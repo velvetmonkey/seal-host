@@ -168,4 +168,36 @@ def main : IO Unit := do
     (match Lean.Json.parse "{\"temporal\":{\"policies\":[{\"name\":\"p\",\"type\":\"weird\",\"trigger\":[],\"forbidden\":[]}]}}" >>= parseTemporalSection with
      | .error _ => true | .ok _ => false)
 
+  -- kernel C: quorum-certificate gate over Consensus.Checker.validB
+  let cCfg : Kernels.ConsensusConfig :=
+    { roster := [1, 2, 3]
+      votesFile := System.FilePath.mk "/tmp/unused-votes.ndjson"
+      highStakes := ["payments.send"] }
+  let pay := mkAct "payments.send" Lean.Json.null
+  let decideC := fun (votes : Consensus.Checker.Votes) =>
+    (Kernels.consensusKernel.decide pay cCfg votes ()).1
+  check "C: gates high-stakes tool" (Kernels.consensusKernel.gates cCfg pay == true)
+  check "C: ignores other tools" (Kernels.consensusKernel.gates cCfg (mkAct "db.execute" Lean.Json.null) == false)
+  check "C: 2-of-3 quorum -> allow" ((decideC [(1, "payments.send"), (2, "payments.send")]).kind == .allow)
+  check "C: no votes -> deny" ((decideC []).kind == .deny)
+  check "C: minority 1-of-3 -> deny" ((decideC [(1, "payments.send")]).kind == .deny)
+  check "C: duplicate voter does not double-count"
+    ((decideC [(1, "payments.send"), (1, "payments.send")]).kind == .deny)
+  check "C: rogue acceptor outside roster -> deny"
+    ((decideC [(9, "payments.send"), (1, "payments.send")]).kind == .deny)
+  check "C: acceptor's first vote binds (conflicting later vote rejected)"
+    ((decideC [(1, "other.value"), (1, "payments.send"), (2, "payments.send")]).kind == .deny)
+  check "C: 3-of-3 -> allow"
+    ((decideC [(1, "payments.send"), (2, "payments.send"), (3, "payments.send")]).kind == .allow)
+
+  -- consensus config section parsing
+  let consensusJson := "{\"consensus\":{\"roster\":[1,2,3],\"votes_file\":\"/tmp/v.ndjson\",\"high_stakes\":[\"payments.send\"]}}"
+  check "consensus section parses"
+    (match Lean.Json.parse consensusJson >>= parseConsensusSection with
+     | .ok (some c) => c.roster == [1, 2, 3] && c.highStakes == ["payments.send"]
+     | _ => false)
+  check "missing consensus section -> none"
+    (match Lean.Json.parse "{\"epoch\":1}" >>= parseConsensusSection with
+     | .ok none => true | _ => false)
+
   IO.println "all host unit tests passed"

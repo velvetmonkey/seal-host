@@ -12,6 +12,7 @@ import Host.Registry
 import Host.Audit
 import Kernels.Safety
 import Kernels.Temporal
+import Kernels.Consensus
 
 namespace Host
 
@@ -54,6 +55,25 @@ def gatherSafetyEvidence (policy : Seal.Policy) (approvalSeenRef : IO.Ref Nat) :
   let (newSeen, approvals) ← Seal.readApprovalsFrom policy.approvalFile seen now policy.approvalTtlMs
   approvalSeenRef.set newSeen
   pure { now, approvalEvents := approvals }
+
+/-- Evidence gatherer for kernel C: read the votes file fresh per gated call.
+    Malformed lines are skipped — a vote that fails to parse simply does not
+    exist, which can only shrink a quorum (fail-closed for allow). -/
+def gatherVotes (cfg : Kernels.ConsensusConfig) :
+    CanonicalAction → IO Consensus.Checker.Votes := fun _ => do
+  if (← cfg.votesFile.pathExists) then
+    let text ← IO.FS.readFile cfg.votesFile
+    pure <| text.splitOn "\n" |>.filterMap fun line =>
+      let trimmed := line.trimAscii.toString
+      if trimmed.isEmpty then none else
+        match Json.parse trimmed with
+        | .error _ => none
+        | .ok j => do
+            let acceptor ← (j.getObjVal? "acceptor").toOption.bind (·.getNat?.toOption)
+            let value ← (j.getObjVal? "value").toOption.bind (·.getStr?.toOption)
+            some (acceptor, value)
+  else
+    pure []
 
 def processHostLine
     (epoch : Nat)
@@ -120,6 +140,15 @@ def main (rawArgs : List String) : IO UInt32 := do
   let approvalSeenRef ← IO.mkRef 0
   let safetyStateRef ← IO.mkRef Kernels.safetyKernel.init
   let temporalStateRef ← IO.mkRef Kernels.temporalKernel.init
+  let consensusStateRef ← IO.mkRef Kernels.consensusKernel.init
+  let consensusEntries : Registry :=
+    match config.consensus with
+    | some cfg =>
+        [{ kernel := Kernels.consensusKernel
+           config := cfg
+           stateRef := consensusStateRef
+           gather := gatherVotes cfg }]
+    | none => []
   let registry : Registry := [
     { kernel := Kernels.safetyKernel
       config := config.safety
@@ -129,7 +158,7 @@ def main (rawArgs : List String) : IO UInt32 := do
       config := config.temporal
       stateRef := temporalStateRef
       gather := fun _ => pure () }
-  ]
+  ] ++ consensusEntries
   let relayTask ← IO.asTask (relayChildStdout stdoutLock child.stdout hostOut) Task.Priority.dedicated
   hostLoop config.epoch registry hostIn hostOut child.stdin stdoutLock
   child.kill

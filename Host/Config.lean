@@ -5,6 +5,7 @@ import SealV2.Parser
 import Seal.Policy
 import Seal.JsonUtil
 import Kernels.Temporal
+import Kernels.Consensus
 
 namespace Host
 
@@ -18,6 +19,7 @@ structure TrustedConfig where
   epoch : Nat
   safety : Seal.Policy
   temporal : List Kernels.TemporalPolicy
+  consensus : Option Kernels.ConsensusConfig
 
 private def parseStringList (json : Json) : Except String (List String) := do
   let arr ← json.getArr?
@@ -38,6 +40,16 @@ def parseTemporalSection (json : Json) : Except String (List Kernels.TemporalPol
   | some section_ =>
       let policiesJson ← (← section_.getObjVal? "policies").getArr?
       policiesJson.toList.mapM parseTemporalPolicy
+
+def parseConsensusSection (json : Json) : Except String (Option Kernels.ConsensusConfig) := do
+  match ← getObjValOpt json "consensus" with
+  | none => pure none
+  | some section_ =>
+      let rosterJson ← (← section_.getObjVal? "roster").getArr?
+      let roster ← rosterJson.toList.mapM (fun j => j.getNat?)
+      let votesFile := System.FilePath.mk (← getObjString section_ "votes_file")
+      let highStakes ← parseStringList (← section_.getObjVal? "high_stakes")
+      pure (some { roster, votesFile, highStakes })
 
 /-- Stub signature scheme, byte-compatible with the SealV2 approval stub
     (`SealV2.Validation.verifySignature`): the signature commits to the exact
@@ -65,7 +77,8 @@ def checkTrustedConfig (publicKey payload signature : String) :
   let safetyJson ← json.getObjVal? "safety"
   let safety ← Seal.parsePolicyJson safetyJson
   let temporal ← parseTemporalSection json
-  pure { epoch, safety, temporal }
+  let consensus ← parseConsensusSection json
+  pure { epoch, safety, temporal, consensus }
 
 /-- Load and verify the signed config envelope:
     `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`.

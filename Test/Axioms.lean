@@ -74,6 +74,39 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 /-- info: 'Temporal.monitor_sound' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Temporal.monitor_sound
 
+/-- info: 'Kernels.consensusKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.consensusKernel
+
+/-- info: 'Consensus.Checker.validB' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Consensus.Checker.validB
+
+/-- info: 'Host.parseConsensusSection' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.parseConsensusSection
+
+-- G3 composition theorem — the AND-combinator preserves kernel invariants
+
+/-- info: 'Host.combine_empty_deny' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.combine_empty_deny
+
+/-- info: 'Host.combine_allow_iff' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.combine_allow_iff
+
+/-- info: 'Host.combine_deny_of_member' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.combine_deny_of_member
+
+/-- info: 'Host.composed_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.composed_non_bypass
+
+/--
+info: 'Host.composed_no_conflicting_agreement' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.composed_no_conflicting_agreement
+
+/--
+info: 'Host.and_combinator_preserves_invariants' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.and_combinator_preserves_invariants
+
 -- Lake-dep math bricks for kernels T, C, V, K (G2+): imported and axiom-clean
 
 /-- info: 'Temporal.gateTrace_sealSafe' depends on axioms: [propext, Classical.choice, Quot.sound] -/

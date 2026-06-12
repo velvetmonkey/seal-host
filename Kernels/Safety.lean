@@ -16,9 +16,12 @@ structure SafetyEvidence where
   now : Nat
   approvalEvents : List Event
 
-private def kindOf : Decision → Host.VerdictKind
+def kindOf : Decision → Host.VerdictKind
   | .allow => .allow
   | .block => .deny
+
+theorem kindOf_allow_iff (d : Decision) : kindOf d = .allow ↔ d = .allow := by
+  cases d <;> simp [kindOf]
 
 /-- Kernel S — the Safety Seal. A pure lift of the mcp-seal V1 decision path
     (`Seal/Main.lean` processHostLine): fold freshly ingested approvals through
@@ -54,5 +57,17 @@ def safetyKernel : Host.Kernel where
       certHash := Seal.stableHashParts ["safety", kind.text, reason]
     }
     (verdict, st3)
+
+/-- Bridge for the composition theorem: kernel S's verdict is allow exactly
+    when the proven SealCore automaton's step decision is allow on the
+    classified event. -/
+theorem safety_verdict_allow_iff
+    (act : Host.CanonicalAction) (pol : Seal.Policy)
+    (ev : SafetyEvidence) (st1 : SealCore.State) :
+    (safetyKernel.decide act pol ev st1).1.kind = .allow ↔
+      (step ev.now st1 (Seal.classifyToolCall pol act.tool act.argsJson).toEvent).1 = .allow := by
+  rw [show (safetyKernel.decide act pol ev st1).1.kind =
+      kindOf (step ev.now st1 (Seal.classifyToolCall pol act.tool act.argsJson).toEvent).1 from rfl]
+  exact kindOf_allow_iff _
 
 end Kernels

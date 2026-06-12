@@ -54,6 +54,12 @@ def safety_section(approval_file: Path) -> dict:
                 "match": {"type": "always"},
                 "target": [{"literal": "revoke"}],
             },
+            {
+                "name": "payments.send",
+                "mode": "guarded",
+                "match": {"type": "always"},
+                "target": [{"literal": "pay"}],
+            },
             {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []},
         ],
     }
@@ -72,11 +78,20 @@ def temporal_section() -> dict:
     }
 
 
+def consensus_section(votes_file: Path) -> dict:
+    return {
+        "roster": [1, 2, 3],
+        "votes_file": str(votes_file),
+        "high_stakes": ["payments.send"],
+    }
+
+
 def write_config(tmp: Path, approval_file: Path, epoch: int = 1, tamper: bool = False) -> Path:
     payload = {
         "epoch": epoch,
         "safety": safety_section(approval_file),
         "temporal": temporal_section(),
+        "consensus": consensus_section(tmp / "votes.ndjson"),
     }
     envelope = sign_payload(payload, PUBKEY)
     if tamper:
@@ -209,7 +224,52 @@ def main() -> int:
         proc.stdin.close()
         proc.wait(timeout=5)
 
-    # 6. Host-specific: tampered config -> startup refusal, nothing mediated.
+    # 6. Consensus kernel C: high-stakes tool needs a ratified 2-of-3 quorum,
+    #    not just an approval. Also exercises the two-phase state commit: the
+    #    approval is NOT consumed by the quorum-blocked first call.
+    pay_target = stable_hash(["payments.send", "pay"])
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text(json.dumps({"target": pay_target}) + "\n", encoding="utf-8")
+        votes = tmp / "votes.ndjson"
+        config = write_config(tmp, approvals)
+        proc = spawn(config)
+        assert proc.stdin is not None and proc.stdout is not None
+
+        def call(mid, name, arguments):
+            proc.stdin.write(json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        # Approved but no quorum: C denies.
+        r1 = call(1, "payments.send", {"amount": 10})
+        assert r1["result"]["isError"] is True
+        assert "quorum missing" in r1["result"]["content"][0]["text"]
+        # 2-of-3 quorum ratified: allowed — and the approval survived the
+        # earlier combined deny (not consumed by a call that never executed).
+        votes.write_text(
+            json.dumps({"acceptor": 1, "value": "payments.send"}) + "\n"
+            + json.dumps({"acceptor": 2, "value": "payments.send"}) + "\n",
+            encoding="utf-8",
+        )
+        r2 = call(2, "payments.send", {"amount": 10})
+        assert r2["result"]["isError"] is False
+        # Rogue quorum (acceptor outside roster) with a fresh approval: denied.
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"target": pay_target}) + "\n")
+        votes.write_text(
+            json.dumps({"acceptor": 9, "value": "payments.send"}) + "\n"
+            + json.dumps({"acceptor": 1, "value": "payments.send"}) + "\n",
+            encoding="utf-8",
+        )
+        r3 = call(3, "payments.send", {"amount": 10})
+        assert r3["result"]["isError"] is True
+        assert "quorum missing" in r3["result"]["content"][0]["text"]
+        proc.stdin.close()
+        proc.wait(timeout=5)
+
+    # 7. Host-specific: tampered config -> startup refusal, nothing mediated.
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
