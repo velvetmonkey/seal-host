@@ -72,6 +72,12 @@ def safety_section(approval_file: Path) -> dict:
                 "match": {"type": "always"},
                 "target": [{"literal": "act"}],
             },
+            {
+                "name": "key.use",
+                "mode": "guarded",
+                "match": {"type": "always"},
+                "target": [{"literal": "key"}],
+            },
             {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []},
         ],
     }
@@ -112,6 +118,15 @@ def write_config(tmp: Path, approval_file: Path, epoch: int = 1, tamper: bool = 
             "min_samples": 10,
             "records_file": str(tmp / "forecasts.ndjson"),
             "gated_tools": ["model.act"],
+        },
+        "linear": {
+            "grants_file": str(tmp / "grants.ndjson"),
+            "tools": [{"tool": "key.use", "cap_arg": "key"}],
+        },
+        "budget": {
+            "budgets": [
+                {"name": "db-calls", "cap": 2, "tools": ["db.execute"]},
+            ]
         },
     }
     envelope = sign_payload(payload, PUBKEY)
@@ -358,7 +373,65 @@ def main() -> int:
         proc.stdin.close()
         proc.wait(timeout=5)
 
-    # 9. Host-specific: tampered config -> startup refusal, nothing mediated.
+    # 9. Budget kernel B: db.execute capped at 2 executions per session; the
+    #    third approved call is denied over-budget (S allows, B vetoes).
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text(json.dumps({"target": target}) + "\n", encoding="utf-8")
+        config = write_config(tmp, approvals)
+        proc = spawn(config)
+        assert proc.stdin is not None and proc.stdout is not None
+
+        def call(mid, name, arguments):
+            proc.stdin.write(json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        destructive = {"database": "prod", "sql": "drop table users"}
+        r1 = call(1, "db.execute", destructive)
+        assert r1["result"]["isError"] is False
+        for n in (2, 3):
+            with approvals.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"target": target}) + "\n")
+            r = call(n, "db.execute", destructive)
+            if n == 2:
+                assert r["result"]["isError"] is False
+            else:
+                assert r["result"]["isError"] is True
+                assert "over budget" in r["result"]["content"][0]["text"]
+        proc.stdin.close()
+        proc.wait(timeout=5)
+
+    # 10. Linear kernel L: a capability granted one use spends exactly once;
+    #     the second approved call is a double-spend and is denied.
+    key_target = stable_hash(["key.use", "key"])
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text(json.dumps({"target": key_target}) + "\n", encoding="utf-8")
+        grants = tmp / "grants.ndjson"
+        grants.write_text(json.dumps({"cap": "deploy-key-7", "uses": 1}) + "\n", encoding="utf-8")
+        config = write_config(tmp, approvals)
+        proc = spawn(config)
+        assert proc.stdin is not None and proc.stdout is not None
+
+        def call(mid, name, arguments):
+            proc.stdin.write(json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        r1 = call(1, "key.use", {"key": "deploy-key-7"})
+        assert r1["result"]["isError"] is False
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"target": key_target}) + "\n")
+        r2 = call(2, "key.use", {"key": "deploy-key-7"})
+        assert r2["result"]["isError"] is True
+        assert "double-spend" in r2["result"]["content"][0]["text"]
+        proc.stdin.close()
+        proc.wait(timeout=5)
+
+    # 11. Host-specific: tampered config -> startup refusal, nothing mediated.
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"

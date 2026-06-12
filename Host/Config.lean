@@ -8,6 +8,8 @@ import Kernels.Temporal
 import Kernels.Consensus
 import Kernels.Convergence
 import Kernels.Calibration
+import Kernels.Linear
+import Kernels.Budget
 
 namespace Host
 
@@ -24,6 +26,8 @@ structure TrustedConfig where
   consensus : Option Kernels.ConsensusConfig
   convergence : Kernels.ConvergenceConfig
   calibration : Option Kernels.CalibrationConfig
+  linear : Option Kernels.LinearConfig
+  budget : Kernels.BudgetConfig
 
 private def parseStringList (json : Json) : Except String (List String) := do
   let arr ← json.getArr?
@@ -83,6 +87,32 @@ def parseCalibrationSection (json : Json) :
       pure (some { enabled, deltaNum, deltaDen, minSamples, gatedTools,
                    recordsFile := System.FilePath.mk recordsFile })
 
+def parseLinearSection (json : Json) : Except String (Option Kernels.LinearConfig) := do
+  match ← getObjValOpt json "linear" with
+  | none => pure none
+  | some section_ =>
+      let grantsFile := System.FilePath.mk (← getObjString section_ "grants_file")
+      let toolsJson ← (← section_.getObjVal? "tools").getArr?
+      let tools ← toolsJson.toList.mapM fun j => do
+        let tool ← getObjString j "tool"
+        let capArg ← getObjString j "cap_arg"
+        pure { tool, capArg := splitPath capArg : Kernels.LinearTool }
+      pure (some { grantsFile, tools })
+
+def parseBudgetSection (json : Json) : Except String Kernels.BudgetConfig := do
+  match ← getObjValOpt json "budget" with
+  | none => pure []
+  | some section_ =>
+      let budgetsJson ← (← section_.getObjVal? "budgets").getArr?
+      budgetsJson.toList.mapM fun j => do
+        let name ← getObjString j "name"
+        let cap ← (← j.getObjVal? "cap").getNat?
+        let tools ← parseStringList (← j.getObjVal? "tools")
+        let costArg ← match ← getObjValOpt j "cost_arg" with
+          | some v => pure (some (splitPath (← v.getStr?)))
+          | none => pure none
+        pure { name, cap, tools, costArg : Kernels.BudgetSpec }
+
 /-- Stub signature scheme, byte-compatible with the SealV2 approval stub
     (`SealV2.Validation.verifySignature`): the signature commits to the exact
     payload bytes. G6 swaps this for real Ed25519 over the same bytes. -/
@@ -112,7 +142,9 @@ def checkTrustedConfig (publicKey payload signature : String) :
   let consensus ← parseConsensusSection json
   let convergence ← parseConvergenceSection json
   let calibration ← parseCalibrationSection json
-  pure { epoch, safety, temporal, consensus, convergence, calibration }
+  let linear ← parseLinearSection json
+  let budget ← parseBudgetSection json
+  pure { epoch, safety, temporal, consensus, convergence, calibration, linear, budget }
 
 /-- Load and verify the signed config envelope:
     `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`.

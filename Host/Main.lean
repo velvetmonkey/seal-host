@@ -15,6 +15,8 @@ import Kernels.Temporal
 import Kernels.Consensus
 import Kernels.Convergence
 import Kernels.Calibration
+import Kernels.Linear
+import Kernels.Budget
 
 namespace Host
 
@@ -99,6 +101,30 @@ def gatherForecasts (cfg : Kernels.CalibrationConfig) :
               some { confidence, outcome := outcome == 1 }
             else
               none
+  else
+    pure []
+
+/-- Evidence gatherer for kernel L: incrementally read freshly minted grants
+    from the grants file (`{"cap": "<id>", "uses": <n>}` per line), each
+    record exactly once via the seen counter — mirroring the approval channel.
+    Malformed lines are skipped (a grant that fails to parse grants nothing,
+    fail-closed). -/
+def gatherGrants (cfg : Kernels.LinearConfig) (seenRef : IO.Ref Nat) :
+    CanonicalAction → IO (List LinearCore.LEvent) := fun _ => do
+  if (← cfg.grantsFile.pathExists) then
+    let text ← IO.FS.readFile cfg.grantsFile
+    let records := text.splitOn "\n" |>.filter
+      (fun line => !(line.trimAscii.toString).isEmpty)
+    let seen ← seenRef.get
+    let fresh := records.drop seen
+    seenRef.set records.length
+    pure <| fresh.filterMap fun line =>
+      match Json.parse line.trimAscii.toString with
+      | .error _ => none
+      | .ok j => do
+          let cap ← (j.getObjVal? "cap").toOption.bind (·.getStr?.toOption)
+          let uses ← (j.getObjVal? "uses").toOption.bind (·.getNat?.toOption)
+          some (LinearCore.LEvent.grant cap uses)
   else
     pure []
 
@@ -196,6 +222,24 @@ def main (rawArgs : List String) : IO UInt32 := do
              gather := gatherForecasts cfg }]
         else []
     | none => []
+  let linearStateRef ← IO.mkRef Kernels.linearKernel.init
+  let linearSeenRef ← IO.mkRef 0
+  let linearEntries : Registry :=
+    match config.linear with
+    | some cfg =>
+        [{ kernel := Kernels.linearKernel
+           config := cfg
+           stateRef := linearStateRef
+           gather := gatherGrants cfg linearSeenRef }]
+    | none => []
+  let budgetStateRef ← IO.mkRef Kernels.budgetKernel.init
+  let budgetEntries : Registry :=
+    if config.budget.isEmpty then []
+    else
+      [{ kernel := Kernels.budgetKernel
+         config := config.budget
+         stateRef := budgetStateRef
+         gather := fun _ => pure () }]
   let registry : Registry := [
     { kernel := Kernels.safetyKernel
       config := config.safety
@@ -206,6 +250,7 @@ def main (rawArgs : List String) : IO UInt32 := do
       stateRef := temporalStateRef
       gather := fun _ => pure () }
   ] ++ consensusEntries ++ convergenceEntries ++ calibrationEntries
+    ++ linearEntries ++ budgetEntries
   let relayTask ← IO.asTask (relayChildStdout stdoutLock child.stdout hostOut) Task.Priority.dedicated
   hostLoop config.epoch registry hostIn hostOut child.stdin stdoutLock
   child.kill

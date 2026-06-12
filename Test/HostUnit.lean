@@ -258,4 +258,60 @@ def main : IO Unit := do
     (match Lean.Json.parse "{\"calibration\":{\"enabled\":true,\"delta_num\":2,\"delta_den\":2,\"min_samples\":1,\"records_file\":\"/tmp/f\",\"gated_tools\":[]}}" >>= parseCalibrationSection with
      | .error _ => true | .ok _ => false)
 
+  -- kernel L: linear capability accounting (no double-spend)
+  let lCfg : Kernels.LinearConfig :=
+    { grantsFile := System.FilePath.mk "/tmp/unused-grants.ndjson"
+      tools := [{ tool := "key.use", capArg := ["key"] }] }
+  let keyAct := mkAct "key.use" (Lean.Json.mkObj [("key", Lean.Json.str "k7")])
+  let decideL := fun (st : LinearCore.LState) =>
+    Kernels.linearKernel.decide keyAct lCfg [] st
+  check "L: gates configured tool" (Kernels.linearKernel.gates lCfg keyAct == true)
+  check "L: never-granted capability -> deny" ((decideL LinearCore.LState.empty).1.kind == .deny)
+  let lst1 := Kernels.linearKernel.ingest [.grant "k7" 1] LinearCore.LState.empty
+  let (lv1, lst2) := decideL lst1
+  check "L: granted once -> first spend allows" (lv1.kind == .allow)
+  let (lv2, _) := decideL lst2
+  check "L: double-spend -> deny" (lv2.kind == .deny)
+  check "L: deny names double-spend" (lv2.reason == "capability exhausted, double-spend denied: k7")
+  let lst3 := Kernels.linearKernel.ingest [.grant "k7" 2] LinearCore.LState.empty
+  let (lw1, lst4) := decideL lst3
+  let (lw2, lst5) := decideL lst4
+  let (lw3, _) := decideL lst5
+  check "L: multiplicity 2 -> exactly two spends"
+    (lw1.kind == .allow && lw2.kind == .allow && lw3.kind == .deny)
+  check "L: missing capability field -> deny"
+    ((Kernels.linearKernel.decide (mkAct "key.use" Lean.Json.null) lCfg [] lst3).1.kind == .deny)
+
+  -- kernel B: monotone budget gate
+  let bCfg : Kernels.BudgetConfig :=
+    [{ name := "db-calls", cap := 2, tools := ["db.execute"], costArg := none },
+     { name := "spend", cap := 10, tools := ["payments.send"], costArg := some ["amount"] }]
+  let dbAct := mkAct "db.execute" Lean.Json.null
+  let decideB := fun (a : CanonicalAction) (st : Kernels.BudgetState) =>
+    Kernels.budgetKernel.decide a bCfg () st
+  check "B: gates covered tool" (Kernels.budgetKernel.gates bCfg dbAct == true)
+  let (bv1, bst1) := decideB dbAct Kernels.budgetKernel.init
+  let (bv2, bst2) := decideB dbAct bst1
+  let (bv3, _) := decideB dbAct bst2
+  check "B: call-rate cap 2 -> two allows then deny"
+    (bv1.kind == .allow && bv2.kind == .allow && bv3.kind == .deny)
+  let payAmt := fun (n : Nat) =>
+    mkAct "payments.send" (Lean.Json.mkObj [("amount", Lean.Json.num n)])
+  let (bw1, bst3) := decideB (payAmt 7) Kernels.budgetKernel.init
+  let (bw2, _) := decideB (payAmt 4) bst3
+  check "B: cost-arg budget 7 then 4 over cap 10 -> deny second"
+    (bw1.kind == .allow && bw2.kind == .deny)
+  check "B: missing cost field -> deny"
+    ((decideB (mkAct "payments.send" Lean.Json.null) Kernels.budgetKernel.init).1.kind == .deny)
+
+  -- linear + budget config parsing
+  check "linear section parses"
+    (match Lean.Json.parse "{\"linear\":{\"grants_file\":\"/tmp/g.ndjson\",\"tools\":[{\"tool\":\"key.use\",\"cap_arg\":\"key\"}]}}" >>= parseLinearSection with
+     | .ok (some c) => c.tools.length == 1
+     | _ => false)
+  check "budget section parses"
+    (match Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]}]}}" >>= parseBudgetSection with
+     | .ok [b] => b.cap == 2 && b.costArg.isNone
+     | _ => false)
+
   IO.println "all host unit tests passed"

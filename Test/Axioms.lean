@@ -128,6 +128,39 @@ info: 'Host.and_combinator_preserves_invariants' depends on axioms: [propext, Cl
 /-- info: 'Crdt.ORSet.add_wins' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Crdt.ORSet.add_wins
 
+-- G5: LinearCore calculus (L) + BudgetCore gate (B) — proven in this repo
+
+/-- info: 'LinearCore.no_double_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LinearCore.no_double_spend
+
+/--
+info: 'LinearCore.granted_plus_initial_eq_spent_plus_remaining' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms LinearCore.granted_plus_initial_eq_spent_plus_remaining
+
+/-- info: 'LinearCore.spends_le_grants' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LinearCore.spends_le_grants
+
+/--
+info: 'LinearCore.spend_allow_consumes' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms LinearCore.spend_allow_consumes
+
+/-- info: 'BudgetCore.run_never_over_budget' depends on axioms: [propext] -/
+#guard_msgs in #print axioms BudgetCore.run_never_over_budget
+
+/-- info: 'BudgetCore.over_budget_denied' depends on axioms: [propext] -/
+#guard_msgs in #print axioms BudgetCore.over_budget_denied
+
+/-- info: 'BudgetCore.step_monotone' depends on axioms: [propext] -/
+#guard_msgs in #print axioms BudgetCore.step_monotone
+
+/-- info: 'Kernels.linearKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.linearKernel
+
+/-- info: 'Kernels.budgetKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.budgetKernel
+
 -- Lake-dep math bricks for kernels T, C, V, K (G2+): imported and axiom-clean
 
 /-- info: 'Temporal.gateTrace_sealSafe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
