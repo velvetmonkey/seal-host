@@ -6,6 +6,8 @@ import Seal.Policy
 import Seal.JsonUtil
 import Kernels.Temporal
 import Kernels.Consensus
+import Kernels.Convergence
+import Kernels.Calibration
 
 namespace Host
 
@@ -20,6 +22,8 @@ structure TrustedConfig where
   safety : Seal.Policy
   temporal : List Kernels.TemporalPolicy
   consensus : Option Kernels.ConsensusConfig
+  convergence : Kernels.ConvergenceConfig
+  calibration : Option Kernels.CalibrationConfig
 
 private def parseStringList (json : Json) : Except String (List String) := do
   let arr ← json.getArr?
@@ -51,6 +55,34 @@ def parseConsensusSection (json : Json) : Except String (Option Kernels.Consensu
       let highStakes ← parseStringList (← section_.getObjVal? "high_stakes")
       pure (some { roster, votesFile, highStakes })
 
+def parseConvergenceSection (json : Json) : Except String Kernels.ConvergenceConfig := do
+  match ← getObjValOpt json "convergence" with
+  | none => pure []
+  | some section_ =>
+      let toolsJson ← (← section_.getObjVal? "tools").getArr?
+      toolsJson.toList.mapM fun j => do
+        let tool ← getObjString j "tool"
+        let opArg ← getObjString j "op_arg"
+        pure { tool, opArg := splitPath opArg : Kernels.ReplicatedTool }
+
+def parseCalibrationSection (json : Json) :
+    Except String (Option Kernels.CalibrationConfig) := do
+  match ← getObjValOpt json "calibration" with
+  | none => pure none
+  | some section_ =>
+      let enabled ← match ← getObjValOpt section_ "enabled" with
+        | some v => v.getBool?
+        | none => pure false
+      let deltaNum ← (← section_.getObjVal? "delta_num").getNat?
+      let deltaDen ← (← section_.getObjVal? "delta_den").getNat?
+      if deltaNum == 0 || deltaDen ≤ deltaNum then
+        throw "calibration delta must satisfy 0 < delta < 1"
+      let minSamples ← (← section_.getObjVal? "min_samples").getNat?
+      let recordsFile ← getObjString section_ "records_file"
+      let gatedTools ← parseStringList (← section_.getObjVal? "gated_tools")
+      pure (some { enabled, deltaNum, deltaDen, minSamples, gatedTools,
+                   recordsFile := System.FilePath.mk recordsFile })
+
 /-- Stub signature scheme, byte-compatible with the SealV2 approval stub
     (`SealV2.Validation.verifySignature`): the signature commits to the exact
     payload bytes. G6 swaps this for real Ed25519 over the same bytes. -/
@@ -78,7 +110,9 @@ def checkTrustedConfig (publicKey payload signature : String) :
   let safety ← Seal.parsePolicyJson safetyJson
   let temporal ← parseTemporalSection json
   let consensus ← parseConsensusSection json
-  pure { epoch, safety, temporal, consensus }
+  let convergence ← parseConvergenceSection json
+  let calibration ← parseCalibrationSection json
+  pure { epoch, safety, temporal, consensus, convergence, calibration }
 
 /-- Load and verify the signed config envelope:
     `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`.

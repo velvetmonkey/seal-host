@@ -60,6 +60,18 @@ def safety_section(approval_file: Path) -> dict:
                 "match": {"type": "always"},
                 "target": [{"literal": "pay"}],
             },
+            {
+                "name": "store.update",
+                "mode": "guarded",
+                "match": {"type": "always"},
+                "target": [{"literal": "store"}],
+            },
+            {
+                "name": "model.act",
+                "mode": "guarded",
+                "match": {"type": "always"},
+                "target": [{"literal": "act"}],
+            },
             {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []},
         ],
     }
@@ -92,6 +104,15 @@ def write_config(tmp: Path, approval_file: Path, epoch: int = 1, tamper: bool = 
         "safety": safety_section(approval_file),
         "temporal": temporal_section(),
         "consensus": consensus_section(tmp / "votes.ndjson"),
+        "convergence": {"tools": [{"tool": "store.update", "op_arg": "op"}]},
+        "calibration": {
+            "enabled": True,
+            "delta_num": 1,
+            "delta_den": 20,
+            "min_samples": 10,
+            "records_file": str(tmp / "forecasts.ndjson"),
+            "gated_tools": ["model.act"],
+        },
     }
     envelope = sign_payload(payload, PUBKEY)
     if tamper:
@@ -269,7 +290,75 @@ def main() -> int:
         proc.stdin.close()
         proc.wait(timeout=5)
 
-    # 7. Host-specific: tampered config -> startup refusal, nothing mediated.
+    # 7. Convergence kernel V: only proven-convergent ops admitted on
+    #    replicated stores.
+    store_target = stable_hash(["store.update", "store"])
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text(json.dumps({"target": store_target}) + "\n", encoding="utf-8")
+        config = write_config(tmp, approvals)
+        proc = spawn(config)
+        assert proc.stdin is not None and proc.stdout is not None
+
+        def call(mid, name, arguments):
+            proc.stdin.write(json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        # Convergent op (OR-Set add): allowed.
+        r1 = call(1, "store.update", {"op": "orset.add", "key": "k1"})
+        assert r1["result"]["isError"] is False
+        # LWW assignment: refused, divergent-replica risk (approval is fresh).
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"target": store_target}) + "\n")
+        r2 = call(2, "store.update", {"op": "assign", "key": "k1"})
+        assert r2["result"]["isError"] is True
+        assert "proven-convergent" in r2["result"]["content"][0]["text"]
+        proc.stdin.close()
+        proc.wait(timeout=5)
+
+    # 8. Calibration kernel K (experimental flag on): confidence-conditioned
+    #    tool gated on the empirical Hoeffding calibration bound.
+    act_target = stable_hash(["model.act", "act"])
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text(json.dumps({"target": act_target}) + "\n", encoding="utf-8")
+        forecasts = tmp / "forecasts.ndjson"
+        # Well-calibrated window: confidence 0.5, half the outcomes positive.
+        forecasts.write_text(
+            "".join(
+                json.dumps({"confidence": 0.5, "outcome": 1 if i % 2 == 0 else 0}) + "\n"
+                for i in range(20)
+            ),
+            encoding="utf-8",
+        )
+        config = write_config(tmp, approvals)
+        proc = spawn(config)
+        assert proc.stdin is not None and proc.stdout is not None
+
+        def call(mid, name, arguments):
+            proc.stdin.write(json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        r1 = call(1, "model.act", {"action": "send"})
+        assert r1["result"]["isError"] is False
+        # Overconfident forecaster: every prediction 0.9, nothing happened.
+        forecasts.write_text(
+            "".join(json.dumps({"confidence": 0.9, "outcome": 0}) + "\n" for _ in range(20)),
+            encoding="utf-8",
+        )
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"target": act_target}) + "\n")
+        r2 = call(2, "model.act", {"action": "send"})
+        assert r2["result"]["isError"] is True
+        assert "uncalibrated" in r2["result"]["content"][0]["text"]
+        proc.stdin.close()
+        proc.wait(timeout=5)
+
+    # 9. Host-specific: tampered config -> startup refusal, nothing mediated.
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"

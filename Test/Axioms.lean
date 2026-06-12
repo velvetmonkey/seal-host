@@ -10,6 +10,7 @@ import SealV2.DecideTheorems
 import Host
 import Kernels
 import Crdt.Convergence
+import Crdt.ORSet
 import Temporal.Monitor
 import Consensus.Checker
 import Calibration.CondHoeffding
@@ -106,6 +107,26 @@ info: 'Host.composed_no_conflicting_agreement' depends on axioms: [propext, Clas
 info: 'Host.and_combinator_preserves_invariants' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.and_combinator_preserves_invariants
+
+-- G4: Convergence (V) + Calibration (K) kernels
+
+/-- info: 'Kernels.convergenceKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.convergenceKernel
+
+/-- info: 'Kernels.provenConvergentOps' does not depend on any axioms -/
+#guard_msgs in #print axioms Kernels.provenConvergentOps
+
+/-- info: 'Kernels.calibrationKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.calibrationKernel
+
+/-- info: 'Kernels.calibratedB' depends on axioms: [Classical.choice] -/
+#guard_msgs in #print axioms Kernels.calibratedB
+
+/-- info: 'Crdt.converged_states_agree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Crdt.converged_states_agree
+
+/-- info: 'Crdt.ORSet.add_wins' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Crdt.ORSet.add_wins
 
 -- Lake-dep math bricks for kernels T, C, V, K (G2+): imported and axiom-clean
 

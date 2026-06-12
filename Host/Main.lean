@@ -13,6 +13,8 @@ import Host.Audit
 import Kernels.Safety
 import Kernels.Temporal
 import Kernels.Consensus
+import Kernels.Convergence
+import Kernels.Calibration
 
 namespace Host
 
@@ -72,6 +74,31 @@ def gatherVotes (cfg : Kernels.ConsensusConfig) :
             let acceptor ← (j.getObjVal? "acceptor").toOption.bind (·.getNat?.toOption)
             let value ← (j.getObjVal? "value").toOption.bind (·.getStr?.toOption)
             some (acceptor, value)
+  else
+    pure []
+
+/-- Evidence gatherer for kernel K: read the forecast records file fresh per
+    gated call. Malformed lines are skipped — a record that fails to parse
+    shrinks the window, and a small window denies (fail-closed). -/
+def gatherForecasts (cfg : Kernels.CalibrationConfig) :
+    CanonicalAction → IO (List Kernels.ForecastRecord) := fun _ => do
+  if (← cfg.recordsFile.pathExists) then
+    let text ← IO.FS.readFile cfg.recordsFile
+    pure <| text.splitOn "\n" |>.filterMap fun line =>
+      let trimmed := line.trimAscii.toString
+      if trimmed.isEmpty then none else
+        match Json.parse trimmed with
+        | .error _ => none
+        | .ok j => do
+            let confidence ← (j.getObjVal? "confidence").toOption.bind fun v =>
+              match v with
+              | .num n => some n.toFloat
+              | _ => none
+            let outcome ← (j.getObjVal? "outcome").toOption.bind (·.getNat?.toOption)
+            if outcome == 0 || outcome == 1 then
+              some { confidence, outcome := outcome == 1 }
+            else
+              none
   else
     pure []
 
@@ -149,6 +176,26 @@ def main (rawArgs : List String) : IO UInt32 := do
            stateRef := consensusStateRef
            gather := gatherVotes cfg }]
     | none => []
+  let convergenceStateRef ← IO.mkRef Kernels.convergenceKernel.init
+  let convergenceEntries : Registry :=
+    if config.convergence.isEmpty then []
+    else
+      [{ kernel := Kernels.convergenceKernel
+         config := config.convergence
+         stateRef := convergenceStateRef
+         gather := fun _ => pure () }]
+  let calibrationStateRef ← IO.mkRef Kernels.calibrationKernel.init
+  -- EXPERIMENTAL flag: K registers only when calibration.enabled is true.
+  let calibrationEntries : Registry :=
+    match config.calibration with
+    | some cfg =>
+        if cfg.enabled then
+          [{ kernel := Kernels.calibrationKernel
+             config := cfg
+             stateRef := calibrationStateRef
+             gather := gatherForecasts cfg }]
+        else []
+    | none => []
   let registry : Registry := [
     { kernel := Kernels.safetyKernel
       config := config.safety
@@ -158,7 +205,7 @@ def main (rawArgs : List String) : IO UInt32 := do
       config := config.temporal
       stateRef := temporalStateRef
       gather := fun _ => pure () }
-  ] ++ consensusEntries
+  ] ++ consensusEntries ++ convergenceEntries ++ calibrationEntries
   let relayTask ← IO.asTask (relayChildStdout stdoutLock child.stdout hostOut) Task.Priority.dedicated
   hostLoop config.epoch registry hostIn hostOut child.stdin stdoutLock
   child.kill

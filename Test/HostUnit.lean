@@ -200,4 +200,62 @@ def main : IO Unit := do
     (match Lean.Json.parse "{\"epoch\":1}" >>= parseConsensusSection with
      | .ok none => true | _ => false)
 
+  -- kernel V: only proven-convergent ops admitted
+  let vCfg : Kernels.ConvergenceConfig := [{ tool := "store.update", opArg := ["op"] }]
+  let storeAct := fun (op : Lean.Json) =>
+    mkAct "store.update" (Lean.Json.mkObj [("op", op)])
+  let decideV := fun (args : Lean.Json) =>
+    (Kernels.convergenceKernel.decide (mkAct "store.update" args) vCfg () ()).1
+  check "V: gates replicated tool"
+    (Kernels.convergenceKernel.gates vCfg (storeAct (Lean.Json.str "x")) == true)
+  check "V: ignores other tools"
+    (Kernels.convergenceKernel.gates vCfg (mkAct "db.execute" Lean.Json.null) == false)
+  check "V: convergent op (orset.add) -> allow"
+    ((decideV (Lean.Json.mkObj [("op", Lean.Json.str "orset.add")])).kind == .allow)
+  check "V: gcounter.inc -> allow"
+    ((decideV (Lean.Json.mkObj [("op", Lean.Json.str "gcounter.inc")])).kind == .allow)
+  check "V: LWW assign -> deny"
+    ((decideV (Lean.Json.mkObj [("op", Lean.Json.str "assign")])).kind == .deny)
+  check "V: missing op field -> deny" ((decideV Lean.Json.null).kind == .deny)
+  check "V: non-scalar op -> deny"
+    ((decideV (Lean.Json.mkObj [("op", Lean.Json.arr #[])])).kind == .deny)
+
+  -- kernel K: calibration gate (experimental)
+  let kCfg : Kernels.CalibrationConfig :=
+    { enabled := true, deltaNum := 1, deltaDen := 20, minSamples := 10
+      recordsFile := System.FilePath.mk "/tmp/unused-forecasts.ndjson"
+      gatedTools := ["model.act"] }
+  let modelAct := mkAct "model.act" Lean.Json.null
+  let decideK := fun (records : List Kernels.ForecastRecord) =>
+    (Kernels.calibrationKernel.decide modelAct kCfg records ()).1
+  let calibrated : List Kernels.ForecastRecord :=
+    (List.range 20).map fun i => { confidence := 0.5, outcome := i % 2 == 0 }
+  let overconfident : List Kernels.ForecastRecord :=
+    (List.range 20).map fun _ => { confidence := 0.9, outcome := false }
+  check "K: gates configured tool" (Kernels.calibrationKernel.gates kCfg modelAct == true)
+  check "K: ignores other tools"
+    (Kernels.calibrationKernel.gates kCfg (mkAct "db.execute" Lean.Json.null) == false)
+  check "K: calibrated window -> allow" ((decideK calibrated).kind == .allow)
+  check "K: overconfident forecaster -> deny" ((decideK overconfident).kind == .deny)
+  check "K: too few samples -> deny (fail-closed)"
+    ((decideK (calibrated.take 5)).kind == .deny)
+  check "K: empty window -> deny" ((decideK []).kind == .deny)
+
+  -- convergence + calibration config parsing
+  check "convergence section parses"
+    (match Lean.Json.parse "{\"convergence\":{\"tools\":[{\"tool\":\"store.update\",\"op_arg\":\"op\"}]}}" >>= parseConvergenceSection with
+     | .ok [r] => r.tool == "store.update" && r.opArg == ["op"]
+     | _ => false)
+  check "missing convergence section -> empty"
+    (match Lean.Json.parse "{}" >>= parseConvergenceSection with
+     | .ok [] => true | _ => false)
+  let kJson := "{\"calibration\":{\"enabled\":true,\"delta_num\":1,\"delta_den\":20,\"min_samples\":10,\"records_file\":\"/tmp/f.ndjson\",\"gated_tools\":[\"model.act\"]}}"
+  check "calibration section parses"
+    (match Lean.Json.parse kJson >>= parseCalibrationSection with
+     | .ok (some c) => c.enabled && c.deltaNum == 1 && c.minSamples == 10
+     | _ => false)
+  check "calibration delta >= 1 rejected"
+    (match Lean.Json.parse "{\"calibration\":{\"enabled\":true,\"delta_num\":2,\"delta_den\":2,\"min_samples\":1,\"records_file\":\"/tmp/f\",\"gated_tools\":[]}}" >>= parseCalibrationSection with
+     | .error _ => true | .ok _ => false)
+
   IO.println "all host unit tests passed"
