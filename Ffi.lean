@@ -139,12 +139,6 @@ private def stepImpl (inputText : String) : IO String := do
       match classifyLine line with
       | .passthrough =>
           pure (Json.mkObj [("route", Json.str "passthrough")]).compress
-      | .blockMalformed id =>
-          pure (Json.mkObj [
-            ("route", Json.str "block"),
-            ("response", Json.str (Seal.blockResponseLine id "non-canonical payload")),
-            ("audit", Json.str (auditLine session.config.epoch "<non-canonical>" .deny []))
-          ]).compress
       | .act act => do
           let registry := registryFor session now approvals votes grants forecasts
           let (combined, verdicts) ← dispatch registry act
@@ -171,13 +165,12 @@ unsafe def sealHostStep (inputText : String) : String :=
     (fun e => pure (errJson (toString e)))
 
 /-- Routing classification for the differential harness:
-    0 = passthrough, 1 = mediated tools/call, 2 = blocked non-canonical. -/
+    0 = passthrough, 1 = mediated tools/call. -/
 @[export seal_host_classify]
 def sealHostClassify (line : String) : UInt32 :=
   match classifyLine line with
   | .passthrough => 0
   | .act _ => 1
-  | .blockMalformed _ => 2
 
 end Ffi
 

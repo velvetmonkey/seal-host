@@ -20,11 +20,15 @@ open Lean
 inductive LineClass where
   | passthrough
   | act (a : CanonicalAction)
-  | blockMalformed (id : Json)
 
 private def jsonId (json : Json) : Json :=
   (json.getObjVal? "id").toOption.getD Json.null
 
+/-- Route a wire line. A `tools/call` (recognised by the V1 `Lean.Json` view,
+    byte-identical to the mcp-seal host) is mediated; the SealV2 canonical
+    parse is attached as `ast?` when it succeeds (audit + the byte form an
+    approval commits to) and is `none` otherwise — it never blocks a call.
+    Non-`tools/call` lines pass through untouched. -/
 def classifyLine (line : String) : LineClass :=
   let trimmed := line.trimAscii.toString
   match Json.parse trimmed with
@@ -33,15 +37,12 @@ def classifyLine (line : String) : LineClass :=
       match Seal.toolsCall? json with
       | none => .passthrough
       | some (toolName, toolArgs) =>
-          match SealV2.parse trimmed with
-          | some ast =>
-              .act {
-                tool := toolName
-                argsJson := toolArgs
-                ast := ast
-                raw := line
-                requestId := jsonId json
-              }
-          | none => .blockMalformed (jsonId json)
+          .act {
+            tool := toolName
+            argsJson := toolArgs
+            ast? := SealV2.parse trimmed
+            raw := line
+            requestId := jsonId json
+          }
 
 end Host

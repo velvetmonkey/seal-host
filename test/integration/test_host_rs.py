@@ -120,7 +120,8 @@ def test_file_channel_all_kernels():
         r = call(proc, 7, "store.update", {"op": "assign"})
         assert r["result"]["isError"] is True
 
-        # Malformed-canonical tools/call blocked.
+        # Non-canonical tools/call (escape) is mediated, not refused: here it
+        # denies as unmatched policy (no destructive needle), not a parser veto.
         proc.stdin.write('{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"db.execute","arguments":{"sql":"a\\tb"}}}\n')
         proc.stdin.flush()
         r = json.loads(proc.stdout.readline())

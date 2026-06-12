@@ -37,7 +37,7 @@ private def dbTarget : SealCore.Hash :=
   Seal.stableHashParts ["db.execute", "db", "prod", "write", "drop table users"]
 
 private def mkAct (tool : String) (args : Lean.Json) : CanonicalAction :=
-  { tool, argsJson := args, ast := SealV2.AST.null, raw := "", requestId := Lean.Json.null }
+  { tool, argsJson := args, ast? := none, raw := "", requestId := Lean.Json.null }
 
 -- Emulate the host's two-phase dispatch for one kernel: commit ingest, then
 -- decide on the ingested state.
@@ -73,8 +73,13 @@ def main : IO Unit := do
      | .passthrough => true | _ => false)
   check "tools/call canonical -> act with tool name"
     (match classifyLine goodLine with | .act a => a.tool == "db.execute" | _ => false)
-  check "tools/call with escape -> blockMalformed"
-    (match classifyLine escapedLine with | .blockMalformed _ => true | _ => false)
+  -- A tools/call carrying an escape is non-canonical (ast? = none) but is
+  -- still mediated on the V1 view — legitimate multiline/Unicode tool args
+  -- are decided, not refused. The canonical gate does not block traffic.
+  check "tools/call with escape -> mediated act, no canonical ast"
+    (match classifyLine escapedLine with | .act a => a.ast?.isNone | _ => false)
+  check "canonical tools/call -> act carries canonical ast"
+    (match classifyLine goodLine with | .act a => a.ast?.isSome | _ => false)
 
   -- checkTrustedConfig: fail-closed loader core
   let payload := "{\"epoch\":3,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a.ndjson\",\"ttl_seconds\":120},\"tools\":[]}}"

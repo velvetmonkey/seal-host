@@ -59,24 +59,16 @@ fn rust_routes_as_tools_call(line: &str) -> bool {
 }
 
 fn check_agreement(line: &str) {
-    let lean = common::lean_classify(line); // 0 passthrough, 1 act, 2 block
+    let lean = common::lean_classify(line); // 0 passthrough, 1 mediated act
     let rust = rust_routes_as_tools_call(line);
-    if rust {
-        // Rust sees a tools/call: Lean must mediate it (act or canonical
-        // block) — Lean saying "passthrough" would be a bypass.
-        assert_ne!(
-            lean, 0,
-            "BYPASS: Rust routes as tools/call but Lean passes through: {line:?}"
-        );
-    } else {
-        // Rust does not see a tools/call: Lean must agree it is not a
-        // mediated act. (Lean block of a non-tools/call cannot happen by
-        // construction; assert anyway.)
-        assert_eq!(
-            lean, 0,
-            "DISAGREEMENT: Lean mediates what Rust would not route: {line:?}"
-        );
-    }
+    // The Rust wire view and the Lean canonical routing view must agree
+    // exactly on WHAT IS MEDIATED — a tools/call is mediated (1) iff Rust
+    // would route it as one. Any disagreement is a potential bypass.
+    assert_eq!(
+        lean == 1,
+        rust,
+        "ROUTING DISAGREEMENT (lean={lean}, rust={rust}): {line:?}"
+    );
 }
 
 #[test]
@@ -84,7 +76,7 @@ fn corpus_agreement() {
     let cases = [
         // canonical tools/call
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"sql":"drop"}}}"#,
-        // tools/call with escape — Lean blocks (2), Rust still routes: agree (mediated)
+        // tools/call with escape — non-canonical but still mediated (1); Rust routes: agree
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"sql":"a\tb"}}}"#,
         // not tools/call
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,

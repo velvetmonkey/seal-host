@@ -214,15 +214,18 @@ def main() -> int:
     assert self_approval[0]["result"]["isError"] is True
     assert self_approval[1]["result"]["isError"] is True
 
-    # 4. Host-specific: a tools/call Lean.Json accepts but the SealV2 canonical
-    #    parser rejects (escape sequence) is blocked, fail-closed.
-    malformed = run_case(
+    # 4. A non-canonical tools/call (escape sequence) is still MEDIATED on the
+    #    V1 view — the canonical parser does not block traffic. Here the sql
+    #    "a\tb" matches no destructive needle, so the safety kernel denies it
+    #    as unmatched policy (still fail-closed, just not via the parser).
+    mediated = run_case(
         [],
         raw_lines=[
             '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"db.execute","arguments":{"sql":"a\\tb"}}}'
         ],
     )
-    assert malformed[0]["result"]["isError"] is True
+    assert mediated[0]["result"]["isError"] is True
+    assert "approval required" in mediated[0]["result"]["content"][0]["text"]
 
     # 5. Temporal kernel T: no destructive call after revoke, even with a
     #    fresh, valid approval (S allows; T denies; AND is fail-closed).

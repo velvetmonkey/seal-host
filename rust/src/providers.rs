@@ -5,14 +5,38 @@
 //! (nonce/replay/TTL) before reaching Lean.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::io::BufRead;
+
+/// Accept a u64 written either as a JSON number or a JSON string — the V1
+/// control-file format emits the target as a string, signed tokens as a
+/// number, and both must parse (matching the Lean-side `jsonToNat?`).
+fn u64_str_or_num<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    use serde::de::Error;
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| D::Error::custom("not u64")),
+        serde_json::Value::String(s) => s.parse().map_err(D::Error::custom),
+        _ => Err(D::Error::custom("target must be a number or string")),
+    }
+}
+
+fn opt_u64_str_or_num<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    use serde::de::Error;
+    match Option::<serde_json::Value>::deserialize(d)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n.as_u64().map(Some).ok_or_else(|| D::Error::custom("not u64")),
+        Some(serde_json::Value::String(s)) => s.parse().map(Some).map_err(D::Error::custom),
+        _ => Err(D::Error::custom("issuedAt must be a number or string")),
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApprovalRecord {
+    #[serde(deserialize_with = "u64_str_or_num")]
     pub target: u64,
-    #[serde(rename = "issuedAt")]
+    #[serde(rename = "issuedAt", default, deserialize_with = "opt_u64_str_or_num")]
     pub issued_at: Option<u64>,
+    #[serde(default)]
     pub nonce: Option<String>,
 }
 

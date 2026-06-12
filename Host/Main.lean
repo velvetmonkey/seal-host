@@ -110,9 +110,6 @@ def processHostLine
   | .passthrough =>
       childIn.putStr hostLine
       childIn.flush
-  | .blockMalformed id =>
-      IO.eprintln (auditLine epoch "<non-canonical>" .deny [])
-      writeLocked stdoutLock hostOut (Seal.blockResponseLine id "non-canonical payload")
   | .act act => do
       let (combined, verdicts) ← dispatch registry act
       IO.eprintln (auditLine epoch act.tool combined verdicts)

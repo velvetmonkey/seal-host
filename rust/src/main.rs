@@ -241,6 +241,17 @@ fn run() -> i32 {
         let wire = format!("{line}\n");
         let now = now_ms();
 
+        // Pass non-mediated lines (initialize, tools/list, notifications)
+        // straight through WITHOUT polling the approval channel. V1 reads the
+        // control file only for tools/call; polling on passthrough lines would
+        // advance the provider's seen-counter and consume an approval before
+        // the mediated call that needs it ever sees it.
+        if host.classify(&line) == 0 {
+            let _ = child_in.write_all(wire.as_bytes());
+            let _ = child_in.flush();
+            continue;
+        }
+
         let (records, dropped) = a3.filter(provider.poll(), now);
         for reason in &dropped {
             eprintln!("{}", json!({"a3": reason}).to_string());
