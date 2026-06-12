@@ -18,7 +18,28 @@ kernel interface, registry, composition theorem, harness — lives only here.
 - **G1 (this)**: host + `Kernel = {name, gates, decide}` + Safety Seal kernel
   (S) lifted from SealCore, behaviour unchanged; registry skeleton; signed
   epoch'd trusted-config loader (stub signature; Ed25519 lands in G6).
-- G2–G7: see the build plan.
+- **G2–G5**: kernels T (temporal monitor), C (consensus quorum), V
+  (convergence), K (calibration, experimental flag), L (linear capability
+  accounting, proven in-repo), B (budget/rate, proven in-repo); composition
+  theorem (`Host/Composition.lean`).
+- **G6 (this)**: Rust FFI host (`rust/`) — stdio transport + swappable
+  approval back-channel (control-file / Ed25519 signed token / interactive
+  TTY) + A3 nonce/replay/TTL, calling the Lean verified core through
+  `libsealffi.so` (`scripts/build_ffi_so.sh`); property-based differential
+  conformance harness on the seam. **FFI grows the TCB — see `TCB.md`.**
+- G7: see the build plan.
+
+## Rust host build
+
+```sh
+lake build Ffi               # compile the Lean core
+scripts/build_ffi_so.sh      # link libsealffi.so (self-contained + leanshared)
+cd rust && cargo build && cargo test
+python3 test/integration/test_host_rs.py
+.lake/build/bin/../../rust/target/debug/seal-host-rs \
+  --config trusted.json --pubkey <pk> \
+  [--channel file|ed25519|interactive] -- <server-cmd> ...
+```
 
 ## Layout
 

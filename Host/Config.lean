@@ -146,18 +146,20 @@ def checkTrustedConfig (publicKey payload signature : String) :
   let budget ← parseBudgetSection json
   pure { epoch, safety, temporal, consensus, convergence, calibration, linear, budget }
 
-/-- Load and verify the signed config envelope:
-    `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`.
-    Fail-closed: any failure aborts the host before it touches stdio. -/
+/-- Pure envelope check:
+    `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`. -/
+def checkEnvelope (text publicKey : String) : Except String TrustedConfig := do
+  let envelope ← Json.parse text
+  let payload ← getObjString envelope "payload"
+  let signature ← getObjString envelope "signature"
+  checkTrustedConfig publicKey payload signature
+
+/-- Load and verify the signed config envelope. Fail-closed: any failure
+    aborts the host before it touches stdio. -/
 def loadTrustedConfig (path : System.FilePath) (publicKey : String) :
     IO TrustedConfig := do
   let text ← IO.FS.readFile path
-  let result : Except String TrustedConfig := do
-    let envelope ← Json.parse text
-    let payload ← getObjString envelope "payload"
-    let signature ← getObjString envelope "signature"
-    checkTrustedConfig publicKey payload signature
-  match result with
+  match checkEnvelope text publicKey with
   | .ok config => pure config
   | .error err => throw <| IO.userError s!"trusted config rejected: {err}"
 

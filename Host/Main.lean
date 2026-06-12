@@ -8,6 +8,7 @@ import Seal.Channel
 import Seal.Block
 import Host.Canonical
 import Host.Config
+import Host.Evidence
 import Host.Registry
 import Host.Audit
 import Kernels.Safety
@@ -66,16 +67,7 @@ def gatherSafetyEvidence (policy : Seal.Policy) (approvalSeenRef : IO.Ref Nat) :
 def gatherVotes (cfg : Kernels.ConsensusConfig) :
     CanonicalAction → IO Consensus.Checker.Votes := fun _ => do
   if (← cfg.votesFile.pathExists) then
-    let text ← IO.FS.readFile cfg.votesFile
-    pure <| text.splitOn "\n" |>.filterMap fun line =>
-      let trimmed := line.trimAscii.toString
-      if trimmed.isEmpty then none else
-        match Json.parse trimmed with
-        | .error _ => none
-        | .ok j => do
-            let acceptor ← (j.getObjVal? "acceptor").toOption.bind (·.getNat?.toOption)
-            let value ← (j.getObjVal? "value").toOption.bind (·.getStr?.toOption)
-            some (acceptor, value)
+    pure <| Evidence.parseVotesText (← IO.FS.readFile cfg.votesFile)
   else
     pure []
 
@@ -85,22 +77,7 @@ def gatherVotes (cfg : Kernels.ConsensusConfig) :
 def gatherForecasts (cfg : Kernels.CalibrationConfig) :
     CanonicalAction → IO (List Kernels.ForecastRecord) := fun _ => do
   if (← cfg.recordsFile.pathExists) then
-    let text ← IO.FS.readFile cfg.recordsFile
-    pure <| text.splitOn "\n" |>.filterMap fun line =>
-      let trimmed := line.trimAscii.toString
-      if trimmed.isEmpty then none else
-        match Json.parse trimmed with
-        | .error _ => none
-        | .ok j => do
-            let confidence ← (j.getObjVal? "confidence").toOption.bind fun v =>
-              match v with
-              | .num n => some n.toFloat
-              | _ => none
-            let outcome ← (j.getObjVal? "outcome").toOption.bind (·.getNat?.toOption)
-            if outcome == 0 || outcome == 1 then
-              some { confidence, outcome := outcome == 1 }
-            else
-              none
+    pure <| Evidence.parseForecastsText (← IO.FS.readFile cfg.recordsFile)
   else
     pure []
 
@@ -118,13 +95,7 @@ def gatherGrants (cfg : Kernels.LinearConfig) (seenRef : IO.Ref Nat) :
     let seen ← seenRef.get
     let fresh := records.drop seen
     seenRef.set records.length
-    pure <| fresh.filterMap fun line =>
-      match Json.parse line.trimAscii.toString with
-      | .error _ => none
-      | .ok j => do
-          let cap ← (j.getObjVal? "cap").toOption.bind (·.getStr?.toOption)
-          let uses ← (j.getObjVal? "uses").toOption.bind (·.getNat?.toOption)
-          some (LinearCore.LEvent.grant cap uses)
+    pure <| Evidence.parseGrantsText ("\n".intercalate fresh)
   else
     pure []
 

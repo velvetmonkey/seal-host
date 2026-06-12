@@ -28,11 +28,13 @@ name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal.git"
 rev = "c578b5dc8d9c55742eedf07d68f131b0d59db530"
 
+# One library for the host + kernels + FFI surface. Host and Kernels modules
+# import each other across the prefix boundary (Kernels implement Host.Kernel;
+# Host.Config carries kernel config types), so they must live in ONE Lake lib
+# or the per-lib shared facets cycle.
 [[lean_lib]]
-name = "Host"
-
-[[lean_lib]]
-name = "Kernels"
+name = "Ffi"
+globs = ["Host", "Host.+", "Kernels", "Kernels.+", "Ffi"]
 
 [[lean_lib]]
 name = "Test"
@@ -41,6 +43,15 @@ globs = ["Test.+"]
 [[lean_exe]]
 name = "seal-host"
 root = "Host.Main"
+
+# Self-contained shared library for the Rust host: an exe-shaped link (so it
+# carries the FULL transitive object set, mathlib included) emitted as a
+# shared object. The per-lib `:shared` facet cannot do this — it links only
+# the lib's own modules.
+[[lean_exe]]
+name = "ffi_shared"
+root = "Ffi"
+moreLinkArgs = ["-shared"]
 
 [[lean_exe]]
 name = "axiom_check"

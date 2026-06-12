@@ -1,0 +1,17 @@
+[package]
+name = "seal-host-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
+
+[dev-dependencies]
+proptest = "1"
+
+[[bin]]
+name = "seal-host-rs"
+path = "src/main.rs"
