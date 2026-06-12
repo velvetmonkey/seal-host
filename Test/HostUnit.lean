@@ -39,9 +39,11 @@ private def dbTarget : SealCore.Hash :=
 private def mkAct (tool : String) (args : Lean.Json) : CanonicalAction :=
   { tool, argsJson := args, ast := SealV2.AST.null, raw := "", requestId := Lean.Json.null }
 
+-- Emulate the host's two-phase dispatch for one kernel: commit ingest, then
+-- decide on the ingested state.
 private def decideS (act : CanonicalAction) (ev : Kernels.SafetyEvidence)
     (st : SealCore.State) : Verdict × SealCore.State :=
-  Kernels.safetyKernel.decide act testPolicy ev st
+  Kernels.safetyKernel.decide act testPolicy ev (Kernels.safetyKernel.ingest ev st)
 
 private def goodLine : String :=
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"db.execute\",\"arguments\":{\"sql\":\"drop table users\"}}}"
@@ -129,5 +131,41 @@ def main : IO Unit := do
   let benignArgs := Lean.Json.mkObj [("database", Lean.Json.str "prod"), ("sql", Lean.Json.str "select 1")]
   let (v7, _) := decideS (mkAct "db.execute" benignArgs) noEv State.empty
   check "guarded tool, unmatched needles -> deny (V1 unmatched-policy semantics)" (v7.kind == .deny)
+
+  -- kernel T: no-destructive-after-revoke over Temporal.monitor
+  let pol : Kernels.TemporalPolicy :=
+    { name := "no-destructive-after-revoke"
+      trigger := ["session.revoke"]
+      forbidden := ["db.execute"] }
+  let decideT := fun (tool : String) (st : Kernels.TemporalState) =>
+    Kernels.temporalKernel.decide (mkAct tool Lean.Json.null) [pol] () st
+  let t0 : Kernels.TemporalState := Kernels.temporalKernel.init
+
+  let (tv1, t1) := decideT "db.execute" t0
+  check "T: destructive before revoke -> allow" (tv1.kind == .allow)
+  let (tv2, t2) := decideT "session.revoke" t1
+  check "T: revoke itself -> allow" (tv2.kind == .allow)
+  let (tv3, t3) := decideT "db.execute" t2
+  check "T: destructive after revoke -> deny" (tv3.kind == .deny)
+  check "T: deny reason names policy" (tv3.reason == "temporal policy violated: no-destructive-after-revoke")
+  check "T: denied call not appended to trace" (t3.executed == t2.executed)
+  let (tv4, _) := decideT "other.tool" t2
+  check "T: unrelated tool after revoke -> allow" (tv4.kind == .allow)
+  let (tv5, _) := decideT "db.execute" { executed := ["db.execute", "other.tool"] }
+  check "T: no trigger executed -> destructive still allowed" (tv5.kind == .allow)
+  check "T: empty policy list allows" ((Kernels.temporalKernel.decide (mkAct "db.execute" Lean.Json.null) [] () t2).1.kind == .allow)
+
+  -- temporal config section parsing
+  let temporalJson := "{\"epoch\":1,\"temporal\":{\"policies\":[{\"name\":\"p1\",\"type\":\"no_after\",\"trigger\":[\"a\"],\"forbidden\":[\"b\",\"c\"]}]}}"
+  check "temporal section parses"
+    (match Lean.Json.parse temporalJson >>= parseTemporalSection with
+     | .ok [p] => p.name == "p1" && p.trigger == ["a"] && p.forbidden == ["b", "c"]
+     | _ => false)
+  check "missing temporal section -> no policies"
+    (match Lean.Json.parse "{\"epoch\":1}" >>= parseTemporalSection with
+     | .ok [] => true | _ => false)
+  check "unknown temporal policy type rejected"
+    (match Lean.Json.parse "{\"temporal\":{\"policies\":[{\"name\":\"p\",\"type\":\"weird\",\"trigger\":[],\"forbidden\":[]}]}}" >>= parseTemporalSection with
+     | .error _ => true | .ok _ => false)
 
   IO.println "all host unit tests passed"

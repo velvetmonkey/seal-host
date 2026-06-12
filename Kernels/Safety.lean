@@ -33,8 +33,15 @@ def safetyKernel : Host.Kernel where
   State := SealCore.State
   init := SealCore.State.empty
   gates := fun _ _ => true
-  decide := fun act policy ev st =>
-    let st1 := ev.approvalEvents.foldl (fun s e => (step ev.now s e).2) st
+  -- Approval ingestion is committed unconditionally by the host (the seen
+  -- counter has already advanced; losing these events would drop approvals).
+  ingest := fun ev st =>
+    ev.approvalEvents.foldl (fun s e => (step ev.now s e).2) st
+  -- Decision + execution transition on the already-ingested state. On the
+  -- host's combined deny this state is discarded: the approval is not
+  -- consumed by a call that never executed, and skipping `prune` is
+  -- decision-neutral (SealCore.prune changes no `live` answer).
+  decide := fun act policy ev st1 =>
     let hostEvent := Seal.classifyToolCall policy act.tool act.argsJson
     let (decision, st2) := step ev.now st1 hostEvent.toEvent
     let st3 : State := { approved := prune ev.now st2.approved }

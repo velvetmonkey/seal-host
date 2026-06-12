@@ -65,6 +65,15 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 /-- info: 'Kernels.safetyKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Kernels.safetyKernel
 
+/-- info: 'Kernels.temporalKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.temporalKernel
+
+/-- info: 'Host.parseTemporalSection' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.parseTemporalSection
+
+/-- info: 'Temporal.monitor_sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Temporal.monitor_sound
+
 -- Lake-dep math bricks for kernels T, C, V, K (G2+): imported and axiom-clean
 
 /-- info: 'Temporal.gateTrace_sealSafe' depends on axioms: [propext, Classical.choice, Quot.sound] -/

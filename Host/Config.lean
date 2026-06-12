@@ -4,6 +4,7 @@ import Lean.Data.Json
 import SealV2.Parser
 import Seal.Policy
 import Seal.JsonUtil
+import Kernels.Temporal
 
 namespace Host
 
@@ -11,10 +12,32 @@ open Lean
 open Seal.JsonUtil
 
 /-- The host's one trusted config: signed, epoch-stamped, one section per
-    kernel. G1 carries the `safety` section only (the V1 policy shape). -/
+    kernel. `safety` is the V1 policy shape (kernel S); `temporal` is the LTL
+    safety-policy list (kernel T), absent section = no temporal constraints. -/
 structure TrustedConfig where
   epoch : Nat
   safety : Seal.Policy
+  temporal : List Kernels.TemporalPolicy
+
+private def parseStringList (json : Json) : Except String (List String) := do
+  let arr ← json.getArr?
+  arr.toList.mapM (fun j => j.getStr?)
+
+private def parseTemporalPolicy (json : Json) : Except String Kernels.TemporalPolicy := do
+  let name ← getObjString json "name"
+  let kind ← getObjString json "type"
+  if kind != "no_after" then
+    throw s!"unsupported temporal policy type: {kind}"
+  let trigger ← parseStringList (← json.getObjVal? "trigger")
+  let forbidden ← parseStringList (← json.getObjVal? "forbidden")
+  pure { name, trigger, forbidden }
+
+def parseTemporalSection (json : Json) : Except String (List Kernels.TemporalPolicy) := do
+  match ← getObjValOpt json "temporal" with
+  | none => pure []
+  | some section_ =>
+      let policiesJson ← (← section_.getObjVal? "policies").getArr?
+      policiesJson.toList.mapM parseTemporalPolicy
 
 /-- Stub signature scheme, byte-compatible with the SealV2 approval stub
     (`SealV2.Validation.verifySignature`): the signature commits to the exact
@@ -41,7 +64,8 @@ def checkTrustedConfig (publicKey payload signature : String) :
     throw "config epoch must be ≥ 1"
   let safetyJson ← json.getObjVal? "safety"
   let safety ← Seal.parsePolicyJson safetyJson
-  pure { epoch, safety }
+  let temporal ← parseTemporalSection json
+  pure { epoch, safety, temporal }
 
 /-- Load and verify the signed config envelope:
     `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`.

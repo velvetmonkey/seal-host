@@ -11,6 +11,7 @@ import Host.Config
 import Host.Registry
 import Host.Audit
 import Kernels.Safety
+import Kernels.Temporal
 
 namespace Host
 
@@ -118,12 +119,17 @@ def main (rawArgs : List String) : IO UInt32 := do
   let stdoutLock ← Std.Mutex.new ()
   let approvalSeenRef ← IO.mkRef 0
   let safetyStateRef ← IO.mkRef Kernels.safetyKernel.init
-  let registry : Registry := [{
-    kernel := Kernels.safetyKernel
-    config := config.safety
-    stateRef := safetyStateRef
-    gather := gatherSafetyEvidence config.safety approvalSeenRef
-  }]
+  let temporalStateRef ← IO.mkRef Kernels.temporalKernel.init
+  let registry : Registry := [
+    { kernel := Kernels.safetyKernel
+      config := config.safety
+      stateRef := safetyStateRef
+      gather := gatherSafetyEvidence config.safety approvalSeenRef },
+    { kernel := Kernels.temporalKernel
+      config := config.temporal
+      stateRef := temporalStateRef
+      gather := fun _ => pure () }
+  ]
   let relayTask ← IO.asTask (relayChildStdout stdoutLock child.stdout hostOut) Task.Priority.dedicated
   hostLoop config.epoch registry hostIn hostOut child.stdin stdoutLock
   child.kill

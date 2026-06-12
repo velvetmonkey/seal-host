@@ -21,6 +21,14 @@ sys.path.insert(0, str(ROOT / "test" / "tools"))
 from sign_config import sign_payload  # noqa: E402
 
 
+def stable_hash(parts) -> int:
+    """Mirror of Seal.Hash.stableHashParts (FNV-style over '|'-joined parts)."""
+    acc = 14695981039346656037
+    for ch in "|".join(parts):
+        acc = (acc * 1099511628211 + ord(ch)) % 2**64
+    return acc
+
+
 def safety_section(approval_file: Path) -> dict:
     return {
         "approval": {"control_file": str(approval_file), "ttl_seconds": 120},
@@ -40,13 +48,36 @@ def safety_section(approval_file: Path) -> dict:
                     {"arg": "sql"},
                 ],
             },
+            {
+                "name": "session.revoke",
+                "mode": "guarded",
+                "match": {"type": "always"},
+                "target": [{"literal": "revoke"}],
+            },
             {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []},
         ],
     }
 
 
+def temporal_section() -> dict:
+    return {
+        "policies": [
+            {
+                "name": "no-destructive-after-revoke",
+                "type": "no_after",
+                "trigger": ["session.revoke"],
+                "forbidden": ["db.execute"],
+            }
+        ]
+    }
+
+
 def write_config(tmp: Path, approval_file: Path, epoch: int = 1, tamper: bool = False) -> Path:
-    payload = {"epoch": epoch, "safety": safety_section(approval_file)}
+    payload = {
+        "epoch": epoch,
+        "safety": safety_section(approval_file),
+        "temporal": temporal_section(),
+    }
     envelope = sign_payload(payload, PUBKEY)
     if tamper:
         env = json.loads(envelope)
@@ -142,7 +173,43 @@ def main() -> int:
     )
     assert malformed[0]["result"]["isError"] is True
 
-    # 5. Host-specific: tampered config -> startup refusal, nothing mediated.
+    # 5. Temporal kernel T: no destructive call after revoke, even with a
+    #    fresh, valid approval (S allows; T denies; AND is fail-closed).
+    db_target = stable_hash(["db.execute", "db", "prod", "write", "drop table users"])
+    assert db_target == target, "python stable_hash drifted from Seal.Hash"
+    revoke_target = stable_hash(["session.revoke", "revoke"])
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text(json.dumps({"target": db_target}) + "\n", encoding="utf-8")
+        config = write_config(tmp, approvals)
+        proc = spawn(config)
+        assert proc.stdin is not None and proc.stdout is not None
+
+        def call(mid, name, arguments):
+            proc.stdin.write(json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        destructive = {"database": "prod", "sql": "drop table users"}
+        # Approved destructive call before revoke: allowed.
+        r1 = call(1, "db.execute", destructive)
+        assert r1["result"]["isError"] is False
+        # Approved revoke: allowed; T records the trigger.
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"target": revoke_target}) + "\n")
+        r2 = call(2, "session.revoke", {})
+        assert r2["result"]["isError"] is False
+        # Fresh approval, but destructive-after-revoke: T must deny.
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"target": db_target}) + "\n")
+        r3 = call(3, "db.execute", destructive)
+        assert r3["result"]["isError"] is True
+        assert "temporal policy violated" in r3["result"]["content"][0]["text"]
+        proc.stdin.close()
+        proc.wait(timeout=5)
+
+    # 6. Host-specific: tampered config -> startup refusal, nothing mediated.
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"

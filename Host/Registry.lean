@@ -30,19 +30,33 @@ def denyReason (verdicts : List Verdict) : String :=
   | some v => v.reason
   | none => "no kernel gated this call"
 
-/-- Run every kernel whose `gates` matches, in registry order, threading each
-    kernel's state through its `IO.Ref`. Returns the combined verdict plus the
-    per-kernel verdicts (audit certs). -/
+/-- Run every kernel whose `gates` matches, in registry order. Two-phase:
+
+    1. For each gating kernel: gather evidence, commit `ingest` immediately
+       (evidence must survive a deny), then run the pure `decide` and hold the
+       returned execution-transition state.
+    2. Combine fail-closed. Only on combined ALLOW are the held states
+       committed — a denied call never executed, so no kernel's
+       trace/automaton advances on it.
+
+    Returns the combined verdict plus the per-kernel verdicts (audit certs). -/
 def dispatch (registry : Registry) (act : CanonicalAction) :
     IO (VerdictKind × List Verdict) := do
   let mut verdicts : List Verdict := []
+  let mut commits : List (IO Unit) := []
   for r in registry do
     if r.kernel.gates r.config act then
       let evidence ← r.gather act
-      let st ← r.stateRef.get
-      let (verdict, st') := r.kernel.decide act r.config evidence st
-      r.stateRef.set st'
+      let st0 ← r.stateRef.get
+      let st1 := r.kernel.ingest evidence st0
+      r.stateRef.set st1
+      let (verdict, st2) := r.kernel.decide act r.config evidence st1
+      commits := commits ++ [r.stateRef.set st2]
       verdicts := verdicts ++ [verdict]
-  pure (combineVerdicts verdicts, verdicts)
+  let combined := combineVerdicts verdicts
+  if combined == .allow then
+    for commit in commits do
+      commit
+  pure (combined, verdicts)
 
 end Host
