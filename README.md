@@ -1,6 +1,6 @@
 # seal-host
 
-**PRIVATE. Do not push to any remote.**
+**PRIVATE pre-award — do not push to any public remote yet.** Per the ARIA Track 1 bid commitment, the specification layer (kernel theorem statements, the composition theorem statement, `THREAT_MODEL`, `TCB`) is to be published openly ahead of submission and the full proof sources at grant kickoff; only the implementation (host, registry, harness) is retained under the 12-month commercialisation clawback.
 
 Verified Agent Kernels: one fail-closed MCP host, many verified kernels. Each
 kernel is a verified `decide()` grounded in a sorry-free, axiom-clean Lean
