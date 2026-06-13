@@ -1,0 +1,20 @@
+Copyright (c) 2026 Ben Cassie. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL.
+
+This repository (the "Software") is private, pre-award intellectual property.
+No licence, express or implied, is granted to any person to use, copy, modify,
+merge, publish, distribute, sublicense, or sell any part of the Software, except
+as expressly set out in NOTICE.md.
+
+The implementation layer (host, registry, harness, Rust FFI, and supporting
+tooling) is retained as proprietary, subject to a 12-month commercialisation
+clawback period following any grant award.
+
+Certain layers of this repository are committed to open release on a defined
+schedule; see NOTICE.md. Once released, those layers are governed solely by
+their stated open licence (Apache-2.0) and not by this file.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
