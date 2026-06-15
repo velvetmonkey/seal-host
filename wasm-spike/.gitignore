@@ -1,0 +1,14 @@
+# Third-party toolchains (multi-GB, fetch via RESUME.md steps)
+emsdk/
+lean4-src/
+# Failed cmake bootstrap attempt (other session)
+build/
+# Regenerable build outputs
+build-core/
+build-wasm-rt/
+*.o
+*.a
+*.wasm
+# Noisy fetch/build logs
+*.log
+*.out
