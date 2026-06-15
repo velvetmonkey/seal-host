@@ -12,3 +12,9 @@ build-wasm-rt/
 # Noisy fetch/build logs
 *.log
 *.out
+build-stdlib-closure/
+build-spec/
+build-stdlib/
+build-seal/
+build-pkg/
+conformance_native

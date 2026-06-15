@@ -9,6 +9,7 @@ extern void lean_io_mark_end_initialization(void);
 extern void lean_init_task_manager(void);
 extern lean_object* seal_ffi_initialize(uint8_t builtin, lean_object* w);
 extern uint8_t      seal_lean_io_result_is_ok(b_lean_obj_arg r);
+extern lean_object* seal_host_init(lean_object*, lean_object*);
 extern lean_object* seal_host_step(lean_object*);
 
 static int g_inited = 0;
@@ -27,14 +28,26 @@ static int ensure_init(void) {
     return 1;
 }
 
-/* JSON tool-call string in -> verified verdict JSON string out. */
+/* Load the signed trusted-config envelope into the session (must be called
+ * once before seal_decide). Returns the init summary JSON (or {ok:false,...}). */
+EMSCRIPTEN_KEEPALIVE
+char* seal_init(const char* envelope, const char* pubkey) {
+    if (!ensure_init()) return strdup("{\"error\":\"init failed\"}");
+    lean_object* env = lean_mk_string_from_bytes(envelope, strlen(envelope));
+    lean_object* pk  = lean_mk_string_from_bytes(pubkey, strlen(pubkey));
+    lean_object* out = seal_host_init(env, pk);
+    char* ret = strdup(lean_string_cstr(out));
+    lean_dec(out);
+    return ret;
+}
+
+/* JSON step input in -> verified verdict JSON string out. Requires a prior
+ * seal_init; otherwise returns {"error":"session not initialised"}. */
 EMSCRIPTEN_KEEPALIVE
 char* seal_decide(const char* input) {
     if (!ensure_init()) return strdup("{\"error\":\"init failed\"}");
-    printf("[seal] init done, calling step\n"); fflush(stdout);
     lean_object* in  = lean_mk_string_from_bytes(input, strlen(input));
     lean_object* out = seal_host_step(in);
-    printf("[seal] step returned\n"); fflush(stdout);
     char* ret = strdup(lean_string_cstr(out));
     lean_dec(out);
     return ret;

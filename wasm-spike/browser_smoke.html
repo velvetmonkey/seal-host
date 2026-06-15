@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>seal wasm — browser smoke</title></head>
+<body>
+<h1>seal verified kernel — in-browser smoke test</h1>
+<pre id="out">loading…</pre>
+<!-- emscripten MODULARIZE module: defines window.SealModule -->
+<script src="./build-core/seal.js"></script>
+<script type="module">
+import { scenarios, buildEnvelope, PUBKEY } from "./seal_scenarios.mjs";
+const out = document.getElementById("out");
+const lines = [];
+const say = (s) => { lines.push(s); out.textContent = lines.join("\n"); };
+try {
+  const M = await window.SealModule({ print: () => {}, printErr: () => {} });
+  const seal_init = (e, p) => M.ccall("seal_init", "string", ["string", "string"], [e, p]);
+  const seal_decide = (i) => M.ccall("seal_decide", "string", ["string"], [i]);
+  const env = buildEnvelope();
+
+  let pass = 0; const seen = new Set();
+  for (const s of scenarios) {
+    if (JSON.parse(seal_init(env, PUBKEY)).ok !== true) { say(`INIT FAIL ${s.name}`); continue; }
+    let ok = true;
+    for (const st of s.steps) {
+      const v = JSON.parse(seal_decide(st.input));
+      if (v.route !== st.expect) { ok = false; say(`FAIL ${s.name}: got ${v.route} want ${st.expect}`); break; }
+    }
+    if (ok) { pass++; seen.add(s.kernel); }
+  }
+
+  // determinism in-browser
+  const det = scenarios.find((s) => s.kernel === "consensus");
+  const run = () => { seal_init(env, PUBKEY); return det.steps.map((st) => seal_decide(st.input)).join("|"); };
+  const first = run(); let detOk = true;
+  for (let i = 0; i < 50; i++) if (run() !== first) { detOk = false; break; }
+
+  const okAll = pass === scenarios.length && seen.size === 7 && detOk;
+  say(`scenarios: ${pass}/${scenarios.length}`);
+  say(`kernels: ${[...seen].sort().join(", ")} (${seen.size}/7)`);
+  say(`determinism: ${detOk ? "OK (50 runs identical in-browser)" : "FAILED"}`);
+  say(`RESULT: ${okAll ? "ALL-PASS" : "FAIL"}`);
+  window.__SEAL_RESULT__ = okAll ? "ALL-PASS" : "FAIL";
+} catch (e) {
+  say("EXCEPTION: " + e.message);
+  window.__SEAL_RESULT__ = "EXCEPTION: " + e.message;
+}
+</script>
+</body>
+</html>

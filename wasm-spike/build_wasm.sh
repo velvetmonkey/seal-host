@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Build seal.wasm / seal.js from the pre-built object trees.
+# Recompiles only the C wrapper + FFI shim (the hand-written glue); all Lean-
+# generated objects are reused from build-{core,seal,pkg,stdlib}/ and libleanrt.a.
+#
+# Usage: ./build_wasm.sh [strict]
+#   strict -> link with -sERROR_ON_UNDEFINED_SYMBOLS=1 (proves full symbol closure)
+set -uo pipefail
+cd "$(dirname "$0")"
+source ./emsdk/emsdk_env.sh >/dev/null 2>&1
+
+ROOT=/home/monkey/src/seal-host
+CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
+
+echo "[build_wasm] recompiling wrapper + shim"
+emcc $CFLAGS -c seal_wrapper.c          -o build-core/seal_wrapper.o || exit 1
+emcc $CFLAGS -c "$ROOT/scripts/ffi_shim.c" -o build-core/ffi_shim.o  || exit 1
+
+# Undefined-symbol policy: lax by default (DCE drops unreachable refs), strict on demand.
+UNDEF="-sERROR_ON_UNDEFINED_SYMBOLS=0"
+[ "${1:-}" = "strict" ] && UNDEF="-sERROR_ON_UNDEFINED_SYMBOLS=1"
+
+# Init_Meta.o is required at runtime (initialize_Init calls initialize_Init_Meta);
+# its data ref l_Lean_Parser_Tactic_optConfig now resolves from the closure's
+# Init_Tactics.o, so it links cleanly.
+STDLIB_O=$(ls build-stdlib/*.o)
+# build-stdlib-closure/*.o = transitive module-initializer closure (build_closure.sh);
+# build-core/stubs.o = no-op inits for external proof libs (mathlib/aesop/batteries).
+CLOSURE_O=$(ls build-stdlib-closure/*.o 2>/dev/null)
+# build-spec/*.o: external modules compiled in isolation purely to DEFINE the
+# compiler-shared specializations (List.elem/Option.beq/List.repr'/Format.joinSep)
+# that Kernels_Temporal + Consensus_Checker reference; DCE keeps only those.
+SPEC_O=$(ls build-spec/*.o 2>/dev/null)
+
+echo "[build_wasm] linking seal.js / seal.wasm ($UNDEF)"
+emcc -O2 \
+  build-core/*.o build-seal/*.o build-pkg/*.o $STDLIB_O $CLOSURE_O $SPEC_O \
+  build-wasm-rt/libleanrt.a \
+  -o build-core/seal.js \
+  -s EXPORTED_FUNCTIONS='["_seal_init","_seal_decide","_malloc","_free"]' \
+  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s MODULARIZE=1 -s EXPORT_NAME=SealModule \
+  $UNDEF \
+  -Wl,--allow-multiple-definition \
+  || { echo "[build_wasm] LINK FAILED"; exit 1; }
+
+echo "[build_wasm] done: $(ls -la build-core/seal.wasm | awk '{print $5}') bytes"

@@ -1,60 +1,64 @@
-# WASM browser demo spike — resume state (2026-06-15 ~23:45)
+# WASM browser demo spike — resume state (2026-06-16)
+
+## STATUS: WORKING ✅ — init-trap fixed; seal_decide runs end-to-end in node AND browser.
+- All 7 kernels decide correctly; determinism proven (100 runs node / 50 browser, identical certs).
+- Strict link: ZERO undefined symbols (no DCE-hides-undefined trickery).
+- Conformance: WASM == native (libsealffi.so) == fixture, 25/25 steps identical (incl. cert hashes).
 
 ## Goal
 Port verified Lean seal kernel to WebAssembly. seal_host_step deciding allow/block
 entirely in-browser, no backend. ARIA "prove it in the browser" demo.
 
-## DONE — full symbol closure + runnable wasm (the hard 90%)
-- emsdk active at ./emsdk (source ./emsdk/emsdk_env.sh). lean4 v4.28.0 at ./lean4-src.
-- GMP dodged (non-GMP bignum fallback, no -D LEAN_USE_GMP).
-- Generated headers in ./gen: include/lean/{config,version}.h, githash.h, uv.h (stub).
-- Lean RUNTIME -> wasm: 25/25 .cpp incl io.cpp -> build-wasm-rt/libleanrt.a.
-  - io.cpp compiles against gen/uv.h (57 UV_E* error consts + 8 fn decls; the
-    temp-file fns dead-strip, never reached by decide path).
-  - interrupt.cpp patched: uncaught_exception() -> uncaught_exceptions().
-- All 23 generated seal-host C modules (Ffi + Host/* + Kernels/*) -> build-core/*.o.
-- Dep packages compiled: mcp-seal (22 obj, build-seal/), consensus-lean +
-  temporal-logic-lean (14 obj, build-pkg/).
-- Lean stdlib subset (29 obj, build-stdlib/): Init umbrella + Prelude + Json +
-  Parsec + String/List/Int/Format/Repr/Meta etc. Whole closure chased to ZERO.
-- C wrapper seal_wrapper.c: boots runtime + exposes seal_decide(json)->json.
-  Reuses scripts/ffi_shim.c (seal_ffi_initialize / seal_lean_*).
-- LINKS CLEAN at -O2, ZERO undefined symbols. build-core/seal.wasm (~834KB) +
-  seal.js (MODULARIZE, EXPORT_NAME=SealModule, exports _seal_decide).
-- Module LOADS under node, seal_decide executes, runtime_module init OK.
+## ROOT CAUSE of the `RuntimeError: unreachable` trap (now fixed)
+Two stacked bugs, the second masked by the first:
 
-## BLOCKER — traps in the module-init chain (the last 10%)
-- node run_demo2.mjs: breadcrumbs show lean_initialize_runtime_module() returns
-  fine, then `RuntimeError: unreachable` INSIDE seal_ffi_initialize(...) — i.e.
-  somewhere in the initialize_* module-init chain. NO Lean panic text (not a
-  lean_internal_panic; a raw wasm `unreachable`).
-- Ruled out: stack overflow (8MB stack no change); builtin flag (0 and 1 both trap).
-- Likely: one module initializer executes an unreachable arm, OR a non-GMP-path
-  Nat/Int literal build, OR a decide/native_decide-baked constant in a Theorems
-  module mismatching under cross-compile.
+1. **Signature mismatch (the trap).** `scripts/ffi_shim.c` declared+called the Lean
+   module initializer as `initialize_seal_x2dhost_Ffi(uint8_t, lean_object* w)` (2-arg,
+   old Lean convention), but the v4.28.0-generated definition is `(uint8_t builtin)`
+   (1-arg; returns the IO result directly, takes no world). On native x86-64 the extra
+   arg sits in an ignored register (harmless — that's why libsealffi.so passed 10/10).
+   On wasm, wasm-ld redirects the signature-mismatched call to a trap stub that executes
+   `unreachable` → the exact symptom (traps inside seal_ffi_initialize, after runtime
+   init, no Lean panic text). FIX: call with the real 1-arg signature (public
+   seal_ffi_initialize keeps its (builtin, w) shape; w ignored, for caller ABI compat).
 
-## DEBUG PATH (Wednesday)
-The clean -O2 link only works because DCE strips unreachable refs (lean_initialize,
-l_Lean_Parser_Tactic_*, repr helpers from Init_Meta.o + Ffi.o main). ANY diagnostic
-build (-g2 / ASSERTIONS / -O1) weakens DCE and re-exposes those as unlinkable.
-To get a NAMED stack trace:
-  1. Drop build-stdlib/Init_Meta.o (only added for l_Nat_reprFast, also in
-     Init_Data_Repr.o) — kills the l_Lean_Parser_Tactic_* refs.
-  2. Provide/stub lean_initialize (main-only) + the 1 repr helper from Kernels_Budget.
-  3. Then link -O2 -g2 -s ASSERTIONS=1 -s ERROR_ON_UNDEFINED_SYMBOLS=0 -> named trap.
-  4. The named initialize_<Module> in the trace IS the culprit; inspect its _init.
-Alt: bisect — instrument generated Ffi.c initialize_seal_x2dhost_Ffi to printf
-before each initialize_<import>, find which one traps.
+2. **Incomplete init closure (masked by #1).** The trap stub short-circuited
+   `initialize_seal_x2dhost_Ffi` before its body ran, so the "stdlib subset chased to
+   ZERO" was a fiction. Once #1 was fixed, `initialize_Init` (the umbrella) called
+   ~80 submodule initializers absent from the subset → `Aborted(missing function:
+   initialize_Init_*)`. FIX: `build_closure.sh` compiles the FULL transitive
+   module-initializer closure (617 stdlib .o) from lean4-src/stage0/stdlib, stubbing
+   only the 3 external proof libs (mathlib/aesop/batteries) whose inits set up no
+   runtime-read data. Plus: drop native-only Host_Main/Host/Host_Composition .o (pulled
+   Std.Time); define 4 compiler-shared specializations (List.elem etc.) referenced by
+   Kernels_Temporal + Consensus_Checker, by compiling their defining .c in isolation
+   (build-spec/*.o, DCE keeps only the needed symbol).
 
-## BUILD RECIPE (reproduce from a clean tree)
-source ./emsdk/emsdk_env.sh
-# 1. runtime -> libleanrt.a:  build_runtime_wasm.sh (+ io.cpp w/ gen/uv.h)
-# 2. seal-host C:   emcc -O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1 -c .lake/build/ir/**/*.c
-# 3. packages:      same flags over .lake/packages/{mcp-seal,consensus-lean,temporal-logic-lean}/.lake/build/ir/**/*.c
-# 4. stdlib subset: same flags, modules under build-stdlib/
-# 5. wrapper+shim:  emcc ... -c seal_wrapper.c scripts/ffi_shim.c
-# 6. link:          emcc -O2 build-core/*.o build-seal/*.o build-stdlib/*.o build-pkg/*.o libleanrt.a \
-#                     -o seal.js -s EXPORTED_FUNCTIONS='["_seal_decide","_malloc","_free"]' \
-#                     -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' -s ALLOW_MEMORY_GROWTH=1 \
-#                     -s MODULARIZE=1 -s EXPORT_NAME=SealModule -Wl,--allow-multiple-definition
-# test: node run_demo2.mjs
+## BUILD (reproduce from a clean tree)
+    source ./emsdk/emsdk_env.sh           # emsdk/ + lean4-src/ via earlier fetch
+    ./build_runtime_wasm.sh               # 1. Lean runtime -> build-wasm-rt/libleanrt.a
+    ./build_closure.sh                    # 2. module-init closure -> build-stdlib-closure/*.o + stubs
+    ./build_wasm.sh                       # 3. recompile wrapper+shim, link -> build-core/seal.{js,wasm}
+    ./build_wasm.sh strict                #    (optional) prove ZERO undefined symbols
+    node test_kernels.mjs                 # 7 kernels + determinism (100 runs)
+    node conformance.mjs                  # wasm == native == fixture (needs build-core/conformance_native)
+
+(build-core/*.o, build-seal/*.o, build-pkg/*.o, build-stdlib/*.o already on disk from the
+earlier spike; build_closure.sh + build_wasm.sh reuse them. Native conformance CLI:
+cc conformance_native.c -lsealffi -lleanshared -> build-core/conformance_native.)
+
+## Exports (build-core/seal.js, MODULARIZE, EXPORT_NAME=SealModule)
+- `seal_init(envelopeJson, pubkey) -> summaryJson` — load signed trusted-config; call once.
+- `seal_decide(stepInputJson) -> {route, response?, audit?}` — one mediation step.
+  step input: `{line, now, approvals:[{target,issuedAt?}], votes, grants, forecasts}`.
+  Config envelope is stub-signed: `{"payload":<compact json>,"signature":"stub-ed25519:<pk>:<payload>"}`.
+
+## Key files
+- scripts/ffi_shim.c          — the 1-arg init fix (shared with native build).
+- seal_wrapper.c              — boots runtime; exports seal_init + seal_decide.
+- build_closure.sh            — iterative module-init closure builder (batched emnm).
+- build_wasm.sh [strict]      — recompile glue + link.
+- seal_scenarios.mjs          — shared config + 7-kernel scenarios (mirrors test_host.py).
+- test_kernels.mjs            — 7-kernel + determinism harness.
+- conformance.mjs / conformance_native.c — wasm vs native vs fixture gate.
+- conformance_fixture.json    — captured native verdicts (source of truth).
