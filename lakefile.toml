@@ -25,7 +25,7 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 
 [[require]]
 name = "mcp-seal"
-git = "https://github.com/velvetmonkey/mcp-seal.git"
+git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
 rev = "c578b5dc8d9c55742eedf07d68f131b0d59db530"
 
 # One library for the host + kernels + FFI surface. Host and Kernels modules
