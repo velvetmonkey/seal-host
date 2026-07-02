@@ -50,7 +50,7 @@ root = "Host.Main"
 # the lib's own modules.
 [[lean_exe]]
 name = "ffi_shared"
-root = "Ffi"
+root = "FfiMain"
 moreLinkArgs = ["-shared"]
 
 [[lean_exe]]

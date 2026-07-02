@@ -1,0 +1,23 @@
+===============================================================
+ spec→binary conformance bridge  (differential evidence over C)
+===============================================================
+corpus C: 11 destructive disguises + 3 passthrough + 1 approved forward
+
+[1] DECISION + audit byte agreement — native .so vs interpreted Lean
+  ✓ harness liveness: all routes exercised; chain is order-sensitive (non-vacuous)
+  ✓ 15/15 inputs: native == model, byte-for-byte, route as expected
+
+[2] RECORD chain agreement — SHA-256 head over native vs model audits
+  ✓ chain heads equal: 5bf359829a4e3782f77dca9608b545803dd6ad86f83de40bef5b00424eb69bd6
+
+[3] DEPLOYED binary — seal-host-rs record chain vs model
+  ✓ deployed seal-host-rs record head == model head: 6f6a3f0644dcf4d285cc113b09238b3ba9fbdc82ad57c05ab5d86c113cdc0238
+
+===============================================================
+ CONFORMANCE BRIDGE: PASS
+   • compiled native .so conforms to the interpreted Lean model
+     on corpus C (decision + audit bytes, both routes)
+   • the SHA-256 record chain agrees across model / native / the
+     deployed seal-host-rs binary
+   • evidence over C only — NOT a universal binary==model claim
+===============================================================

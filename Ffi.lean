@@ -170,6 +170,18 @@ private def stepImpl (inputText : String) : IO String := do
                 ("audit", Json.str audit)
               ]).compress
 
+/-- Conformance-bridge model oracle. These call the SAME private `initImpl` /
+    `stepImpl` the FFI exports below wrap, but WITHOUT the `unsafe`/`unsafeBaseIO`
+    marshalling — so `lake env lean --run` evaluates the real Lean decision core
+    in the interpreter. The bridge diffs this against the compiled native `.so`
+    (and, as a stretch, the emscripten wasm) to test that codegen preserves the
+    proven decisions + audit bytes on the corpus. NOT an FFI export. -/
+def modelInit (envelopeText publicKey : String) : IO String :=
+  initImpl envelopeText publicKey
+
+def modelStep (inputText : String) : IO String :=
+  stepImpl inputText
+
 @[export seal_host_init]
 unsafe def sealHostInit (envelopeText publicKey : String) : String :=
   unsafeBaseIO <| (initImpl envelopeText publicKey).catchExceptions
@@ -189,7 +201,3 @@ def sealHostClassify (line : String) : UInt32 :=
   | .act _ => 1
 
 end Ffi
-
-/-- Unused: present only so the `ffi_shared` exe target (linked with
-    `-shared` to produce a self-contained .so) elaborates. -/
-def main : IO Unit := pure ()
