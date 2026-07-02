@@ -105,6 +105,13 @@ chain-head equality, and deployed-binary/model chain-head equality.
 
 - **Must-ship (done):** the Rust host / native `libsealffi.so` — the
   `seal-live-demo` / receipt binary.
-- **Stretch:** the WASM (`seal-check/wasm/seal.wasm`, emscripten) — same corpus
-  through the browser-deployment shape. Same method; a WASM oracle in place of
-  `kernel_oracle`.
+- **Stretch (attempted, deferred — deliberately not faked):** the WASM
+  (`seal-check/wasm/seal.wasm`, emscripten). Same method — a WASM oracle in
+  place of `kernel_oracle`, same corpus C. **Hard prerequisite:** the wasm must
+  be rebuilt from the *current* Lean rev before it is driven. The pinned
+  in-tree `seal.wasm` is an earlier build; a differential against it would
+  report **version skew as if it were a codegen bug** (or pass by luck) — either
+  outcome is misleading. Driving a stale binary is worse than not running the
+  stretch, so it is deferred until an emscripten rebuild at HEAD exists. The
+  native bridge above already closes the model↔binary gap for the
+  `seal-live-demo` deployment shape.
