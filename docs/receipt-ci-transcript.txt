@@ -1,0 +1,47 @@
+===============================================================
+ STEP 1+2 — agent attempts destructive deletes; seal decides
+===============================================================
+  agent → 3 destructive db.execute calls (drop / delete / truncate on prod)
+  seal  → 3/3 BLOCKED by default-deny (nothing reached the database).
+  audit certs: 3 decisions recorded (one per call).
+
+===============================================================
+ STEP 3 — seal the decision into the tamper-evident record
+===============================================================
+sealed 3 entries → /tmp/tmp.xw9ajpkGQo/sealed.json
+chain head: 6f6a3f0644dcf4d285cc113b09238b3ba9fbdc82ad57c05ab5d86c113cdc0238
+
+  verify the record (one command):
+  $ node scripts/seal_log.mjs verify sealed.json
+VERIFY OK: 3 entries, chain intact.
+chain head: 6f6a3f0644dcf4d285cc113b09238b3ba9fbdc82ad57c05ab5d86c113cdc0238
+
+===============================================================
+ STEP 4a — tamper check: MUTATE a middle entry, re-verify
+===============================================================
+  attacker rewrote entry 1 (deny → allow), kept the recorded heads
+  $ node scripts/seal_log.mjs verify mutated.json
+VERIFY FAIL: entry 1 — recorded head does not match recomputed chain.
+  recorded:   f848856cfeb9a9dc1427fcac4c5a2928d03e70aac4d3db7173f0664acfd52cfc
+  recomputed: 65e94c31225d07ee3e0b8c4fd16b15e66a8c4fc7def9049ffefc68ab9b06572d
+  → the log was inserted into, reordered, or mutated at or before entry 1.
+  ✓ mutation REJECTED.
+
+===============================================================
+ STEP 4b — tamper check: REORDER two entries, re-verify
+===============================================================
+  attacker swapped entries 0 and 1, kept the recorded heads
+  $ node scripts/seal_log.mjs verify reordered.json
+VERIFY FAIL: entry 0 — recorded head does not match recomputed chain.
+  recorded:   f848856cfeb9a9dc1427fcac4c5a2928d03e70aac4d3db7173f0664acfd52cfc
+  recomputed: d187977f2a30ff5a28109205bf2ecaccb7de9bc139a8b88ad036c12067099f34
+  → the log was inserted into, reordered, or mutated at or before entry 0.
+  ✓ reorder REJECTED — both mutation and reordering break the hash-chain.
+
+===============================================================
+ RECEIPT DEMO PASSED
+   • destructive delete BLOCKED by the Lean-verified gate
+   • decision sealed into a hash-chain (machine-checked structure:
+     Host.Record.tamper_evident, H = SHA-256)
+   • intact log VERIFIES; any mutation is REJECTED
+===============================================================
