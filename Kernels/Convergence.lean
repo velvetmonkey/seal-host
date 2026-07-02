@@ -63,4 +63,28 @@ def convergenceKernel : Host.Kernel where
             else
               mk .deny s!"op not in the proven-convergent set: {op}"
 
+/-- The pure accept condition of kernel V, mirroring `Kernels.quorumAccepts`:
+    the call names a configured replicated tool, its op field resolves to a
+    scalar, and that op is in the fixed proven-convergent set. This is the
+    internal condition the kernel's `decide` allows on. -/
+def convergentAccepts (cfg : ConvergenceConfig) (act : Host.CanonicalAction) : Bool :=
+  match cfg.find? (fun r => r.tool == act.tool) with
+  | none => false
+  | some r =>
+      match Seal.JsonUtil.atPath act.argsJson r.opArg >>=
+          Seal.JsonUtil.jsonScalarToString with
+      | none => false
+      | some op => provenConvergentOps.contains op
+
+/-- Bridge for the composition theorem: kernel V's verdict is allow exactly
+    when its accept condition holds — the admitted operation is in the
+    fixed, kernel-checked convergent set. -/
+theorem convergence_verdict_allow_iff
+    (act : Host.CanonicalAction) (cfg : ConvergenceConfig) (ev : Unit) (st : Unit) :
+    (convergenceKernel.decide act cfg ev st).1.kind = .allow ↔
+      convergentAccepts cfg act = true := by
+  simp only [convergenceKernel, convergentAccepts]
+  repeat' split
+  all_goals simp_all
+
 end Kernels

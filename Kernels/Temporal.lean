@@ -75,4 +75,24 @@ def temporalKernel : Host.Kernel where
            certHash := Seal.stableHashParts ["temporal", "allow", reason] },
          { executed := st.executed ++ [act.tool] })
 
+/-- The pure accept condition of kernel T, mirroring `Kernels.quorumAccepts`:
+    no configured LTL policy is violated by executing this call after the
+    current trace — i.e. the monitor finds no forbidden-after-trigger
+    position. This is the internal condition the kernel's `decide` allows on. -/
+def temporalAccepts (policies : List TemporalPolicy) (st : TemporalState)
+    (act : Host.CanonicalAction) : Bool :=
+  (policies.find? (fun pol => !policyAccepts pol st.executed act.tool)).isNone
+
+/-- Bridge for the composition theorem: kernel T's verdict is allow exactly
+    when its accept condition holds — no temporal safety policy forbids the
+    call in the current trace. -/
+theorem temporal_verdict_allow_iff
+    (act : Host.CanonicalAction) (policies : List TemporalPolicy) (ev : Unit)
+    (st : TemporalState) :
+    (temporalKernel.decide act policies ev st).1.kind = .allow ↔
+      temporalAccepts policies st act = true := by
+  simp only [temporalKernel, temporalAccepts]
+  repeat' split
+  all_goals simp_all
+
 end Kernels

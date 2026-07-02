@@ -1,8 +1,12 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
 import Host.Registry
+import Host.Canonical
+import Host.Step
 import Kernels.Safety
 import Kernels.Consensus
+import Kernels.Convergence
+import Kernels.Temporal
 
 /-!
 # The composition theorem — the AND-combinator preserves kernel invariants
@@ -109,6 +113,33 @@ theorem composed_no_conflicting_agreement
     (combine_allow_implies_member vs' _ hmem' hcomb')
   exact Consensus.Checker.agreement cfg.roster votes _ _ h h'
 
+/-- **Convergence survives composition.** If the convergence kernel's verdict
+    is among the combined verdicts and the composed gate allows, then the
+    admitted operation is in the fixed, kernel-checked proven-convergent set —
+    a divergent (split-brain) write cannot slip through the AND-combinator. -/
+theorem composed_convergent
+    (vs : List Verdict) (act : CanonicalAction) (cfg : Kernels.ConvergenceConfig)
+    (ev st : Unit)
+    (hmem : (Kernels.convergenceKernel.decide act cfg ev st).1 ∈ vs)
+    (hcomb : combineVerdicts vs = .allow) :
+    Kernels.convergentAccepts cfg act = true :=
+  (Kernels.convergence_verdict_allow_iff act cfg ev st).mp
+    (combine_allow_implies_member vs _ hmem hcomb)
+
+/-- **Temporal safety survives composition.** If the temporal kernel's verdict
+    is among the combined verdicts and the composed gate allows, then no
+    configured LTL safety policy forbids the call in the current trace — a
+    stale-capability replay (e.g. a call after its revoke) cannot slip through
+    the AND-combinator. -/
+theorem composed_temporal_safety
+    (vs : List Verdict) (act : CanonicalAction) (policies : List Kernels.TemporalPolicy)
+    (ev : Unit) (st : Kernels.TemporalState)
+    (hmem : (Kernels.temporalKernel.decide act policies ev st).1 ∈ vs)
+    (hcomb : combineVerdicts vs = .allow) :
+    Kernels.temporalAccepts policies st act = true :=
+  (Kernels.temporal_verdict_allow_iff act policies ev st).mp
+    (combine_allow_implies_member vs _ hmem hcomb)
+
 /-- **The composition theorem.** The fail-closed AND-combinator preserves both
     headline kernel invariants simultaneously: non-bypass (S) and
     no-conflicting-agreement (C) both survive composition under one host. -/
@@ -127,5 +158,59 @@ theorem and_combinator_preserves_invariants
       (Kernels.certFor votes act.tool).value = (Kernels.certFor votes act'.tool).value :=
   ⟨composed_non_bypass vs act pol ev st1 target hS hcomb hguard,
    composed_no_conflicting_agreement vs vs' act act' cfg votes hC hC' hcomb hcomb'⟩
+
+/-- A line that classifies as a mediated act carries its routing/parse
+    witness: the trimmed line parses as JSON to a value that `Seal.toolsCall?`
+    recognises as the very `(tool, args)` the action carries. Extracted from
+    `classifyLine` (Host.Canonical). -/
+theorem classify_act_witness (line : String) (act : CanonicalAction)
+    (h : classifyLine line = .act act) :
+    ∃ json, Lean.Json.parse line.trimAscii.toString = .ok json ∧
+      Seal.toolsCall? json = some (act.tool, act.argsJson) := by
+  simp only [classifyLine] at h
+  cases hp : Lean.Json.parse line.trimAscii.toString with
+  | error e => simp [hp] at h
+  | ok json =>
+      cases ht : Seal.toolsCall? json with
+      | none => simp [hp, ht] at h
+      | some p =>
+          obtain ⟨toolName, toolArgs⟩ := p
+          simp only [hp, ht] at h
+          injection h with hrec
+          subst hrec
+          exact ⟨json, rfl, ht⟩
+
+/-- **THE FLAGSHIP — multi-gate non-bypass over the deployed step core.**
+
+    If the pure routing core that `Ffi.stepImpl` delegates to routes a line to
+    `forward`, then:
+
+    * **(a) routing/parse witness** — the line was a genuine, parseable
+      `tools/call` (`classifyLine` recognised it and the trimmed bytes parsed
+      to the `(tool, args)` the mediated action carries); AND
+    * **(b) fail-closed AND** — at least one kernel gated the call and EVERY
+      gating kernel returned `allow` (`combine_allow_iff`). Composed with the
+      per-gate `composed_*` theorems above, this means a forward implies every
+      applicable gate's invariant held: a live matching approval (safety), a
+      ratified quorum (consensus), a proven-convergent op (convergence), and no
+      temporal-safety violation (temporal).
+
+    TCB (NOT proven through): `Ffi.stepImpl`'s IO — the evidence gathered into
+    `verdicts` via `Host.dispatch`, the session `IO.Ref` state, the JSON
+    marshalling, and the `unsafeBaseIO` FFI boundary in `Ffi.sealHostStep`.
+    This theorem is over the pure decision `stepImpl` delegates to
+    (`Host.stepRoute`), not through the IO boundary. -/
+theorem step_forward_non_bypass
+    (line : String) (verdicts : List Verdict) (act : CanonicalAction)
+    (hclass : classifyLine line = .act act)
+    (hfwd : stepRoute (classifyLine line) verdicts = .forward) :
+    (∃ json, Lean.Json.parse line.trimAscii.toString = .ok json ∧
+        Seal.toolsCall? json = some (act.tool, act.argsJson)) ∧
+    (verdicts ≠ [] ∧ ∀ v ∈ verdicts, v.kind = .allow) := by
+  refine ⟨classify_act_witness line act hclass, ?_⟩
+  rw [hclass] at hfwd
+  have hall : combineVerdicts verdicts = .allow :=
+    (stepRoute_act_forward_iff act verdicts).mp hfwd
+  exact (combine_allow_iff verdicts).mp hall
 
 end Host

@@ -2,6 +2,7 @@
 
 import Lean.Data.Json
 import Host.Canonical
+import Host.Step
 import Host.Config
 import Host.Registry
 import Host.Audit
@@ -136,18 +137,33 @@ private def stepImpl (inputText : String) : IO String := do
       let votes := Host.Evidence.parseVotesText (getStrD input "votes" "")
       let grants := Host.Evidence.parseGrantsText (getStrD input "grants" "")
       let forecasts := Host.Evidence.parseForecastsText (getStrD input "forecasts" "")
-      match classifyLine line with
+      let lc := classifyLine line
+      match lc with
       | .passthrough =>
           pure (Json.mkObj [("route", Json.str "passthrough")]).compress
       | .act act => do
           let registry := registryFor session now approvals votes grants forecasts
           let (combined, verdicts) ← dispatch registry act
           let audit := auditLine session.config.epoch act.tool combined verdicts
-          match combined with
-          | .allow =>
+          -- Route through the PURE `Host.stepRoute` — the function
+          -- `step_forward_non_bypass` (Host.Composition) is proven over.
+          -- `stepRoute (.act act) verdicts = .forward ↔ combineVerdicts verdicts
+          -- = .allow` (`stepRoute_act_forward_iff`), and `dispatch` returns
+          -- `combined = combineVerdicts verdicts`, so this is byte-identical to
+          -- routing on `combined` directly.
+          match Host.stepRoute lc verdicts with
+          | .forward =>
               pure (Json.mkObj [
                 ("route", Json.str "forward"), ("audit", Json.str audit)]).compress
-          | .deny =>
+          | .block =>
+              pure (Json.mkObj [
+                ("route", Json.str "block"),
+                ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
+                ("audit", Json.str audit)
+              ]).compress
+          | .passthrough =>
+              -- Unreachable: `stepRoute (.act _)` is `.forward`/`.block` only.
+              -- Fail-closed to block if ever reached.
               pure (Json.mkObj [
                 ("route", Json.str "block"),
                 ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
