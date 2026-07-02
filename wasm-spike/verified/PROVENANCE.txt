@@ -1,0 +1,28 @@
+seal.wasm — verified conformance build provenance
+==================================================
+Built from seal-host Lean HEAD, differential-verified against the real Lean
+model over corpus C (see docs/CONFORMANCE-BRIDGE.md, WASM section).
+
+Lean HEAD commit : 4cf02241eff89cba3b8386cd80cc04ad70abde39
+Build date       : 2026-07-02
+Lean toolchain   : leanprover/lean4:v4.28.0
+Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
+
+Artifact sha256:
+  seal.wasm  4bf99dc7957c5623df05b6f50d29fb435015457de2dce78d4ae3d1a8cc6a1475  (3460950 bytes)
+  seal.js    c7991de32f4b9d6cbb76460ac35ac84c37eaa12aa9a401560c20355f1e219540
+
+Supersedes the stale spike pin sha256
+  1cc765c7de2cead88eda2e8e5f5af5a5e070f35a767916e754b873733562c70a
+(built 2026-06-16 from the Jun-15 Lean spike — the version-skew hazard).
+
+Reproduce (from wasm-spike/):
+  source ./emsdk/emsdk_env.sh
+  (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
+  ./build_core.sh               # ir -> build-core/*.o (19 project modules, incl Host_Step)
+  ./build_closure.sh            # module-initializer closure + external-lib stubs
+  ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
+
+Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
+  seal_init(envelope, pubkey) -> {ok,...}
+  seal_decide(stepInput)      -> {route, audit, response?}

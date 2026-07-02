@@ -44,6 +44,7 @@ which the harness checks directly.
 | **MODEL** | the REAL Lean `stepImpl` (`scripts/model_oracle.lean`, via `lake env lean`) | Lean **interpreter** — never a reimplementation |
 | **NATIVE** | `kernel_oracle` calling `seal_host_step` | the compiled **`libsealffi.so`** the deployed host links |
 | **DEPLOYED** | the actual `seal-host-rs` binary over stdio | the shipped artifact, end-to-end |
+| **WASM** | the emscripten module (`seal_init`/`seal_decide`) headless in Node | the compiled **`seal.wasm`** — the in-browser seal-check shape (`--wasm` mode) |
 
 The MODEL side being the **interpreter** is the point: interpreter vs native
 codegen is exactly the gap a codegen bug would open. The oracle evaluates the
@@ -63,12 +64,18 @@ Both routes and both record outcomes (deny audit, allow audit) are covered.
 ## Run it
 
 ```sh
-node scripts/conformance_bridge.mjs        # exit non-zero on any divergence
+node scripts/conformance_bridge.mjs          # native .so + deployed seal-host-rs
+node scripts/conformance_bridge.mjs --wasm    # emscripten seal.wasm (browser shape)
+# exit non-zero on any divergence
 ```
 
-Green transcript: `docs/conformance-ci-transcript.txt`. It asserts, in order:
-harness liveness (below), 15/15 byte agreement + route agreement, native/model
-chain-head equality, and deployed-binary/model chain-head equality.
+Green transcripts: `docs/conformance-ci-transcript.txt` (native),
+`docs/conformance-wasm-ci-transcript.txt` (wasm). Each asserts, in order:
+harness liveness (below), 15/15 byte agreement + route agreement, and
+artifact/model chain-head equality (native mode additionally checks the
+deployed-`seal-host-rs`/model chain head). All three artifacts — native `.so`,
+`seal.wasm`, and the deployed binary — produce the **same** SHA-256 record head
+as the Lean model over corpus C.
 
 ## Red-team / objections (adversarially reviewed)
 
@@ -93,9 +100,11 @@ chain-head equality, and deployed-binary/model chain-head equality.
 
 ## TCB (named, not proven)
 
-- The Lean compiler + native code generation (`libsealffi.so`); emscripten for
-  the WASM shape (out of scope here — stretch).
-- The FFI marshalling (`lean.rs`), already TCB in `RUST_BRIDGE.md`.
+- The Lean compiler + native code generation (`libsealffi.so`) **and the
+  emscripten codegen (`seal.wasm`)** — both trusted compiles; the bridge tests
+  each on corpus C rather than trusting it blind.
+- The FFI marshalling (`lean.rs`) and the wasm C glue (`wasm-spike/seal_wrapper.c`,
+  `scripts/ffi_shim.c`); the FFI seam is already TCB in `RUST_BRIDGE.md`.
 - `node:crypto` SHA-256 and the harness itself.
 - **Corpus finiteness** — evidence covers C only. The bridge narrows the T3
   trusted-compile assumption to the security-relevant corpus; it does not
@@ -103,15 +112,39 @@ chain-head equality, and deployed-binary/model chain-head equality.
 
 ## Scope
 
-- **Must-ship (done):** the Rust host / native `libsealffi.so` — the
-  `seal-live-demo` / receipt binary.
-- **Stretch (attempted, deferred — deliberately not faked):** the WASM
-  (`seal-check/wasm/seal.wasm`, emscripten). Same method — a WASM oracle in
-  place of `kernel_oracle`, same corpus C. **Hard prerequisite:** the wasm must
-  be rebuilt from the *current* Lean rev before it is driven. The pinned
-  in-tree `seal.wasm` is an earlier build; a differential against it would
-  report **version skew as if it were a codegen bug** (or pass by luck) — either
-  outcome is misleading. Driving a stale binary is worse than not running the
-  stretch, so it is deferred until an emscripten rebuild at HEAD exists. The
-  native bridge above already closes the model↔binary gap for the
-  `seal-live-demo` deployment shape.
+- **Native (done):** the Rust host / native `libsealffi.so` — the
+  `seal-live-demo` / receipt binary. `node scripts/conformance_bridge.mjs`.
+- **WASM (done at HEAD):** the emscripten `seal.wasm` — the in-browser
+  seal-check shape. `node scripts/conformance_bridge.mjs --wasm`. See below.
+
+## WASM shape (`seal.wasm`) — done at HEAD
+
+The public artifact a reviewer runs in the browser is the emscripten `seal.wasm`,
+not the native `.so`. The `--wasm` oracle drives that module headless in Node
+(`seal_init`/`seal_decide`, thin C aliases over the SAME Lean `seal_host_init`/
+`seal_host_step`) against the identical corpus C and the unchanged real-Lean MODEL
+oracle. It asserts the same two things — 15/15 byte-identical decision + audit,
+and SHA-256 record chain-head equality WASM vs model. The wasm's record head on C
+is byte-identical to the native `.so`'s and the deployed binary's.
+
+**Provenance (the version-skew hazard, closed).** Earlier this doc flagged that
+driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
+bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
+before the differential, and driving the fresh artifact:
+
+- Lean HEAD: `4cf02241eff89cba3b8386cd80cc04ad70abde39`
+- `seal.wasm` sha256: `4bf99dc7957c5623df05b6f50d29fb435015457de2dce78d4ae3d1a8cc6a1475`
+- emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
+- Supersedes the stale spike pin sha256 `1cc765c7…` (built 2026-06-16 from the
+  Jun-15 Lean spike).
+
+The verified artifact + full provenance + reproduce recipe are staged at
+`wasm-spike/verified/{seal.wasm,seal.js,PROVENANCE.txt}`; the rebuild step that
+was missing from the vendored pipeline (project ir → `build-core/*.o`, including
+the new `Host/Step`) is `wasm-spike/build_core.sh`.
+
+**Public deployment note.** For the conformance claim to cover the *deployed
+public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
+build (sha256 `4bf99dc7…`). That repin is a separate, audited step gated to the
+public flip — it is **not** performed here; this repo stays the private source of
+truth and the public mirror is untouched.

@@ -41,6 +41,15 @@ const MODEL_LEAN = "scripts/model_oracle.lean";
 const PK = "conformance-pk";
 const NOW = 1000;
 
+// `--wasm` swaps the compiled artifact under test from the native .so to the
+// emscripten wasm (the in-browser seal-check shape). The MODEL oracle (real Lean
+// in the interpreter) is unchanged either way. The wasm is the freshly-verified,
+// staged, rebuilt-at-HEAD artifact — never the stale in-tree pin.
+const WASM = process.argv.includes("--wasm");
+const WASM_JS = `${ROOT}/wasm-spike/verified/seal.js`;
+const WASM_WASM = `${ROOT}/wasm-spike/verified/seal.wasm`;
+const ARTIFACT = WASM ? "wasm (emscripten, in-browser seal-check shape)" : "native .so (libsealffi.so)";
+
 const WORK = mkdtempSync(join(tmpdir(), "seal-conf-"));
 process.on("exit", () => { try { rmSync(WORK, { recursive: true, force: true }); } catch {} });
 
@@ -112,15 +121,47 @@ function runModel(corpusFile) {
   return readFileSync(outFile, "utf8");
 }
 
+// WASM oracle: the emscripten module loaded HEADLESS in Node (MODULARIZE factory).
+// seal_init/seal_decide are thin C aliases over the SAME Lean seal_host_init/
+// seal_host_step the native oracle calls, so the corpus step-inputs are byte-identical.
+let _wasmMod = null;
+async function wasmModule() {
+  if (_wasmMod) return _wasmMod;
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const factory = require(WASM_JS); // seal.js locates seal.wasm next to it (__dirname)
+  _wasmMod = await factory({ print() {}, printErr() {} });
+  return _wasmMod;
+}
+async function runWasm(corpusFile) {
+  const M = await wasmModule();
+  // Re-init per run for a FRESH session — matches a fresh kernel_oracle process,
+  // so temporal/linear/budget state threads identically across the corpus.
+  const initOut = M.ccall("seal_init", "string", ["string", "string"], [readFileSync(ENV_FILE, "utf8"), PK]);
+  if (!initOut.includes('"ok":true')) throw new Error(`wasm seal_init failed: ${initOut}`);
+  const lines = readFileSync(corpusFile, "utf8").split("\n").map((s) => s.trim()).filter(Boolean);
+  return lines.map((l) => M.ccall("seal_decide", "string", ["string"], [l])).join("\n") + "\n";
+}
+
+// The compiled artifact under test — native .so or wasm, per --wasm.
+async function runArtifact(corpusFile) { return WASM ? runWasm(corpusFile) : runNative(corpusFile); }
+
 // ---- STEP 1: derive the forward case's approval target from a real block -----
 console.log("===============================================================");
 console.log(" spec→binary conformance bridge  (differential evidence over C)");
 console.log("===============================================================");
+console.log(`artifact under test: ${ARTIFACT}`);
+if (WASM) {
+  const wasmSha = createHash("sha256").update(readFileSync(WASM_WASM)).digest("hex");
+  const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  console.log(`  provenance: built at HEAD ${head}`);
+  console.log(`  seal.wasm sha256: ${wasmSha}`);
+}
 console.log(`corpus C: ${DISGUISES.length} destructive disguises + ${PASSTHROUGH.length} passthrough + 1 approved forward`);
 
 const probeFile = join(WORK, "probe.jsonl");
 writeFileSync(probeFile, stepInput(wireCall(1, "drop table customers")) + "\n");
-const probeOut = JSON.parse(runNative(probeFile).trim());
+const probeOut = JSON.parse((await runArtifact(probeFile)).trim());
 const m = /approval required: (\d+)/.exec(probeOut.response || "");
 if (!m) { console.error("could not derive approval target from a block; aborting"); process.exit(1); }
 const target = m[1];
@@ -135,44 +176,50 @@ corpus.push({
 const corpusFile = join(WORK, "corpus.jsonl");
 writeFileSync(corpusFile, corpus.map((c) => c.step).join("\n") + "\n");
 
-console.log("\n[1] DECISION + audit byte agreement — native .so vs interpreted Lean");
-const nativeLines = runNative(corpusFile).split("\n").filter(Boolean);
+console.log(`\n[1] DECISION + audit byte agreement — ${ARTIFACT} vs interpreted Lean`);
+const artifactLines = (await runArtifact(corpusFile)).split("\n").filter(Boolean);
 const modelLines = runModel(corpusFile).split("\n").filter(Boolean);
 
 // Liveness: prove the harness is not vacuous before trusting a PASS.
 {
-  const routes = new Set(nativeLines.map((l) => JSON.parse(l).route));
+  const routes = new Set(artifactLines.map((l) => JSON.parse(l).route));
   if (!(routes.has("block") && routes.has("passthrough") && routes.has("forward")))
     fail(`liveness: corpus did not exercise all three routes (saw ${[...routes].join(",")})`);
-  const auds = nativeLines.map((l) => JSON.parse(l).audit).filter(Boolean);
+  const auds = artifactLines.map((l) => JSON.parse(l).audit).filter(Boolean);
   if (auds.length > 1 && chainHead(auds) === chainHead([...auds].reverse()))
     fail("liveness: chain head is order-insensitive — the comparator would miss a reorder");
   if (!failed) ok("harness liveness: all routes exercised; chain is order-sensitive (non-vacuous)");
 }
 
-if (nativeLines.length !== corpus.length || modelLines.length !== corpus.length) {
-  fail(`line count mismatch: corpus=${corpus.length} native=${nativeLines.length} model=${modelLines.length}`);
+if (artifactLines.length !== corpus.length || modelLines.length !== corpus.length) {
+  fail(`line count mismatch: corpus=${corpus.length} artifact=${artifactLines.length} model=${modelLines.length}`);
 } else {
   let diverged = 0;
   for (let i = 0; i < corpus.length; i++) {
-    const route = JSON.parse(nativeLines[i]).route;
-    if (nativeLines[i] !== modelLines[i]) { fail(`byte divergence @ ${corpus[i].name}`); diverged++; }
+    const route = JSON.parse(artifactLines[i]).route;
+    if (artifactLines[i] !== modelLines[i]) { fail(`byte divergence @ ${corpus[i].name}`); diverged++; }
     else if (route !== corpus[i].expect) { fail(`route mismatch @ ${corpus[i].name}: got ${route}, expected ${corpus[i].expect}`); diverged++; }
   }
-  if (!diverged) ok(`${corpus.length}/${corpus.length} inputs: native == model, byte-for-byte, route as expected`);
+  if (!diverged) ok(`${corpus.length}/${corpus.length} inputs: artifact == model, byte-for-byte, route as expected`);
 }
 
 // ---- STEP 3: record-chain agreement (reduces to audit payload agreement) -----
-console.log("\n[2] RECORD chain agreement — SHA-256 head over native vs model audits");
+console.log("\n[2] RECORD chain agreement — SHA-256 head over artifact vs model audits");
 const auditOf = (line) => { const o = JSON.parse(line); return o.audit; };
-const nativeAudits = nativeLines.map(auditOf).filter((a) => a != null);
+const artifactAudits = artifactLines.map(auditOf).filter((a) => a != null);
 const modelAudits = modelLines.map(auditOf).filter((a) => a != null);
-const nativeHead = chainHead(nativeAudits);
+const artifactHead = chainHead(artifactAudits);
 const modelHead = chainHead(modelAudits);
-if (nativeHead === modelHead) ok(`chain heads equal: ${nativeHead}`);
-else fail(`chain head divergence: native ${nativeHead} vs model ${modelHead}`);
+if (artifactHead === modelHead) ok(`chain heads equal: ${artifactHead}`);
+else fail(`chain head divergence: artifact ${artifactHead} vs model ${modelHead}`);
 
 // ---- STEP 4: the DEPLOYED binary's record matches the model -------------------
+// Native shape only: seal-host-rs is the deployed process. In --wasm mode the
+// in-proc wasm module IS the deployed browser artifact, already covered by [1]+[2].
+if (WASM) {
+  console.log("\n[3] DEPLOYED binary — skipped in --wasm mode");
+  ok("the in-proc wasm module is itself the deployed browser artifact ([1]+[2] cover it)");
+} else {
 console.log("\n[3] DEPLOYED binary — seal-host-rs record chain vs model");
 const wireSeq = ["drop table customers", "delete from ledger", "truncate audit"];
 const wireInput = wireSeq.map((sql, i) => wireCall(300 + i, sql)).join("\n") + "\n";
@@ -190,13 +237,21 @@ if (hostAudits.length === 3) {
 } else {
   fail(`expected 3 audit certs from the deployed binary, captured ${hostAudits.length}`);
 }
+}
 
 console.log("\n===============================================================");
 if (failed) { console.log(" CONFORMANCE BRIDGE: FAIL — a divergence was detected."); process.exit(1); }
 console.log(" CONFORMANCE BRIDGE: PASS");
-console.log("   • compiled native .so conforms to the interpreted Lean model");
-console.log("     on corpus C (decision + audit bytes, both routes)");
-console.log("   • the SHA-256 record chain agrees across model / native / the");
-console.log("     deployed seal-host-rs binary");
+if (WASM) {
+  console.log("   • the rebuilt-at-HEAD emscripten wasm (in-browser seal-check shape)");
+  console.log("     conforms to the interpreted Lean model on corpus C");
+  console.log("     (decision + audit bytes, both routes)");
+  console.log("   • the SHA-256 record chain agrees across model / wasm");
+} else {
+  console.log("   • compiled native .so conforms to the interpreted Lean model");
+  console.log("     on corpus C (decision + audit bytes, both routes)");
+  console.log("   • the SHA-256 record chain agrees across model / native / the");
+  console.log("     deployed seal-host-rs binary");
+}
 console.log("   • evidence over C only — NOT a universal binary==model claim");
 console.log("===============================================================");
