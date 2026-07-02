@@ -78,11 +78,23 @@ node scripts/seal_log.mjs verify <sealed.json>                 # recompute + che
 node scripts/seal_log.mjs head   <sealed.json>                 # print the current chain head
 ```
 
+## Faithful reflection (STRETCH — proven, `Host/RecordReflection.lean`)
+
+- **`log_reflects_l0_decisions`** — for a log built from a sequence of forwarded
+  decisions (most-recent-first), every entry corresponds to a decision that
+  passed L0: its verdict list is non-empty and every gate allowed. Proof chain:
+  logged ⇒ `stepRoute (.act …) = .forward` ⇒ `combineVerdicts = .allow` ⇒
+  (`combine_allow_iff`) every gating kernel allowed. Order-preserving by
+  construction (the log is exactly the per-decision audits in reverse order).
+- Footprint `[propext, Classical.choice, Quot.sound]` (baseline), zero `sorry`.
+- Scope: the record of ADMITTED (forwarded) effects — the security-relevant log.
+  Composed with `tamper_evident`, the record is both unforgeable and a faithful
+  witness of what passed the gate.
+
 ## Not claimed
 
 - Not a claim that FNV/`stableHashParts` is tamper-evident — it is not; the
   chained record uses SHA-256, and the theorem's strength is exactly `H`'s
   collision-resistance.
-- Not a proof that the emitted audit payload faithfully reflects a real
-  L0-passing decision — that is the STRETCH (`log_reflects_l0_decisions`),
-  attempted only after this CORE, and not part of this deliverable.
+- Not a claim that the Lean model equals the shipping binary — that is the
+  conformance-bridge work (spec ↔ deployed Rust/WASM), scoped separately.
