@@ -6,9 +6,22 @@
 //! bypasses no Lean proof — Lean still decides — but a routing bug (e.g.
 //! forwarding a line Lean said to block) would. Keep this file tiny and
 //! boring.
+//!
+//! Fail-closed seam contract:
+//! * every call returns `Result`; the caller maps ANY `SeamError` to Block —
+//!   there is no error value that can route bytes to the child;
+//! * Lean panics terminate the process (`lean_set_exit_on_panic` +
+//!   `LEAN_ABORT_ON_PANIC`) — without this, a compiled `panic!` returns the
+//!   type's `default`, and `seal_host_classify`'s default is 0 = passthrough,
+//!   a fail-OPEN (see `tests/panic_probe.rs` for the empirical check);
+//! * kernel strings are read by exact byte length (never `CStr`, which stops
+//!   at an interior NUL) and validated as strict UTF-8;
+//! * a poisoned lock or a non-string result object is a `SeamError`, not a
+//!   guess.
 
 use std::ffi::c_void;
 use std::os::raw::{c_char, c_uint};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 
 type LeanObj = *mut c_void;
@@ -25,10 +38,42 @@ extern "C" {
     fn seal_lean_dec(o: LeanObj);
     fn seal_lean_mk_string(s: *const c_char, n: usize) -> LeanObj;
     fn seal_lean_string_cstr(o: LeanObj) -> *const c_char;
+    fn seal_lean_string_size(o: LeanObj) -> usize;
+    fn seal_lean_is_string(o: LeanObj) -> u8;
+    fn seal_lean_set_exit_on_panic(flag: u8);
+    fn seal_lean_force_panic() -> LeanObj;
     // libsealffi @[export] surface
     fn seal_host_init(envelope: LeanObj, pubkey: LeanObj) -> LeanObj;
     fn seal_host_step(input: LeanObj) -> LeanObj;
     fn seal_host_classify(line: LeanObj) -> c_uint;
+}
+
+/// Any failure of the FFI seam. Callers MUST treat every variant as Block;
+/// none of them carries a verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeamError {
+    /// A Rust-side panic during the call (caught; the Lean side exits the
+    /// process on its own panics instead of returning defaults).
+    Panic,
+    /// The seam mutex was poisoned by an earlier panic.
+    PoisonedLock,
+    /// The kernel returned a NULL or non-string object where a string
+    /// verdict was expected.
+    NotAString,
+    /// The kernel string was not valid UTF-8 (corrupted seam).
+    InvalidUtf8,
+}
+
+impl std::fmt::Display for SeamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            SeamError::Panic => "ffi seam panic",
+            SeamError::PoisonedLock => "ffi seam lock poisoned",
+            SeamError::NotAString => "ffi result not a string",
+            SeamError::InvalidUtf8 => "ffi result not valid utf-8",
+        };
+        f.write_str(s)
+    }
 }
 
 unsafe fn lean_dec(o: LeanObj) {
@@ -48,10 +93,28 @@ fn lean_world() -> LeanObj {
     1usize as LeanObj
 }
 
-fn from_lean_string(o: LeanObj) -> String {
+/// Read a Lean string by its exact byte length (`m_size` includes the NUL
+/// terminator; content is `size - 1` bytes). Rejects NULL, boxed scalars,
+/// non-string objects and invalid UTF-8 — every rejection is a `SeamError`
+/// the caller maps to Block.
+fn from_lean_string(o: LeanObj) -> Result<String, SeamError> {
+    if o.is_null() || (o as usize) & 1 == 1 {
+        return Err(SeamError::NotAString);
+    }
     unsafe {
+        if seal_lean_is_string(o) == 0 {
+            return Err(SeamError::NotAString);
+        }
+        let size = seal_lean_string_size(o);
+        if size == 0 {
+            return Err(SeamError::NotAString);
+        }
         let p = seal_lean_string_cstr(o);
-        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+        if p.is_null() {
+            return Err(SeamError::NotAString);
+        }
+        let bytes = std::slice::from_raw_parts(p as *const u8, size - 1);
+        String::from_utf8(bytes.to_vec()).map_err(|_| SeamError::InvalidUtf8)
     }
 }
 
@@ -61,9 +124,27 @@ pub struct LeanHost {
 }
 
 impl LeanHost {
-    /// Initialise the Lean runtime exactly once per process.
+    /// Initialise the Lean runtime exactly once per process, with the
+    /// fail-closed panic policy armed (Lean panic ⇒ process exit, never a
+    /// routable default).
     pub fn new() -> Self {
+        Self::new_with_panic_guard(true)
+    }
+
+    /// Test seam for `tests/panic_probe.rs` ONLY: `guard = false` leaves the
+    /// runtime's default return-a-default panic behavior in place so the
+    /// probe can demonstrate the fail-open this host closes. Never call with
+    /// `false` in production code.
+    #[doc(hidden)]
+    pub fn new_with_panic_guard(guard: bool) -> Self {
         unsafe {
+            if guard {
+                // Belt: runtime flag. Braces: env var read by the runtime's
+                // own abort_on_panic() path. Either alone kills the process
+                // on a Lean panic.
+                seal_lean_set_exit_on_panic(1);
+                std::env::set_var("LEAN_ABORT_ON_PANIC", "1");
+            }
             lean_initialize_runtime_module();
             let res = seal_ffi_initialize(1, lean_world());
             if seal_lean_io_result_is_ok(res) == 0 {
@@ -76,28 +157,41 @@ impl LeanHost {
         LeanHost { lock: Mutex::new(()) }
     }
 
-    pub fn init(&self, envelope: &str, pubkey: &str) -> String {
-        let _g = self.lock.lock().unwrap();
-        unsafe {
-            let r = seal_host_init(to_lean_string(envelope), to_lean_string(pubkey));
+    fn call_string(&self, f: impl FnOnce() -> LeanObj) -> Result<String, SeamError> {
+        let _g = self.lock.lock().map_err(|_| SeamError::PoisonedLock)?;
+        catch_unwind(AssertUnwindSafe(|| {
+            let r = f();
             let s = from_lean_string(r);
-            lean_dec(r);
+            unsafe { lean_dec(r) };
             s
-        }
+        }))
+        .map_err(|_| SeamError::Panic)?
     }
 
-    pub fn step(&self, input: &str) -> String {
-        let _g = self.lock.lock().unwrap();
-        unsafe {
-            let r = seal_host_step(to_lean_string(input));
-            let s = from_lean_string(r);
-            lean_dec(r);
-            s
-        }
+    pub fn init(&self, envelope: &str, pubkey: &str) -> Result<String, SeamError> {
+        self.call_string(|| unsafe {
+            seal_host_init(to_lean_string(envelope), to_lean_string(pubkey))
+        })
     }
 
-    pub fn classify(&self, line: &str) -> u32 {
-        let _g = self.lock.lock().unwrap();
-        unsafe { seal_host_classify(to_lean_string(line)) }
+    pub fn step(&self, input: &str) -> Result<String, SeamError> {
+        self.call_string(|| unsafe { seal_host_step(to_lean_string(input)) })
+    }
+
+    pub fn classify(&self, line: &str) -> Result<u32, SeamError> {
+        let _g = self.lock.lock().map_err(|_| SeamError::PoisonedLock)?;
+        catch_unwind(AssertUnwindSafe(|| unsafe {
+            seal_host_classify(to_lean_string(line))
+        }))
+        .map_err(|_| SeamError::Panic)
+    }
+
+    /// Test seam for `tests/panic_probe.rs` ONLY: trigger a Lean panic. With
+    /// the guard armed the process must die here; if it returns, the value is
+    /// the boxed default (0) — the exact fail-open classify would produce.
+    #[doc(hidden)]
+    pub fn force_panic_probe(&self) -> usize {
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { seal_lean_force_panic() as usize }
     }
 }

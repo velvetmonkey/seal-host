@@ -33,3 +33,32 @@ LEAN_EXPORT void seal_lean_dec(lean_obj_arg o) {
 LEAN_EXPORT lean_object* seal_lean_mk_string(char const* s, size_t n) {
     return lean_mk_string_from_bytes(s, n);
 }
+
+/* Byte size of the string INCLUDING the NUL terminator (lean_string_object
+ * m_size). Content bytes = size - 1. Lets the Rust host read kernel output
+ * exactly instead of stopping at an interior NUL. */
+LEAN_EXPORT size_t seal_lean_string_size(b_lean_obj_arg o) {
+    return lean_string_size(o);
+}
+
+/* Object-shape guard: the host must never treat a non-string result as a
+ * verdict. */
+LEAN_EXPORT uint8_t seal_lean_is_string(b_lean_obj_arg o) {
+    return lean_is_string(o);
+}
+
+/* Fail-closed panic policy: with exit-on-panic set, a Lean panic terminates
+ * the process instead of returning the type's default value. Without it,
+ * `seal_host_classify`'s default is 0 = passthrough — a fail-OPEN. The host
+ * sets this before mediating any byte. */
+LEAN_EXPORT void seal_lean_set_exit_on_panic(uint8_t flag) {
+    lean_set_exit_on_panic(flag != 0);
+}
+
+/* Test-only: force a Lean panic so the harness can verify the process dies
+ * (never returns a default that could route). Returns lean_box(0) — the
+ * exact fail-open value classify would yield — if the panic does NOT kill
+ * the process. */
+LEAN_EXPORT lean_object* seal_lean_force_panic(void) {
+    return lean_panic_fn(lean_box(0), lean_mk_string("seal-host panic-path probe"));
+}

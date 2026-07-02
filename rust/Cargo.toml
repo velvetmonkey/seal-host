@@ -12,6 +12,10 @@ hex = "0.4"
 [dev-dependencies]
 proptest = "1"
 
+[lib]
+name = "seal_host_rs"
+path = "src/lib.rs"
+
 [[bin]]
 name = "seal-host-rs"
 path = "src/main.rs"

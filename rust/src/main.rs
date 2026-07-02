@@ -5,12 +5,34 @@
 //! A3 freshness, evidence file reads, the wall clock. Does NOT own any
 //! decision: every line is classified and decided by the Lean exports
 //! (`seal_host_step`), and this host only routes bytes accordingly.
+//!
+//! # Path inventory (source → sink → mediated?)
+//!
+//! | # | Source                    | Sink                                   | Mediated? |
+//! |---|---------------------------|----------------------------------------|-----------|
+//! | P1| stdin line (hostile)      | `child_in.write_all` (classify path)   | YES — `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); Lean panic exits the process (never a routable default) |
+//! | P2| stdin line                | `child_in.write_all` (step path)       | YES — `seal_host_step` route `forward`/`passthrough`, exact parse (`route_of_step_output`) |
+//! | P3| stdin line                | `child_in.write_all` (interactive retry)| YES — second `seal_host_step == forward` after a human-minted approval |
+//! | P4| operator argv             | `Command::new(...).spawn()`            | N/A — operator-trusted setup; the child IS the guarded resource |
+//! | P5| kernel block response     | client stdout                          | YES — kernel-authored bytes |
+//! | P6| child stdout              | client stdout (relay thread)           | NO — response egress is unmediated BY DESIGN (requests are mediated, responses are not; see RUST_BRIDGE.md) |
+//! | P7| audit / A3 drops / errors | stderr                                 | telemetry only, no effect |
+//! | P8| approval evidence         | (feeds Lean via A3 only)               | parse failure drops the record ⇒ deny |
+//! | P9| votes/grants/forecasts    | (raw text to Lean)                     | Lean parses; grants cursor line-split is drop-only |
+//!
+//! Enforced invariant: bytes reach the child ⇔ the Lean kernel returned
+//! classify == 0 or step route ∈ {forward, passthrough} for the
+//! byte-identical line. Every seam error, panic, or ambiguity refuses the
+//! line and answers the client with `SEAM_ERROR_RESPONSE` — the only
+//! host-authored egress bytes.
+//!
+//! The wire bytes the client sent are forwarded VERBATIM on allow — the host
+//! never reconstructs, re-encodes, or trims what the child receives.
 
-mod a3;
-mod lean;
-mod providers;
-
-use providers::ApprovalProvider;
+use seal_host_rs::a3;
+use seal_host_rs::lean;
+use seal_host_rs::providers::{self, ApprovalProvider};
+use seal_host_rs::route::{route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE};
 use serde_json::{json, Value};
 
 /// The active back-channel. Enum (not a trait object) so the transport can
@@ -127,7 +149,44 @@ fn write_locked(lock: &Mutex<()>, line: &str) {
     let _ = out.flush();
 }
 
+/// The Lean routing view of one wire line: the line terminator (`\n` or
+/// `\r\n`) stripped. This framing strip is the ONLY transformation between
+/// the client's bytes and what Lean judges; the bytes forwarded to the child
+/// on allow are the client's original, terminator included.
+fn lean_view(wire: &[u8]) -> &[u8] {
+    let s = wire.strip_suffix(b"\n").unwrap_or(wire);
+    s.strip_suffix(b"\r").unwrap_or(s)
+}
+
 fn main() {
+    // Fail-closed panic policy, armed before the runtime exists and before
+    // any thread spawns: a Lean panic must terminate the process, never
+    // return a type default that could route (classify's default is 0 =
+    // passthrough — a fail-open without this). Belt: env var (runtime
+    // abort_on_panic). Braces: lean_set_exit_on_panic in LeanHost::new.
+    std::env::set_var("LEAN_ABORT_ON_PANIC", "1");
+
+    // Hidden probes for tests/panic_probe.rs: verify empirically that a Lean
+    // panic kills the process under the production guard (and demonstrates
+    // the fail-open default without it). Never used in normal operation.
+    match std::env::args().nth(1).as_deref() {
+        Some("--panic-probe") => {
+            let host = lean::LeanHost::new();
+            let v = host.force_panic_probe();
+            // Reaching this line means the guard FAILED to kill the process.
+            println!("SURVIVED {v}");
+            std::process::exit(42);
+        }
+        Some("--panic-probe-unguarded") => {
+            std::env::remove_var("LEAN_ABORT_ON_PANIC");
+            let host = lean::LeanHost::new_with_panic_guard(false);
+            let v = host.force_panic_probe();
+            println!("SURVIVED {v}");
+            std::process::exit(0);
+        }
+        _ => {}
+    }
+
     std::process::exit(run());
 }
 
@@ -152,7 +211,14 @@ fn run() -> i32 {
             return 3;
         }
     };
-    let summary: Value = match serde_json::from_str(&host.init(&envelope, &args.pubkey)) {
+    let init_out = match host.init(&envelope, &args.pubkey) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("trusted config rejected: init seam failure: {e}");
+            return 3;
+        }
+    };
+    let summary: Value = match serde_json::from_str(&init_out) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("trusted config rejected: bad init response: {e}");
@@ -236,9 +302,27 @@ fn run() -> i32 {
     });
 
     let stdin = std::io::stdin();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        let wire = format!("{line}\n");
+    let mut reader = stdin.lock();
+    let mut wire: Vec<u8> = Vec::new();
+    loop {
+        wire.clear();
+        match reader.read_until(b'\n', &mut wire) {
+            Ok(0) => break,          // EOF: session over
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("{}", json!({"error": format!("stdin read error: {e}")}));
+                break;               // transport dead: stop mediating, kill child
+            }
+        }
+
+        // The Lean view must be valid UTF-8 (Lean strings are UTF-8). A
+        // non-UTF-8 line cannot be judged, so it cannot be forwarded:
+        // refuse it and keep the session alive.
+        let Ok(line) = std::str::from_utf8(lean_view(&wire)) else {
+            eprintln!("{}", json!({"error": "non-utf8 line refused"}));
+            write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+            continue;
+        };
         let now = now_ms();
 
         // Pass non-mediated lines (initialize, tools/list, notifications)
@@ -246,10 +330,21 @@ fn run() -> i32 {
         // control file only for tools/call; polling on passthrough lines would
         // advance the provider's seen-counter and consume an approval before
         // the mediated call that needs it ever sees it.
-        if host.classify(&line) == 0 {
-            let _ = child_in.write_all(wire.as_bytes());
-            let _ = child_in.flush();
-            continue;
+        //
+        // `line` (the string judged here) is byte-identical to the "line"
+        // field handed to `step` below — one binding, no rewrites.
+        match route_of_classify(host.classify(line)) {
+            ClassifyRoute::Passthrough => {
+                let _ = child_in.write_all(&wire);
+                let _ = child_in.flush();
+                continue;
+            }
+            ClassifyRoute::Mediate => {}
+            ClassifyRoute::Refuse => {
+                eprintln!("{}", json!({"error": "classify seam failure; line refused"}));
+                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                continue;
+            }
         }
 
         let (records, dropped) = a3.filter(provider.poll(), now);
@@ -269,25 +364,23 @@ fn run() -> i32 {
             "grants": grants.fresh(),
             "forecasts": read_or_empty(&forecasts_file),
         });
-        let out: Value = match serde_json::from_str(&host.step(&input.to_string())) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("{}", json!({"error": format!("step output unparseable: {e}")}));
-                continue; // fail-closed: never forward on a broken seam
-            }
-        };
-        if let Some(audit) = out["audit"].as_str() {
-            eprintln!("{audit}");
-        }
-        match out["route"].as_str() {
-            Some("passthrough") | Some("forward") => {
-                let _ = child_in.write_all(wire.as_bytes());
+        match route_of_step_output(host.step(&input.to_string())) {
+            Route::Forward { audit } => {
+                if let Some(a) = audit {
+                    eprintln!("{a}");
+                }
+                let _ = child_in.write_all(&wire);
                 let _ = child_in.flush();
             }
-            Some("block") => {
-                let mut response = out["response"].as_str().unwrap_or("").to_string();
+            Route::Block { mut response, audit } => {
+                if let Some(a) = audit {
+                    eprintln!("{a}");
+                }
                 // Interactive channel: a missing-approval deny queues a human
                 // question; a "y" mints the approval and the call retries once.
+                // The target is parsed from the KERNEL's response text (never
+                // from raw input); a failed parse means no retry — the line
+                // stays blocked.
                 if interactive {
                     if let Some(target) = response
                         .split("approval required: ")
@@ -311,17 +404,24 @@ fn run() -> i32 {
                                 "grants": grants.fresh(),
                                 "forecasts": read_or_empty(&forecasts_file),
                             });
-                            if let Ok(v) = serde_json::from_str::<Value>(&host.step(&retry.to_string())) {
-                                if let Some(a) = v["audit"].as_str() {
-                                    eprintln!("{a}");
-                                }
-                                if v["route"] == json!("forward") {
-                                    let _ = child_in.write_all(wire.as_bytes());
+                            match route_of_step_output(host.step(&retry.to_string())) {
+                                Route::Forward { audit } => {
+                                    if let Some(a) = audit {
+                                        eprintln!("{a}");
+                                    }
+                                    let _ = child_in.write_all(&wire);
                                     let _ = child_in.flush();
                                     continue;
                                 }
-                                if let Some(r) = v["response"].as_str() {
-                                    response = r.to_string();
+                                Route::Block { response: r2, audit } => {
+                                    if let Some(a) = audit {
+                                        eprintln!("{a}");
+                                    }
+                                    response = r2;
+                                }
+                                Route::SeamFailure { reason } => {
+                                    eprintln!("{}", json!({"error": reason}));
+                                    response = SEAM_ERROR_RESPONSE.to_string();
                                 }
                             }
                         }
@@ -329,8 +429,9 @@ fn run() -> i32 {
                 }
                 write_locked(&stdout_lock, &response);
             }
-            _ => {
-                eprintln!("{}", json!({"error": "missing route; not forwarding"}));
+            Route::SeamFailure { reason } => {
+                eprintln!("{}", json!({"error": reason}));
+                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
             }
         }
     }

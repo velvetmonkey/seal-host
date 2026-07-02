@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 /rust/target
 
+
+# scratch lane goal files
+.goal-*.md

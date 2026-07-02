@@ -35,7 +35,7 @@ impl A3Filter {
         let mut dropped = Vec::new();
         for r in records {
             if let Some(issued) = r.issued_at {
-                if issued > now_ms + MAX_FUTURE_SKEW_MS {
+                if issued > now_ms.saturating_add(MAX_FUTURE_SKEW_MS) {
                     dropped.push(format!("a3: future issuedAt for target {}", r.target));
                     continue;
                 }

@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The ONLY translation from kernel output to transport action. Pure, total
+//! functions: every possible seam result maps to exactly one action, and
+//! `Route::Forward` is constructible ONLY from a successfully parsed kernel
+//! step output whose `route` is literally `"forward"` or `"passthrough"`
+//! (with, for a block, a present response string). Everything else — seam
+//! errors, unparseable output, missing/unknown routes, non-string fields —
+//! lands in `SeamFailure`, which never forwards.
+//!
+//! `main.rs` and the conformance tests call these SAME functions, so there
+//! is no test-mirror differential: the property the tests pin is the code
+//! that runs.
+
+use crate::lean::SeamError;
+use serde_json::Value;
+
+/// Transport action for one mediated line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    /// Kernel verdict allows the bytes through (step route `forward`, or
+    /// step-level `passthrough`). The only variant that may write wire bytes
+    /// to the child.
+    Forward { audit: Option<String> },
+    /// Kernel verdict blocks: `response` (kernel-authored, newline-terminated)
+    /// goes to the client; nothing goes to the child.
+    Block { response: String, audit: Option<String> },
+    /// Broken or ambiguous seam: nothing goes to the child; the static
+    /// `seam_error_response` goes to the client.
+    SeamFailure { reason: String },
+}
+
+/// Routing action for the pre-step classify fast path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassifyRoute {
+    /// Literal `Ok(0)` from a healthy seam: not a tools/call; forward the
+    /// wire bytes untouched (Lean's own routing verdict).
+    Passthrough,
+    /// Literal `Ok(1)`: mediated act — must go through `seal_host_step`.
+    Mediate,
+    /// Anything else (seam error or a value outside the kernel's 0/1
+    /// contract): refuse — never forward, respond with the seam error.
+    Refuse,
+}
+
+/// Total mapping from the classify seam result. Only the exact healthy
+/// values route; garbage and errors refuse.
+pub fn route_of_classify(c: Result<u32, SeamError>) -> ClassifyRoute {
+    match c {
+        Ok(0) => ClassifyRoute::Passthrough,
+        Ok(1) => ClassifyRoute::Mediate,
+        Ok(_) | Err(_) => ClassifyRoute::Refuse,
+    }
+}
+
+/// Total mapping from the step seam result. Forward requires an exact parse
+/// of the kernel's output with an exact route literal; a block requires the
+/// kernel's response string to be present (a block with nothing to tell the
+/// client is a malformed verdict, not a verdict).
+pub fn route_of_step_output(out: Result<String, SeamError>) -> Route {
+    let text = match out {
+        Ok(t) => t,
+        Err(e) => return Route::SeamFailure { reason: format!("seam error: {e}") },
+    };
+    let v: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            return Route::SeamFailure { reason: format!("step output unparseable: {e}") }
+        }
+    };
+    let audit = v["audit"].as_str().map(str::to_owned);
+    match v["route"].as_str() {
+        Some("forward") | Some("passthrough") => Route::Forward { audit },
+        Some("block") => match v["response"].as_str() {
+            Some(r) => Route::Block { response: r.to_owned(), audit },
+            None => Route::SeamFailure {
+                reason: "block verdict without response".to_owned(),
+            },
+        },
+        Some(other) => Route::SeamFailure { reason: format!("unknown route: {other}") },
+        None => Route::SeamFailure { reason: "missing route".to_owned() },
+    }
+}
+
+/// The ONLY host-authored bytes that ever reach the client: a static
+/// JSON-RPC error emitted when the mediation seam fails mid-request, so the
+/// client is not left hanging. `id` is null because recovering the request
+/// id would mean re-parsing raw input — the parser differential this host
+/// forbids. Named in RUST_BRIDGE.md.
+pub const SEAM_ERROR_RESPONSE: &str = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"seal-host: mediation seam failure; request blocked\"}}\n";

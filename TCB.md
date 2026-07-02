@@ -21,13 +21,22 @@ The cleanest assurance story. Trusted:
 for deployability.** Everything in Shape 1, plus:
 
 - the C ABI seam: `lean.rs` marshalling (string in/out), Lean runtime
-  initialisation ordering, refcount handling;
+  initialisation ordering, refcount handling. Hardened (see RUST_BRIDGE.md):
+  strings cross by exact byte length (interior-NUL safe), strict UTF-8, and
+  every seam failure is a typed `SeamError` that can only refuse; Lean
+  panics terminate the process (`lean_set_exit_on_panic` +
+  `LEAN_ABORT_ON_PANIC`) instead of returning a routable default —
+  empirically pinned by `rust/tests/panic_probe.rs`;
 - the Rust transport (`main.rs`): it must actually route the bytes the way
   Lean's verdict says — a transport bug here can bypass mediation without
   falsifying any Lean theorem. Mitigation: the transport never parses wire
   lines for routing (Lean's `seal_host_classify`/`seal_host_step` is the
-  single authority) and never forwards on a broken seam (fail-closed on any
-  unparseable step output);
+  single authority), forwards the client's bytes VERBATIM on allow, and
+  never forwards on a broken seam. The kernel-output → action translation
+  lives in `rust/src/route.rs` as total functions where `Forward` is
+  unconstructible without an exact kernel verdict; the binary and the tests
+  run the same functions, and the property is proptested plus pinned by the
+  full-binary oracle in `rust/tests/host_path.rs`;
 - the JSON marshalling of evidence across the seam (`serde_json` on the
   Rust side, `Lean.Json` on the Lean side);
 - the approval back-channel providers (`providers.rs`): control-file,
@@ -39,9 +48,19 @@ for deployability.** Everything in Shape 1, plus:
   and clock the proofs assume;
 - the differential conformance harness (`rust/tests/differential.rs`) pins
   the residual wire-parser gap: property-based agreement between the Rust
-  serde_json wire view and the Lean canonical parser on what gets mediated,
-  with zero bypass cases. This is evidence, not proof — stated as a trusted
-  relationship, never claimed eliminated.
+  serde_json wire view and the Lean canonical parser on what gets mediated
+  (including the full obfuscation disguise corpus), with zero bypass cases;
+  the one known representational difference (numbers beyond f64: Lean
+  mediates, serde can't parse — fail-closed direction) is pinned as its own
+  test. This is evidence, not proof — stated as a trusted relationship,
+  never claimed eliminated.
+
+**Not mediated, loudly:** responses are relayed verbatim from the guarded
+server to the client (request-effects are mediated, response egress is not),
+and routing assumes a strict child parser (a lenient child that executes a
+line strict JSON rejects is outside the contract). Both are limitations of
+the claim — see "What seal does NOT claim" in RUST_BRIDGE.md; never restate
+the guarantee as "nothing leaks".
 
 ## Unchanged by either shape
 
