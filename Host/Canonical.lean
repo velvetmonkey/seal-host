@@ -12,11 +12,16 @@ open Lean
 /-- How the host treats one wire line.
 
     Routing (is this a `tools/call`?) follows the V1 host byte-for-byte:
-    `Lean.Json.parse` + `Seal.toolsCall?`. The SealV2 verified parser is then a
-    strictly fail-closed gate on top: a line V1 routing recognises as a
-    `tools/call` but the canonical parser rejects is blocked rather than
-    mediated. Everything that is not a `tools/call` passes through untouched,
-    exactly as in V1. -/
+    `Lean.Json.parse` + `Seal.toolsCall?`. This host runs the COMPATIBLE
+    profile: the SealV2 canonical parse is attached as `ast?` for audit only
+    and does NOT gate the call. A `tools/call` the canonical parser rejects is
+    still mediated on the V1 `Lean.Json` view with `ast? = none`; it is never
+    silently blocked on canonical-reject. (A strict `canonical-l0` profile, in
+    which canonical-reject BLOCKS and every forward carries a canonical parse
+    witness, is a separate mode tracked in `CLAIMS.md` and
+    `SEAL-MEDIATION-PROFILE-L0`; it is not implemented in this file.)
+    Everything that is not a `tools/call` passes through untouched, exactly as
+    in V1. -/
 inductive LineClass where
   | passthrough
   | act (a : CanonicalAction)
