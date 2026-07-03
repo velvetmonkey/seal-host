@@ -10,6 +10,7 @@ import SealV2.DecideTheorems
 import Host
 import Host.RecordTemporal
 import Host.CompositionBytes
+import Host.ChannelModel
 import Kernels
 import Kernels.ConsensusBytes
 import Crdt.Convergence
@@ -195,6 +196,60 @@ info: 'ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc' depends on axioms: [p
 
 /-- info: 'Host.combine_extension_from_empty' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.combine_extension_from_empty
+
+-- W2-T6: channel non-bypass capstone (Host/ChannelModel.lean)
+
+/-- info: 'Host.Channel.obligation_O3' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.obligation_O3
+
+/-- info: 'Host.Channel.run' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.run
+
+/-- info: 'Host.Channel.run_invariant' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.run_invariant
+
+/-- info: 'Host.Channel.run_decide_genuine' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Channel.run_decide_genuine
+
+/-- info: 'Host.Channel.channel_preserves_non_bypass_gen' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.channel_preserves_non_bypass_gen
+
+/--
+info: 'Host.Channel.channel_preserves_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.channel_preserves_non_bypass
+
+/--
+info: 'Host.Channel.channel_emits_only_validated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.channel_emits_only_validated
+
+/-- info: 'Host.Channel.compliantAdapter_O1' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Channel.compliantAdapter_O1
+
+/-- info: 'Host.Channel.compliantAdapter_O2' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.compliantAdapter_O2
+
+/-- info: 'Host.Channel.compliant_run_mediated' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Channel.compliant_run_mediated
+
+/-- info: 'Host.Channel.rogueAdapter_not_O1' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.rogueAdapter_not_O1
+
+/-- info: 'Host.Channel.rogueAdapter_O2' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.rogueAdapter_O2
+
+/-- info: 'Host.Channel.rogue_mediation_fails' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.rogue_mediation_fails
+
+/-- info: 'Host.Channel.forgerAdapter_O1' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.forgerAdapter_O1
+
+/-- info: 'Host.Channel.forgerAdapter_not_O2' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.forgerAdapter_not_O2
+
+/-- info: 'Host.Channel.forger_mediation_fails' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.forger_mediation_fails
 
 -- W2-T2: byte-quorum consensus, model-level
 -- (Kernels/ConsensusBytes.lean, Host/CompositionBytes.lean)
