@@ -21,7 +21,7 @@ The host runs a **profile**. This is load-bearing for every claim below.
 | Profile | Canonical-reject `tools/call` | Forward carries | Status |
 |---|---|---|---|
 | `compatible` (this repo, today) | mediated on the V1 `Lean.Json` view, `ast? = none`, audit-only | V1 route decision | IMPLEMENTED (`Host/Canonical.lean`) |
-| `canonical-l0` | BLOCKS | canonical parse witness | SPEC ONLY (`SEAL-MEDIATION-PROFILE-L0`); NOT implemented here |
+| `canonical-l0` | BLOCKS | canonical parse witness | IMPLEMENTED AT THE PROOF LAYER (`Host/CanonicalL0.lean`: `stepRouteP .canonicalL0`, reject-on-parse-failure + witness-on-forward proven); NOT the deployed routing path (`Ffi.stepImpl` still runs `compatible`) |
 
 Do not describe the deployed host as strict canonical-l0. It is `compatible`.
 The canonical AST is audit input for kernels, not the mediation gate.
@@ -35,6 +35,7 @@ The canonical AST is audit input for kernels, not the mediation gate.
 | `Forward` is unconstructible without an exact kernel verdict | Rust bridge type | Rust type-level | Rust type soundness | — | yes |
 | Lean-panic fail-open risk is closed | abort-on-panic in `rust/` | code + test | abort semantics | — | yes |
 | Complete mediation modulo A1-A4, A2 minimised by construction; A6 (durability) stated, not hidden | THREAT_MODEL.md capstone | mixed (see below) | A1-A4 | A6 | yes (verbatim only) |
+| W2-T1: timed record admissibility — accepted entries are δ-fresh against the producing step's monotone clock; stale-clock, clock-regressed, and replayed-nonce entries are inadmissible; admissible appends preserve log clock-sortedness and nonce uniqueness; chain spine (append-only, tamper-evidence) inherited from L1 CORE under A-CR + A-GEN + A-ENC (injective entry encoding) | `Host/RecordTemporal.lean` | Lean theorem (spine inherited) | monotone host/LOGICAL clock feeding `now` (NOT wall clock — wall clock + runtime nonce/TTL remain TCB, `a3.rs`); A-ENC undischarged for the deployed `TimedEntry.line` encoder | statement-level: the runtime does not yet enforce `admissible` | yes, with the logical-clock caveat verbatim |
 
 ## Assumptions and residuals (A1-A6)
 

@@ -483,3 +483,4 @@ dated entry here with rationale — conclusions never drift silently.
 | date | target | change | why |
 |---|---|---|---|
 | 2026-07-03 | all | initial freeze | Day-1 batch |
+| 2026-07-03 | W2-T1 | `admissible` replay conjunct written `decide (e.nonce ∉ nonces log)` instead of `!(nonces log).contains e.nonce` | proof plumbing (uniform `decide` conjuncts, no BEq lemmas); semantically identical; conclusions unchanged |

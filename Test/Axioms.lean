@@ -8,6 +8,7 @@
 import SealCore.Safety
 import SealV2.DecideTheorems
 import Host
+import Host.RecordTemporal
 import Kernels
 import Crdt.Convergence
 import Crdt.ORSet
@@ -178,6 +179,44 @@ info: 'Crdt.strong_eventual_consistency' depends on axioms: [propext, Classical.
 info: 'ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc
+
+-- W2-T1: timed record admissibility (Host/RecordTemporal.lean)
+
+/-- info: 'Host.Record.admissible' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.admissible
+
+/-- info: 'Host.Record.admit' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.admit
+
+/-- info: 'Host.Record.admitted_within_bound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.admitted_within_bound
+
+/-- info: 'Host.Record.stale_clock_inadmissible' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.stale_clock_inadmissible
+
+/-- info: 'Host.Record.regressed_clock_inadmissible' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.regressed_clock_inadmissible
+
+/-- info: 'Host.Record.replayed_nonce_inadmissible' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.replayed_nonce_inadmissible
+
+/-- info: 'Host.Record.admit_preserves_clock_mono' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.admit_preserves_clock_mono
+
+/-- info: 'Host.Record.admit_preserves_nonce_nodup' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.admit_preserves_nonce_nodup
+
+/-- info: 'Host.Record.timed_head_after_append' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Record.timed_head_after_append
+
+/-- info: 'Host.Record.timed_tamper_evident' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Record.timed_tamper_evident
+
+/-- info: 'Host.Record.wLog_clock_mono' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Record.wLog_clock_mono
+
+/-- info: 'Host.Record.wLog_nonce_nodup' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Record.wLog_nonce_nodup
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
