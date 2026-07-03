@@ -180,6 +180,20 @@ info: 'ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc' depends on axioms: [p
 -/
 #guard_msgs in #print axioms ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc
 
+-- W2-T3: composition residual — gate-extension corollaries (Host/Composition.lean)
+
+/-- info: 'Host.combine_allow_restrict' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.combine_allow_restrict
+
+/-- info: 'Host.combine_deny_append' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.combine_deny_append
+
+/-- info: 'Host.combine_deny_append_live' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.combine_deny_append_live
+
+/-- info: 'Host.combine_extension_from_empty' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.combine_extension_from_empty
+
 -- W2-T1: timed record admissibility (Host/RecordTemporal.lean)
 
 /-- info: 'Host.Record.admissible' depends on axioms: [propext, Quot.sound] -/

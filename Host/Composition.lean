@@ -78,6 +78,44 @@ theorem combine_deny_of_member (vs : List Verdict) (v : Verdict)
       rw [hdeny] at this
       cases this
 
+/-- **Allow-restriction under gate extension (W2-T3).** If the extended gate
+    set allows, any non-empty prefix allows on its own: no later kernel can
+    have been load-bearing for an earlier kernel's allow. -/
+theorem combine_allow_restrict (vs ws : List Verdict)
+    (hne : vs ≠ []) (hallow : combineVerdicts (vs ++ ws) = .allow) :
+    combineVerdicts vs = .allow :=
+  (combine_allow_iff vs).mpr ⟨hne, fun v hv =>
+    ((combine_allow_iff _).mp hallow).2 v (List.mem_append_left ws hv)⟩
+
+/-- **Deny-monotonicity under gate extension (W2-T3).** A NON-VACUOUS deny
+    survives adding kernels: composition never widens admission of an
+    already-gated, already-denied call. `vs ≠ []` is load-bearing — the empty
+    deny is the fail-closed DEFAULT, and a first gating kernel may
+    legitimately allow (`combine_extension_from_empty` below witnesses the
+    boundary). -/
+theorem combine_deny_append (vs ws : List Verdict)
+    (hne : vs ≠ []) (hdeny : combineVerdicts vs = .deny) :
+    combineVerdicts (vs ++ ws) = .deny := by
+  cases hcomb : combineVerdicts (vs ++ ws) with
+  | deny => rfl
+  | allow =>
+      rw [combine_allow_restrict vs ws hne hcomb] at hdeny
+      cases hdeny
+
+/-- Non-vacuity: a real deny among the prefix keeps the extended composition
+    denied. -/
+theorem combine_deny_append_live :
+    combineVerdicts
+      ([{ kernel := "k", kind := .deny, reason := "r", certHash := 0 }]
+        ++ [{ kernel := "k", kind := .allow, reason := "r", certHash := 0 }]) = .deny := rfl
+
+/-- Boundary witness: why `vs ≠ []` is required in `combine_deny_append` —
+    the fail-closed EMPTY deny does not survive extension; a first gating
+    kernel legitimately opens admission. -/
+theorem combine_extension_from_empty :
+    combineVerdicts (([] : List Verdict)
+      ++ [{ kernel := "k", kind := .allow, reason := "r", certHash := 0 }]) = .allow := rfl
+
 /-- **Non-bypass survives composition.** If the safety kernel's verdict for a
     guarded call is among the combined verdicts and the composed gate allows,
     then the automaton held a live approval bound to exactly that target —
