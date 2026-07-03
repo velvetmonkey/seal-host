@@ -9,7 +9,9 @@ import SealCore.Safety
 import SealV2.DecideTheorems
 import Host
 import Host.RecordTemporal
+import Host.CompositionBytes
 import Kernels
+import Kernels.ConsensusBytes
 import Crdt.Convergence
 import Crdt.ORSet
 import Temporal.Monitor
@@ -193,6 +195,50 @@ info: 'ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc' depends on axioms: [p
 
 /-- info: 'Host.combine_extension_from_empty' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.combine_extension_from_empty
+
+-- W2-T2: byte-quorum consensus, model-level
+-- (Kernels/ConsensusBytes.lean, Host/CompositionBytes.lean)
+
+/-- info: 'Kernels.canonicalBytesOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.canonicalBytesOf
+
+/-- info: 'Kernels.byteQuorumAccepts' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.byteQuorumAccepts
+
+/-- info: 'Kernels.byteConsensusKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.byteConsensusKernel
+
+/--
+info: 'Kernels.byteConsensus_verdict_allow_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Kernels.byteConsensus_verdict_allow_iff
+
+/--
+info: 'Kernels.byteConsensus_denies_without_witness' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Kernels.byteConsensus_denies_without_witness
+
+/-- info: 'Kernels.byte_quorum_agreement' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.byte_quorum_agreement
+
+/-- info: 'Kernels.byteQuorum_accepts_majority' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.byteQuorum_accepts_majority
+
+/-- info: 'Kernels.byteQuorum_rejects_minority' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.byteQuorum_rejects_minority
+
+/--
+info: 'Host.forward_high_stakes_byte_quorum' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.forward_high_stakes_byte_quorum
+
+/-- info: 'Host.composed_byte_agreement' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.composed_byte_agreement
+
+/--
+info: 'Host.forward_byte_quorum_route_live' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.forward_byte_quorum_route_live
 
 -- W2-T1: timed record admissibility (Host/RecordTemporal.lean)
 
