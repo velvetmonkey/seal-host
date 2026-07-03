@@ -484,3 +484,4 @@ dated entry here with rationale — conclusions never drift silently.
 |---|---|---|---|
 | 2026-07-03 | all | initial freeze | Day-1 batch |
 | 2026-07-03 | W2-T1 | `admissible` replay conjunct written `decide (e.nonce ∉ nonces log)` instead of `!(nonces log).contains e.nonce` | proof plumbing (uniform `decide` conjuncts, no BEq lemmas); semantically identical; conclusions unchanged |
+| 2026-07-03 | all | EXECUTED: T1 5b4e9f5, T3 cb2be14, T2 56d5c78, T6 7cc9370, T4 e0cc621 (seal-host feat/wave2); T5 replacement ff12a65 (attention-lean feat/parity-achievability). All frozen conclusions shipped verbatim; T4 done before T5 (order swap only, both landed); T4 stop-early never triggered | wave complete |
