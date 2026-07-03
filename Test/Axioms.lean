@@ -13,6 +13,7 @@ import Host.CompositionBytes
 import Host.ChannelModel
 import Kernels
 import Kernels.ConsensusBytes
+import Kernels.ConvergencePotential
 import Crdt.Convergence
 import Crdt.ORSet
 import Temporal.Monitor
@@ -196,6 +197,41 @@ info: 'ProbabilityTheory.hasCondSubgaussianMGF_of_mem_Icc' depends on axioms: [p
 
 /-- info: 'Host.combine_extension_from_empty' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.combine_extension_from_empty
+
+-- W2-T4: convergence potential (Kernels/ConvergencePotential.lean)
+
+/-- info: 'Kernels.deficit' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.deficit
+
+/-- info: 'Kernels.deficit_antitone' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.deficit_antitone
+
+/--
+info: 'Kernels.deficit_strict_decrease' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Kernels.deficit_strict_decrease
+
+/-- info: 'Kernels.deficit_eq_zero_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.deficit_eq_zero_iff
+
+/--
+info: 'Kernels.deficit_zero_converged' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Kernels.deficit_zero_converged
+
+/--
+info: 'Kernels.deficit_eventually_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Kernels.deficit_eventually_zero
+
+/-- info: 'Kernels.sysEx_deficit_before' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.sysEx_deficit_before
+
+/-- info: 'Kernels.sysEx_deficit_after' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.sysEx_deficit_after
+
+/-- info: 'Kernels.sysEx_strict_decrease' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.sysEx_strict_decrease
 
 -- W2-T6: channel non-bypass capstone (Host/ChannelModel.lean)
 
