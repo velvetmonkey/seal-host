@@ -9,6 +9,7 @@ import SealCore.Safety
 import SealV2.DecideTheorems
 import Host
 import Host.RecordTemporal
+import Host.RecordTemporalCanonical
 import Host.CompositionBytes
 import Host.ChannelModel
 import Kernels
@@ -368,6 +369,18 @@ info: 'Host.forward_byte_quorum_route_live' depends on axioms: [propext, Classic
 
 /-- info: 'Host.Record.wLog_nonce_nodup' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.Record.wLog_nonce_nodup
+
+-- W2-T1 hardening: A-ENC discharged (Host/RecordTemporalCanonical.lean)
+
+/--
+info: 'Host.Record.TimedEntry.encCanonical_injective' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Record.TimedEntry.encCanonical_injective
+
+/--
+info: 'Host.Record.timed_tamper_evident_canonical' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Record.timed_tamper_evident_canonical
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
