@@ -2,10 +2,14 @@
 
 # Decision-Receipt Schema v1 (normative)
 
-**Status: Day-1 FROZEN DRAFT — spec + shared-module seam only. Producers and
-verifiers are NOT yet rewired; that convergence happens after this freeze is
-reviewed.** Serialization/format consolidation only: nothing here changes the
-wasm binary, its pin, any Lean proof, or any decision logic.
+**Status: v1 CONVERGED (Day-2 complete, 2026-07-04).** The Day-1 freeze was
+reviewed and passed; the two parked decisions were ruled: (1) neutral
+discriminator `seal_receipt: "v1"` adopted; (2) **hard split** of
+`kernel_identity` vs asserted provenance, with `v0-live` grandfathered.
+Producers and verifiers in seal-check and seal-assurance-kit now emit/accept
+this schema (§10 records what landed). Serialization/format consolidation
+only: nothing here changes the wasm binary, its pin, any Lean proof, or any
+decision logic.
 
 This document is the single normative definition of the JSON **decision
 receipt** produced and verified across the seal family. It exists because
@@ -31,9 +35,9 @@ gateway keeps emitting it until its own audited bump). The Schema K
 discriminator `"seal_check_receipt"` is NOT v1-compatible; verifiers MUST
 reject it as legacy, naming this spec.
 
-> **Review point 1:** the new neutral discriminator `seal_receipt: "v1"`
-> (rather than making every producer emit `seal_live_receipt`) is a Day-1
-> decision — veto here if the family should instead keep the L key verbatim.
+> **Decision (ruled at Day-1 review):** the neutral discriminator
+> `seal_receipt: "v1"` is adopted; producers do not spread the
+> `seal_live_receipt` key beyond the deployed gateway that already emits it.
 
 ### Field table
 
@@ -42,6 +46,7 @@ reject it as legacy, naming this spec.
 | `seal_receipt` | `"v1"` | yes (or legacy `seal_live_receipt:"v0"`) | schema version discriminator |
 | `tool` | string | yes | mediated tool name (e.g. `"db.execute"`) |
 | `arguments` | object | yes | the tool-call arguments, verbatim; key order is fixed at production time and is significant (§2) |
+| `now` | integer ≥ 0 | optional (default 1000) | the caller-supplied **logical clock** the kernel decided with — carried so re-derivation replays the same clock; NOT wall time |
 | `canonical_request` | string | optional | the exact canonical request line that was hashed; if present it MUST equal the line derived per §2 |
 | `canonical_request_sha256` | 64-hex string | yes | SHA-256 of the canonical request line (§2) |
 | `bypass` | boolean | yes | `true` = mediation was skipped (control run); §6 |
@@ -50,9 +55,10 @@ reject it as legacy, naming this spec.
 | `deny_kernel` | string or null | yes when mediated | which gating kernel denied (null on ALLOW) |
 | `certs` | array | yes when mediated | per-gate seals `{kernel, verdict, reason, certHash}` with `certHash` a **decimal string** (u64; §3) — top-level, not nested under `witness` |
 | `emitted_bytes` | string | yes when mediated | verbatim canonical `seal_decide` output |
-| `kernel_identity` | object | yes | `wasm_sha256` (64-hex, or **null iff `bypass`**), `self_verified` (boolean). See §4 |
+| `kernel_identity` | object | yes | `wasm_sha256` (64-hex, or **null iff `bypass`**), `self_verified` (boolean). HARD SPLIT: never carries toolchain/axioms in v1. See §4 |
+| `asserted_provenance` | object | optional | asserted-not-verified proof hygiene (`lean_toolchain`, `axioms`, `verified_in_browser` — MUST NOT be `true`); the only v1 home for toolchain/axioms (§4) |
 | `kernel_config` | object | yes when mediated | the exact trusted config the kernel was initialised with — re-derivation input |
-| `granted_capabilities` | array of objects | yes when mediated | the presented grants, un-hashed: each entry carries `tool` plus the policy-selected argument fields (§3) |
+| `granted_capabilities` | array of objects | yes when mediated | the presented grants. Two entry forms (§3): **un-hashed** `{tool, <policy-selected fields>...}` when the producer holds the grant pre-image, or **opaque** `{target: "<decimal u64>"}` when it does not (e.g. seal-check's fire-your-own box accepts raw targets) |
 | `policy_id` | string | optional | producer's policy label |
 | `signature` | object | optional | integrity envelope (e.g. live-demo HMAC demo key); never a substitute for re-derivation |
 
@@ -135,9 +141,20 @@ Frozen vectors:
 | V2b | `[{literal:"pay"}]` (seal-check `payments.send`) | `["payments.send","pay"]` | `2693940768235235512` |
 | V3 | `[{arg:"table"},{arg:"operation"}]` (live-demo `db.execute`) | `["db.execute","staging_deploy_audit","insert"]` | `11517196862591714860` |
 
-A v1 receipt carries grants **un-hashed** in `granted_capabilities`
-(entry = `{tool, <selected arg fields>...}`); the verifier recomputes each
-target with the convention above before re-derivation.
+A v1 receipt carries grants in `granted_capabilities`, in one of two entry
+forms, and the verifier resolves them via the shared
+`capabilityTargetsFromPolicy(kernel_config, grants)`:
+
+* **Un-hashed** `{tool, <fields>...}` — the strong form; the producer held
+  the grant pre-image. The verifier recomputes the target from the POLICY's
+  target spec for that tool: `{literal}` parts come from the policy itself,
+  `{arg}` parts from the entry's field of that name, in policy order.
+* **Opaque** `{target: "<decimal u64>"}` — the producer did not hold the
+  pre-image (e.g. a raw target pasted into seal-check's fire-your-own box).
+  The verifier uses the decimal verbatim and COUNTS it: verdict
+  re-derivation still holds, but the grant binding cannot be independently
+  checked for that entry. Receipts say what the producer actually knew —
+  opaque entries are honest, not equivalent.
 
 ## 4. `kernel_identity` and asserted provenance
 
@@ -148,15 +165,14 @@ is `self_verified` (Schema L); Schema K's `self_verified_in_browser` is
 retired with K.
 
 Toolchain/axiom provenance (`lean_toolchain`, `axioms`) is ASSERTED, not
-verified by any receipt consumer. v0-live receipts carry these inside
-`kernel_identity`; that stays accepted. v1 producers SHOULD emit them in a
-separate `asserted_provenance` block instead, per the L0 mediation profile
-§6.2 (`seal-check/docs/SEAL-MEDIATION-PROFILE-L0.md`) — verifiers MUST base
-nothing on these fields either way.
-
-> **Review point 2:** v1 keeps L's merged block *accepted* but *discouraged*.
-> If the family wants a hard split (§6.2 strictly), say so at review and the
-> Day-2 producers will emit `asserted_provenance` only.
+verified by any receipt consumer. **HARD SPLIT (ruled at Day-1 review, per
+the L0 mediation profile §6.2,
+`seal-check/docs/SEAL-MEDIATION-PROFILE-L0.md`):** in v1 these keys are
+FORBIDDEN inside `kernel_identity` — a v1 receipt carrying them there is
+invalid (`validateReceipt` rejects it). Their only v1 home is the separate
+`asserted_provenance` block, whose `verified_in_browser` MUST NOT be `true`.
+Legacy `v0-live` receipts with the merged block are grandfathered: verifiers
+accept them as v0-live and base nothing on those fields either way.
 
 The wasm pin itself (`1cc765c7de2cead88eda2e8e5f5af5a5e070f35a767916e754b873733562c70a`)
 is untouched by this spec; the pending audited repin
@@ -188,15 +204,19 @@ item.)
 
 ## 7. Verifier obligations (summary)
 
+0. Validate the shape FIRST (`validateReceipt`): version discriminator,
+   field table, hard split, stored-line-vs-derived-line equality. A
+   malformed receipt never reaches the kernel.
 1. `kernel_identity.wasm_sha256` equals the verifier's own hash of the
    binary it will re-run, and that binary matches the audited pin.
 2. Derive the canonical line from the same `(tool, arguments)` used for
    re-derivation; check stored `canonical_request` (if present) equals it;
    hash and compare to `canonical_request_sha256`.
-3. Recompute approval targets from `granted_capabilities` per §3; re-run the
-   kernel with `kernel_config`; require verdict equality and (when present)
-   byte-identical `emitted_bytes`.
-4. Handle `bypass` per §6.
+3. Resolve `granted_capabilities` per §3 (recompute un-hashed entries from
+   the policy; count opaque entries); re-run the kernel with
+   `kernel_config` and the receipt's `now`; require verdict equality and
+   (when present) byte-identical `emitted_bytes`.
+4. Handle `bypass` per §6: report NOT MEDIATED, never "verified".
 5. Reject `seal_check_receipt` objects as legacy Schema K.
 
 ## 8. The host audit line is NOT a decision receipt
@@ -234,24 +254,37 @@ sha256Hex(bytes)                        // -> hex      (pure-JS, browser-safe)
 canonicalRequestSha256(tool, args)      // -> hex      (§2)
 stableHashParts(parts)                  // -> BigInt   (§3)
 capabilityTarget(tool, parts)           // -> BigInt   (§3 convention)
+capabilityTargetsFromPolicy(cfg, grants) // -> { approvals, opaque, errors } (§3 resolve)
+assembleReceiptV1(fields)               // -> object   (§1 fixed key order, byte-stable)
 validateReceipt(obj)                    // -> { ok, version, errors }
 ```
 
 Both repos ship a vector test (`V1/V2/V2b/V3/V4` above) that fails if the
-module and this spec ever disagree.
+module and this spec ever disagree. The kit's vendored `kernel.js` is also a
+byte-identical copy of seal-check's (pre-existing discipline, re-vendored
+with each producer change).
 
-## 10. Day-2 convergence plan (after this freeze is reviewed)
+## 10. Day-2 convergence — LANDED (2026-07-04)
 
-1. `seal-check/kernel.js buildReceipt` → emit v1 (fields of §1) via
-   `receipt-format.js`.
-2. `seal-check/receipt.js` → derive the line via `canonicalRequest(tool,
-   arguments)` (drop the `db.execute` hardcode), validate via
-   `validateReceipt`.
-3. `seal-assurance-kit gen-receipt.cjs` → emit v1; `verify.cjs` → accept v1
-   (+`v0-live`), add the bypass branch, and derive the hashed line from the
-   same call it re-runs (§2 obligation), asserting equality with any stored
-   line first.
-4. Cross-tool test: one receipt produced by seal-check verifies under BOTH
-   `seal-check/receipt.js` and `seal-assurance-kit verify.cjs`.
+1. **DONE** `seal-check/kernel.js buildReceipt` emits v1 via
+   `receipt-format.js` (hard-split identity + `asserted_provenance`; grants
+   carried as opaque `{target}` entries since seal-check accepts raw
+   targets). `app.js` call sites + conformance CLAUSE_MAP updated;
+   `SEAL-MEDIATION-PROFILE-L0.md` §4 carries a supersession note.
+2. **DONE** `seal-check/receipt.js` validates first, derives the line from
+   `(tool, arguments)` (hardcode gone), resolves grants via
+   `capabilityTargetsFromPolicy`, replays `now`, checks `emitted_bytes`,
+   and reports bypass receipts NOT MEDIATED.
+3. **DONE** kit: `gen-receipt.cjs` emits v1 (fixtures regenerated as v1);
+   `verify.cjs` accepts v1 + `v0-live`, rejects Schema K, has the bypass
+   branch (exit non-zero, prints `NOT MEDIATED`), and derives the hashed
+   line from the same call it re-runs, asserting stored-line equality
+   first. `fixtures/receipt-bypass.json` exercises the branch in `npm test`.
+4. **DONE** cross-tool test: `seal-check/test/fixtures/cross-receipt.json`
+   (produced by the shipped seal-check producer, byte-pinned) passes BOTH
+   `seal-check/receipt.js` (`test/cross-receipt.test.cjs`) and
+   `seal-assurance-kit`'s `seal verify`
+   (`fixtures/receipt-crosstool.json`, byte-identical copy, wired into
+   `npm test`).
 5. seal-live-demo stays as-is (`v0-live` accepted); its own bump to
    `seal_receipt: "v1"` is a separate, later step.
