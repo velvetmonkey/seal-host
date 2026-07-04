@@ -15,7 +15,7 @@ kernel interface, registry, composition theorem, harness — lives only here.
 
 ## Status
 
-- **G1 (this)**: host + `Kernel = {name, gates, decide}` + Safety Seal kernel
+- **G1**: host + `Kernel = {name, gates, decide}` + Safety Seal kernel
   (S) lifted from SealCore, behaviour unchanged; registry skeleton; signed
   epoch'd trusted-config loader (stub signature; Ed25519 lands in G6).
 - **G2–G5**: kernels T (temporal monitor), C (consensus quorum), V
@@ -47,8 +47,12 @@ python3 test/integration/test_host_rs.py
   (`Canonical.lean`, SealV2-backed, fail-closed), trusted-config loader
   (`Config.lean`), registry + fail-closed combinator (`Registry.lean`), audit
   certs (`Audit.lean`), MCP stdio loop (`Main.lean`).
-- `Kernels/` — `Safety.lean`: kernel S, a pure lift of the mcp-seal V1
-  decision path (`SealCore.step` + `Seal.classifyToolCall`, unchanged).
+- `Kernels/` — the seven kernel modules shipped in-repo: `Safety.lean` (kernel S,
+  a pure lift of the mcp-seal V1 decision path — `SealCore.step` +
+  `Seal.classifyToolCall`, unchanged), `Temporal.lean`,
+  `Consensus.lean`/`ConsensusBytes.lean`,
+  `Convergence.lean`/`ConvergencePotential.lean`, `Calibration.lean`,
+  `Linear.lean`/`LinearCore.lean`, and `Budget.lean`/`BudgetCore.lean`.
 - `Test/` — `Axioms.lean` (axiom gate: {propext, Classical.choice, Quot.sound}
   only), `HostUnit.lean` (pure unit tests).
 - `test/integration/` — stdio regression suite ported from mcp-seal.
