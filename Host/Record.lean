@@ -16,11 +16,12 @@ genesis (`A-GEN`). This is the standard crypto-proof discipline: the STRUCTURE
 is machine-checked; the PRIMITIVE's collision-resistance is a named TCB
 assumption — exactly as Ed25519-correctness is TCB(A3) in the L0 proofs.
 
-TCB / honesty note: the deploy instance `chainHash` uses `Seal.stableHashParts`
-(FNV-1a into `UInt64`). A 64-bit hash is NOT collision-resistant — `A-CR` is
-literally false for it — so the deployed instance is **demonstration-grade**;
-production must discharge `A-CR` by swapping in a real CR hash (e.g. SHA-256).
-The abstract theorems below hold for any `H` that does satisfy `A-CR`.
+TCB / honesty note: the executable production receipt chain instantiates this
+structure with SHA-256 (`rust/src/receipt.rs`, `scripts/seal_log.mjs`, and the
+conformance bridge). We do NOT prove SHA-256 collision-resistance in Lean:
+`A-CR` remains the named crypto TCB assumption. The in-Lean `chainHash` below is
+a cheap legacy/demo `UInt64` instance over frozen `Seal.stableHashParts`
+(FNV-1a); it is intentionally not the production commitment.
 -/
 
 namespace Host.Record
@@ -77,10 +78,10 @@ theorem tamper_evident
           obtain ⟨hheads, hpq⟩ := hinj _ _ _ _ hhead
           rw [hpq, ih qs hheads]
 
-/-- The deployed commitment: chain the prior head (as its canonical decimal
-    string) with the payload, via the V1 stable hash. **Demonstration-grade**:
-    `Seal.stableHashParts` is FNV-1a/`UInt64`, so it does NOT satisfy `A-CR`
-    (64-bit ⇒ collisions exist). Production discharges `A-CR` with a CR hash. -/
+/-- Cheap legacy/demo commitment: chain the prior `UInt64` head (as its
+    canonical decimal string) with the payload via the frozen V1 stable hash.
+    `Seal.stableHashParts` is FNV-1a/`UInt64`, so it does NOT satisfy `A-CR`.
+    The deployed receipt commitment is the SHA-256 chain in Rust/scripts. -/
 def chainHash (prevHead : Hash) (payload : String) : Hash :=
   Seal.stableHashParts [toString prevHead.toNat, payload]
 

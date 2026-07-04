@@ -32,7 +32,10 @@
 use seal_host_rs::a3;
 use seal_host_rs::lean;
 use seal_host_rs::providers::{self, ApprovalProvider};
-use seal_host_rs::route::{route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE};
+use seal_host_rs::receipt::ReceiptChain;
+use seal_host_rs::route::{
+    route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE,
+};
 use serde_json::{json, Value};
 
 /// The active back-channel. Enum (not a trait object) so the transport can
@@ -147,6 +150,11 @@ fn write_locked(lock: &Mutex<()>, line: &str) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(line.as_bytes());
     let _ = out.flush();
+}
+
+fn emit_audit(receipts: &mut ReceiptChain, audit: &str) {
+    eprintln!("{audit}");
+    eprintln!("{}", receipts.observe(audit).to_json_line());
 }
 
 /// The Lean routing view of one wire line: the line terminator (`\n` or
@@ -266,6 +274,7 @@ fn run() -> i32 {
         }
     };
     let mut a3 = a3::A3Filter::new(ttl_ms);
+    let mut receipts = ReceiptChain::new();
     let interactive = args.channel == "interactive";
 
     let mut child = match Command::new(&args.cmd[0])
@@ -367,14 +376,14 @@ fn run() -> i32 {
         match route_of_step_output(host.step(&input.to_string())) {
             Route::Forward { audit } => {
                 if let Some(a) = audit {
-                    eprintln!("{a}");
+                    emit_audit(&mut receipts, &a);
                 }
                 let _ = child_in.write_all(&wire);
                 let _ = child_in.flush();
             }
             Route::Block { mut response, audit } => {
                 if let Some(a) = audit {
-                    eprintln!("{a}");
+                    emit_audit(&mut receipts, &a);
                 }
                 // Interactive channel: a missing-approval deny queues a human
                 // question; a "y" mints the approval and the call retries once.
@@ -407,7 +416,7 @@ fn run() -> i32 {
                             match route_of_step_output(host.step(&retry.to_string())) {
                                 Route::Forward { audit } => {
                                     if let Some(a) = audit {
-                                        eprintln!("{a}");
+                                        emit_audit(&mut receipts, &a);
                                     }
                                     let _ = child_in.write_all(&wire);
                                     let _ = child_in.flush();
@@ -415,7 +424,7 @@ fn run() -> i32 {
                                 }
                                 Route::Block { response: r2, audit } => {
                                     if let Some(a) = audit {
-                                        eprintln!("{a}");
+                                        emit_audit(&mut receipts, &a);
                                     }
                                     response = r2;
                                 }

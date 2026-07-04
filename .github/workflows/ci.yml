@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+      - run: lake build
+      - run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
+      - run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"

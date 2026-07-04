@@ -26,7 +26,17 @@ kernel interface, registry, composition theorem, harness — lives only here.
   approval back-channel (control-file / Ed25519 signed token / interactive
   TTY) + A3 nonce/replay/TTL, calling the Lean verified core through
   `libsealffi.so` (`scripts/build_ffi_so.sh`); property-based differential
-  conformance harness on the seam. **FFI grows the TCB — see `TCB.md`.**
+  conformance harness on the seam. The deployed host emits a SHA-256 receipt
+  commitment for each audit certificate; FNV `stableHashParts` remains only a
+  per-cert/demo hash, not the record commitment. **FFI grows the TCB — see
+  `TCB.md`.**
+- **W2 closeout**: single-request non-interference
+  (`Host.NonInterference.observe_noninterference`), cross-session replay
+  isolation (`Host.ReplayIsolation.replay_isolation_trace`), and deployed
+  adapter O1/O2 + non-vacuity (`Host.Channel.deployed_O1`,
+  `Host.Channel.deployed_O2`, `Host.Channel.deployed_nonvacuous`) are landed
+  as Lean model theorems. Binary correspondence remains the finite-corpus
+  conformance bridge, not a theorem.
 - G7: see the build plan.
 
 ## Rust host build
@@ -62,6 +72,7 @@ python3 test/integration/test_host_rs.py
 
 ```sh
 lake build                                   # also runs Test/Axioms #print axioms
+lake exe axiom_check
 lake exe host_unit_tests
 python3 test/integration/test_host.py
 ```
@@ -77,4 +88,6 @@ python3 test/tools/sign_config.py payload.json <pubkey> > trusted.json
 
 `lake build` clean; `#print axioms` on every decision-bearing def and imported
 theorem = `{propext, Classical.choice, Quot.sound}` only (no `sorryAx`, no
-`Lean.ofReduceBool`); zero behaviour regression on the mcp-seal SealCore suite.
+`Lean.ofReduceBool`); CI runs `lake build`, `lake exe axiom_check`, and greps the
+axiom-check output for those forbidden axioms; zero behaviour regression on the
+mcp-seal SealCore suite.

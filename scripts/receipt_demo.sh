@@ -21,7 +21,7 @@ SEAL="$ROOT/scripts/seal_log.mjs"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-if [ ! -x "$HOST" ]; then
+if [ ! -x "$HOST" ] || [ "$ROOT/rust/src/main.rs" -nt "$HOST" ] || [ "$ROOT/rust/src/receipt.rs" -nt "$HOST" ]; then
   echo "building release host…"
   ( cd "$ROOT/rust" && cargo build --release >/dev/null 2>&1 )
 fi
@@ -76,6 +76,15 @@ if [ "$NENTRIES" -lt 3 ]; then
   echo "DEMO FAIL: expected 3 audit certificates, got $NENTRIES"; exit 1
 fi
 echo "  audit certs: $NENTRIES decisions recorded (one per call)."
+HOST_HEAD="$(node -e '
+const fs=require("fs");
+const recs=fs.readFileSync(process.argv[1],"utf8").split("\n").filter(Boolean)
+  .map(l=>{ try { return JSON.parse(l); } catch { return null; } })
+  .filter(o=>o && o.seal_record==="v1");
+if (!recs.length) process.exit(1);
+process.stdout.write(recs[recs.length-1].head);
+' "$WORK/audit.raw")"
+echo "  deployed receipt head: $HOST_HEAD"
 
 echo
 echo "==============================================================="

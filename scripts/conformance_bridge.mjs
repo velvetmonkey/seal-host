@@ -224,18 +224,29 @@ console.log("\n[3] DEPLOYED binary — seal-host-rs record chain vs model");
 const wireSeq = ["drop table customers", "delete from ledger", "truncate audit"];
 const wireInput = wireSeq.map((sql, i) => wireCall(300 + i, sql)).join("\n") + "\n";
 const hostRun = spawnSync(HOST, ["--config", ENV_FILE, "--pubkey", PK, "--", "/bin/cat"], { input: wireInput, encoding: "utf8" });
-const hostAudits = (hostRun.stderr || "").split("\n").filter((l) => l.includes('"certs":[') && l.includes('"verdict":'));
+const hostStderr = (hostRun.stderr || "").split("\n").filter(Boolean);
+const hostAudits = hostStderr.filter((l) => l.includes('"certs":[') && l.includes('"verdict":'));
+const hostRecords = hostStderr
+  .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+  .filter((o) => o?.seal_record === "v1");
 // model audits for the same 3 decisions (fresh session, now fixed):
 const modelSeqFile = join(WORK, "seq.jsonl");
 writeFileSync(modelSeqFile, wireSeq.map((sql, i) => stepInput(wireCall(300 + i, sql))).join("\n") + "\n");
 const modelSeqAudits = runModel(modelSeqFile).split("\n").filter(Boolean).map(auditOf);
-if (hostAudits.length === 3) {
+if (hostAudits.length === 3 && hostRecords.length === 3) {
   const hostHead = chainHead(hostAudits);
   const modelSeqHead = chainHead(modelSeqAudits);
-  if (hostHead === modelSeqHead) ok(`deployed seal-host-rs record head == model head: ${hostHead}`);
-  else fail(`deployed binary record diverges from model: ${hostHead} vs ${modelSeqHead}`);
+  const emittedHead = hostRecords[hostRecords.length - 1].head;
+  if (hostRecords.some((r, i) => r.entry !== i))
+    fail(`deployed binary receipt entries not sequential: ${hostRecords.map((r) => r.entry).join(",")}`);
+  if (hostRecords.some((r) => r.commitment !== "sha256(prevHead || 0x1f || payload)"))
+    fail("deployed binary receipt commitment label mismatch");
+  if (hostHead === emittedHead && hostHead === modelSeqHead)
+    ok(`deployed seal-host-rs emitted SHA-256 record head == model head: ${hostHead}`);
+  else
+    fail(`deployed binary record diverges: derived ${hostHead}, emitted ${emittedHead}, model ${modelSeqHead}`);
 } else {
-  fail(`expected 3 audit certs from the deployed binary, captured ${hostAudits.length}`);
+  fail(`expected 3 audit certs and 3 receipt records from the deployed binary, captured ${hostAudits.length}/${hostRecords.length}`);
 }
 }
 

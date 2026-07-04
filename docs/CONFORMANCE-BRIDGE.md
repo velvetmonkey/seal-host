@@ -31,7 +31,9 @@ For every input in C:
    **byte-identical** to the model's, so the SHA-256 record chain
    (`scripts/seal_log.mjs`, the machine-checked structure `rollingHead` with
    `H = SHA-256`) over the artifact's log has the **same head** as over the
-   model's log.
+   model's log. In native mode, the deployed Rust host also emits that
+   production receipt head directly, and the bridge checks it against an
+   independent re-derivation.
 
 Chain agreement reduces to payload agreement, which reduces to (1) + audit
 serialization — so the whole thing rests on byte-identical audit emission,
@@ -73,9 +75,9 @@ Green transcripts: `docs/conformance-ci-transcript.txt` (native),
 `docs/conformance-wasm-ci-transcript.txt` (wasm). Each asserts, in order:
 harness liveness (below), 15/15 byte agreement + route agreement, and
 artifact/model chain-head equality (native mode additionally checks the
-deployed-`seal-host-rs`/model chain head). All three artifacts — native `.so`,
-`seal.wasm`, and the deployed binary — produce the **same** SHA-256 record head
-as the Lean model over corpus C.
+deployed-`seal-host-rs` emitted receipt head against the model chain head). All
+three artifacts — native `.so`, `seal.wasm`, and the deployed binary — produce
+the **same** SHA-256 record head as the Lean model over corpus C.
 
 ## Red-team / objections (adversarially reviewed)
 
@@ -95,8 +97,16 @@ as the Lean model over corpus C.
   is fixed in the model step inputs. The deployed binary uses its own wall
   clock yet produces a byte-identical record — demonstrated, not assumed.
 - **"64-bit FNV again?"** No. The record chain here uses SHA-256 (the L1
-  deploy decision, exit a). The FNV `stableHashParts` inside `auditLine` is a
+  deploy decision, exit a), and the Rust host emits that SHA-256 receipt head
+  as `seal_record:"v1"`. The FNV `stableHashParts` inside `auditLine` is a
   per-cert content hash, not the chain commitment.
+- **"Which recent proof gaps does this bridge name?"** It names the model
+  theorems landed for single-request NI
+  (`Host.NonInterference.observe_noninterference`), replay isolation
+  (`Host.ReplayIsolation.replay_isolation_trace`), and deployed-adapter O1/O2
+  plus non-vacuity (`Host.Channel.deployed_O1`, `deployed_O2`,
+  `deployed_nonvacuous`). The bridge tests binary correspondence on C; it does
+  not turn those model theorems into a universal binary proof.
 
 ## TCB (named, not proven)
 

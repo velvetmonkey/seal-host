@@ -6,4 +6,5 @@
 pub mod a3;
 pub mod lean;
 pub mod providers;
+pub mod receipt;
 pub mod route;
