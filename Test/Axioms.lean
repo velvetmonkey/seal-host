@@ -13,6 +13,7 @@ import Host.RecordTemporalCanonical
 import Host.CompositionBytes
 import Host.ChannelModel
 import Host.SealAdapter
+import Host.NonInterference
 import Kernels
 import Kernels.ConsensusBytes
 import Kernels.ConvergencePotential
@@ -396,6 +397,29 @@ info: 'Host.Record.timed_tamper_evident_canonical' depends on axioms: [propext, 
 info: 'Host.Channel.sealAdapter_trace' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.Channel.sealAdapter_trace
+
+-- Non-interference: the gate reveals nothing about ApprovalState beyond the
+-- one declassified authorization bit (Host/NonInterference.lean)
+
+/--
+info: 'Host.NonInterference.decide_authView_noninterference' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.NonInterference.decide_authView_noninterference
+
+/--
+info: 'Host.NonInterference.authView_noninterference_nonvacuous' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.NonInterference.authView_noninterference_nonvacuous
+
+/--
+info: 'Host.NonInterference.record_authView_noninterference' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.NonInterference.record_authView_noninterference
+
+/--
+info: 'Host.NonInterference.observe_noninterference' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.NonInterference.observe_noninterference
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
