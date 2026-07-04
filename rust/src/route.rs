@@ -23,7 +23,10 @@ pub enum Route {
     Forward { audit: Option<String> },
     /// Kernel verdict blocks: `response` (kernel-authored, newline-terminated)
     /// goes to the client; nothing goes to the child.
-    Block { response: String, audit: Option<String> },
+    Block {
+        response: String,
+        audit: Option<String>,
+    },
     /// Broken or ambiguous seam: nothing goes to the child; the static
     /// `seam_error_response` goes to the client.
     SeamFailure { reason: String },
@@ -59,25 +62,38 @@ pub fn route_of_classify(c: Result<u32, SeamError>) -> ClassifyRoute {
 pub fn route_of_step_output(out: Result<String, SeamError>) -> Route {
     let text = match out {
         Ok(t) => t,
-        Err(e) => return Route::SeamFailure { reason: format!("seam error: {e}") },
+        Err(e) => {
+            return Route::SeamFailure {
+                reason: format!("seam error: {e}"),
+            }
+        }
     };
     let v: Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
-            return Route::SeamFailure { reason: format!("step output unparseable: {e}") }
+            return Route::SeamFailure {
+                reason: format!("step output unparseable: {e}"),
+            }
         }
     };
     let audit = v["audit"].as_str().map(str::to_owned);
     match v["route"].as_str() {
         Some("forward") | Some("passthrough") => Route::Forward { audit },
         Some("block") => match v["response"].as_str() {
-            Some(r) => Route::Block { response: r.to_owned(), audit },
+            Some(r) => Route::Block {
+                response: r.to_owned(),
+                audit,
+            },
             None => Route::SeamFailure {
                 reason: "block verdict without response".to_owned(),
             },
         },
-        Some(other) => Route::SeamFailure { reason: format!("unknown route: {other}") },
-        None => Route::SeamFailure { reason: "missing route".to_owned() },
+        Some(other) => Route::SeamFailure {
+            reason: format!("unknown route: {other}"),
+        },
+        None => Route::SeamFailure {
+            reason: "missing route".to_owned(),
+        },
     }
 }
 

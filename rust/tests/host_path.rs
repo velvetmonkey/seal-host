@@ -35,11 +35,8 @@ struct Oracle {
 
 impl Oracle {
     fn spawn(tag: &str) -> Oracle {
-        let dir = std::env::temp_dir().join(format!(
-            "seal-host-oracle-{}-{}",
-            std::process::id(),
-            tag
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("seal-host-oracle-{}-{}", std::process::id(), tag));
         std::fs::create_dir_all(&dir).unwrap();
         let approvals = dir.join("approvals.ndjson");
         std::fs::write(&approvals, b"").unwrap();
@@ -76,7 +73,14 @@ impl Oracle {
         std::fs::write(&config, envelope).unwrap();
 
         let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
-            .args(["--config", config.to_str().unwrap(), "--pubkey", pk, "--", "/bin/cat"])
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "--pubkey",
+                pk,
+                "--",
+                "/bin/cat",
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -107,7 +111,12 @@ impl Oracle {
             }
         });
 
-        Oracle { child, stdin, lines, dir }
+        Oracle {
+            child,
+            stdin,
+            lines,
+            dir,
+        }
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) {
@@ -183,13 +192,20 @@ fn mediation_obfuscation_and_one_shot_approval() {
     // (lines() strips the terminator for comparison only).
     let list = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
     o.send_bytes(format!("{list}\r\n").as_bytes());
-    assert_eq!(o.expect_line(), list, "CRLF passthrough must reach the child");
+    assert_eq!(
+        o.expect_line(),
+        list,
+        "CRLF passthrough must reach the child"
+    );
 
     // Canonical guarded call, no approval: kernel block, nothing at the child.
     let canonical = guarded_call(3, "drop table accounts");
     o.send(&canonical);
     let blocked = o.expect_line();
-    assert!(is_block(&blocked), "unapproved guarded call must block: {blocked}");
+    assert!(
+        is_block(&blocked),
+        "unapproved guarded call must block: {blocked}"
+    );
     let target = block_target(&blocked).expect("block names its approval target");
 
     // The obfuscation corpus at the transport level: the same destructive
@@ -205,20 +221,24 @@ fn mediation_obfuscation_and_one_shot_approval() {
         "drop table accounts\r\n",
         "  drop table accounts  ",
     ];
-    let mut id = 10;
     let mut disguise_targets = Vec::new();
-    for sql in sql_disguises {
+    for (id, sql) in (10..).zip(sql_disguises) {
         let call = guarded_call(id, sql);
         o.send(&call);
         let resp = o.expect_line();
-        assert!(is_block(&resp), "disguised call must block ({sql:?}): {resp}");
+        assert!(
+            is_block(&resp),
+            "disguised call must block ({sql:?}): {resp}"
+        );
         disguise_targets.push(block_target(&resp).expect("disguise block names target"));
-        id += 1;
     }
     // Canonicalisation makes every disguise a DIFFERENT target than the
     // canonical call — that is exactly why an approval cannot be forged.
     for (sql, t) in sql_disguises.iter().zip(&disguise_targets) {
-        assert_ne!(*t, target, "disguise {sql:?} must not share the canonical target");
+        assert_ne!(
+            *t, target,
+            "disguise {sql:?} must not share the canonical target"
+        );
     }
 
     // Line-level disguises: whitespace/terminator noise around the whole
@@ -240,7 +260,11 @@ fn mediation_obfuscation_and_one_shot_approval() {
     // RUST_BRIDGE.md).
     let shouted = canonical.replace("\"tools/call\"", "\"TOOLS/CALL\"");
     o.send(&shouted);
-    assert_eq!(o.expect_line(), shouted, "non-tools/call method is passthrough");
+    assert_eq!(
+        o.expect_line(),
+        shouted,
+        "non-tools/call method is passthrough"
+    );
 
     // Approve the canonical target, then fire a DISGUISE first: the approval
     // is in hand, bound to the canonical bytes — the disguise must still
@@ -249,18 +273,28 @@ fn mediation_obfuscation_and_one_shot_approval() {
     let disguised_again = guarded_call(30, "DROP TABLE ACCOUNTS");
     o.send(&disguised_again);
     let resp = o.expect_line();
-    assert!(is_block(&resp), "approval for canonical must not unlock a disguise: {resp}");
+    assert!(
+        is_block(&resp),
+        "approval for canonical must not unlock a disguise: {resp}"
+    );
 
     // The canonical call is now approved: it must FORWARD (echo verbatim).
     let approved = guarded_call(31, "drop table accounts");
     o.send(&approved);
-    assert_eq!(o.expect_line(), approved, "approved canonical call must forward");
+    assert_eq!(
+        o.expect_line(),
+        approved,
+        "approved canonical call must forward"
+    );
 
     // One-shot: the same call again must block — the approval was consumed.
     let replay = guarded_call(32, "drop table accounts");
     o.send(&replay);
     let resp = o.expect_line();
-    assert!(is_block(&resp), "approval must be one-shot; replay blocked: {resp}");
+    assert!(
+        is_block(&resp),
+        "approval must be one-shot; replay blocked: {resp}"
+    );
 }
 
 #[test]
@@ -283,5 +317,8 @@ fn non_utf8_line_refused_and_session_survives() {
 
     let call = guarded_call(2, "drop table accounts");
     o.send(&call);
-    assert!(is_block(&o.expect_line()), "mediation must survive a refused line");
+    assert!(
+        is_block(&o.expect_line()),
+        "mediation must survive a refused line"
+    );
 }

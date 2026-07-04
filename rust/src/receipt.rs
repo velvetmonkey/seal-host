@@ -53,6 +53,12 @@ impl ReceiptChain {
     }
 }
 
+impl Default for ReceiptChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiptRecord {
     pub entry: u64,

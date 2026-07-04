@@ -31,7 +31,9 @@ fn host() -> &'static LeanHost {
 }
 
 fn lean_classify(line: &str) -> u32 {
-    host().classify(line).expect("classify seam healthy in tests")
+    host()
+        .classify(line)
+        .expect("classify seam healthy in tests")
 }
 
 /// The Rust wire-parser mirror of V1 routing: JSON object with
@@ -45,7 +47,10 @@ fn rust_routes_as_tools_call(line: &str) -> bool {
         return false;
     };
     v.get("method").and_then(|m| m.as_str()) == Some("tools/call")
-        && v.get("params").and_then(|p| p.get("name")).and_then(|n| n.as_str()).is_some()
+        && v.get("params")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .is_some()
 }
 
 // NOTE on failure style: libleanshared bundles its own LLVM libunwind and
@@ -62,10 +67,14 @@ fn check_agreement(line: &str) -> Result<(), String> {
     let lean = lean_classify(line); // 0 passthrough, 1 mediated act
     let rust = rust_routes_as_tools_call(line);
     if lean > 1 {
-        return Err(format!("classify outside 0/1 contract: {lean} for {line:?}"));
+        return Err(format!(
+            "classify outside 0/1 contract: {lean} for {line:?}"
+        ));
     }
     if (lean == 1) != rust {
-        return Err(format!("ROUTING DISAGREEMENT (lean={lean}, rust={rust}): {line:?}"));
+        return Err(format!(
+            "ROUTING DISAGREEMENT (lean={lean}, rust={rust}): {line:?}"
+        ));
     }
     Ok(())
 }
@@ -78,17 +87,20 @@ fn check_no_bypass(line: &str) -> Result<(), String> {
     let lean = lean_classify(line);
     let rust = rust_routes_as_tools_call(line);
     if lean > 1 {
-        return Err(format!("classify outside 0/1 contract: {lean} for {line:?}"));
+        return Err(format!(
+            "classify outside 0/1 contract: {lean} for {line:?}"
+        ));
     }
     if rust && lean == 0 {
-        return Err(format!("BYPASS: rust routes as tools/call, lean passes through: {line:?}"));
+        return Err(format!(
+            "BYPASS: rust routes as tools/call, lean passes through: {line:?}"
+        ));
     }
     Ok(())
 }
 
 fn assert_all<'a>(lines: impl IntoIterator<Item = &'a str>, check: fn(&str) -> Result<(), String>) {
-    let failures: Vec<String> =
-        lines.into_iter().filter_map(|l| check(l).err()).collect();
+    let failures: Vec<String> = lines.into_iter().filter_map(|l| check(l).err()).collect();
     if !failures.is_empty() {
         panic!("{} failure(s):\n{}", failures.len(), failures.join("\n"));
     }
@@ -101,7 +113,13 @@ fn disguises(s: &str) -> Vec<String> {
     let mixed: String = s
         .chars()
         .enumerate()
-        .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() })
+        .map(|(i, c)| {
+            if i % 2 == 0 {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
         .collect();
     vec![
         s.to_string(),
@@ -171,8 +189,7 @@ fn corpus_agreement() {
 fn known_lean_stricter_cases() {
     // serde_json rejects numbers beyond f64 range (whole parse fails);
     // Lean's JsonNumber is arbitrary-precision and parses fine → mediated.
-    let overflow =
-        r#"{"method":"tools/call","params":{"name":"x","arguments":{"v":1e309}}}"#;
+    let overflow = r#"{"method":"tools/call","params":{"name":"x","arguments":{"v":1e309}}}"#;
     let lean = lean_classify(overflow);
     let rust = rust_routes_as_tools_call(overflow);
     assert_eq!(lean, 1, "Lean must mediate the overflow-number call");
@@ -220,7 +237,10 @@ fn corpus_agreement_pathological_shapes() {
     // A large line (256 KiB of payload) — size must not change routing.
     let big = tools_call_line("tools/call", "db.execute", &"x".repeat(256 * 1024));
     let big_pass = tools_call_line("tools/list", "db.execute", &"x".repeat(256 * 1024));
-    assert_all([deep.as_str(), big.as_str(), big_pass.as_str()], check_agreement);
+    assert_all(
+        [deep.as_str(), big.as_str(), big_pass.as_str()],
+        check_agreement,
+    );
 }
 
 #[cfg(test)]

@@ -154,7 +154,9 @@ impl LeanHost {
             lean_io_mark_end_initialization();
             lean_init_task_manager();
         }
-        LeanHost { lock: Mutex::new(()) }
+        LeanHost {
+            lock: Mutex::new(()),
+        }
     }
 
     fn call_string(&self, f: impl FnOnce() -> LeanObj) -> Result<String, SeamError> {
@@ -193,5 +195,11 @@ impl LeanHost {
     pub fn force_panic_probe(&self) -> usize {
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { seal_lean_force_panic() as usize }
+    }
+}
+
+impl Default for LeanHost {
+    fn default() -> Self {
+        Self::new()
     }
 }

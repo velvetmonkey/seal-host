@@ -24,13 +24,19 @@ pub struct A3Filter {
 
 impl A3Filter {
     pub fn new(ttl_ms: u64) -> Self {
-        Self { seen_nonces: HashSet::new(), ttl_ms }
+        Self {
+            seen_nonces: HashSet::new(),
+            ttl_ms,
+        }
     }
 
     /// Filter records fail-closed; returns survivors and a reason per drop
     /// (for the audit log).
-    pub fn filter(&mut self, records: Vec<ApprovalRecord>, now_ms: u64)
-        -> (Vec<ApprovalRecord>, Vec<String>) {
+    pub fn filter(
+        &mut self,
+        records: Vec<ApprovalRecord>,
+        now_ms: u64,
+    ) -> (Vec<ApprovalRecord>, Vec<String>) {
         let mut ok = Vec::new();
         let mut dropped = Vec::new();
         for r in records {
@@ -61,14 +67,21 @@ mod tests {
     use super::*;
 
     fn rec(target: u64, issued: Option<u64>, nonce: Option<&str>) -> ApprovalRecord {
-        ApprovalRecord { target, issued_at: issued, nonce: nonce.map(String::from) }
+        ApprovalRecord {
+            target,
+            issued_at: issued,
+            nonce: nonce.map(String::from),
+        }
     }
 
     #[test]
     fn replayed_nonce_rejected() {
         let mut a3 = A3Filter::new(120_000);
         let (ok, dropped) = a3.filter(
-            vec![rec(1, Some(1000), Some("n1")), rec(1, Some(1000), Some("n1"))],
+            vec![
+                rec(1, Some(1000), Some("n1")),
+                rec(1, Some(1000), Some("n1")),
+            ],
             2000,
         );
         assert_eq!(ok.len(), 1);
@@ -85,9 +98,9 @@ mod tests {
         let mut a3 = A3Filter::new(1_000);
         let (ok, dropped) = a3.filter(
             vec![
-                rec(1, Some(0), Some("old")),        // 10s old, ttl 1s
-                rec(2, Some(100_000), Some("fut")),  // far future
-                rec(3, Some(9_800), Some("fresh")),  // 200ms old
+                rec(1, Some(0), Some("old")),       // 10s old, ttl 1s
+                rec(2, Some(100_000), Some("fut")), // far future
+                rec(3, Some(9_800), Some("fresh")), // 200ms old
             ],
             10_000,
         );
@@ -100,6 +113,10 @@ mod tests {
     fn nonceless_records_pass_freshness_only() {
         let mut a3 = A3Filter::new(1_000);
         let (ok, _) = a3.filter(vec![rec(1, None, None), rec(1, None, None)], 10_000);
-        assert_eq!(ok.len(), 2, "control-file records rely on seen-counter + one-shot");
+        assert_eq!(
+            ok.len(),
+            2,
+            "control-file records rely on seen-counter + one-shot"
+        );
     }
 }

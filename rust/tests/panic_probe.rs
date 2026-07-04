@@ -45,7 +45,11 @@ fn guarded_lean_panic_kills_the_process() {
     );
     // 42 is the probe's own "survived" exit code; dying inside the panic
     // must produce anything but success or 42.
-    assert_ne!(out.status.code(), Some(42), "probe reached its SURVIVED path");
+    assert_ne!(
+        out.status.code(),
+        Some(42),
+        "probe reached its SURVIVED path"
+    );
 }
 
 #[test]

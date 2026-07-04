@@ -88,12 +88,30 @@ fn parse_args() -> Result<Args, String> {
     let mut i = 0;
     while i < argv.len() {
         match argv[i].as_str() {
-            "--config" => { config = argv.get(i + 1).cloned(); i += 2 }
-            "--pubkey" => { pubkey = argv.get(i + 1).cloned(); i += 2 }
-            "--channel" => { channel = argv.get(i + 1).cloned().unwrap_or_default(); i += 2 }
-            "--token-file" => { token_file = argv.get(i + 1).cloned(); i += 2 }
-            "--approval-pubkey" => { approval_pubkey = argv.get(i + 1).cloned(); i += 2 }
-            "--" => { cmd = argv[i + 1..].to_vec(); break }
+            "--config" => {
+                config = argv.get(i + 1).cloned();
+                i += 2
+            }
+            "--pubkey" => {
+                pubkey = argv.get(i + 1).cloned();
+                i += 2
+            }
+            "--channel" => {
+                channel = argv.get(i + 1).cloned().unwrap_or_default();
+                i += 2
+            }
+            "--token-file" => {
+                token_file = argv.get(i + 1).cloned();
+                i += 2
+            }
+            "--approval-pubkey" => {
+                approval_pubkey = argv.get(i + 1).cloned();
+                i += 2
+            }
+            "--" => {
+                cmd = argv[i + 1..].to_vec();
+                break;
+            }
             other => return Err(format!("unknown arg: {other}")),
         }
     }
@@ -103,7 +121,11 @@ fn parse_args() -> Result<Args, String> {
         channel,
         token_file,
         approval_pubkey,
-        cmd: if cmd.is_empty() { return Err("server command required after --".into()) } else { cmd },
+        cmd: if cmd.is_empty() {
+            return Err("server command required after --".into());
+        } else {
+            cmd
+        },
     })
 }
 
@@ -137,8 +159,11 @@ impl GrantsCursor {
         let Ok(text) = std::fs::read_to_string(&self.path) else {
             return String::new();
         };
-        let lines: Vec<&str> =
-            text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
         let fresh = lines[self.seen.min(lines.len())..].join("\n");
         self.seen = lines.len();
         fresh
@@ -202,9 +227,11 @@ fn run() -> i32 {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("usage: seal-host-rs --config <trusted.json> --pubkey <key> \
+            eprintln!(
+                "usage: seal-host-rs --config <trusted.json> --pubkey <key> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
-                [--approval-pubkey <hex>] -- <server-cmd> <args...>\nerror: {e}");
+                [--approval-pubkey <hex>] -- <server-cmd> <args...>\nerror: {e}"
+            );
             return 2;
         }
     };
@@ -234,7 +261,10 @@ fn run() -> i32 {
         }
     };
     if summary["ok"] != json!(true) {
-        eprintln!("trusted config rejected: {}", summary["error"].as_str().unwrap_or("unknown"));
+        eprintln!(
+            "trusted config rejected: {}",
+            summary["error"].as_str().unwrap_or("unknown")
+        );
         return 3;
     }
     let ttl_ms = summary["approval_ttl_ms"].as_u64().unwrap_or(0);
@@ -316,11 +346,11 @@ fn run() -> i32 {
     loop {
         wire.clear();
         match reader.read_until(b'\n', &mut wire) {
-            Ok(0) => break,          // EOF: session over
+            Ok(0) => break, // EOF: session over
             Ok(_) => {}
             Err(e) => {
                 eprintln!("{}", json!({"error": format!("stdin read error: {e}")}));
-                break;               // transport dead: stop mediating, kill child
+                break; // transport dead: stop mediating, kill child
             }
         }
 
@@ -350,7 +380,10 @@ fn run() -> i32 {
             }
             ClassifyRoute::Mediate => {}
             ClassifyRoute::Refuse => {
-                eprintln!("{}", json!({"error": "classify seam failure; line refused"}));
+                eprintln!(
+                    "{}",
+                    json!({"error": "classify seam failure; line refused"})
+                );
                 write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
                 continue;
             }
@@ -358,7 +391,7 @@ fn run() -> i32 {
 
         let (records, dropped) = a3.filter(provider.poll(), now);
         for reason in &dropped {
-            eprintln!("{}", json!({"a3": reason}).to_string());
+            eprintln!("{}", json!({"a3": reason}));
         }
         let approvals: Vec<Value> = records
             .iter()
@@ -381,7 +414,10 @@ fn run() -> i32 {
                 let _ = child_in.write_all(&wire);
                 let _ = child_in.flush();
             }
-            Route::Block { mut response, audit } => {
+            Route::Block {
+                mut response,
+                audit,
+            } => {
                 if let Some(a) = audit {
                     emit_audit(&mut receipts, &a);
                 }
@@ -391,10 +427,8 @@ fn run() -> i32 {
                 // from raw input); a failed parse means no retry — the line
                 // stays blocked.
                 if interactive {
-                    if let Some(target) = response
-                        .split("approval required: ")
-                        .nth(1)
-                        .and_then(|s| {
+                    if let Some(target) =
+                        response.split("approval required: ").nth(1).and_then(|s| {
                             let digits: String =
                                 s.chars().take_while(|c| c.is_ascii_digit()).collect();
                             digits.parse::<u64>().ok()
@@ -422,7 +456,10 @@ fn run() -> i32 {
                                     let _ = child_in.flush();
                                     continue;
                                 }
-                                Route::Block { response: r2, audit } => {
+                                Route::Block {
+                                    response: r2,
+                                    audit,
+                                } => {
                                     if let Some(a) = audit {
                                         emit_audit(&mut receipts, &a);
                                     }

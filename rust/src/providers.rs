@@ -24,7 +24,10 @@ fn opt_u64_str_or_num<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D:
     use serde::de::Error;
     match Option::<serde_json::Value>::deserialize(d)? {
         None | Some(serde_json::Value::Null) => Ok(None),
-        Some(serde_json::Value::Number(n)) => n.as_u64().map(Some).ok_or_else(|| D::Error::custom("not u64")),
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| D::Error::custom("not u64")),
         Some(serde_json::Value::String(s)) => s.parse().map(Some).map_err(D::Error::custom),
         _ => Err(D::Error::custom("issuedAt must be a number or string")),
     }
@@ -56,7 +59,10 @@ pub struct ControlFileProvider {
 
 impl ControlFileProvider {
     pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
-        Self { path: path.into(), seen: 0 }
+        Self {
+            path: path.into(),
+            seen: 0,
+        }
     }
 }
 
@@ -65,8 +71,11 @@ impl ApprovalProvider for ControlFileProvider {
         let Ok(text) = std::fs::read_to_string(&self.path) else {
             return Vec::new();
         };
-        let lines: Vec<&str> =
-            text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
         let fresh = lines[self.seen.min(lines.len())..].to_vec();
         self.seen = lines.len();
         fresh
@@ -105,9 +114,13 @@ impl Ed25519TokenProvider {
             .map_err(|e| format!("bad approval pubkey hex: {e}"))?
             .try_into()
             .map_err(|_| "approval pubkey must be 32 bytes".to_string())?;
-        let key = VerifyingKey::from_bytes(&bytes)
-            .map_err(|e| format!("bad approval pubkey: {e}"))?;
-        Ok(Self { path: path.into(), key, seen: 0 })
+        let key =
+            VerifyingKey::from_bytes(&bytes).map_err(|e| format!("bad approval pubkey: {e}"))?;
+        Ok(Self {
+            path: path.into(),
+            key,
+            seen: 0,
+        })
     }
 }
 
@@ -116,8 +129,11 @@ impl ApprovalProvider for Ed25519TokenProvider {
         let Ok(text) = std::fs::read_to_string(&self.path) else {
             return Vec::new();
         };
-        let lines: Vec<&str> =
-            text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
         let fresh = lines[self.seen.min(lines.len())..].to_vec();
         self.seen = lines.len();
         fresh
@@ -154,7 +170,11 @@ pub struct InteractiveProvider<R: BufRead, W: std::io::Write> {
 
 impl<R: BufRead, W: std::io::Write> InteractiveProvider<R, W> {
     pub fn new(input: R, output: W) -> Self {
-        Self { input, output, pending_target: None }
+        Self {
+            input,
+            output,
+            pending_target: None,
+        }
     }
 
     pub fn queue(&mut self, target: u64) {
@@ -175,7 +195,11 @@ impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, 
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            vec![ApprovalRecord { target, issued_at: Some(now), nonce: None }]
+            vec![ApprovalRecord {
+                target,
+                issued_at: Some(now),
+                nonce: None,
+            }]
         } else {
             Vec::new()
         }
@@ -197,8 +221,11 @@ mod tests {
         let vk_hex = hex::encode(sk.verifying_key().to_bytes());
         let payload = r#"{"target":42,"issuedAt":1000,"nonce":"abc123"}"#;
         let sig = hex::encode(sk.sign(payload.as_bytes()).to_bytes());
-        let good = format!(r#"{{"payload":{},"signature":"{}"}}"#,
-            serde_json::to_string(payload).unwrap(), sig);
+        let good = format!(
+            r#"{{"payload":{},"signature":"{}"}}"#,
+            serde_json::to_string(payload).unwrap(),
+            sig
+        );
         let bad = good.replace("42", "43");
 
         let dir = std::env::temp_dir().join(format!("seal-tok-{}", std::process::id()));
