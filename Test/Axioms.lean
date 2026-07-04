@@ -15,6 +15,7 @@ import Host.ChannelModel
 import Host.SealAdapter
 import Host.NonInterference
 import Host.ReplayIsolation
+import Host.DeployedAdapter
 import Kernels
 import Kernels.ConsensusBytes
 import Kernels.ConvergencePotential
@@ -449,6 +450,33 @@ info: 'Host.ReplayIsolation.replay_isolation_nonvacuous' depends on axioms: [pro
 info: 'Host.ReplayIsolation.listReplayStore_namespaceLocal' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.ReplayIsolation.listReplayStore_namespaceLocal
+
+-- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
+-- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
+
+/-- info: 'Host.Channel.deployed_O1' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.deployed_O1
+
+/-- info: 'Host.Channel.deployed_O2' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.deployed_O2
+
+/--
+info: 'Host.Channel.deployed_preserves_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.deployed_preserves_non_bypass
+
+/-- info: 'Host.Channel.deployed_nonvacuous' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.deployed_nonvacuous
+
+/--
+info: 'Host.Channel.deployed_live_emit_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.deployed_live_emit_of_allow
+
+/--
+info: 'Host.Channel.deployed_live_license_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.deployed_live_license_of_allow
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
