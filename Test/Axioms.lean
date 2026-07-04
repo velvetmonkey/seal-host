@@ -12,6 +12,7 @@ import Host.RecordTemporal
 import Host.RecordTemporalCanonical
 import Host.CompositionBytes
 import Host.ChannelModel
+import Host.SealAdapter
 import Kernels
 import Kernels.ConsensusBytes
 import Kernels.ConvergencePotential
