@@ -14,7 +14,7 @@ routing core was proven compliant. This module closes that named gap:
 (`rust/src/main.rs`), and `sealAdapter_O1` / `sealAdapter_O2` /
 `sealAdapter_trace` discharge the capstone's hypotheses at it.
 
-## FROZEN STATEMENTS (Day-1 freeze; proofs follow the frisk)
+## STATEMENTS (frozen Day 1, proved after the freeze review)
 
 * `sealAdapter : Host.Channel.Adapter` — state = (license buffer, fresh flag).
   `init` carries an EMPTY license buffer. `onVerdict` prepends exactly the
@@ -78,25 +78,54 @@ def sealAdapter : Adapter where
     else []
   licensed := fun st => st.1
 
-/-- **O1 at the seal adapter (frozen).** The gated sink emits only bytes the
+/-- **O1 at the seal adapter.** The gated sink emits only bytes the
     license buffer covers — structurally, in every state. -/
 theorem sealAdapter_O1 : O1 sealAdapter := by
-  sorry
+  intro st b hb
+  obtain ⟨buf, fresh⟩ := st
+  cases fresh with
+  | false => nomatch hb
+  | true =>
+      cases buf with
+      | nil => nomatch hb
+      | cons p t =>
+          have hb' : b ∈ [p.2] := hb
+          rcases List.mem_singleton.mp hb' with rfl
+          exact ⟨p.1, List.mem_cons_self ..⟩
 
-/-- **O2 at the seal adapter (frozen).** The license buffer starts empty and
+/-- **O2 at the seal adapter.** The license buffer starts empty and
     grows only by the exact `(raw, out)` pair of the `Allow` verdict just
     received; a `Block` licenses nothing. -/
 theorem sealAdapter_O2 : O2 sealAdapter := by
-  sorry
+  refine ⟨rfl, ?_⟩
+  intro st raw d p hp
+  cases d with
+  | Block => exact Or.inl hp
+  | Allow out =>
+      rcases List.mem_cons.mp hp with rfl | hmem
+      · exact Or.inr ⟨out, rfl, rfl⟩
+      · exact Or.inl hmem
 
-/-- **W2-T6.1 (frozen).** The capstone with its hypotheses discharged: the
+/-- **W2-T6.1.** The capstone with its hypotheses discharged: the
     seal adapter model is non-bypassing on every run at the live gate —
     every emission is preceded, strictly earlier in the trace, by an `Allow`
     decide of byte-identical output. -/
 theorem sealAdapter_trace (state : SealV2.ApprovalState)
     (inputs : List SealV2.RawBytes) :
     precededByAllow
-      (run sealAdapter (fun raw => SealV2.decide raw state) inputs).2 := by
-  sorry
+      (run sealAdapter (fun raw => SealV2.decide raw state) inputs).2 :=
+  channel_preserves_non_bypass sealAdapter sealAdapter_O1 sealAdapter_O2
+    state inputs
+
+-- Build-gated fidelity witnesses on the cheap test gate. An allowed line
+-- emits its allowed bytes exactly once:
+#guard (run sealAdapter okGate ["ok"]).2
+  == [ChanEv.emitEv "OK", ChanEv.decideEv "ok" (SealV2.Decision.Allow "OK")]
+-- and a subsequent blocked line emits NOTHING (no re-emission of old
+-- licenses — the gated-sink discipline, where `compliantAdapter` would
+-- re-emit its whole license history):
+#guard (run sealAdapter okGate ["ok", "x"]).2
+  == [ChanEv.decideEv "x" SealV2.Decision.Block,
+      ChanEv.emitEv "OK", ChanEv.decideEv "ok" (SealV2.Decision.Allow "OK")]
 
 end Host.Channel

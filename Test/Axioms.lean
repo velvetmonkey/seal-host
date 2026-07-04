@@ -383,5 +383,19 @@ info: 'Host.Record.timed_tamper_evident_canonical' depends on axioms: [propext, 
 -/
 #guard_msgs in #print axioms Host.Record.timed_tamper_evident_canonical
 
+-- W2-T6.1: the seal adapter model discharges the capstone's hypotheses
+-- (Host/SealAdapter.lean)
+
+/-- info: 'Host.Channel.sealAdapter_O1' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.sealAdapter_O1
+
+/-- info: 'Host.Channel.sealAdapter_O2' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.sealAdapter_O2
+
+/--
+info: 'Host.Channel.sealAdapter_trace' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.sealAdapter_trace
+
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
