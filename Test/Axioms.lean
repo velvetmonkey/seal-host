@@ -14,6 +14,7 @@ import Host.CompositionBytes
 import Host.ChannelModel
 import Host.SealAdapter
 import Host.NonInterference
+import Host.ReplayIsolation
 import Kernels
 import Kernels.ConsensusBytes
 import Kernels.ConvergencePotential
@@ -420,6 +421,34 @@ info: 'Host.NonInterference.record_authView_noninterference' depends on axioms: 
 info: 'Host.NonInterference.observe_noninterference' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.NonInterference.observe_noninterference
+
+-- Cross-session replay isolation over the durable store seam
+-- (Host/ReplayIsolation.lean)
+
+/--
+info: 'Host.ReplayIsolation.ns_eq_implies_session_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReplayIsolation.ns_eq_implies_session_eq
+
+/--
+info: 'Host.ReplayIsolation.store_lowEq_step' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReplayIsolation.store_lowEq_step
+
+/--
+info: 'Host.ReplayIsolation.replay_isolation_trace' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReplayIsolation.replay_isolation_trace
+
+/--
+info: 'Host.ReplayIsolation.replay_isolation_nonvacuous' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReplayIsolation.replay_isolation_nonvacuous
+
+/--
+info: 'Host.ReplayIsolation.listReplayStore_namespaceLocal' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReplayIsolation.listReplayStore_namespaceLocal
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
