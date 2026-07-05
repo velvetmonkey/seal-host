@@ -6,7 +6,7 @@ The deployable MCP host that puts the proven Seal rulebook between an agent and 
 ![Rust](https://img.shields.io/badge/Rust-host-orange)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-**Seal is a proven checkpoint for AI agents.** When an AI agent tries to use a real tool over MCP — send money, delete a record, call an external service — Seal stands in the way and asks one question: did a human explicitly approve *this exact request*? No matching approval, no action. Every decision is written into a tamper-evident record you can check yourself. What makes Seal different from other guardrails: the core mediation rules aren't just tested — they're machine-checked theorems in Lean 4. The same decision logic then runs byte-for-byte in the Rust host you deploy, in the browser, and in the checker, each verified against that one proven rulebook.
+**Seal is a proven checkpoint for AI agents.** When an AI agent tries to use a real tool over MCP (send money, delete a record, call an external service), Seal stands in the way and asks one question: did a human explicitly approve *this exact request*? No matching approval, no action. Every decision is written into a tamper-evident record you can check yourself. What makes Seal different from other guardrails: the core mediation rules aren't just tested, they're machine-checked theorems in Lean 4. The same decision logic then runs byte-for-byte in the Rust host you deploy, in the browser, and in the checker, each verified against that one proven rulebook.
 
 That is the product line in one sentence: prove the rulebook, then check every body that runs it. Seal is built around MCP because MCP is where agent intent becomes an external effect. The proof says what the kernel must do; the conformance tests show that the Rust, wasm, and JavaScript artifacts used by the product family emit the same decisions and records over the shared corpus.
 
@@ -48,12 +48,12 @@ To run the host, build the Lean core and start `rust/target/debug/seal-host-rs` 
 
 ## The Seal family
 
-- [seal](https://github.com/velvetmonkey/seal) — the private umbrella story, product map, and evaluator path.
-- [mcp-seal-dev](https://github.com/velvetmonkey/mcp-seal-dev) — The rulebook, proven.
-- [seal-host](https://github.com/velvetmonkey/seal-host) — The guard at the door.
-- [seal-check](https://github.com/velvetmonkey/seal-check) — Don't trust. Verify.
-- [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo) — Watch it work.
-- [seal-assurance-kit](https://github.com/velvetmonkey/seal-assurance-kit) — Check your own boundary.
+- [seal](https://github.com/velvetmonkey/seal): the private umbrella story, product map, and evaluator path.
+- [mcp-seal-dev](https://github.com/velvetmonkey/mcp-seal-dev): The rulebook, proven.
+- [seal-host](https://github.com/velvetmonkey/seal-host): The guard at the door.
+- [seal-check](https://github.com/velvetmonkey/seal-check): Don't trust. Verify.
+- [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo): Watch it work.
+- [seal-assurance-kit](https://github.com/velvetmonkey/seal-assurance-kit): Check your own boundary.
 
 ## Documentation
 
