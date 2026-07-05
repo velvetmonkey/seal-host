@@ -60,3 +60,7 @@ root = "Test.Axioms"
 [[lean_exe]]
 name = "host_unit_tests"
 root = "Test.HostUnit"
+
+[[lean_exe]]
+name = "sha256_selfcheck"
+root = "Test.Sha256SelfCheck"

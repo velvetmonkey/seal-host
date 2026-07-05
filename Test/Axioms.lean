@@ -363,6 +363,16 @@ info: 'Host.forward_byte_quorum_route_live' depends on axioms: [propext, Classic
 /-- info: 'Host.Record.admit_preserves_nonce_nodup' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Host.Record.admit_preserves_nonce_nodup
 
+-- L1 CORE record theorems, generalized over the commitment type and
+-- instantiated at the production SHA-256 commitment (Host/Record.lean).
+-- Observed footprints (both axiom-free) — strictly inside the L0 baseline.
+
+/-- info: 'Host.Record.head_after_append' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Record.head_after_append
+
+/-- info: 'Host.Record.tamper_evident' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Record.tamper_evident
+
 /-- info: 'Host.Record.timed_head_after_append' does not depend on any axioms -/
 #guard_msgs in #print axioms Host.Record.timed_head_after_append
 
