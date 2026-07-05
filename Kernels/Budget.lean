@@ -56,7 +56,7 @@ def budgetKernel : Host.Kernel where
   decide := fun act cfg _ st =>
     let mk := fun (kind : Host.VerdictKind) (reason : String) (st' : BudgetState) =>
       ({ kernel := "budget", kind, reason,
-         certHash := Seal.stableHashParts ["budget", kind.text, reason] }, st')
+         certHash := Seal.auditHashParts ["budget", kind.text, reason] }, st')
     let covering := cfg.filter (fun b => b.tools.contains act.tool)
     let outcome := covering.foldl
       (fun (acc : Except String BudgetState) spec => do

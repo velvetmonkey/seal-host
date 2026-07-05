@@ -34,18 +34,15 @@ pre-images. A-CR ("the commitment is collision-resistant: that clash is not
 reachable") is the NAMED assurance-case assumption that discharges it —
 consumed as an explicit hypothesis of `approval_authorizes_only_its_target'`,
 never as a Lean `axiom`. It CANNOT be an axiom: `stableHashString` is a
-fixed-width (64-bit) compression, so by counting it HAS agreeing distinct
+fixed-width compression, so by counting it HAS agreeing distinct
 inputs — a total-injectivity axiom would be FALSE and everything downstream
 vacuous. The hypothesis form states the reduction honestly: authorization-
 uniqueness holds MODULO A-CR on the commitment.
 
 Quantitative honesty (model ↔ deployment gap): the DEPLOYED commitment is
-presently FNV-1a-64 — 64-bit, non-cryptographic — for which A-CR is
-quantitatively WEAK (collisions are findable; the assurance kit's
-`seal adequacy find-collision` is the operational probe). Widening the
-commitment to a 256-bit hash is a separate deployment step; this module's
-reduction is stated so that the widening changes NO Lean statement — only
-the strength of the named A-CR assumption.
+SHA-256 over the injective `encodeParts` bytes. This module still names the
+crypto residual as an explicit A-CR hypothesis; the deployment now makes
+that assumption credible instead of relying on the old audit-only FNV path.
 
 The proofs keep `Seal.stableHashParts` fully OPAQUE: no unfolding to
 concrete values, no `decide` on hash values, no evaluation seam. The former
@@ -55,14 +52,14 @@ needs no finite-universe enumeration and no mirror.
 
 ## A-MINT — the explicit mint-faithfulness assumption (TCB, loud)
 
-Unchanged from the landed module: the Rust minting side
-(`rust/src/providers.rs`) produces `ApprovalRecord { target: u64, … }`; the
-assumption that the MINTED `u64` equals `Seal.stableHashParts (toolName ::
-approvedParts)` — same bytes, same part-list, across the FFI seam — is the
-named, visible `MintFaithful` proposition, consumed as an explicit
-hypothesis. (Deliberately NOT a Lean `axiom`: Rust structs are not objects
-of this logic. Operationally exercised by the four-bodies conformance chain
-and `host_path.rs`.)
+Unchanged from the landed module: the Rust minting side produces
+`ApprovalRecord { target: "<64 lowercase hex>", … }`; the assumption that
+the MINTED target equals `Seal.stableHashParts (toolName :: approvedParts)`
+— same bytes, same part-list, across the FFI seam — is the named, visible
+`MintFaithful` proposition, consumed as an explicit hypothesis.
+(Deliberately NOT a Lean `axiom`: Rust structs are not objects of this
+logic. Operationally exercised by the four-bodies conformance chain and
+`host_path.rs`.)
 
 ## What is proved (this module)
 
@@ -84,10 +81,10 @@ is cited, not re-proved.
 namespace Host.CapabilityAdequacy
 
 /-- **A-MINT (TCB assumption, made visible).** The minted approval target
-(`ApprovalRecord.target : u64` on the Rust side) is exactly the deployed
+(`ApprovalRecord.target : 64 lowercase hex` on the Rust side) is exactly the deployed
 commitment of the labeled part-list — same bytes across the FFI seam.
 Consumed as an explicit hypothesis; see the module docstring. -/
-def MintFaithful (minted : SealCore.Hash) (toolName : String)
+def MintFaithful (minted : SealCore.TargetHash) (toolName : String)
     (parts : List String) : Prop :=
   minted = Seal.stableHashParts (toolName :: parts)
 
@@ -97,7 +94,7 @@ commitment stays OPAQUE: this is the contrapositive of the landed
 private theorem hash_eq_of_live
     (pa pg : List String) (now deadline : Nat)
     (hguard : SealCore.live
-      { approved := (∅ : Std.HashMap SealCore.Hash Nat).insert
+      { approved := (∅ : Std.HashMap SealCore.TargetHash Nat).insert
           (Seal.stableHashParts pa) deadline }
       (Seal.stableHashParts pg) now = true) :
     Seal.stableHashParts pa = Seal.stableHashParts pg := by
@@ -121,14 +118,12 @@ disjunction is unconditionally TRUE for ALL part-lists; nothing confines
 Honesty: the second disjunct is exactly what A-CR (see module docstring)
 asserts to be unreachable. It is kept as a visible disjunct rather than
 discharged by an axiom, because for a fixed-width commitment a total-
-injectivity axiom is FALSE by counting. The deployed commitment is
-presently FNV-1a-64, for which A-CR is quantitatively weak — the 256-bit
-widening is a separate deployment step that strengthens the assumption
-without changing this statement. -/
+injectivity axiom is FALSE by counting. The deployed commitment is SHA-256;
+the named residual remains an explicit crypto assumption, not a Lean axiom. -/
 theorem capability_sound_or_commitment_clash
     (pa pg : List String) (now deadline : Nat)
     (hguard : SealCore.live
-      { approved := (∅ : Std.HashMap SealCore.Hash Nat).insert
+      { approved := (∅ : Std.HashMap SealCore.TargetHash Nat).insert
           (Seal.stableHashParts pa) deadline }
       (Seal.stableHashParts pg) now = true) :
     pa = pg ∨
@@ -154,7 +149,7 @@ theorem approval_authorizes_only_its_target'
     (hACR : ∀ x y, Seal.stableHashString x = Seal.stableHashString y → x = y)
     (pa pg : List String) (now deadline : Nat)
     (hguard : SealCore.live
-      { approved := (∅ : Std.HashMap SealCore.Hash Nat).insert
+      { approved := (∅ : Std.HashMap SealCore.TargetHash Nat).insert
           (Seal.stableHashParts pa) deadline }
       (Seal.stableHashParts pg) now = true) : pa = pg := by
   rcases capability_sound_or_commitment_clash pa pg now deadline hguard with
@@ -171,10 +166,10 @@ modulo A-CR. -/
 theorem minted_approval_authorizes_only_its_target'
     (hACR : ∀ x y, Seal.stableHashString x = Seal.stableHashString y → x = y)
     (toolName : String) (parts pg : List String)
-    (minted : SealCore.Hash) (hmint : MintFaithful minted toolName parts)
+    (minted : SealCore.TargetHash) (hmint : MintFaithful minted toolName parts)
     (now deadline : Nat)
     (hguard : SealCore.live
-      { approved := (∅ : Std.HashMap SealCore.Hash Nat).insert minted deadline }
+      { approved := (∅ : Std.HashMap SealCore.TargetHash Nat).insert minted deadline }
       (Seal.stableHashParts pg) now = true) : toolName :: parts = pg := by
   rw [MintFaithful] at hmint
   rw [hmint] at hguard

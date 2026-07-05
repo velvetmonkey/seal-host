@@ -66,9 +66,9 @@ impl A3Filter {
 mod tests {
     use super::*;
 
-    fn rec(target: u64, issued: Option<u64>, nonce: Option<&str>) -> ApprovalRecord {
+    fn rec(target: &str, issued: Option<u64>, nonce: Option<&str>) -> ApprovalRecord {
         ApprovalRecord {
-            target,
+            target: target.to_string(),
             issued_at: issued,
             nonce: nonce.map(String::from),
         }
@@ -79,8 +79,16 @@ mod tests {
         let mut a3 = A3Filter::new(120_000);
         let (ok, dropped) = a3.filter(
             vec![
-                rec(1, Some(1000), Some("n1")),
-                rec(1, Some(1000), Some("n1")),
+                rec(
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    Some(1000),
+                    Some("n1"),
+                ),
+                rec(
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    Some(1000),
+                    Some("n1"),
+                ),
             ],
             2000,
         );
@@ -88,7 +96,14 @@ mod tests {
         assert_eq!(dropped.len(), 1);
         assert!(dropped[0].contains("replayed nonce"));
         // Replay in a later poll also rejected.
-        let (ok2, dropped2) = a3.filter(vec![rec(1, Some(1500), Some("n1"))], 2500);
+        let (ok2, dropped2) = a3.filter(
+            vec![rec(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                Some(1500),
+                Some("n1"),
+            )],
+            2500,
+        );
         assert!(ok2.is_empty());
         assert_eq!(dropped2.len(), 1);
     }
@@ -98,21 +113,40 @@ mod tests {
         let mut a3 = A3Filter::new(1_000);
         let (ok, dropped) = a3.filter(
             vec![
-                rec(1, Some(0), Some("old")),       // 10s old, ttl 1s
-                rec(2, Some(100_000), Some("fut")), // far future
-                rec(3, Some(9_800), Some("fresh")), // 200ms old
+                rec(
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    Some(0),
+                    Some("old"),
+                ), // 10s old, ttl 1s
+                rec(
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                    Some(100_000),
+                    Some("fut"),
+                ), // far future
+                rec(
+                    "0000000000000000000000000000000000000000000000000000000000000003",
+                    Some(9_800),
+                    Some("fresh"),
+                ), // 200ms old
             ],
             10_000,
         );
         assert_eq!(ok.len(), 1);
-        assert_eq!(ok[0].target, 3);
+        assert_eq!(
+            ok[0].target,
+            "0000000000000000000000000000000000000000000000000000000000000003"
+        );
         assert_eq!(dropped.len(), 2);
     }
 
     #[test]
     fn nonceless_records_pass_freshness_only() {
         let mut a3 = A3Filter::new(1_000);
-        let (ok, _) = a3.filter(vec![rec(1, None, None), rec(1, None, None)], 10_000);
+        let target = "0000000000000000000000000000000000000000000000000000000000000001";
+        let (ok, _) = a3.filter(
+            vec![rec(target, None, None), rec(target, None, None)],
+            10_000,
+        );
         assert_eq!(
             ok.len(),
             2,

@@ -35,9 +35,9 @@ The **structure** is machine-checked; the **primitive's** collision-resistance
 is a named TCB assumption — the same discipline as Ed25519-correctness being
 TCB(A3) in the L0 proofs.
 
-Why abstract and not over the in-tree hash: `Seal.stableHashParts` is FNV-1a
+Why abstract and not over the legacy audit hash: `Seal.auditHashParts` is FNV-1a
 into `UInt64`. A 64-bit hash **is not collision-resistant** — `A-CR` is literally
-false for it (pigeonhole). A "no-assumption tamper-evidence over stableHashParts"
+false for it (pigeonhole). A "no-assumption tamper-evidence over auditHashParts"
 theorem is therefore not merely hard, it is unprovable because it is false. The
 in-Lean `chainHash` (FNV) is kept only as an illustrative instance and is
 **demonstration-grade**.
@@ -93,7 +93,7 @@ node scripts/seal_log.mjs head   <sealed.json>                 # print the curre
 
 ## Not claimed
 
-- Not a claim that FNV/`stableHashParts` is tamper-evident — it is not; the
+- Not a claim that FNV/`auditHashParts` is tamper-evident — it is not; the
   chained record uses SHA-256, and the theorem's strength is exactly `H`'s
   collision-resistance.
 - Not a claim that the Lean model equals the shipping binary — that is the

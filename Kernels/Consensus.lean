@@ -52,11 +52,11 @@ def consensusKernel : Host.Kernel where
     if quorumAccepts cfg.roster votes act.tool then
       let reason := s!"quorum ok ({cert.voters.length}/{cfg.roster.length}): {act.tool}"
       ({ kernel := "consensus", kind := .allow, reason,
-         certHash := Seal.stableHashParts ["consensus", "allow", reason] }, st)
+         certHash := Seal.auditHashParts ["consensus", "allow", reason] }, st)
     else
       let reason := s!"quorum missing ({cert.voters.length}/{cfg.roster.length}): {act.tool}"
       ({ kernel := "consensus", kind := .deny, reason,
-         certHash := Seal.stableHashParts ["consensus", "deny", reason] }, st)
+         certHash := Seal.auditHashParts ["consensus", "deny", reason] }, st)
 
 /-- Bridge for the composition theorem: kernel C's verdict is allow exactly
     when the proved checker accepts the certificate. -/

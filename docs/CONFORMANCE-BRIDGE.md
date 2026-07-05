@@ -96,10 +96,10 @@ the **same** SHA-256 record head as the Lean model over corpus C.
   cert reason is trace-length, the safety reason is a target hash), and `now`
   is fixed in the model step inputs. The deployed binary uses its own wall
   clock yet produces a byte-identical record — demonstrated, not assumed.
-- **"64-bit FNV again?"** No. The record chain here uses SHA-256 (the L1
-  deploy decision, exit a), and the Rust host emits that SHA-256 receipt head
-  as `seal_record:"v1"`. The FNV `stableHashParts` inside `auditLine` is a
-  per-cert content hash, not the chain commitment.
+- **"64-bit FNV again?"** No. The target commitment and record chain use
+  SHA-256. The Rust host emits the SHA-256 receipt head as
+  `seal_record:"v1"`. The FNV `auditHashParts` value inside `auditLine` is a
+  per-cert content hash, not the target or chain commitment.
 - **"Which recent proof gaps does this bridge name?"** It names the model
   theorems landed for single-request NI
   (`Host.NonInterference.observe_noninterference`), replay isolation

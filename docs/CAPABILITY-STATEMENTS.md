@@ -2,64 +2,52 @@
 
 # CAPABILITY-STATEMENTS — ocap/delegation-safety scoping (ARIA S6)
 
-**Status: SCOPING DRAFT for the design council. One frozen candidate
-statement, no proof. The CONCLUSION is locked; hypothesis plumbing may flex
-at council; the conclusion may not.** Wave-2 discipline applies to the
-eventual proof module (build bar in §6). Nothing in this document edits any
-existing theorem; `.lake/packages/mcp-seal` is untouched.
+**Status: LANDED.** The live proof is `Host/CapabilityAdequacy.lean`; Stage 2
+repins the target commitment to SHA-256 (`SealCore.TargetHash = Digest256`)
+without changing the theorem conclusions. The old finite-universe/FNV scoping
+language in this note is superseded by the explicit A-CR hypothesis over
+`Seal.stableHashString`.
 
 All symbols below are verbatim-bound to the live tree and were
-`#check`-probed to bind and typecheck (including decidability of the
-adequacy side-condition) on 2026-07-05.
+`#check`-probed to bind and typecheck (including the A-CR hypothesis shape)
+on 2026-07-05.
 
 ---
 
-## 1. The frozen property + candidate statement
+## 1. The frozen property + landed statement
 
 **Prose (frozen).** Every allowed guarded action traces to a held, live
 approval whose minted target hash equals the action's resolved target hash
-(already landed — §3). And whenever the deployment's target part-list
-universe is *hash-adequate*, the authorizing approval's minted part-list
-EQUALS the action's resolved part-list: **a capability authorizes exactly
-the action it was minted for, never a neighbor.** This is
-no-ambient-authority + no-confused-deputy specialized to the seam the
-deployed broker actually crosses — the collapse from structural targets to
-`UInt64` hashes.
+(already landed — §3). Under A-CR for the deployed target commitment, the
+authorizing approval's minted part-list EQUALS the action's resolved
+part-list: **a capability authorizes exactly the action it was minted for,
+never a neighbor.** This is no-ambient-authority + no-confused-deputy
+specialized to the seam the deployed broker actually crosses — the collapse
+from structural targets to `Digest256` target commitments.
 
-**Candidate Lean statement (conclusion LOCKED = `pa = pg`):**
+**Landed Lean statement (conclusion LOCKED = `pa = pg`):**
 
 ```lean
-/-- The deployment's part-list universe is hash-adequate: the deployed
-    FNV-1a-64 target hash is injective ON THIS UNIVERSE. Decidable for any
-    finite `U` — discharged per policy by `decide`. -/
-def Adequate (U : List (List String)) : Prop :=
-  ∀ pa ∈ U, ∀ pg ∈ U,
-    Seal.stableHashParts pa = Seal.stableHashParts pg → pa = pg
-
-theorem approval_authorizes_only_its_target
-    (U : List (List String)) (hadq : Adequate U)
-    (pa pg : List String) (hpa : pa ∈ U) (hpg : pg ∈ U)
+theorem approval_authorizes_only_its_target'
+    (hACR : ∀ x y, Seal.stableHashString x = Seal.stableHashString y → x = y)
+    (pa pg : List String)
     (now deadline : Nat)
-    (hlive : SealCore.live
-      { approved := (∅ : Std.HashMap SealCore.Hash Nat).insert
+    (hguard : SealCore.live
+      { approved := (∅ : Std.HashMap SealCore.TargetHash Nat).insert
           (Seal.stableHashParts pa) deadline }
       (Seal.stableHashParts pg) now = true) :
     pa = pg
 ```
 
-Notes: `Seal.stableHashParts : List String → SealCore.Hash`
-(`Seal/Hash.lean:16`, namespace `Seal`, NOT `Seal.Hash`); the
-single-approval state literal mirrors the landed
-`SealCore.approval_binds_to_target` pattern (its generalization is council
-question Q3). Expected proof shape: contrapositive of
-`approval_binds_to_target` gives hash equality from liveness; `hadq` lifts
-it to part-list equality. Small — the value is in the STATEMENT +
-per-deployment adequacy discharge, not proof difficulty.
+Notes: `Seal.stableHashParts : List String → SealCore.TargetHash`;
+`Seal.stableHashString` is SHA-256 over `Seal.encodeParts`. The proof keeps
+the hash opaque: `SealCore.approval_binds_to_target` gives target equality
+from liveness, and `hACR` lifts that to part-list equality.
 
 ## 2. Authority map (recon, live-symbol-bound)
 
 * **Minting (TCB):** Rust providers (`rust/src/providers.rs`) mint
-  `ApprovalRecord { target: u64, … }` via control-file / Ed25519
+  `ApprovalRecord { target: "<64 lowercase hex>", … }` via control-file / Ed25519
   signed-token / TTY. `rust/src/a3.rs` freshness-filters every record
   (nonce-once per session, TTL, +5s future-skew, wall clock) before Lean
   sees it — `A3Filter`, fail-closed.
@@ -69,15 +57,15 @@ per-deployment adequacy discharge, not proof difficulty.
   (`Seal/Classify.lean:32-51` — this is where the `literal`/`argPath`
   target-part split lives) → `SealCore.step`/`live`
   (`SealCore/Automaton.lean:20`): a **hash-keyed** `Std.HashMap
-  Hash Nat` lookup. The deployed broker compares `UInt64` hashes.
+  TargetHash Nat` lookup. The deployed broker compares SHA-256 target digests.
 * **Value model (SealV2):** `validate`/`ValidCapability`
   (`SealV2/Validation.lean:272-309`) compares full `Target` STRUCTS
   (`approval.target == target`, derived BEq over all fields including
   `arguments : AST`; `targetFor`:226 copies request fields whole). Used by
   the SealAdapter / NI / replay proofs.
-* **The seam:** the two layers meet only at `stableHashParts`. FNV-1a-64 is
-  NOT collision resistant; a collision between two distinct resolvable
-  part-lists is precisely a confused deputy in the deployed broker.
+* **The seam:** the two layers meet only at `stableHashParts`. The live theorem
+  names the residual as A-CR over SHA-256 `stableHashString`; this is a
+  cryptographic assumption, not a Lean axiom.
 * **Delegation/attenuation: NO PRIMITIVE EXISTS** (grep-confirmed across
   the package and Host). Approvals are minted for one fully-instantiated
   target and matched by equality; nothing narrows, chains, or re-mints.
@@ -99,19 +87,18 @@ per-deployment adequacy discharge, not proof difficulty.
 | `SealCore.consumed_approval_not_live` / `fresh_approval_live` / `expired_not_live` | one-shot + freshness discipline |
 | `SealV2.decide_emit_unique` | value-level: every Allow carries a `ValidCapability` witness (held, session-bound, target-equal approval) |
 
-**Novel residual (the theorem to ship):** the **hash→value lift** — nothing
-landed says hash-equality implies part-list equality, because
-unconditionally it is FALSE (FNV collisions exist). The candidate makes it
-true under the decidable `Adequate U` side-condition and ships the
-per-policy discharge. NI (state secrecy), ReplayIsolation (store
-isolation), DeployedAdapter O1∧O2 (channel mediation) are orthogonal — none
-speak to authority binding across the hash seam.
+**Novel residual (now named explicitly):** the **hash→value lift** — nothing
+in Lean proves SHA-256 collision resistance. The theorem exposes that as
+`hACR` over `Seal.stableHashString`; deployment makes the assumption
+credible by using SHA-256 over the injective `encodeParts` bytes. NI (state
+secrecy), ReplayIsolation (store isolation), DeployedAdapter O1∧O2 (channel
+mediation) are orthogonal — none speak to authority binding across the hash
+seam.
 
-**Convergence note:** `seal-assurance-kit` just gained
-`seal adequacy check` / `seal adequacy find-collision` (labels.json) — the
-operational JS probe of exactly this property. The Lean theorem is its
-formal half; the kit tool is the deployment-side discharge/refutation
-procedure. One property, two enforcement points.
+**Convergence note:** the old finite-universe adequacy probes were useful
+for FNV-era scoping. The live deployment story is now the four-body
+conformance chain: Lean model, native host, wasm, and JS mirrors all compute
+the same SHA-256 target commitment.
 
 ## 4. Trust boundary (loud)
 
@@ -121,13 +108,12 @@ TTL, and skew (`a3.rs`); the C ABI seam + JSON marshalling (`Ffi.lean`,
 `lean.rs`); OS permissions on config/approval files.
 
 **The model PROVES:** authority tracing (allow ⇒ held live approval,
-landed) and — new — the adequacy-conditional binding (held approval for
-`pa` authorizes an action resolving to `pg` only if `pa = pg`).
+landed) and the A-CR-conditional binding (held approval for `pa` authorizes
+an action resolving to `pg` only if `pa = pg`).
 
-**Explicitly NOT assumed:** collision resistance of FNV-1a-64. That is the
-point: the statement replaces an unavailable cryptographic assumption with
-a decidable, per-deployment, kernel-checked injectivity condition on the
-finite universe the deployment actually uses.
+**Explicitly NOT a Lean axiom:** collision resistance of SHA-256. It remains
+the named assurance-case hypothesis `hACR`; the old FNV path is confined to
+`Seal.auditHashParts` for UInt64 audit/demo hashes.
 
 ## 5. Non-vacuity plan (build-gated exemplars)
 

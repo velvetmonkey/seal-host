@@ -69,16 +69,16 @@ def byteConsensusKernel : Host.Kernel where
     | none =>
         let reason := s!"no canonical witness: {act.tool}"
         ({ kernel := "consensus-bytes", kind := .deny, reason,
-           certHash := Seal.stableHashParts ["consensus-bytes", "deny", reason] }, st)
+           certHash := Seal.auditHashParts ["consensus-bytes", "deny", reason] }, st)
     | some bytes =>
         if byteQuorumAccepts cfg.roster votes bytes then
           let reason := s!"byte quorum ok: {act.tool}"
           ({ kernel := "consensus-bytes", kind := .allow, reason,
-             certHash := Seal.stableHashParts ["consensus-bytes", "allow", reason] }, st)
+             certHash := Seal.auditHashParts ["consensus-bytes", "allow", reason] }, st)
         else
           let reason := s!"byte quorum missing: {act.tool}"
           ({ kernel := "consensus-bytes", kind := .deny, reason,
-             certHash := Seal.stableHashParts ["consensus-bytes", "deny", reason] }, st)
+             certHash := Seal.auditHashParts ["consensus-bytes", "deny", reason] }, st)
 
 /-- Bridge for the composition theorems, mirroring
     `consensus_verdict_allow_iff`: kernel C-bytes allows exactly when the act

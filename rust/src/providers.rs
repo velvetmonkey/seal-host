@@ -8,15 +8,17 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Deserializer};
 use std::io::BufRead;
 
-/// Accept a u64 written either as a JSON number or a JSON string — the V1
-/// control-file format emits the target as a string, signed tokens as a
-/// number, and both must parse (matching the Lean-side `jsonToNat?`).
-fn u64_str_or_num<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+fn is_target_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Accept exactly the deployed target commitment format: lowercase 64-hex SHA-256.
+fn target_hex<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     use serde::de::Error;
     match serde_json::Value::deserialize(d)? {
-        serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| D::Error::custom("not u64")),
-        serde_json::Value::String(s) => s.parse().map_err(D::Error::custom),
-        _ => Err(D::Error::custom("target must be a number or string")),
+        serde_json::Value::String(s) if is_target_hex(&s) => Ok(s),
+        serde_json::Value::String(_) => Err(D::Error::custom("target must be lowercase 64-hex")),
+        _ => Err(D::Error::custom("target must be a lowercase 64-hex string")),
     }
 }
 
@@ -35,8 +37,8 @@ fn opt_u64_str_or_num<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D:
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApprovalRecord {
-    #[serde(deserialize_with = "u64_str_or_num")]
-    pub target: u64,
+    #[serde(deserialize_with = "target_hex")]
+    pub target: String,
     #[serde(rename = "issuedAt", default, deserialize_with = "opt_u64_str_or_num")]
     pub issued_at: Option<u64>,
     #[serde(default)]
@@ -50,7 +52,7 @@ pub trait ApprovalProvider {
     fn name(&self) -> &'static str;
 }
 
-/// V1-compatible control file: NDJSON `{"target": n, "issuedAt"?: ms}`,
+/// Control file: NDJSON `{"target": "<64 lowercase hex>", "issuedAt"?: ms}`,
 /// each line ingested exactly once (positional seen counter).
 pub struct ControlFileProvider {
     path: std::path::PathBuf,
@@ -165,7 +167,7 @@ impl ApprovalProvider for Ed25519TokenProvider {
 pub struct InteractiveProvider<R: BufRead, W: std::io::Write> {
     input: R,
     output: W,
-    pub pending_target: Option<u64>,
+    pub pending_target: Option<String>,
 }
 
 impl<R: BufRead, W: std::io::Write> InteractiveProvider<R, W> {
@@ -177,7 +179,7 @@ impl<R: BufRead, W: std::io::Write> InteractiveProvider<R, W> {
         }
     }
 
-    pub fn queue(&mut self, target: u64) {
+    pub fn queue(&mut self, target: String) {
         self.pending_target = Some(target);
     }
 }
@@ -219,14 +221,15 @@ mod tests {
     fn ed25519_provider_accepts_valid_rejects_tampered() {
         let sk = SigningKey::from_bytes(&[7u8; 32]);
         let vk_hex = hex::encode(sk.verifying_key().to_bytes());
-        let payload = r#"{"target":42,"issuedAt":1000,"nonce":"abc123"}"#;
+        let target = "000000000000000000000000000000000000000000000000000000000000002a";
+        let payload = format!(r#"{{"target":"{target}","issuedAt":1000,"nonce":"abc123"}}"#);
         let sig = hex::encode(sk.sign(payload.as_bytes()).to_bytes());
         let good = format!(
             r#"{{"payload":{},"signature":"{}"}}"#,
-            serde_json::to_string(payload).unwrap(),
+            serde_json::to_string(&payload).unwrap(),
             sig
         );
-        let bad = good.replace("42", "43");
+        let bad = good.replace("002a", "002b");
 
         let dir = std::env::temp_dir().join(format!("seal-tok-{}", std::process::id()));
         std::fs::write(&dir, format!("{good}\n{bad}\n")).unwrap();
@@ -234,19 +237,20 @@ mod tests {
         let records = p.poll();
         std::fs::remove_file(&dir).ok();
         assert_eq!(records.len(), 1, "tampered token must be dropped");
-        assert_eq!(records[0].target, 42);
+        assert_eq!(records[0].target, target);
     }
 
     #[test]
     fn interactive_provider_mints_on_yes_only() {
         let mut p = InteractiveProvider::new(std::io::Cursor::new(b"y\n".to_vec()), Vec::new());
-        p.queue(7);
+        let target = "0000000000000000000000000000000000000000000000000000000000000007".to_string();
+        p.queue(target.clone());
         let records = p.poll();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].target, 7);
+        assert_eq!(records[0].target, target);
 
         let mut p = InteractiveProvider::new(std::io::Cursor::new(b"n\n".to_vec()), Vec::new());
-        p.queue(7);
+        p.queue("0000000000000000000000000000000000000000000000000000000000000007".to_string());
         assert!(p.poll().is_empty());
     }
 }

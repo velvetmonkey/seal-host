@@ -40,7 +40,7 @@ def linearKernel : Host.Kernel where
   decide := fun act cfg _ st =>
     let mk := fun (kind : Host.VerdictKind) (reason : String) (st' : LinearCore.LState) =>
       ({ kernel := "linear", kind, reason,
-         certHash := Seal.stableHashParts ["linear", kind.text, reason] }, st')
+         certHash := Seal.auditHashParts ["linear", kind.text, reason] }, st')
     match cfg.tools.find? (fun t => t.tool == act.tool) with
     | none => mk .deny s!"not a linearly-gated tool: {act.tool}" st
     | some t =>

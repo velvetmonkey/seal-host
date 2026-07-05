@@ -58,7 +58,7 @@ reject it as legacy, naming this spec.
 | `kernel_identity` | object | yes | `wasm_sha256` (64-hex, or **null iff `bypass`**), `self_verified` (boolean). HARD SPLIT: never carries toolchain/axioms in v1. See §4 |
 | `asserted_provenance` | object | optional | asserted-not-verified proof hygiene (`lean_toolchain`, `axioms`, `verified_in_browser` — MUST NOT be `true`); the only v1 home for toolchain/axioms (§4) |
 | `kernel_config` | object | yes when mediated | the exact trusted config the kernel was initialised with — re-derivation input |
-| `granted_capabilities` | array of objects | yes when mediated | the presented grants. Two entry forms (§3): **un-hashed** `{tool, <policy-selected fields>...}` when the producer holds the grant pre-image, or **opaque** `{target: "<decimal u64>"}` when it does not (e.g. seal-check's fire-your-own box accepts raw targets) |
+| `granted_capabilities` | array of objects | yes when mediated | the presented grants. Two entry forms (§3): **un-hashed** `{tool, <policy-selected fields>...}` when the producer holds the grant pre-image, or **opaque** `{target: "<64 lowercase hex>"}` when it does not (e.g. seal-check's fire-your-own box accepts raw targets) |
 | `policy_id` | string | optional | producer's policy label |
 | `signature` | object | optional | integrity envelope (e.g. live-demo HMAC demo key); never a substitute for re-derivation |
 
@@ -108,18 +108,16 @@ produces.
 
 ## 3. Capability targets — one convention, policy-determined arity
 
-Approval targets are computed by the JS mirror of Lean
-`Seal.Hash.stableHashParts`:
+Approval targets are computed by the JS mirror of Lean `Seal.stableHashParts`:
 
 ```
-acc := 14695981039346656037
-for each Unicode codepoint c of parts.join("|"):
-    acc := (acc * 1099511628211 + c) mod 2^64
+encoded := parts.map(p => `${charCount(p)}:${p}`).join("")
+target := SHA-256(UTF-8(encoded)) as 64-character lowercase hex
 ```
 
-(u64 result; exceeds `Number.MAX_SAFE_INTEGER`, so it is a BigInt in JS and
-MUST be serialised as a decimal **string** or an exact integer literal —
-never through lossy `Number`.)
+`charCount` is the JavaScript/Lean string character count, not UTF-8 byte
+length. For non-ASCII, the bytes hashed are still the UTF-8 bytes of the
+netstring text.
 
 **The convention (pinned):**
 
@@ -135,11 +133,11 @@ existing uses already follow this rule.
 
 Frozen vectors:
 
-| # | policy target spec | parts fed | decimal target |
+| # | policy target spec | encoded parts | target hex |
 |---|---|---|---|
-| V2 | `[{literal:"store"}]` (seal-check `store.update`) | `["store.update","store"]` | `11662918066780758608` |
-| V2b | `[{literal:"pay"}]` (seal-check `payments.send`) | `["payments.send","pay"]` | `2693940768235235512` |
-| V3 | `[{arg:"table"},{arg:"operation"}]` (live-demo `db.execute`) | `["db.execute","staging_deploy_audit","insert"]` | `11517196862591714860` |
+| V2 | `[{literal:"store"}]` (seal-check `store.update`) | `12:store.update5:store` | `6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984` |
+| V2b | `[{literal:"pay"}]` (seal-check `payments.send`) | `13:payments.send3:pay` | `e35dd14f3e1d02fec3b03a781b7f8928bfd1ce7b7f93a23a7b61228c536bd73a` |
+| V3 | `[{arg:"table"},{arg:"operation"}]` (live-demo `db.execute`) | `10:db.execute20:staging_deploy_audit6:insert` | `351f47a44bcf935c7242432e24bd11db1536d7c1da873f0ca953c8b80ae02433` |
 
 A v1 receipt carries grants in `granted_capabilities`, in one of two entry
 forms, and the verifier resolves them via the shared
@@ -149,9 +147,9 @@ forms, and the verifier resolves them via the shared
   the grant pre-image. The verifier recomputes the target from the POLICY's
   target spec for that tool: `{literal}` parts come from the policy itself,
   `{arg}` parts from the entry's field of that name, in policy order.
-* **Opaque** `{target: "<decimal u64>"}` — the producer did not hold the
+* **Opaque** `{target: "<64 lowercase hex>"}` — the producer did not hold the
   pre-image (e.g. a raw target pasted into seal-check's fire-your-own box).
-  The verifier uses the decimal verbatim and COUNTS it: verdict
+  The verifier uses the target verbatim and COUNTS it: verdict
   re-derivation still holds, but the grant binding cannot be independently
   checked for that entry. Receipts say what the producer actually knew —
   opaque entries are honest, not equivalent.
@@ -252,8 +250,8 @@ HOST_AUDIT_VERDICT_MAP            // { allow: "ALLOW", deny: "BLOCK" }
 canonicalRequest(tool, args, id=1)      // -> string   (§2 line)
 sha256Hex(bytes)                        // -> hex      (pure-JS, browser-safe)
 canonicalRequestSha256(tool, args)      // -> hex      (§2)
-stableHashParts(parts)                  // -> BigInt   (§3)
-capabilityTarget(tool, parts)           // -> BigInt   (§3 convention)
+stableHashParts(parts)                  // -> hex      (§3)
+capabilityTarget(tool, parts)           // -> hex      (§3 convention)
 capabilityTargetsFromPolicy(cfg, grants) // -> { approvals, opaque, errors } (§3 resolve)
 assembleReceiptV1(fields)               // -> object   (§1 fixed key order, byte-stable)
 validateReceipt(obj)                    // -> { ok, version, errors }

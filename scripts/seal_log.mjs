@@ -8,7 +8,7 @@
 //
 // with the commitment H instantiated as SHA-256 (a credible collision-resistant
 // hash, so assumption A-CR of `tamper_evident` is credible — NOT the 64-bit FNV
-// `stableHashParts`, which is demonstration-grade only). A-GEN (fresh genesis)
+// `auditHashParts`, which is demonstration-grade only). A-GEN (fresh genesis)
 // is a domain-separated constant.
 //
 // The Lean theorem `tamper_evident` proves: under A-CR + A-GEN, the chain head

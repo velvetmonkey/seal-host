@@ -26,9 +26,9 @@ kernel interface, registry, composition theorem, harness — lives only here.
   approval back-channel (control-file / Ed25519 signed token / interactive
   TTY) + A3 nonce/replay/TTL, calling the Lean verified core through
   `libsealffi.so` (`scripts/build_ffi_so.sh`); property-based differential
-  conformance harness on the seam. The deployed host emits a SHA-256 receipt
-  commitment for each audit certificate; FNV `stableHashParts` remains only a
-  per-cert/demo hash, not the record commitment. **FFI grows the TCB — see
+  conformance harness on the seam. The deployed target commitment is SHA-256;
+  FNV `auditHashParts` remains only a per-cert/demo hash, not the target or
+  record commitment. **FFI grows the TCB — see
   `TCB.md`.**
 - **W2 closeout**: single-request non-interference
   (`Host.NonInterference.observe_noninterference`), cross-session replay

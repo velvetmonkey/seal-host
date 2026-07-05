@@ -50,7 +50,7 @@ def convergenceKernel : Host.Kernel where
   decide := fun act cfg _ st =>
     let mk := fun (kind : Host.VerdictKind) (reason : String) =>
       ({ kernel := "convergence", kind, reason,
-         certHash := Seal.stableHashParts ["convergence", kind.text, reason] }, st)
+         certHash := Seal.auditHashParts ["convergence", kind.text, reason] }, st)
     match cfg.find? (fun r => r.tool == act.tool) with
     | none => mk .deny s!"not a configured replicated tool: {act.tool}"
     | some r =>

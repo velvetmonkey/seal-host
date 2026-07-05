@@ -57,7 +57,18 @@ def parseForecastsText (text : String) : List Kernels.ForecastRecord :=
         else
           none
 
-/-- Convert approval records (JSON array of `{"target": <nat>, "issuedAt"?: <ms>}`)
+private def jsonToNat? (j : Json) : Option Nat :=
+  match j with
+  | .num n => (toString n).toNat?
+  | .str s => s.toNat?
+  | _ => none
+
+private def jsonToTargetHash? (j : Json) : Option SealCore.TargetHash :=
+  match j with
+  | .str s => SealCore.Sha256.Digest256.parseHex? s
+  | _ => none
+
+/-- Convert approval records (JSON array of `{"target": "<64 lowercase hex>", "issuedAt"?: <ms>}`)
     into SealCore approval events, mirroring `Seal.Channel.parseApprovalRecord`
     deadline semantics exactly: `deadline = min(issuedAt, now) + ttlMs`, so a
     record can only ever make a ticket expire SOONER than `now + ttlMs`. -/
@@ -66,17 +77,9 @@ def approvalEventsFromJson (j : Json) (now ttlMs : Nat) : List SealCore.Event :=
   | .error _ => []
   | .ok arr =>
       arr.toList.filterMap fun r => do
-        let target ← (r.getObjVal? "target").toOption.bind fun v =>
-          match v with
-          | .num n => (toString n).toNat?
-          | .str s => s.toNat?
-          | _ => none
-        let issuedAt := (r.getObjVal? "issuedAt").toOption.bind fun v =>
-          match v with
-          | .num n => (toString n).toNat?
-          | .str s => s.toNat?
-          | _ => none
+        let target ← (r.getObjVal? "target").toOption.bind jsonToTargetHash?
+        let issuedAt := (r.getObjVal? "issuedAt").toOption.bind jsonToNat?
         let base := min (issuedAt.getD now) now
-        some (SealCore.Event.approval (UInt64.ofNat target) (base + ttlMs))
+        some (SealCore.Event.approval target (base + ttlMs))
 
 end Host.Evidence

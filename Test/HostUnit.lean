@@ -33,7 +33,7 @@ private def dbArgs : Lean.Json :=
     ("sql", Lean.Json.str "drop table users")
   ]
 
-private def dbTarget : SealCore.Hash :=
+private def dbTarget : SealCore.TargetHash :=
   Seal.stableHashParts ["db.execute", "db", "prod", "write", "drop table users"]
 
 private def mkAct (tool : String) (args : Lean.Json) : CanonicalAction :=
@@ -113,7 +113,7 @@ def main : IO Unit := do
 
   let (v1, st1) := decideS act noEv State.empty
   check "guarded without approval -> deny" (v1.kind == .deny)
-  check "deny reason carries target text" (v1.reason == toString dbTarget.toNat)
+  check "deny reason carries target text" (v1.reason == "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783")
 
   let approvedEv : Kernels.SafetyEvidence :=
     { now, approvalEvents := [.approval dbTarget (now + 120000)] }

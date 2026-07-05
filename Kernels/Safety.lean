@@ -54,7 +54,7 @@ def safetyKernel : Host.Kernel where
       kernel := "safety"
       kind := kind
       reason := reason
-      certHash := Seal.stableHashParts ["safety", kind.text, reason]
+      certHash := Seal.auditHashParts ["safety", kind.text, reason]
     }
     (verdict, st3)
 

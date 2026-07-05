@@ -373,7 +373,7 @@ mod props {
         /// A replayed nonce never survives, whatever the clock does.
         #[test]
         fn replayed_nonce_never_survives(
-            target in any::<u64>(),
+            target in "[a-f0-9]{64}",
             issued in any::<u64>(),
             now1 in any::<u64>(),
             now2 in any::<u64>(),
@@ -381,7 +381,7 @@ mod props {
         ) {
             let mut a3 = A3Filter::new(u64::MAX);
             let rec = || ApprovalRecord {
-                target,
+                target: target.clone(),
                 issued_at: Some(issued),
                 nonce: Some(nonce.clone()),
             };
@@ -402,7 +402,11 @@ mod props {
         ) {
             let mut a3 = A3Filter::new(ttl);
             let (ok, _) = a3.filter(
-                vec![ApprovalRecord { target: 1, issued_at: Some(issued), nonce: None }],
+                vec![ApprovalRecord {
+                    target: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
+                    issued_at: Some(issued),
+                    nonce: None,
+                }],
                 now,
             );
             let expired = now.saturating_sub(issued) > ttl;

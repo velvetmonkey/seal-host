@@ -55,7 +55,7 @@ impl Channel {
         }
     }
 
-    fn queue_interactive(&mut self, target: u64) -> bool {
+    fn queue_interactive(&mut self, target: String) -> bool {
         if let Channel::Tty(p) = self {
             p.queue(target);
             true
@@ -134,6 +134,19 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn extract_target_hex(s: &str) -> Option<String> {
+    let target: String = s.chars().take(64).collect();
+    if target.len() == 64
+        && target
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        Some(target)
+    } else {
+        None
+    }
 }
 
 fn read_or_empty(path: &str) -> String {
@@ -427,12 +440,10 @@ fn run() -> i32 {
                 // from raw input); a failed parse means no retry — the line
                 // stays blocked.
                 if interactive {
-                    if let Some(target) =
-                        response.split("approval required: ").nth(1).and_then(|s| {
-                            let digits: String =
-                                s.chars().take_while(|c| c.is_ascii_digit()).collect();
-                            digits.parse::<u64>().ok()
-                        })
+                    if let Some(target) = response
+                        .split("approval required: ")
+                        .nth(1)
+                        .and_then(extract_target_hex)
                     {
                         provider.queue_interactive(target);
                         let (records, _) = a3.filter(provider.poll(), now);

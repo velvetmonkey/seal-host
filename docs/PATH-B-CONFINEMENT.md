@@ -2,10 +2,11 @@
 
 # PATH B — closing the capability-theorem residual (runtime `pg` confinement)
 
-**Status: DESIGN DOC. No spike shipped — the honest recommendation touches
-frozen `mcp-seal`, so this stops at a seal-day / council decision (per the
-Path-B brief's stop rule).** No `.lake/packages/mcp-seal` edit, no landed
-theorem touched, no Rust code added.
+**Status: HISTORICAL DESIGN DOC, superseded by Stage 2.** The recommended
+CR-hash swap has now shipped in the private kernel (`mcp-seal-dev @ 872ac50`):
+`Seal.stableHashParts` is SHA-256 over injective netstring encoding, while
+the old FNV path is explicitly named `Seal.auditHashParts` for UInt64 audit
+cert/demo hashes. The analysis below is retained as pre-widening rationale.
 
 ## The residual being closed
 

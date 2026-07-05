@@ -90,11 +90,11 @@ theorem tamper_evident {α : Type}
 
 /-- Cheap legacy/demo commitment — the `α := UInt64` instantiation of the
     chain structure: commit the prior `UInt64` head (as its canonical decimal
-    string) with the payload via the frozen V1 stable hash.
-    `Seal.stableHashParts` is FNV-1a/`UInt64`, so it does NOT satisfy `A-CR`.
+    string) with the payload via the explicit legacy audit hash.
+    `Seal.auditHashParts` is FNV-1a/`UInt64`, so it does NOT satisfy `A-CR`.
     The deployed receipt commitment is the SHA-256 chain (`prodChainHash`). -/
 def chainHash (prevHead : Hash) (payload : String) : Hash :=
-  Seal.stableHashParts [toString prevHead.toNat, payload]
+  Seal.auditHashParts [toString prevHead.toNat, payload]
 
 /-- **PRODUCTION commitment** — the `α := String` instantiation, mirroring
     `rust/src/receipt.rs` byte-for-byte: the prior head as its 64-character

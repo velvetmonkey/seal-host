@@ -26,7 +26,7 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 [[require]]
 name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
-rev = "e36fc98"
+rev = "872ac50"
 
 # One library for the host + kernels + FFI surface. Host and Kernels modules
 # import each other across the prefix boundary (Kernels implement Host.Kernel;

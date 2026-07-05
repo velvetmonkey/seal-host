@@ -136,13 +136,13 @@ impl Oracle {
             .expect("host produced no output line in time")
     }
 
-    fn approve(&mut self, target: u64) {
+    fn approve(&mut self, target: &str) {
         use std::io::Write as _;
         let mut f = std::fs::OpenOptions::new()
             .append(true)
             .open(self.dir.join("approvals.ndjson"))
             .unwrap();
-        writeln!(f, "{{\"target\": {target}}}").unwrap();
+        writeln!(f, "{{\"target\": \"{target}\"}}").unwrap();
     }
 }
 
@@ -169,14 +169,22 @@ fn is_block(line: &str) -> bool {
     line.contains("\"isError\":true") && line.contains("approval required: ")
 }
 
-fn block_target(line: &str) -> Option<u64> {
-    let digits: String = line
+fn block_target(line: &str) -> Option<String> {
+    let target: String = line
         .split("approval required: ")
         .nth(1)?
         .chars()
-        .take_while(|c| c.is_ascii_digit())
+        .take(64)
         .collect();
-    digits.parse().ok()
+    if target.len() == 64
+        && target
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        Some(target)
+    } else {
+        None
+    }
 }
 
 #[test]
@@ -236,7 +244,7 @@ fn mediation_obfuscation_and_one_shot_approval() {
     // canonical call — that is exactly why an approval cannot be forged.
     for (sql, t) in sql_disguises.iter().zip(&disguise_targets) {
         assert_ne!(
-            *t, target,
+            t, &target,
             "disguise {sql:?} must not share the canonical target"
         );
     }
@@ -269,7 +277,7 @@ fn mediation_obfuscation_and_one_shot_approval() {
     // Approve the canonical target, then fire a DISGUISE first: the approval
     // is in hand, bound to the canonical bytes — the disguise must still
     // block (and the ingested approval survives the deny; Registry.lean).
-    o.approve(target);
+    o.approve(&target);
     let disguised_again = guarded_call(30, "DROP TABLE ACCOUNTS");
     o.send(&disguised_again);
     let resp = o.expect_line();

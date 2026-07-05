@@ -123,7 +123,7 @@ theorem combine_extension_from_empty :
     under the AND-combinator. -/
 theorem composed_non_bypass
     (vs : List Verdict) (act : CanonicalAction) (pol : Seal.Policy)
-    (ev : Kernels.SafetyEvidence) (st1 : SealCore.State) (target : SealCore.Hash)
+    (ev : Kernels.SafetyEvidence) (st1 : SealCore.State) (target : SealCore.TargetHash)
     (hmem : (Kernels.safetyKernel.decide act pol ev st1).1 ∈ vs)
     (hcomb : combineVerdicts vs = .allow)
     (hguard : (Seal.classifyToolCall pol act.tool act.argsJson).toEvent =
@@ -184,7 +184,7 @@ theorem composed_temporal_safety
 theorem and_combinator_preserves_invariants
     (vs vs' : List Verdict) (act act' : CanonicalAction)
     (pol : Seal.Policy) (ev : Kernels.SafetyEvidence) (st1 : SealCore.State)
-    (target : SealCore.Hash)
+    (target : SealCore.TargetHash)
     (cfg : Kernels.ConsensusConfig) (votes : Consensus.Checker.Votes)
     (hS : (Kernels.safetyKernel.decide act pol ev st1).1 ∈ vs)
     (hC : (Kernels.consensusKernel.decide act cfg votes ()).1 ∈ vs)

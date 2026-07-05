@@ -68,11 +68,11 @@ def temporalKernel : Host.Kernel where
     | some pol =>
         let reason := s!"temporal policy violated: {pol.name}"
         ({ kernel := "temporal", kind := .deny, reason,
-           certHash := Seal.stableHashParts ["temporal", "deny", reason] }, st)
+           certHash := Seal.auditHashParts ["temporal", "deny", reason] }, st)
     | none =>
         let reason := s!"trace ok ({st.executed.length + 1} events)"
         ({ kernel := "temporal", kind := .allow, reason,
-           certHash := Seal.stableHashParts ["temporal", "allow", reason] },
+           certHash := Seal.auditHashParts ["temporal", "allow", reason] },
          { executed := st.executed ++ [act.tool] })
 
 /-- The pure accept condition of kernel T, mirroring `Kernels.quorumAccepts`:

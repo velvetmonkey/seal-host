@@ -75,7 +75,7 @@ def calibrationKernel : Host.Kernel where
     if calibratedB cfg records then
       let reason := s!"forecaster calibrated over {n} samples: {act.tool}"
       ({ kernel := "calibration", kind := .allow, reason,
-         certHash := Seal.stableHashParts ["calibration", "allow", reason] }, st)
+         certHash := Seal.auditHashParts ["calibration", "allow", reason] }, st)
     else
       let reason :=
         if n < cfg.minSamples then
@@ -83,6 +83,6 @@ def calibrationKernel : Host.Kernel where
         else
           s!"forecaster uncalibrated over {n} samples: {act.tool}"
       ({ kernel := "calibration", kind := .deny, reason,
-         certHash := Seal.stableHashParts ["calibration", "deny", reason] }, st)
+         certHash := Seal.auditHashParts ["calibration", "deny", reason] }, st)
 
 end Kernels
