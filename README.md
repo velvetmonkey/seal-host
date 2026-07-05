@@ -1,107 +1,72 @@
 # seal-host
 
+The deployable MCP host that puts the proven Seal rulebook between an agent and real tools. **Role:** The guard at the door.
+
 ![Lean](https://img.shields.io/badge/Lean-4.28.0-blue)
+![Rust](https://img.shields.io/badge/Rust-host-orange)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
-![Proofs](https://img.shields.io/badge/proofs-0%20sorry-brightgreen)
-![Axioms](https://img.shields.io/badge/axioms-propext·Classical.choice·Quot.sound-informational)
 
-**PRIVATE pre-award — do not push to any public remote yet.** Per the ARIA Track 1 bid commitment, the specification layer (kernel theorem statements, the composition theorem statement, `THREAT_MODEL`, `TCB`) is to be published openly ahead of submission and the full proof sources at grant kickoff; only the implementation (host, registry, harness) is retained under the 12-month commercialisation clawback.
+**Seal is a proven checkpoint for AI agents.** When an AI agent tries to use a real tool over MCP — send money, delete a record, call an external service — Seal stands in the way and asks one question: did a human explicitly approve *this exact request*? No matching approval, no action. Every decision is written into a tamper-evident record you can check yourself. What makes Seal different from other guardrails: the core mediation rules aren't just tested — they're machine-checked theorems in Lean 4. The same decision logic then runs byte-for-byte in the Rust host you deploy, in the browser, and in the checker, each verified against that one proven rulebook.
 
-Verified Agent Kernels: one fail-closed MCP host, many verified kernels. Each
-kernel is a verified `decide()` grounded in a sorry-free, axiom-clean Lean
-library. The host owns MCP stdio transport, the SealV2 canonical parser
-service, a signed epoch-stamped trusted config, and a kernel registry that
-combines verdicts fail-closed (allow iff every gating kernel allows).
+That is the product line in one sentence: prove the rulebook, then check every body that runs it. Seal is built around MCP because MCP is where agent intent becomes an external effect. The proof says what the kernel must do; the conformance tests show that the Rust, wasm, and JavaScript artifacts used by the product family emit the same decisions and records over the shared corpus.
 
-Spec: `tech/projects/seal/seal-host-kernel-buildout-plan.md` (vault).
-Public math bricks are consumed as Lake dependencies (mcp-seal, crdt-lean,
-temporal-logic-lean, consensus-lean, calibration-lean); the novel IP — host,
-kernel interface, registry, composition theorem, harness — lives only here.
+## What happens when an agent tries to use a production tool
 
-## Status
+The Rust host receives MCP traffic and forwards ordinary traffic unchanged. When a guarded `tools/call` arrives, it gathers approval records, filters them for freshness and replay, and calls the Lean kernel through the FFI surface. A matching approval routes the original call forward. No match returns a JSON-RPC error before the downstream tool sees anything.
 
-- **G1**: host + `Kernel = {name, gates, decide}` + Safety Seal kernel
-  (S) lifted from SealCore, behaviour unchanged; registry skeleton; signed
-  epoch'd trusted-config loader (stub signature; Ed25519 lands in G6).
-- **G2–G5**: kernels T (temporal monitor), C (consensus quorum), V
-  (convergence), K (calibration, experimental flag), L (linear capability
-  accounting, proven in-repo), B (budget/rate, proven in-repo); composition
-  theorem (`Host/Composition.lean`).
-- **G6 (this)**: Rust FFI host (`rust/`) — stdio transport + swappable
-  approval back-channel (control-file / Ed25519 signed token / interactive
-  TTY) + A3 nonce/replay/TTL, calling the Lean verified core through
-  `libsealffi.so` (`scripts/build_ffi_so.sh`); property-based differential
-  conformance harness on the seam. The deployed target commitment is SHA-256;
-  FNV `auditHashParts` remains only a per-cert/demo hash, not the target or
-  record commitment. **FFI grows the TCB — see
-  `TCB.md`.**
-- **W2 closeout**: single-request non-interference
-  (`Host.NonInterference.observe_noninterference`), cross-session replay
-  isolation (`Host.ReplayIsolation.replay_isolation_trace`), and deployed
-  adapter O1/O2 + non-vacuity (`Host.Channel.deployed_O1`,
-  `Host.Channel.deployed_O2`, `Host.Channel.deployed_nonvacuous`) are landed
-  as Lean model theorems. Binary correspondence remains the finite-corpus
-  conformance bridge, not a theorem.
-- **Capability adequacy (unconditional)**:
-  `Host.CapabilityAdequacy.approval_authorizes_only_its_target'` — a held
-  approval authorizes only the part-list it was minted for, for ALL runtime
-  targets (no finite-universe premise). It composes an injective netstring
-  encoding (`Host.Encoding.encodeParts_injective`, proved structurally) with a
-  reduction to commitment collision-resistance (assumption A-CR, carried as a
-  scoped hypothesis, never an in-Lean axiom). The deployed target commitment is
-  256-bit SHA-256, byte-identical across the Lean model, native `.so`, browser
-  wasm, deployed Rust host, and the JS checker (conformance bridge).
-- G7: see the build plan.
+The host also writes records. The production record chain uses SHA-256. Per-kernel `certHash` values remain the legacy UInt64 audit seals; they are not the target commitment and they are not the record-chain commitment.
 
-## Rust host build
+## For evaluators and auditors
+
+Seal's proof story is intentionally narrow. The Lean theorems cover the mediation kernel and selected model properties. The binaries and browser artifacts are connected to that proof by reproducible conformance tests, not by a theorem about every compiled instruction.
+
+Start with [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md) for theorem names and file locations, [docs/CONFORMANCE.md](docs/CONFORMANCE.md) for the byte-identity claim, and [docs/TCB.md](docs/TCB.md) for what remains trusted.
+
+Mandatory non-claims:
+
+- Seal proves properties of the mediation KERNEL, not of the whole deployed system.
+- Seal does NOT prove SHA-256 collision resistance in Lean; it is a named, scoped cryptographic assumption (A-CR).
+- The deployed Rust / wasm / JS are NOT proven bug-free; they are tied to the proof by byte-exact conformance testing over a corpus, not for every possible input.
+- Seal guarantees AUTHORIZATION match, not INTENT match: if a human approves a malicious-but-valid request, Seal will execute it.
+- Seal does NOT prevent compromise of hosts, browsers, build systems, keys, operators, or downstream tools.
+- Seal's audit chain is tamper-EVIDENT, not tamper-IMPOSSIBLE.
+- Seal does NOT make the AI smarter or prevent hallucinations; it stops an unapproved effect.
+- Axiom footprint {propext, Classical.choice, Quot.sound} is the minimal classical fragment; no extra axioms.
+
+## Verify in five minutes
 
 ```sh
-lake build Ffi               # compile the Lean core
-scripts/build_ffi_so.sh      # link libsealffi.so (self-contained + leanshared)
-cd rust && cargo build && cargo test
-python3 test/integration/test_host_rs.py
-.lake/build/bin/../../rust/target/debug/seal-host-rs \
-  --config trusted.json --pubkey <pk> \
-  [--channel file|ed25519|interactive] -- <server-cmd> ...
-```
-
-## Layout
-
-- `Host/` — kernel interface (`Kernel.lean`), canonical parse service
-  (`Canonical.lean`, SealV2-backed, fail-closed), trusted-config loader
-  (`Config.lean`), registry + fail-closed combinator (`Registry.lean`), audit
-  certs (`Audit.lean`), MCP stdio loop (`Main.lean`).
-- `Kernels/` — the seven kernel modules shipped in-repo: `Safety.lean` (kernel S,
-  a pure lift of the mcp-seal V1 decision path — `SealCore.step` +
-  `Seal.classifyToolCall`, unchanged), `Temporal.lean`,
-  `Consensus.lean`/`ConsensusBytes.lean`,
-  `Convergence.lean`/`ConvergencePotential.lean`, `Calibration.lean`,
-  `Linear.lean`/`LinearCore.lean`, and `Budget.lean`/`BudgetCore.lean`.
-- `Test/` — `Axioms.lean` (axiom gate: {propext, Classical.choice, Quot.sound}
-  only), `HostUnit.lean` (pure unit tests).
-- `test/integration/` — stdio regression suite ported from mcp-seal.
-- `test/tools/sign_config.py` — wraps a config payload in the signed envelope.
-
-## Build and test
-
-```sh
-lake build                                   # also runs Test/Axioms #print axioms
+lake build
 lake exe axiom_check
-lake exe host_unit_tests
-python3 test/integration/test_host.py
+lake exe sha256_selfcheck
+scripts/build_ffi_so.sh
+cd rust && cargo test
+cd .. && node scripts/conformance_bridge.mjs --wasm
 ```
 
-Run the host:
+To run the host, build the Lean core and start `rust/target/debug/seal-host-rs` with a signed config and a child MCP server. See `docs/ARCHITECTURE.md` and `docs/CONFORMANCE.md` before deploying.
 
-```sh
-python3 test/tools/sign_config.py payload.json <pubkey> > trusted.json
-.lake/build/bin/seal-host --config trusted.json --pubkey <pubkey> -- <server-cmd> ...
-```
+## The Seal family
 
-## Gate (every goal)
+- [seal](https://github.com/velvetmonkey/seal) — the private umbrella story, product map, and evaluator path.
+- [mcp-seal-dev](https://github.com/velvetmonkey/mcp-seal-dev) — The rulebook, proven.
+- [seal-host](https://github.com/velvetmonkey/seal-host) — The guard at the door.
+- [seal-check](https://github.com/velvetmonkey/seal-check) — Don't trust. Verify.
+- [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo) — Watch it work.
+- [seal-assurance-kit](https://github.com/velvetmonkey/seal-assurance-kit) — Check your own boundary.
 
-`lake build` clean; `#print axioms` on every decision-bearing def and imported
-theorem = `{propext, Classical.choice, Quot.sound}` only (no `sorryAx`, no
-`Lean.ofReduceBool`); CI runs `lake build`, `lake exe axiom_check`, and greps the
-axiom-check output for those forbidden axioms; zero behaviour regression on the
-mcp-seal SealCore suite.
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Threat model](docs/THREAT-MODEL.md)
+- [Assumptions](docs/ASSUMPTIONS.md)
+- [Proof reference](docs/PROOF-REFERENCE.md)
+- [Conformance](docs/CONFORMANCE.md)
+- [Trusted computing base](docs/TCB.md)
+- [Glossary](docs/GLOSSARY.md)
+- [Limitations](docs/LIMITATIONS.md)
+- [Security policy](SECURITY.md)
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
