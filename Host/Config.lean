@@ -2,6 +2,7 @@
 
 import Lean.Data.Json
 import SealV2.Parser
+import SealV2.Crypto
 import Seal.Policy
 import Seal.JsonUtil
 import Kernels.Temporal
@@ -113,23 +114,22 @@ def parseBudgetSection (json : Json) : Except String Kernels.BudgetConfig := do
           | none => pure none
         pure { name, cap, tools, costArg : Kernels.BudgetSpec }
 
-/-- Stub signature scheme for the trusted config envelope. The signature commits
-    to the exact payload bytes but is not real crypto; approval-token Ed25519 is
-    a separate path. -/
+/-- Real Ed25519 verification for the trusted config envelope. The config
+    signing key is a startup trust root, separate from approval-token keys.
+    The signature covers the exact `payload` string bytes carried by the
+    envelope; no normalized or reserialized substitute is verified. -/
 def verifyConfigSignature (publicKey payload signature : String) : Bool :=
-  signature == s!"stub-ed25519:{publicKey}:{payload}"
+  match SealV2.hexDecode? publicKey, SealV2.hexDecode? signature with
+  | some pk, some sig => SealV2.ed25519Verify pk payload.toUTF8 sig
+  | _, _ => false
 
-/-- Pure, fail-closed config check. The payload must
-    1. carry a signature binding it to the trusted public key,
-    2. be accepted by the SealV2 verified canonical parser (one canonical
-       byte-form, no parser differential on the trusted input), and
-    3. parse to an epoch ≥ 1 plus a well-formed `safety` policy section.
-    The epoch lives INSIDE the signed payload, so it cannot be tampered with
-    independently of the signature. Any failure is an error — never a default. -/
-def checkTrustedConfig (publicKey payload signature : String) :
+/-- Parse the already-authenticated config payload. This does NOT verify
+    signatures and is therefore not a trust boundary by itself; real loaders
+    must call `checkTrustedConfig` / `checkEnvelope` first. It is factored out
+    so the conformance model oracle can initialise from a harness-trusted
+    payload without executing the `@[extern]` Ed25519 leaf in the interpreter. -/
+def parseCanonicalConfigPayload (payload : String) :
     Except String TrustedConfig := do
-  if !verifyConfigSignature publicKey payload signature then
-    throw "config signature verification failed"
   if (SealV2.parse payload).isNone then
     throw "config payload is not canonical (SealV2 parse rejected it)"
   let json ← Json.parse payload
@@ -146,8 +146,24 @@ def checkTrustedConfig (publicKey payload signature : String) :
   let budget ← parseBudgetSection json
   pure { epoch, safety, temporal, consensus, convergence, calibration, linear, budget }
 
+/-- Pure, fail-closed config check. The payload must
+    1. carry a real Ed25519 signature binding it to the trusted public key,
+    2. be accepted by the SealV2 verified canonical parser (one canonical
+       byte-form, no parser differential on the trusted input), and
+    3. parse to an epoch ≥ 1 plus a well-formed `safety` policy section.
+    The epoch lives INSIDE the signed payload, so it cannot be tampered with
+    independently of the signature. Any failure is an error — never a default. -/
+def checkTrustedConfig (publicKey payload signature : String) :
+    Except String TrustedConfig := do
+  let config ← parseCanonicalConfigPayload payload
+  if !verifyConfigSignature publicKey payload signature then
+    throw "config signature verification failed"
+  pure config
+
 /-- Pure envelope check:
-    `{"payload": "<canonical JSON>", "signature": "stub-ed25519:<pk>:<payload>"}`. -/
+    `{"payload": "<canonical JSON>", "signature": "<ed25519 signature hex>"}`.
+    The config public key is a startup trust root and is not read from the
+    envelope it authenticates. -/
 def checkEnvelope (text publicKey : String) : Except String TrustedConfig := do
   let envelope ← Json.parse text
   let payload ← getObjString envelope "payload"

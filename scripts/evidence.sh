@@ -68,6 +68,10 @@ do
   run_step "mcp-seal-dev: $exe" "$MCP_SEAL_DEV" lake exe "$exe"
 done
 
+if [ ! -d "$ROOT/.lake/packages/mcp-seal" ]; then
+  run_step "seal-host: lake update" "$ROOT" lake update
+fi
+run_step "seal-host: build vendored Ed25519 C leaf" "$ROOT/.lake/packages/mcp-seal" bash c/build.sh
 run_step "seal-host: lake build" "$ROOT" lake build
 run_step "seal-host: axiom_check" "$ROOT" lake exe axiom_check
 run_step "seal-host: lake build Ffi" "$ROOT" lake build Ffi

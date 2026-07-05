@@ -13,7 +13,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.lake/build/lib/libsealffi.so"
 TMP="$ROOT/.lake/build/ffi-archives"
 LEAN_PREFIX="$(lean --print-prefix)"
+CRYPTO_ROOT="$ROOT/.lake/packages/mcp-seal"
+CRYPTO_OBJ="$CRYPTO_ROOT/c/build/libsealcrypto.o"
+CRYPTO_TWEET_PIC="$TMP/tweetnacl_pic.o"
+CRYPTO_ED25519_PIC="$TMP/seal_ed25519_pic.o"
 mkdir -p "$TMP"
+
+if [ ! -f "$CRYPTO_OBJ" ]; then
+  (cd "$CRYPTO_ROOT" && bash c/build.sh)
+fi
+
+# The default `lake build Ffi` refreshes Lean artifacts (`.olean`, `.c`) but
+# not always the exported native objects this linker consumes. Build the
+# module object facet explicitly so edited Lean code cannot leave a stale
+# `.c.o.export` in the shared library.
+(cd "$ROOT" && lake build +Ffi:o)
 
 # Project objects: the Ffi module + Host/Kernels modules. Test modules and
 # Host/Main are excluded — they carry their own `main` symbols.
@@ -40,9 +54,15 @@ for pkgdir in "$ROOT"/.lake/packages/*/; do
 done
 
 cc -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
+CRYPTO_CFLAGS="-O2 -fPIC -fwrapv -fno-strict-aliasing"
+cc $CRYPTO_CFLAGS -c "$CRYPTO_ROOT/c/tweetnacl.c" -o "$CRYPTO_TWEET_PIC"
+cc $CRYPTO_CFLAGS -I "$LEAN_PREFIX/include" -I "$CRYPTO_ROOT/c" \
+  -c "$CRYPTO_ROOT/c/seal_ed25519.c" -o "$CRYPTO_ED25519_PIC"
 
 cc -shared -o "$OUT" \
   "$TMP/ffi_shim.o" \
+  "$CRYPTO_TWEET_PIC" \
+  "$CRYPTO_ED25519_PIC" \
   "${PROJ_OBJS[@]}" \
   -Wl,--start-group "${ARCHIVES[@]}" -Wl,--end-group \
   -L "$LEAN_PREFIX/lib/lean" -lleanshared -lLake_shared \

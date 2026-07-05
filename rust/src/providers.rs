@@ -163,7 +163,7 @@ struct SignedToken {
 /// the trusted verifying key. This host provider signs ApprovalRecord JSON
 /// payload bytes; the SealV2 canonical approval token signs
 /// `(target, session, issuedAt, expiry, nonce)` bytes in mcp-seal-dev, and the
-/// trusted config envelope is a separate stub-signature path.
+/// trusted config envelope is a separate Ed25519-signed payload channel.
 pub struct Ed25519TokenProvider {
     path: std::path::PathBuf,
     key: VerifyingKey,

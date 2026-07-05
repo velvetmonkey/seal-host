@@ -15,6 +15,12 @@ CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 echo "[build_wasm] recompiling wrapper + shim"
 emcc $CFLAGS -c seal_wrapper.c          -o build-core/seal_wrapper.o || exit 1
 emcc $CFLAGS -c "$ROOT/scripts/ffi_shim.c" -o build-core/ffi_shim.o  || exit 1
+emcc $CFLAGS -I "$ROOT/.lake/packages/mcp-seal/c" \
+  -c "$ROOT/.lake/packages/mcp-seal/c/tweetnacl.c" \
+  -o build-core/tweetnacl.o || exit 1
+emcc $CFLAGS -I "$ROOT/.lake/packages/mcp-seal/c" \
+  -c "$ROOT/.lake/packages/mcp-seal/c/seal_ed25519.c" \
+  -o build-core/seal_ed25519.o || exit 1
 
 # Undefined-symbol policy: lax by default (DCE drops unreachable refs), strict on demand.
 UNDEF="-sERROR_ON_UNDEFINED_SYMBOLS=0"

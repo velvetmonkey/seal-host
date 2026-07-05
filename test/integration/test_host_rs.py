@@ -17,16 +17,17 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PUBKEY = "test-pk"
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 
 sys.path.insert(0, str(ROOT / "test" / "tools"))
-from sign_config import sign_payload  # noqa: E402
+from sign_config import generate_keypair, sign_payload  # noqa: E402
 from test_host import safety_section, temporal_section, stable_hash  # noqa: E402
 
+CONFIG_SK, PUBKEY = generate_keypair()
 
-def write_config(tmp: Path, approval_file: Path) -> Path:
-    payload = {
+
+def config_payload(tmp: Path, approval_file: Path) -> dict:
+    return {
         "epoch": 1,
         "safety": safety_section(approval_file),
         "temporal": temporal_section(),
@@ -42,8 +43,19 @@ def write_config(tmp: Path, approval_file: Path) -> Path:
         },
         "budget": {"budgets": [{"name": "db-calls", "cap": 2, "tools": ["db.execute"]}]},
     }
+
+
+def write_config(tmp: Path, approval_file: Path) -> Path:
+    payload = config_payload(tmp, approval_file)
     path = tmp / "trusted.json"
-    path.write_text(sign_payload(payload, PUBKEY), encoding="utf-8")
+    path.write_text(sign_payload(payload, CONFIG_SK), encoding="utf-8")
+    return path
+
+
+def write_unsigned_config(tmp: Path, approval_file: Path) -> Path:
+    payload = json.dumps(config_payload(tmp, approval_file), separators=(",", ":"))
+    path = tmp / "trusted-unsigned.json"
+    path.write_text(json.dumps({"payload": payload}, separators=(",", ":")), encoding="utf-8")
     return path
 
 
@@ -196,10 +208,36 @@ def test_ed25519_channel_and_a3():
         assert "expired" in err, "A3 must log the TTL drop"
 
 
+def test_ed25519_requires_signed_config_and_key_separation():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text("", encoding="utf-8")
+        tokens = tmp / "tokens.ndjson"
+        tokens.write_text("", encoding="utf-8")
+
+        unsigned = write_unsigned_config(tmp, approvals)
+        proc = spawn(unsigned, ("--channel", "ed25519", "--token-file", str(tokens),
+                                "--approval-pubkey", "00" * 32))
+        out, err = proc.communicate(timeout=10)
+        assert proc.returncode == 3
+        assert out == ""
+        assert "trusted config rejected" in err
+
+        signed = write_config(tmp, approvals)
+        proc = spawn(signed, ("--channel", "ed25519", "--token-file", str(tokens),
+                              "--approval-pubkey", PUBKEY))
+        out, err = proc.communicate(timeout=10)
+        assert proc.returncode == 3
+        assert out == ""
+        assert "config signing key must differ from approval signing key" in err
+
+
 def main() -> int:
     assert BIN.exists(), f"build first: cargo build (missing {BIN})"
     test_file_channel_all_kernels()
     test_ed25519_channel_and_a3()
+    test_ed25519_requires_signed_config_and_key_separation()
     print("all rust-host e2e tests passed")
     return 0
 

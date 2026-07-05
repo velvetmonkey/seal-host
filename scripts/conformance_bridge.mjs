@@ -18,6 +18,8 @@
 // Oracles:
 //   • MODEL  = the REAL Lean `stepImpl` in the INTERPRETER
 //              (scripts/model_oracle.lean via `lake env lean`), never a re-impl.
+//              It initialises from the already-trusted payload because the
+//              interpreter cannot execute the Ed25519 config-signature extern.
 //   • NATIVE = the compiled libsealffi.so via `kernel_oracle` (the same object
 //              the deployed seal-host-rs links).
 //   • DEPLOYED = the actual `seal-host-rs` binary, end-to-end over stdio.
@@ -32,13 +34,12 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const NATIVE = `${ROOT}/rust/target/release/kernel_oracle`;
 const HOST = `${ROOT}/rust/target/release/seal-host-rs`;
 const MODEL_LEAN = "scripts/model_oracle.lean";
-const PK = "conformance-pk";
 const NOW = 1000;
 
 // `--wasm` swaps the compiled artifact under test from the native .so to the
@@ -54,6 +55,14 @@ const ARTIFACT = WASM
 
 const WORK = mkdtempSync(join(tmpdir(), "seal-conf-"));
 process.on("exit", () => { try { rmSync(WORK, { recursive: true, force: true }); } catch {} });
+
+const configKeys = generateKeyPairSync("ed25519");
+const configPubDer = configKeys.publicKey.export({ type: "spki", format: "der" });
+const PK = Buffer.from(configPubDer).subarray(-32).toString("hex");
+const signedEnvelope = (payload) => JSON.stringify({
+  payload,
+  signature: sign(null, Buffer.from(payload, "utf8"), configKeys.privateKey).toString("hex"),
+});
 
 let failed = false;
 const fail = (msg) => { console.error(`  ✗ ${msg}`); failed = true; };
@@ -80,7 +89,9 @@ const policyPayload = JSON.stringify({
   },
 });
 const ENV_FILE = join(WORK, "trusted.json");
-writeFileSync(ENV_FILE, JSON.stringify({ payload: policyPayload, signature: `stub-ed25519:${PK}:${policyPayload}` }));
+const PAYLOAD_FILE = join(WORK, "trusted-payload.json");
+writeFileSync(PAYLOAD_FILE, policyPayload);
+writeFileSync(ENV_FILE, signedEnvelope(policyPayload));
 
 // ---- corpus C ----------------------------------------------------------------
 const wireCall = (id, sql) =>
@@ -117,7 +128,7 @@ function runModel(corpusFile) {
   const outFile = join(WORK, "model.out");
   execFileSync("lake", ["env", "lean", MODEL_LEAN], {
     cwd: ROOT,
-    env: { ...process.env, SEAL_CONF_ENV: ENV_FILE, SEAL_CONF_PK: PK, SEAL_CONF_CORPUS: corpusFile, SEAL_CONF_OUT: outFile },
+    env: { ...process.env, SEAL_CONF_PAYLOAD: PAYLOAD_FILE, SEAL_CONF_CORPUS: corpusFile, SEAL_CONF_OUT: outFile },
     stdio: ["ignore", "ignore", "inherit"],
   });
   return readFileSync(outFile, "utf8");

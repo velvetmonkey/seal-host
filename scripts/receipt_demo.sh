@@ -27,26 +27,34 @@ if [ ! -x "$HOST" ] || [ "$ROOT/rust/src/main.rs" -nt "$HOST" ] || [ "$ROOT/rust
 fi
 
 # --- trusted policy: db.execute is guarded when the SQL is destructive -------
-PK="receipt-demo-pk"
 APPROVALS="$WORK/approvals.ndjson"
 : > "$APPROVALS"
-# Build the stub envelope with node (G1–G5 stub signature scheme:
-# `stub-ed25519:<pk>:<payload>` commits to the exact payload bytes).
-APPROVALS="$APPROVALS" PK="$PK" node -e '
-const payload = JSON.stringify({
-  epoch: 1,
-  safety: {
-    approval: { control_file: process.env.APPROVALS, ttl_seconds: 120 },
-    tools: [{
-      name: "db.execute", mode: "guarded",
-      match: { type: "contains_any_ci", arg: "sql", needles: ["drop","delete","truncate"] },
-      target: [{literal:"db"},{arg:"database"},{literal:"write"},{arg:"sql"}]
-    }]
-  }
-});
-const envelope = JSON.stringify({ payload, signature: `stub-ed25519:${process.env.PK}:${payload}` });
-process.stdout.write(envelope);
-' > "$WORK/trusted.json"
+# Build a real Ed25519-signed config envelope with an ephemeral config key.
+PK="$(APPROVALS="$APPROVALS" TRUSTED="$WORK/trusted.json" ROOT="$ROOT" python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(os.environ["ROOT"]) / "test" / "tools"))
+from sign_config import generate_keypair, sign_payload
+
+sk, pk = generate_keypair()
+payload = {
+    "epoch": 1,
+    "safety": {
+        "approval": {"control_file": os.environ["APPROVALS"], "ttl_seconds": 120},
+        "tools": [{
+            "name": "db.execute",
+            "mode": "guarded",
+            "match": {"type": "contains_any_ci", "arg": "sql", "needles": ["drop", "delete", "truncate"]},
+            "target": [{"literal": "db"}, {"arg": "database"}, {"literal": "write"}, {"arg": "sql"}],
+        }],
+    },
+}
+Path(os.environ["TRUSTED"]).write_text(sign_payload(payload, sk), encoding="utf-8")
+print(pk)
+PY
+)"
 
 echo "==============================================================="
 echo " STEP 1+2 — agent attempts destructive deletes; seal decides"

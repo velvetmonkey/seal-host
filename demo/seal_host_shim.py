@@ -17,9 +17,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test" / "tools"))
-from sign_config import sign_payload  # noqa: E402
+from sign_config import generate_keypair, public_key_hex_from_private, sign_payload  # noqa: E402
 
-PUBKEY = os.environ.get("SEAL_HOST_PUBKEY", "demo-pk")
+CONFIG_SK = os.environ.get("SEAL_CONFIG_SIGNING_KEY_HEX")
+if CONFIG_SK:
+    PUBKEY = public_key_hex_from_private(CONFIG_SK)
+else:
+    CONFIG_SK, PUBKEY = generate_keypair()
 BIN = os.environ.get("SEAL_HOST_RS", str(ROOT / "rust" / "target" / "debug" / "seal-host-rs"))
 
 
@@ -33,7 +37,7 @@ def main() -> int:
     payload = {"epoch": 1, "safety": policy}
     fd, config_path = tempfile.mkstemp(prefix="seal-host-trusted-", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(sign_payload(payload, PUBKEY))
+        f.write(sign_payload(payload, CONFIG_SK))
 
     os.execv(BIN, [BIN, "--config", config_path, "--pubkey", PUBKEY,
                    "--channel", "file", "--", *server_cmd])

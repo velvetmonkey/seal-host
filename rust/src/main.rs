@@ -158,6 +158,13 @@ fn read_or_empty(path: &str) -> String {
     }
 }
 
+fn same_ed25519_key_hex(left: &str, right: &str) -> bool {
+    match (hex::decode(left), hex::decode(right)) {
+        (Ok(left), Ok(right)) => left.len() == 32 && right.len() == 32 && left == right,
+        _ => false,
+    }
+}
+
 fn replay_store_path_from_envelope(envelope: &str) -> Result<Option<String>, String> {
     let envelope_json: Value =
         serde_json::from_str(envelope).map_err(|e| format!("bad envelope JSON: {e}"))?;
@@ -286,7 +293,7 @@ fn run() -> i32 {
         Ok(a) => a,
         Err(e) => {
             eprintln!(
-                "usage: seal-host-rs --config <trusted.json> --pubkey <key> \
+                "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
                 [--approval-pubkey <hex>] -- <server-cmd> <args...>\nerror: {e}"
             );
@@ -348,6 +355,12 @@ fn run() -> i32 {
                 eprintln!("--channel ed25519 needs --token-file and --approval-pubkey");
                 return 2;
             };
+            if same_ed25519_key_hex(&args.pubkey, pk) {
+                eprintln!(
+                    "trusted config rejected: config signing key must differ from approval signing key"
+                );
+                return 3;
+            }
             match providers::Ed25519TokenProvider::new(tf, pk) {
                 Ok(p) => Channel::Ed(p),
                 Err(e) => {
@@ -586,8 +599,7 @@ mod tests {
 
     fn envelope(payload: Value) -> String {
         let payload = payload.to_string();
-        json!({"payload": payload, "signature": format!("stub-ed25519:test-pk:{payload}")})
-            .to_string()
+        json!({"payload": payload, "signature": "00"}).to_string()
     }
 
     #[test]

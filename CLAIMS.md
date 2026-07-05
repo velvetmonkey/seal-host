@@ -58,18 +58,22 @@ The canonical AST is audit input for kernels, not the mediation gate.
   control-file/interactive demo channels keep in-memory replay state and do
   not claim cross-restart replay protection.
 
-## Trusted config signatures (roadmap, not a production claim)
+## Trusted config signatures
 
-`Host/Config.lean` currently verifies a **stub** signature:
-`stub-ed25519:<pk>:<payload>` (string equality, `Host/Config.lean:120`). This is
-fine pre-award and MUST NOT be described as real crypto.
+`Host/Config.lean` verifies a real Ed25519 signature over the exact trusted
+config `payload` bytes before the host mediates anything. The startup
+`--pubkey` is the config-signing trust root and must be separate from the
+approval-token key.
 
-- today: stub config signature in the host framework; the trusted
-  `replay_store.sqlite_path` inherits this R6 residual, so config write access
-  can redirect the durable store
-- v2 approval path: real Ed25519 leaf (mcp-seal-dev has real `ed25519Verify` over canonical `(target, session, issuedAt, expiry, nonce)` signed-message bytes)
-- host NDJSON approval-provider path: real `ed25519-dalek` over the exact `ApprovalRecord` JSON payload bytes; this is a separate channel, not the SealV2 canonical tuple
-- S1/S2: real Ed25519 config envelope + durable (cross-restart) replay store
+- config envelope: real Ed25519 via the existing `SealV2.ed25519Verify` leaf
+  over exact trusted-config payload bytes
+- v2 approval path: real Ed25519 leaf in `mcp-seal-dev` over canonical
+  `(target, session, issuedAt, expiry, nonce)` signed-message bytes
+- host NDJSON approval-provider path: real `ed25519-dalek` over exact
+  `ApprovalRecord` JSON payload bytes; this is a separate channel, not the
+  SealV2 canonical tuple
+- durable replay: trusted `replay_store.sqlite_path` is inside the signed
+  config payload; config key custody is therefore part of the TCB
 
 ## Response egress
 

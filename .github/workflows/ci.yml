@@ -15,6 +15,8 @@ jobs:
         with:
           use-github-cache: false
           build: false
+      - run: test -d .lake/packages/mcp-seal || lake update
+      - run: bash .lake/packages/mcp-seal/c/build.sh
       - run: lake build
       - run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
       - run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
@@ -39,6 +41,8 @@ jobs:
           node-version: "22"
       - name: Verify tracked wasm conformance artifact is present
         run: test -s wasm-spike/verified/seal.js && test -s wasm-spike/verified/seal.wasm
+      - run: test -d .lake/packages/mcp-seal || lake update
+      - run: bash .lake/packages/mcp-seal/c/build.sh
       - run: lake build Ffi
       - run: scripts/build_ffi_so.sh
       - run: cargo clippy --all-targets -- -D warnings

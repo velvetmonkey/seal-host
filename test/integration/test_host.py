@@ -16,10 +16,10 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PUBKEY = "test-pk"
-
 sys.path.insert(0, str(ROOT / "test" / "tools"))
-from sign_config import sign_payload  # noqa: E402
+from sign_config import generate_keypair, sign_payload  # noqa: E402
+
+CONFIG_SK, PUBKEY = generate_keypair()
 
 
 def stable_hash(parts) -> str:
@@ -132,7 +132,7 @@ def write_config(tmp: Path, approval_file: Path, epoch: int = 1, tamper: bool = 
             ]
         },
     }
-    envelope = sign_payload(payload, PUBKEY)
+    envelope = sign_payload(payload, CONFIG_SK)
     if tamper:
         env = json.loads(envelope)
         env["payload"] = env["payload"].replace('"ttl_seconds":120', '"ttl_seconds":999')

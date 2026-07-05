@@ -77,8 +77,9 @@ from liveness, and `hACR` lifts that to part-list equality.
   Prop over `verifySignature`; in `mcp-seal-dev` that path calls real Ed25519
   over canonical `(target, session, issuedAt, expiry, nonce)` bytes. The host's
   NDJSON provider is also real Ed25519 (`ed25519-dalek`) but over exact
-  `ApprovalRecord` JSON payload bytes. The trusted config envelope remains the
-  separate `stub-ed25519:` config-signature path until that roadmap item lands.
+  `ApprovalRecord` JSON payload bytes. The trusted config envelope is a third,
+  separate Ed25519 channel over exact config payload bytes, verified with the
+  startup config `--pubkey`.
 
 ## 3. Subsumption verdict vs the landed slate
 

@@ -53,6 +53,13 @@ codegen is exactly the gap a codegen bug would open. The oracle evaluates the
 same Lean source the theorems govern, through Lean's own evaluator, so a
 divergence is a codegen defect, not a spec question.
 
+R6 boundary: the interpreter cannot execute the `@[extern]` Ed25519
+config-signature leaf. The MODEL oracle therefore initialises from the
+harness-trusted payload through a non-exported model-only helper. Native,
+WASM, and deployed oracles still initialise from the signed envelope and
+verify the real signature. Config-signature behavior is covered by dedicated
+startup/config tests, not by the interpreted MODEL leg of this bridge.
+
 ## Corpus C (finite, named — not exhaustive)
 
 - 11 destructive-delete **disguises** (drop / delete / truncate × casing /
@@ -132,8 +139,8 @@ the **same** SHA-256 record head as the Lean model over corpus C.
 The public artifact a reviewer runs in the browser is the emscripten `seal.wasm`,
 not the native `.so`. The `--wasm` oracle drives that module headless in Node
 (`seal_init`/`seal_decide`, thin C aliases over the SAME Lean `seal_host_init`/
-`seal_host_step`) against the identical corpus C and the unchanged real-Lean MODEL
-oracle. It asserts the same two things — 15/15 byte-identical decision + audit,
+`seal_host_step`) against the identical corpus C and the real-Lean MODEL oracle
+above. It asserts the same two things — 15/15 byte-identical decision + audit,
 and SHA-256 record chain-head equality WASM vs model. The wasm's record head on C
 is byte-identical to the native `.so`'s and the deployed binary's.
 
@@ -142,11 +149,11 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Lean HEAD: `4cf02241eff89cba3b8386cd80cc04ad70abde39`
-- `seal.wasm` sha256: `ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0`
+- Source tree: R6 config-signature working tree based on `e3a61c65ddd0`
+- `seal.wasm` sha256: `a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes the stale spike pin sha256 `1cc765c7…` (built 2026-06-16 from the
-  Jun-15 Lean spike).
+- Supersedes the previous verified pin sha256 `ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0`
+  (built before real Ed25519 config-signature verification).
 
 The verified artifact + full provenance + reproduce recipe are staged at
 `wasm-spike/verified/{seal.wasm,seal.js,PROVENANCE.txt}`; the rebuild step that
@@ -155,6 +162,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `ebd17c14…`). That repin is a separate, audited step gated to the
+build (sha256 `a6a73fa5…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

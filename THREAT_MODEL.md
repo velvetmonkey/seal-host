@@ -51,14 +51,15 @@ claimed eliminated.
 2. **OS-permission origin.** The trusted config (signed), the approval/votes/
    grants/forecast files, and the approval keys are trusted inputs. Their
    integrity rests on OS file permissions and (for signed channels) on key
-   secrecy. An adversary who can write the trusted config or forge a signature
-   is outside the model. The config signature is currently the byte-exact
-   `stub-ed25519:<pk>:<payload>` check. The separate approval back-channel can
-   use real Ed25519 (`ed25519-dalek`) over exact `ApprovalRecord` JSON payload
-   bytes, and the signed-token nonce store path is itself inside this trusted
-   config envelope. Until R6 lands, an actor who can write the config can
-   redirect the replay store. The SealV2 canonical token path signs `(target,
-   session, issuedAt, expiry, nonce)` bytes in `mcp-seal-dev`.
+   secrecy. An adversary who controls the config-signing key, approval keys, or
+   host startup arguments is outside the model. The config envelope uses real
+   Ed25519 over the exact trusted-config payload bytes, verified by the
+   existing `SealV2.ed25519Verify` leaf; the startup `--pubkey` is the named
+   config-signing trust root and is not read from the config it verifies. The
+   separate host approval back-channel can use real Ed25519 (`ed25519-dalek`)
+   over exact `ApprovalRecord` JSON payload bytes. The SealV2 canonical token
+   path signs `(target, session, issuedAt, expiry, nonce)` bytes in
+   `mcp-seal-dev`. These are three distinct signing channels and keys.
 
 3. **MCP-boundary-only.** Mediation happens at the MCP `tools/call` boundary.
    In-process orchestrator calls, side effects the agent reaches without

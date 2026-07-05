@@ -2,8 +2,8 @@
  spec->binary conformance bridge  (differential evidence over C)
 ===============================================================
 artifact under test: native .so + wasm (emscripten, in-browser seal-check shape)
-  provenance: built at HEAD b46e2420c31b13afd2eed666612661d4feb935d3
-  seal.wasm sha256: ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0
+  provenance: built at HEAD e3a61c65ddd054e4ddf12981858a71299e0f64bb
+  seal.wasm sha256: a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35
 corpus C: 11 destructive disguises + 3 passthrough + 1 approved forward
   target derivation: MODEL/NATIVE/WASM emit 2e6d0cf644aad8daf884625c07fa542ad60763a44c8f495db307db3c8c1e230d
 

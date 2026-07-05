@@ -4,9 +4,11 @@
 // inline) instead of the stdio binary + control files. Reused by the WASM node
 // harness (D1e) and the WASM<->native conformance gate (D3).
 
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 
-export const PUBKEY = "test-pk";
+const configKeys = generateKeyPairSync("ed25519");
+const configPubDer = configKeys.publicKey.export({ type: "spki", format: "der" });
+export const PUBKEY = Buffer.from(configPubDer).subarray(-32).toString("hex");
 
 // SHA-256 target commitment, exact mirror of Seal.stableHashParts.
 export function encodeParts(parts) {
@@ -60,10 +62,11 @@ export const configPayload = {
   budget: { budgets: [{ name: "db-calls", cap: 2, tools: ["db.execute"] }] },
 };
 
-// Stub-signed envelope (verifyConfigSignature: signature == `stub-ed25519:<pk>:<payload>`).
-export function buildEnvelope(payload = configPayload, pubkey = PUBKEY) {
+// Real Ed25519-signed envelope. The signature covers the exact compact payload bytes.
+export function buildEnvelope(payload = configPayload) {
   const compact = JSON.stringify(payload);
-  return JSON.stringify({ payload: compact, signature: `stub-ed25519:${pubkey}:${compact}` });
+  const signature = sign(null, Buffer.from(compact, "utf8"), configKeys.privateKey).toString("hex");
+  return JSON.stringify({ payload: compact, signature });
 }
 
 const rpc = (id, name, args) =>

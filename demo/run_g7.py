@@ -31,11 +31,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test" / "tools"))
 sys.path.insert(0, str(ROOT / "test" / "integration"))
-from sign_config import sign_payload  # noqa: E402
+from sign_config import generate_keypair, public_key_hex_from_private, sign_payload  # noqa: E402
 from test_host import stable_hash  # noqa: E402
 
 WORK = Path("/tmp/seal-host-g7")
-PUBKEY = "demo-pk"
+CONFIG_SK = os.environ.get("SEAL_CONFIG_SIGNING_KEY_HEX")
+if CONFIG_SK:
+    PUBKEY = public_key_hex_from_private(CONFIG_SK)
+else:
+    CONFIG_SK, PUBKEY = generate_keypair()
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 MOCK = ROOT / "test" / "integration" / "mock_mcp_server.py"
 CANARY = Path(os.environ.get("CANARY_ROOT", "/home/monkey/src/canary"))
@@ -91,7 +95,7 @@ def config_payload(tmp: Path) -> dict:
 class Host:
     def __init__(self, tmp: Path, channel_args: tuple[str, ...] = ()):
         config = tmp / "trusted.json"
-        config.write_text(sign_payload(config_payload(tmp), PUBKEY), encoding="utf-8")
+        config.write_text(sign_payload(config_payload(tmp), CONFIG_SK), encoding="utf-8")
         (tmp / "approvals.ndjson").touch()
         self.proc = subprocess.Popen(
             [str(BIN), "--config", str(config), "--pubkey", PUBKEY, *channel_args,

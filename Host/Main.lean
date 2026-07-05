@@ -33,7 +33,7 @@ def parseArgs (args : List String) : Except String Args :=
   match args with
   | "--config" :: config :: "--pubkey" :: publicKey :: "--" :: cmd :: rest =>
       .ok { config := System.FilePath.mk config, publicKey, cmd, cmdArgs := rest.toArray }
-  | _ => .error "usage: seal-host --config <trusted.json> --pubkey <key> -- <server-cmd> <args...>"
+  | _ => .error "usage: seal-host --config <trusted.json> --pubkey <config-pubkey-hex> -- <server-cmd> <args...>"
 
 def writeLocked (lock : Std.Mutex Unit) (out : IO.FS.Stream) (line : String) : IO Unit := do
   lock.atomically do

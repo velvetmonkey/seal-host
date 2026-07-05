@@ -51,7 +51,8 @@ cc conformance_native.c -lsealffi -lleanshared -> build-core/conformance_native.
 - `seal_init(envelopeJson, pubkey) -> summaryJson` — load signed trusted-config; call once.
 - `seal_decide(stepInputJson) -> {route, response?, audit?}` — one mediation step.
   step input: `{line, now, approvals:[{target,issuedAt?}], votes, grants, forecasts}`.
-  Config envelope is stub-signed: `{"payload":<compact json>,"signature":"stub-ed25519:<pk>:<payload>"}`.
+  Config envelope is Ed25519-signed over the exact compact payload bytes; the
+  matching public key is supplied as the `seal_init`/`--pubkey` trust root.
 
 ## Key files
 - scripts/ffi_shim.c          — the 1-arg init fix (shared with native build).

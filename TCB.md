@@ -12,8 +12,9 @@ The cleanest assurance story. Trusted:
   every decision it routes on comes from proven code;
 - OS file permissions on the trusted config, approval/votes/grants/forecast
   files (origin assumption A-origin);
-- the stub config signature: commits to exact bytes but is not cryptographic
-  until separate config-signature hardening lands.
+- the config-signing trust root (`--pubkey`) and the existing Ed25519 leaf
+  (`SealV2.ed25519Verify` / vendored TweetNaCl) that verifies the exact
+  trusted-config payload bytes. This key is separate from approval-token keys.
 
 ## Shape 2 — Rust FFI host (`rust/`, G6)
 

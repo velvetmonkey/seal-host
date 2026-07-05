@@ -19,6 +19,7 @@
 //! The protocol is strictly lockstep (each input line produces exactly one
 //! output line), so a forwarded line can never be mistaken for a block.
 
+use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -42,7 +43,8 @@ impl Oracle {
         let approvals = dir.join("approvals.ndjson");
         std::fs::write(&approvals, b"").unwrap();
 
-        let pk = "test-pk";
+        let config_sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pk = hex::encode(config_sk.verifying_key().to_bytes());
         let payload = serde_json::json!({
             "epoch": 1,
             "safety": {
@@ -65,9 +67,10 @@ impl Oracle {
             }
         })
         .to_string();
+        let sig = hex::encode(config_sk.sign(payload.as_bytes()).to_bytes());
         let envelope = serde_json::json!({
             "payload": payload,
-            "signature": format!("stub-ed25519:{pk}:{payload}"),
+            "signature": sig,
         })
         .to_string();
         let config = dir.join("trusted.json");
@@ -78,7 +81,7 @@ impl Oracle {
                 "--config",
                 config.to_str().unwrap(),
                 "--pubkey",
-                pk,
+                &pk,
                 "--",
                 "/bin/cat",
             ])
@@ -133,9 +136,16 @@ impl Oracle {
     /// One output line per input line (lockstep). `BufRead::lines` strips
     /// the terminator (and a trailing `\r`), so callers compare content.
     fn expect_line(&mut self) -> String {
-        self.lines
-            .recv_timeout(Duration::from_secs(20))
-            .expect("host produced no output line in time")
+        match self.lines.recv_timeout(Duration::from_secs(20)) {
+            Ok(line) => line,
+            Err(e) => {
+                let status = self.child.try_wait().ok().flatten();
+                let stderr = self.drain_stderr(Duration::from_millis(50));
+                panic!(
+                    "host produced no output line in time: {e}; status={status:?}; stderr={stderr:?}"
+                );
+            }
+        }
     }
 
     fn approve(&mut self, target: &str) {

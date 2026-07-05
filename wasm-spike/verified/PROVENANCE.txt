@@ -1,20 +1,21 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from seal-host Lean HEAD, differential-verified against the real Lean
-model over corpus C (see docs/CONFORMANCE-BRIDGE.md, WASM section).
+Built from the seal-host R6 config-signature working tree, differential-verified
+against the real Lean model over corpus C (see docs/CONFORMANCE-BRIDGE.md, WASM
+section).
 
-Lean HEAD commit : b46e2420c31b13afd2eed666612661d4feb935d3
+Base commit      : e3a61c65ddd0
 Build date       : 2026-07-05
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0  (3562510 bytes)
-  seal.js    2ba21824248a66751d31a2f778e21b866805dc7ca517ae84af4ab1bc597cb14f
+  seal.wasm  a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35  (3578786 bytes)
+  seal.js    c17688e7f849ab936fa45187a3a74e6a2c11048c91fe09da4d36833ba23f02d5
 
 Supersedes the previous verified pin sha256
-  4bf99dc7957c5623df05b6f50d29fb435015457de2dce78d4ae3d1a8cc6a1475
-(built 2026-07-02 before SHA-256 target commitments).
+  ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0
+(built 2026-07-05 before real Ed25519 config-signature verification).
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh

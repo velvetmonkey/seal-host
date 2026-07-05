@@ -3,6 +3,8 @@
 import Host
 import Kernels
 
+set_option maxRecDepth 4096
+
 open Host
 open SealCore
 
@@ -83,27 +85,32 @@ def main : IO Unit := do
 
   -- checkTrustedConfig: fail-closed loader core
   let payload := "{\"epoch\":3,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a.ndjson\",\"ttl_seconds\":120},\"tools\":[]}}"
-  let goodSig := s!"stub-ed25519:test-pk:{payload}"
+  let configPk := "66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a"
+  let goodSig := "8489877ad60dba5c0a2a0ed391202737f06746fa6d2395171ed9ee952ba95effb3242c3d640cf2ecaef52c52b1418fce3ed14b8ad75ceb08be126efb20f72d08"
+  let zeroPk := "0000000000000000000000000000000000000000000000000000000000000000"
+  let zeroSig := "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
   check "good config accepted, epoch read from signed payload"
-    (match checkTrustedConfig "test-pk" payload goodSig with
+    (match checkTrustedConfig configPk payload goodSig with
      | .ok c => c.epoch == 3 | .error _ => false)
   check "wrong signature rejected"
-    (match checkTrustedConfig "test-pk" payload "stub-ed25519:test-pk:other" with
+    (match checkTrustedConfig configPk payload zeroSig with
      | .error _ => true | .ok _ => false)
   check "wrong pubkey rejected"
-    (match checkTrustedConfig "other-pk" payload goodSig with
+    (match checkTrustedConfig zeroPk payload goodSig with
      | .error _ => true | .ok _ => false)
   check "mutated payload rejected"
-    (match checkTrustedConfig "test-pk" (payload ++ " ") goodSig with
+    (match checkTrustedConfig configPk (payload ++ " ") goodSig with
      | .error _ => true | .ok _ => false)
   let payloadE0 := "{\"epoch\":0,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a.ndjson\",\"ttl_seconds\":120},\"tools\":[]}}"
+  let payloadE0Sig := "1023a1362b4e371d60265e5dc5b0d25100bf133001c3af91dd70c67b86a30e3b75b99ee1fb94515388d8c2cd9c4cf114e84d8da3d9803b0976bd666950553f02"
   check "epoch 0 rejected"
-    (match checkTrustedConfig "test-pk" payloadE0 s!"stub-ed25519:test-pk:{payloadE0}" with
+    (match checkTrustedConfig configPk payloadE0 payloadE0Sig with
      | .error _ => true | .ok _ => false)
   -- \t escape makes the payload non-canonical even though Lean.Json parses it
   let payloadNc := "{\"epoch\":1,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a\\tb\",\"ttl_seconds\":120},\"tools\":[]}}"
+  let payloadNcSig := "fc29ff1d44e60d90373783b3b85e2648840729a3ce602b158562f772d0bbf8431189520dbe6e2aeaf57c01dfbd78571ed7ea3a29047db331e0cffc1489396f0f"
   check "non-canonical payload rejected"
-    (match checkTrustedConfig "test-pk" payloadNc s!"stub-ed25519:test-pk:{payloadNc}" with
+    (match checkTrustedConfig configPk payloadNc payloadNcSig with
      | .error _ => true | .ok _ => false)
 
   -- kernel S decision traces (V1 semantics)
@@ -310,12 +317,18 @@ def main : IO Unit := do
     ((decideB (mkAct "payments.send" Lean.Json.null) Kernels.budgetKernel.init).1.kind == .deny)
 
   -- linear + budget config parsing
+  let linearParse : Except String (Option Kernels.LinearConfig) := do
+    let json ← Lean.Json.parse "{\"linear\":{\"grants_file\":\"/tmp/g.ndjson\",\"tools\":[{\"tool\":\"key.use\",\"cap_arg\":\"key\"}]}}"
+    parseLinearSection json
   check "linear section parses"
-    (match Lean.Json.parse "{\"linear\":{\"grants_file\":\"/tmp/g.ndjson\",\"tools\":[{\"tool\":\"key.use\",\"cap_arg\":\"key\"}]}}" >>= parseLinearSection with
-     | .ok (some c) => c.tools.length == 1
+    (match linearParse with
+     | .ok (some { tools := [_], .. }) => true
      | _ => false)
+  let budgetParse : Except String Kernels.BudgetConfig := do
+    let json ← Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]}]}}"
+    parseBudgetSection json
   check "budget section parses"
-    (match Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]}]}}" >>= parseBudgetSection with
+    (match budgetParse with
      | .ok [b] => b.cap == 2 && b.costArg.isNone
      | _ => false)
 

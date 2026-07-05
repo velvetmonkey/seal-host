@@ -47,31 +47,33 @@ initialize sessionRef : IO.Ref (Option Session) ← IO.mkRef none
 private def errJson (msg : String) : String :=
   (Json.mkObj [("ok", Json.bool false), ("error", Json.str msg)]).compress
 
+private def initFromConfig (config : TrustedConfig) : IO String := do
+  let session : Session := {
+    config
+    safetyRef := ← IO.mkRef SealCore.State.empty
+    temporalRef := ← IO.mkRef Kernels.temporalKernel.init
+    linearRef := ← IO.mkRef LinearCore.LState.empty
+    budgetRef := ← IO.mkRef []
+    unitRef := ← IO.mkRef ()
+  }
+  sessionRef.set (some session)
+  pure <| (Json.mkObj [
+    ("ok", Json.bool true),
+    ("epoch", toJson config.epoch),
+    ("approval_ttl_ms", toJson config.safety.approvalTtlMs),
+    ("approval_file", Json.str config.safety.approvalFile.toString),
+    ("votes_file", Json.str (config.consensus.map (·.votesFile.toString) |>.getD "")),
+    ("grants_file", Json.str (config.linear.map (·.grantsFile.toString) |>.getD "")),
+    ("forecasts_file", Json.str (config.calibration.map (·.recordsFile.toString) |>.getD ""))
+  ]).compress
+
 /-- Initialise the session from the signed config envelope. Returns a JSON
     summary the Rust host needs for evidence gathering (file paths, TTL), or
     `{ok: false, error}` — fail-closed, no session on any failure. -/
 private def initImpl (envelopeText publicKey : String) : IO String := do
   match checkEnvelope envelopeText publicKey with
   | .error err => pure (errJson s!"trusted config rejected: {err}")
-  | .ok config => do
-      let session : Session := {
-        config
-        safetyRef := ← IO.mkRef SealCore.State.empty
-        temporalRef := ← IO.mkRef Kernels.temporalKernel.init
-        linearRef := ← IO.mkRef LinearCore.LState.empty
-        budgetRef := ← IO.mkRef []
-        unitRef := ← IO.mkRef ()
-      }
-      sessionRef.set (some session)
-      pure <| (Json.mkObj [
-        ("ok", Json.bool true),
-        ("epoch", toJson config.epoch),
-        ("approval_ttl_ms", toJson config.safety.approvalTtlMs),
-        ("approval_file", Json.str config.safety.approvalFile.toString),
-        ("votes_file", Json.str (config.consensus.map (·.votesFile.toString) |>.getD "")),
-        ("grants_file", Json.str (config.linear.map (·.grantsFile.toString) |>.getD "")),
-        ("forecasts_file", Json.str (config.calibration.map (·.recordsFile.toString) |>.getD ""))
-      ]).compress
+  | .ok config => initFromConfig config
 
 /-- Build the same registry `Host.Main` builds, with evidence injected from
     the step input instead of gathered from IO — `Host.dispatch` (two-phase
@@ -178,6 +180,16 @@ private def stepImpl (inputText : String) : IO String := do
     proven decisions + audit bytes on the corpus. NOT an FFI export. -/
 def modelInit (envelopeText publicKey : String) : IO String :=
   initImpl envelopeText publicKey
+
+/-- MODEL ORACLE ONLY. This intentionally bypasses config-signature verification
+    because the Lean interpreter cannot execute the `@[extern]` Ed25519 leaf.
+    It is not `@[export]`, not called by `seal_host_init`, and is used only by
+    `scripts/model_oracle.lean`; compiled native/WASM/deployed oracles still
+    initialise through `initImpl` and verify real signatures. -/
+def modelInitFromTrustedPayload (payloadText : String) : IO String := do
+  match Host.parseCanonicalConfigPayload payloadText with
+  | .error err => pure (errJson s!"trusted config rejected: {err}")
+  | .ok config => initFromConfig config
 
 def modelStep (inputText : String) : IO String :=
   stepImpl inputText

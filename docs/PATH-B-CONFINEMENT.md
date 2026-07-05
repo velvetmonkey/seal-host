@@ -129,11 +129,10 @@ residual, and (C) fixes the hash.
 * Frozen kernel: `Seal/Hash.lean` + every `SealCore`/`Kernels` consumer that
   keys on `Hash` (audit `certHash`, `Std.HashMap Hash Nat` approval state,
   `Host/Record.lean` chain).
-* The deployed **wasm changes** → the pinned `seal.wasm` sha256
-  (`1cc765c7…`, pinned in `docs/CONFORMANCE-BRIDGE.md`,
-  `docs/SEAL-SYSTEM-TCB.md`, `wasm-spike/verified/PROVENANCE.txt`, and the
-  seal-check / seal-live-demo / seal-assurance-kit runtimes) is invalidated;
-  a full audited repin + rebuild is required.
+* The deployed **wasm changes** → each pinned `seal.wasm` sha256 is invalidated.
+  The current private verified seal-host pin is `a6a73fa5…` in
+  `wasm-spike/verified/PROVENANCE.txt`; public/runtime repins remain separate,
+  audited steps.
 * The JS `stableHashParts` mirror (receipt-format.js / seal-config.js /
   decide.cjs — the whole `capabilityTarget` convention in
   `docs/DECISION-RECEIPT-SCHEMA.md`) must swap to SHA-256 in lockstep, or

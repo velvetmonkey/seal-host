@@ -11,7 +11,7 @@ ledger is authoritative and the public extract is corrected to match.
 `seal-host/RUST_BRIDGE.md` (bridge layer, hardened at commit `f69ddad`), and
 `seal-check/docs/SEAL-MEDIATION-PROFILE-L0.md` (boundary profile).
 
-**Date:** 2026-07-02.
+**Date:** 2026-07-05.
 
 ---
 
@@ -135,9 +135,9 @@ flow make unconstructible-to-violate, each pinned by a test (§5).
 | T2 | **emscripten toolchain** (wasm shape) — Lean-C → wasm. | Same class as T1, extended to wasm. |
 | T3 | **wasm-equals-Lean identity** — that `seal.wasm` computes the same function as the proven Lean. **Trusted compile (T1+T2) + differential evidence (§4, Lane C), NOT a proof.** | The load-bearing honest gap. In-browser sha256 proves *which binary ran*, never *that it matches the model*. |
 | T4 | **`ffi_shim.c` + `lean.h` static-inline helpers** — string size/cstr/is_string, panic hooks, module init. | Marshalling glue; hardened but trusted. |
-| T5 | **OS process model + file permissions** (A-origin) — pipes, spawn, write access to config / approval / votes / grants / forecast files. | Whoever can write the approval file IS an approver. |
+| T5 | **OS process model + file permissions + config-signing trust root** (A-origin) — pipes, spawn, write access to config / approval / votes / grants / forecast files, and startup `--pubkey` for real Ed25519 config signatures. | Whoever controls approval files/keys or the config-signing key/argv is trusted. |
 | T6 | **Wall clock + A3 state + replay store** (`a3.rs`, `replay_store.rs`) — nonce set, Ed25519 signed-token SQLite durability, TTL, future-skew. | Nonce insert is write-ahead before Lean sees the approval; SQLite runs WAL + `synchronous=FULL`. Legacy control-file replay remains in-memory/demo-only. |
-| T7 | **`serde_json` + `ed25519-dalek` + `hex`** — the host evidence path (approval records, NDJSON signed tokens over exact `ApprovalRecord` JSON bytes). | Fail direction: drop the record ⇒ **deny**. |
+| T7 | **Ed25519 implementations + parsers** — vendored TweetNaCl via `SealV2.ed25519Verify` for config payload signatures; `serde_json` + `ed25519-dalek` + `hex` for host approval records. | Fail direction: reject config at startup or drop approval record ⇒ **deny**. |
 | T8 | **P6 — response egress unmediated by design** — child→client bytes relayed verbatim. | Requests gated; responses not. Never restate as "nothing leaks". |
 | T9 | **Operator argv** (P4) — the command line names the guarded server. | Operator-trusted setup; the child IS the guarded resource. |
 | T10 | **A-strict-child** — routing assumes the child parses its protocol strictly; a lenient child that executes a line strict JSON rejects is outside the contract. | Named limitation of the boundary. |
@@ -155,18 +155,14 @@ Inherited from the mcp-seal threat model plus the system seams:
    differential fixture), not eliminated. The standing red-team line.
 3. **Approval origin** — control-file permissions (v1) / signing-key management
    (v2), and that the human understood what they approved.
-4. **wasm-vs-Lean equivalence (T3)** — **Lane C** drives identical inputs
-   through `seal.wasm` and the Lean `decide`, asserting identical verdicts across
-   the obfuscation corpus. **Status: green (v1, 2026-07-02): 13/13 mediated
-   adversarial cases (delete-command disguises + structural JSON manglings +
-   `\u`-escaped forms) agree and Block on both the emscripten wasm and the
-   natively-compiled Lean, 0 disagreements.** Scope: the mediation corpus
-   (guarded calls), not exhaustive over all inputs; the Lean side is the *core*
-   `decide` (Allow/Block) while the wasm is the *host step* — they coincide on
-   every mediated call and diverge only on passthrough, by design (a layer
-   boundary, not a codegen fault). This is *risk-reducing evidence* for T3,
-   never a proof. The v2 rigor upgrade is a native host-step twin
-   (native `seal_wrapper.c` vs wasm).
+4. **wasm-vs-Lean equivalence (T3)** — the conformance bridge drives identical
+   inputs through the interpreted Lean model, the native `.so`, the emscripten
+   wasm, and the deployed Rust host. **Status: green (R6, 2026-07-05): 15/15
+   corpus inputs agree byte-for-byte on decision + audit bytes across model,
+   native and wasm, with matching SHA-256 record-chain heads; the deployed host
+   record head also agrees with the model.** Scope: corpus C (destructive
+   disguises, passthroughs, one approved forward), not exhaustive over all
+   inputs. This is *risk-reducing evidence* for T3, never a proof.
 5. **Out-of-band effects** — anything that never emits a `tools/call` through
    seal.
 
@@ -184,8 +180,8 @@ Inherited from the mcp-seal threat model plus the system seams:
 | Routing agreement incl. full obfuscation disguise corpus | corpus + property tests | `seal-host/rust/tests/differential.rs` (`corpus_agreement*`, `no_routing_bypass`) | `cargo test --test differential` |
 | Panic → abort (F1 closed), fail-open demonstrated + fixed | binary-driven probes | `seal-host/rust/tests/panic_probe.rs` | `cargo test --test panic_probe` |
 | Full-path mediation: disguises block, approval one-shot, non-UTF8 refused, verbatim forward | full-binary oracle | `seal-host/rust/tests/host_path.rs` | `cargo test --test host_path` |
-| Which binary ran (identity, not equivalence) | in-browser sha256 self-verify | `seal-check` (`kernel_identity.wasm_sha256`, pin `1cc765c7…c70a`) | load widget over http(s)/localhost |
-| wasm computes same function as Lean (T3) | **Lane C differential — GREEN (v1, 2026-07-02): 13/13 mediation corpus agree across compile targets, 0 disagreements** (risk-reducing evidence, not a proof) | `seal-check/differential/wasm_lean_differential.mjs` (private) | `SEAL_LEAN_DECIDE=<v2_decide_line> node differential/wasm_lean_differential.mjs` |
+| Which binary ran (identity, not equivalence) | wasm sha256 pin | `seal-host/wasm-spike/verified/PROVENANCE.txt` (`seal.wasm` pin `a6a73fa5d3ab…9e35`) | `sha256sum wasm-spike/verified/seal.wasm` |
+| wasm computes same function as Lean (T3) | conformance bridge — GREEN (R6, 2026-07-05): 15/15 corpus inputs agree across model/native/wasm; deployed record head agrees too (risk-reducing evidence, not a proof) | `seal-host/scripts/conformance_bridge.mjs` | `node scripts/conformance_bridge.mjs --wasm` |
 
 ---
 
