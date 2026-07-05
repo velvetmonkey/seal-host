@@ -48,9 +48,11 @@ from liveness, and `hACR` lifts that to part-list equality.
 
 * **Minting (TCB):** Rust providers (`rust/src/providers.rs`) mint
   `ApprovalRecord { target: "<64 lowercase hex>", … }` via control-file / Ed25519
-  signed-token / TTY. `rust/src/a3.rs` freshness-filters every record
-  (nonce-once per session, TTL, +5s future-skew, wall clock) before Lean
-  sees it — `A3Filter`, fail-closed.
+  signed-token / TTY. The host Ed25519 signed-token provider signs the exact
+  `ApprovalRecord` JSON payload bytes; it is separate from the SealV2 canonical
+  `(target, session, issuedAt, expiry, nonce)` token path in `mcp-seal-dev`.
+  `rust/src/a3.rs` freshness-filters every record (nonce-once per session, TTL,
+  +5s future-skew, wall clock) before Lean sees it — `A3Filter`, fail-closed.
 * **Checking (deployed path):** `Ffi.stepImpl` (`Ffi.lean:190`,
   string-in/string-out seam) → `Seal.classifyToolCall` resolves the call to
   `stableHashParts (toolName :: evalTargetParts rule.target args)`
@@ -72,8 +74,11 @@ from liveness, and `hACR` lifts that to part-list equality.
   "Attenuation-only delegation" would formalize a mechanism the broker does
   not have — rejected as the target, recorded here as a scope finding.
 * **Signature:** `SealV2.SignatureVerified` (`Validation.lean:191`) is a
-  Prop over `verifySignature`, which is a `stub-ed25519:` string match in
-  the model; real Ed25519 (`ed25519-dalek`) is Rust TCB.
+  Prop over `verifySignature`; in `mcp-seal-dev` that path calls real Ed25519
+  over canonical `(target, session, issuedAt, expiry, nonce)` bytes. The host's
+  NDJSON provider is also real Ed25519 (`ed25519-dalek`) but over exact
+  `ApprovalRecord` JSON payload bytes. The trusted config envelope remains the
+  separate `stub-ed25519:` config-signature path until that roadmap item lands.
 
 ## 3. Subsumption verdict vs the landed slate
 
@@ -103,7 +108,7 @@ the same SHA-256 target commitment.
 ## 4. Trust boundary (loud)
 
 **Stays TCB (assumed, not proven):** grant-token unforgeability (Ed25519,
-`providers.rs`; model uses the stub); the wall clock, nonce replay set,
+`providers.rs`, over exact `ApprovalRecord` JSON bytes); the wall clock, nonce replay set,
 TTL, and skew (`a3.rs`); the C ABI seam + JSON marshalling (`Ffi.lean`,
 `lean.rs`); OS permissions on config/approval files.
 

@@ -52,8 +52,11 @@ claimed eliminated.
    grants/forecast files, and the approval keys are trusted inputs. Their
    integrity rests on OS file permissions and (for signed channels) on key
    secrecy. An adversary who can write the trusted config or forge a signature
-   is outside the model. The config signature is byte-exact; the G1–G5 stub
-   becomes real Ed25519 in the G6 approval back-channel (`ed25519-dalek`).
+   is outside the model. The config signature is currently the byte-exact
+   `stub-ed25519:<pk>:<payload>` check. The separate approval back-channel can
+   use real Ed25519 (`ed25519-dalek`) over exact `ApprovalRecord` JSON payload
+   bytes; the SealV2 canonical token path signs `(target, session, issuedAt,
+   expiry, nonce)` bytes in `mcp-seal-dev`.
 
 3. **MCP-boundary-only.** Mediation happens at the MCP `tools/call` boundary.
    In-process orchestrator calls, side effects the agent reaches without

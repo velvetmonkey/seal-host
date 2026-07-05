@@ -137,7 +137,7 @@ flow make unconstructible-to-violate, each pinned by a test (§5).
 | T4 | **`ffi_shim.c` + `lean.h` static-inline helpers** — string size/cstr/is_string, panic hooks, module init. | Marshalling glue; hardened but trusted. |
 | T5 | **OS process model + file permissions** (A-origin) — pipes, spawn, write access to config / approval / votes / grants / forecast files. | Whoever can write the approval file IS an approver. |
 | T6 | **Wall clock + A3 state** (`a3.rs`) — nonce set, TTL, future-skew. | Lean re-derives expiry `min(issuedAt,now)+ttl`; A3 is belt-and-braces. |
-| T7 | **`serde_json` + `ed25519-dalek` + `hex`** — the evidence path (approval records, signed tokens). | Fail direction: drop the record ⇒ **deny**. |
+| T7 | **`serde_json` + `ed25519-dalek` + `hex`** — the host evidence path (approval records, NDJSON signed tokens over exact `ApprovalRecord` JSON bytes). | Fail direction: drop the record ⇒ **deny**. |
 | T8 | **P6 — response egress unmediated by design** — child→client bytes relayed verbatim. | Requests gated; responses not. Never restate as "nothing leaks". |
 | T9 | **Operator argv** (P4) — the command line names the guarded server. | Operator-trusted setup; the child IS the guarded resource. |
 | T10 | **A-strict-child** — routing assumes the child parses its protocol strictly; a lenient child that executes a line strict JSON rejects is outside the contract. | Named limitation of the boundary. |

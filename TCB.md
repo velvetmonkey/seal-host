@@ -12,8 +12,8 @@ The cleanest assurance story. Trusted:
   every decision it routes on comes from proven code;
 - OS file permissions on the trusted config, approval/votes/grants/forecast
   files (origin assumption A-origin);
-- the stub config signature (G1–G5): commits to exact bytes but is not
-  cryptographic until the Ed25519 swap.
+- the stub config signature: commits to exact bytes but is not cryptographic
+  until separate config-signature hardening lands.
 
 ## Shape 2 — Rust FFI host (`rust/`, G6)
 
@@ -40,8 +40,9 @@ for deployability.** Everything in Shape 1, plus:
 - the JSON marshalling of evidence across the seam (`serde_json` on the
   Rust side, `Lean.Json` on the Lean side);
 - the approval back-channel providers (`providers.rs`): control-file,
-  Ed25519 signed token (real cryptography — `ed25519-dalek` is trusted),
-  interactive TTY. Providers mint records; they never decide;
+  Ed25519 signed token (real cryptography over exact `ApprovalRecord` JSON
+  payload bytes — `ed25519-dalek` is trusted), interactive TTY. Providers mint
+  records; they never decide;
 - A3 (`a3.rs`): nonce replay set, TTL freshness, future-skew rejection, and
   the wall clock itself. The Lean kernels prove properties *given* the `now`
   and the evidence the host hands them — A3 is exactly the host-side state

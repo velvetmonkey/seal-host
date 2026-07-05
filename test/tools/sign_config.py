@@ -4,10 +4,10 @@
 
 Usage: sign_config.py <payload.json> <pubkey> [> trusted.json]
 
-The payload (epoch + per-kernel sections) is serialized to compact JSON — the
-SealV2-canonical byte form the host verifies — and the stub signature commits
-to those exact bytes. G6 replaces the stub with real Ed25519 over the same
-bytes.
+The payload (epoch + per-kernel sections) is serialized to compact JSON, and
+the stub signature commits to those exact bytes. Approval-token Ed25519 is a
+separate path; this helper keeps the config-envelope shape stable until the
+config-signature hardening work lands.
 """
 
 import json

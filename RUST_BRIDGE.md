@@ -135,7 +135,10 @@ Still trusted after this work:
   re-derives approval expiry as `min(issuedAt, now) + ttl`, so A3 is
   belt-and-braces, not the sole defense.
 - **Evidence marshalling**: `serde_json`, `ed25519-dalek`, `hex` on the
-  approval path. Failure direction is drop-the-record ⇒ deny.
+  host approval path. Its NDJSON signed-token provider signs exact
+  `ApprovalRecord` JSON payload bytes; the SealV2 canonical
+  `(target, session, issuedAt, expiry, nonce)` token path lives in
+  `mcp-seal-dev`. Failure direction is drop-the-record ⇒ deny.
 - **Line framing**: the terminator strip that defines what "one line" means
   (the only byte-level transformation on the request path).
 - **`SEAM_ERROR_RESPONSE`**: the one host-authored egress string.

@@ -113,9 +113,9 @@ def parseBudgetSection (json : Json) : Except String Kernels.BudgetConfig := do
           | none => pure none
         pure { name, cap, tools, costArg : Kernels.BudgetSpec }
 
-/-- Stub signature scheme, byte-compatible with the SealV2 approval stub
-    (`SealV2.Validation.verifySignature`): the signature commits to the exact
-    payload bytes. G6 swaps this for real Ed25519 over the same bytes. -/
+/-- Stub signature scheme for the trusted config envelope. The signature commits
+    to the exact payload bytes but is not real crypto; approval-token Ed25519 is
+    a separate path. -/
 def verifyConfigSignature (publicKey payload signature : String) : Bool :=
   signature == s!"stub-ed25519:{publicKey}:{payload}"
 

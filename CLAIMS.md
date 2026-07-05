@@ -61,7 +61,8 @@ The canonical AST is audit input for kernels, not the mediation gate.
 fine pre-award and MUST NOT be described as real crypto.
 
 - today: stub config signature in the host framework
-- v2 approval path: real Ed25519 leaf (mcp-seal-dev has real `ed25519Verify` over canonical signed-message bytes)
+- v2 approval path: real Ed25519 leaf (mcp-seal-dev has real `ed25519Verify` over canonical `(target, session, issuedAt, expiry, nonce)` signed-message bytes)
+- host NDJSON approval-provider path: real `ed25519-dalek` over the exact `ApprovalRecord` JSON payload bytes; this is a separate channel, not the SealV2 canonical tuple
 - S1/S2: real Ed25519 config envelope + durable (cross-restart) replay store
 
 ## Response egress

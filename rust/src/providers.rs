@@ -160,8 +160,10 @@ struct SignedToken {
 /// Ed25519 token file: NDJSON `{"payload": "<json>", "signature": "<hex>"}`
 /// where payload parses to an ApprovalRecord with a MANDATORY nonce and
 /// issuedAt. The signature is verified over the exact payload bytes against
-/// the trusted verifying key — same byte-exact discipline as the Lean-side
-/// config envelope, so the G6 Ed25519 swap covers the same bytes.
+/// the trusted verifying key. This host provider signs ApprovalRecord JSON
+/// payload bytes; the SealV2 canonical approval token signs
+/// `(target, session, issuedAt, expiry, nonce)` bytes in mcp-seal-dev, and the
+/// trusted config envelope is a separate stub-signature path.
 pub struct Ed25519TokenProvider {
     path: std::path::PathBuf,
     key: VerifyingKey,
