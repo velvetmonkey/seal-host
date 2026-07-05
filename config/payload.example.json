@@ -3,7 +3,10 @@
   "safety": {
     "approval": {
       "control_file": "/tmp/seal-approvals.ndjson",
-      "ttl_seconds": 120
+      "ttl_seconds": 120,
+      "replay_store": {
+        "sqlite_path": "/var/lib/seal-host/replay.sqlite"
+      }
     },
     "tools": [
       {

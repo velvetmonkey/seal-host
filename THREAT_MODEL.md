@@ -55,8 +55,10 @@ claimed eliminated.
    is outside the model. The config signature is currently the byte-exact
    `stub-ed25519:<pk>:<payload>` check. The separate approval back-channel can
    use real Ed25519 (`ed25519-dalek`) over exact `ApprovalRecord` JSON payload
-   bytes; the SealV2 canonical token path signs `(target, session, issuedAt,
-   expiry, nonce)` bytes in `mcp-seal-dev`.
+   bytes, and the signed-token nonce store path is itself inside this trusted
+   config envelope. Until R6 lands, an actor who can write the config can
+   redirect the replay store. The SealV2 canonical token path signs `(target,
+   session, issuedAt, expiry, nonce)` bytes in `mcp-seal-dev`.
 
 3. **MCP-boundary-only.** Mediation happens at the MCP `tools/call` boundary.
    In-process orchestrator calls, side effects the agent reaches without
@@ -77,8 +79,13 @@ claimed eliminated.
 5. **Host-trusted clock & freshness (A3).** The Lean kernels prove their
    properties *given* the `now` and the evidence the host supplies. Nonce
    replay rejection, TTL expiry and clock-skew rejection are enforced
-   host-side (`rust/src/a3.rs`) before any record reaches a kernel — this is
-   the state and clock the proofs assume, not something they discharge.
+   host-side (`rust/src/a3.rs`) before any record reaches a kernel. For the
+   Ed25519 signed-token production channel, accepted nonces are durably
+   inserted into SQLite before forwarding to Lean, so replay state survives a
+   process restart. The SQLite store uses WAL plus `synchronous=FULL`; the
+   local crash test covers close/reopen process restart, not power-loss
+   certification. The legacy control-file channel remains demo-only and does
+   not claim cross-restart replay protection.
 
 ## Fail-closed posture
 

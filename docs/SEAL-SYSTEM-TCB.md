@@ -136,7 +136,7 @@ flow make unconstructible-to-violate, each pinned by a test (§5).
 | T3 | **wasm-equals-Lean identity** — that `seal.wasm` computes the same function as the proven Lean. **Trusted compile (T1+T2) + differential evidence (§4, Lane C), NOT a proof.** | The load-bearing honest gap. In-browser sha256 proves *which binary ran*, never *that it matches the model*. |
 | T4 | **`ffi_shim.c` + `lean.h` static-inline helpers** — string size/cstr/is_string, panic hooks, module init. | Marshalling glue; hardened but trusted. |
 | T5 | **OS process model + file permissions** (A-origin) — pipes, spawn, write access to config / approval / votes / grants / forecast files. | Whoever can write the approval file IS an approver. |
-| T6 | **Wall clock + A3 state** (`a3.rs`) — nonce set, TTL, future-skew. | Lean re-derives expiry `min(issuedAt,now)+ttl`; A3 is belt-and-braces. |
+| T6 | **Wall clock + A3 state + replay store** (`a3.rs`, `replay_store.rs`) — nonce set, Ed25519 signed-token SQLite durability, TTL, future-skew. | Nonce insert is write-ahead before Lean sees the approval; SQLite runs WAL + `synchronous=FULL`. Legacy control-file replay remains in-memory/demo-only. |
 | T7 | **`serde_json` + `ed25519-dalek` + `hex`** — the host evidence path (approval records, NDJSON signed tokens over exact `ApprovalRecord` JSON bytes). | Fail direction: drop the record ⇒ **deny**. |
 | T8 | **P6 — response egress unmediated by design** — child→client bytes relayed verbatim. | Requests gated; responses not. Never restate as "nothing leaks". |
 | T9 | **Operator argv** (P4) — the command line names the guarded server. | Operator-trusted setup; the child IS the guarded resource. |

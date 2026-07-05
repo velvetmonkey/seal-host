@@ -30,7 +30,11 @@ def stable_hash(parts) -> str:
 
 def safety_section(approval_file: Path) -> dict:
     return {
-        "approval": {"control_file": str(approval_file), "ttl_seconds": 120},
+        "approval": {
+            "control_file": str(approval_file),
+            "ttl_seconds": 120,
+            "replay_store": {"sqlite_path": str(approval_file.with_name("replay.sqlite"))},
+        },
         "tools": [
             {
                 "name": "db.execute",

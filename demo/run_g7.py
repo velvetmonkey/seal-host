@@ -54,7 +54,11 @@ def config_payload(tmp: Path) -> dict:
     return {
         "epoch": 1,
         "safety": {
-            "approval": {"control_file": str(tmp / "approvals.ndjson"), "ttl_seconds": 120},
+            "approval": {
+                "control_file": str(tmp / "approvals.ndjson"),
+                "ttl_seconds": 120,
+                "replay_store": {"sqlite_path": str(tmp / "replay.sqlite")},
+            },
             "tools": [
                 {"name": "db.execute", "mode": "guarded",
                  "match": {"type": "contains_any_ci", "arg": "sql",

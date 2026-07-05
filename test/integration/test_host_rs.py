@@ -192,8 +192,8 @@ def test_ed25519_channel_and_a3():
         assert r["result"]["isError"] is False
 
         _, err = proc.communicate(timeout=10)
-        assert "replayed nonce" in err, "A3 must log the replay drop"
-        assert "expired record" in err, "A3 must log the TTL drop"
+        assert "replayed_nonce" in err, "A3 must log the replay drop"
+        assert "expired" in err, "A3 must log the TTL drop"
 
 
 def main() -> int:

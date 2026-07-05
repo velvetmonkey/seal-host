@@ -43,10 +43,14 @@ for deployability.** Everything in Shape 1, plus:
   Ed25519 signed token (real cryptography over exact `ApprovalRecord` JSON
   payload bytes — `ed25519-dalek` is trusted), interactive TTY. Providers mint
   records; they never decide;
-- A3 (`a3.rs`): nonce replay set, TTL freshness, future-skew rejection, and
-  the wall clock itself. The Lean kernels prove properties *given* the `now`
-  and the evidence the host hands them — A3 is exactly the host-side state
-  and clock the proofs assume;
+- A3 (`a3.rs`) plus the replay store (`replay_store.rs`): nonce replay set,
+  SQLite durable nonce persistence for the Ed25519 signed-token production
+  channel, TTL freshness, future-skew rejection, and the wall clock itself.
+  SQLite runs with WAL and `synchronous=FULL`; the nonce insert is
+  write-ahead before an approval reaches Lean. The Lean kernels prove
+  properties *given* the `now` and the evidence the host hands them — A3 is
+  exactly the host-side state and clock the proofs assume. The legacy
+  control-file/interactive demo channels keep in-memory replay state only.
 - the differential conformance harness (`rust/tests/differential.rs`) pins
   the residual wire-parser gap: property-based agreement between the Rust
   serde_json wire view and the Lean canonical parser on what gets mediated

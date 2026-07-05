@@ -34,7 +34,7 @@ The canonical AST is audit input for kernels, not the mediation gate.
 | Fail-closed AND-composition preserves headline invariants (safety non-bypass, consensus agreement) | composition theorem | Lean theorem | as above | scoped to registered kernels | yes |
 | `Forward` is unconstructible without an exact kernel verdict | Rust bridge type | Rust type-level | Rust type soundness | none | yes |
 | Lean-panic fail-open risk is closed | abort-on-panic in `rust/` | code + test | abort semantics | none | yes |
-| Complete mediation modulo A1-A4, A2 minimised by construction; A6 (durability) stated, not hidden | THREAT_MODEL.md capstone | mixed (see below) | A1-A4 | A6 | yes (verbatim only) |
+| Complete mediation modulo A1-A4, A2 minimised by construction; A6 closed for the signed-token production channel by the durable Rust replay store | THREAT_MODEL.md capstone | mixed (see below) | A1-A4 plus Rust replay-store TCB | legacy control-file channel cross-restart replay remains demo-only residual | yes (verbatim only) |
 | W2-T4: convergence potential (MODEL): the undelivered-update count is a Lyapunov function over crdt-lean's `DeliverySystem`: non-increasing, strictly decreased by each delivery of a new update, zero exactly at full delivery, zero ⇒ replica state = converged state, eventually zero under fairness + quiescence | `Kernels/ConvergencePotential.lean` | Lean theorem | fairness + quiescence are `DeliverySystem` hypotheses (asserted network assumptions); kernel-op ↔ model-update binding is interpretive via `composed_convergent` | model-level; per-event acceptance modeled as delivery-of-new-update | yes, "model-level, conditional on fairness" mandatory |
 | W2-T6: channel non-bypass (MODEL): any adapter trace meeting step-local obligations O1 (emit only licensed bytes) ∧ O2 (no manufactured licenses) ∧ O3 (byte fidelity via license pairs) mediates every action: each emission has a strictly earlier decide event returning Allow of byte-identical output; at gate = `SealV2.decide`, emitted bytes are canonical serializations of VALIDATED capabilities; rogue (O1-violating) and forger (O2-violating) adapters witnessed failing | `Host/ChannelModel.lean` | Lean theorem | model-level: Rust adapter compliance with O1-O3 is TCB until refined (named future work); gate clause aligned with `SealV2.decide`, not the deployed `compatible` profile | Rust refinement of `rust/` against O1-O3 = named future work | yes, "model-level" mandatory |
 | W2-T6.1: seal adapter conformance (MODEL): `sealAdapter`, a Lean model of the DEPLOYED routing core (mirroring `rust/src/main.rs`'s gated-sink discipline), DISCHARGES the capstone's O1/O2 hypotheses (`sealAdapter_O1`, `sealAdapter_O2`), so `channel_preserves_non_bypass` holds unconditionally at it (`sealAdapter_trace`): every emission is preceded strictly earlier by an Allow decide of byte-identical output. Closes the W2-T6 gap that no adapter modelling the deployed core had been proven compliant | `Host/SealAdapter.lean` | Lean theorem | model-level: the byte-level refinement `rust/` ↔ `sealAdapter` (that the compiled binary implements the model's transition discipline) stays TCB, named future work; wall clock + approval providers stay TCB | binary refinement `rust/` ↔ model = named future work; deployed profile still `compatible` (not canonical-l0) | yes, "model-level discharge; binary refinement still future" mandatory |
@@ -52,7 +52,11 @@ The canonical AST is audit input for kernels, not the mediation gate.
 - **A2 (numeric/parse fidelity)** minimised by construction (canonical strict subset), not eliminated. Per-server equivalence obligation remains.
 - **A4 (atomic consume)** discharged by the host `Mutex` carrying M6 atomic-consume; concurrency-tested 16->1 Allow.
 - **A5 (single-use replay)** discharged by construction: the store IS `listReplayStore`.
-- **A6 (cross-restart durability)** the in-process replay store discharges A5 for the live process only; cross-restart durability is a stated residual, a deployment-config concern, first funded hardening item. NOT a proof gap that is hidden.
+- **A6 (cross-restart durability)** closed for the host's Ed25519 signed-token
+  production channel: accepted nonces are written to SQLite before an
+  approval reaches Lean, with WAL plus `synchronous=FULL`. The legacy
+  control-file/interactive demo channels keep in-memory replay state and do
+  not claim cross-restart replay protection.
 
 ## Trusted config signatures (roadmap, not a production claim)
 
@@ -60,7 +64,9 @@ The canonical AST is audit input for kernels, not the mediation gate.
 `stub-ed25519:<pk>:<payload>` (string equality, `Host/Config.lean:120`). This is
 fine pre-award and MUST NOT be described as real crypto.
 
-- today: stub config signature in the host framework
+- today: stub config signature in the host framework; the trusted
+  `replay_store.sqlite_path` inherits this R6 residual, so config write access
+  can redirect the durable store
 - v2 approval path: real Ed25519 leaf (mcp-seal-dev has real `ed25519Verify` over canonical `(target, session, issuedAt, expiry, nonce)` signed-message bytes)
 - host NDJSON approval-provider path: real `ed25519-dalek` over the exact `ApprovalRecord` JSON payload bytes; this is a separate channel, not the SealV2 canonical tuple
 - S1/S2: real Ed25519 config envelope + durable (cross-restart) replay store

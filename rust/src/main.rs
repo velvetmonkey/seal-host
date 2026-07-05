@@ -33,6 +33,7 @@ use seal_host_rs::a3;
 use seal_host_rs::lean;
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
+use seal_host_rs::replay_store::SqliteReplayStore;
 use seal_host_rs::route::{
     route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE,
 };
@@ -155,6 +156,34 @@ fn read_or_empty(path: &str) -> String {
     } else {
         std::fs::read_to_string(path).unwrap_or_default()
     }
+}
+
+fn replay_store_path_from_envelope(envelope: &str) -> Result<Option<String>, String> {
+    let envelope_json: Value =
+        serde_json::from_str(envelope).map_err(|e| format!("bad envelope JSON: {e}"))?;
+    let payload_text = envelope_json
+        .get("payload")
+        .and_then(Value::as_str)
+        .ok_or("missing string payload")?;
+    let payload_json: Value =
+        serde_json::from_str(payload_text).map_err(|e| format!("bad payload JSON: {e}"))?;
+    let Some(replay_store) = payload_json.pointer("/safety/approval/replay_store") else {
+        return Ok(None);
+    };
+    if replay_store.is_null() {
+        return Ok(None);
+    }
+    let obj = replay_store
+        .as_object()
+        .ok_or("safety.approval.replay_store must be an object")?;
+    let path = obj
+        .get("sqlite_path")
+        .and_then(Value::as_str)
+        .ok_or("safety.approval.replay_store.sqlite_path must be a string")?;
+    if path.is_empty() {
+        return Err("safety.approval.replay_store.sqlite_path must be non-empty".to_string());
+    }
+    Ok(Some(path.to_string()))
 }
 
 struct GrantsCursor {
@@ -300,6 +329,13 @@ fn run() -> i32 {
     let approval_file = summary["approval_file"].as_str().unwrap_or("").to_string();
     let votes_file = summary["votes_file"].as_str().unwrap_or("").to_string();
     let forecasts_file = summary["forecasts_file"].as_str().unwrap_or("").to_string();
+    let replay_store_path = match replay_store_path_from_envelope(&envelope) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("trusted config rejected: replay store config: {e}");
+            return 3;
+        }
+    };
     let mut grants = GrantsCursor {
         path: summary["grants_file"].as_str().unwrap_or("").to_string(),
         seen: 0,
@@ -332,7 +368,31 @@ fn run() -> i32 {
             return 2;
         }
     };
-    let mut a3 = a3::A3Filter::new(ttl_ms);
+    let mut a3 = if args.channel == "ed25519" {
+        let Some(path) = replay_store_path else {
+            eprintln!(
+                "trusted config rejected: ed25519 channel requires \
+                safety.approval.replay_store.sqlite_path"
+            );
+            return 3;
+        };
+        let store = match SqliteReplayStore::open(&path) {
+            Ok(store) => store,
+            Err(e) => {
+                eprintln!("trusted config rejected: cannot open replay store: {e}");
+                return 3;
+            }
+        };
+        match a3::A3Filter::with_store(ttl_ms, Box::new(store), now_ms()) {
+            Ok(a3) => a3,
+            Err(e) => {
+                eprintln!("trusted config rejected: cannot load replay store: {e}");
+                return 3;
+            }
+        }
+    } else {
+        a3::A3Filter::new(ttl_ms)
+    };
     let mut receipts = ReceiptChain::new();
     let interactive = args.channel == "interactive";
 
@@ -518,4 +578,65 @@ fn run() -> i32 {
     let code = child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(0);
     let _ = relay.join();
     code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope(payload: Value) -> String {
+        let payload = payload.to_string();
+        json!({"payload": payload, "signature": format!("stub-ed25519:test-pk:{payload}")})
+            .to_string()
+    }
+
+    #[test]
+    fn replay_store_path_reads_signed_payload_field() {
+        let env = envelope(json!({
+            "epoch": 1,
+            "safety": {
+                "approval": {
+                    "control_file": "/tmp/approvals.ndjson",
+                    "ttl_seconds": 120,
+                    "replay_store": {"sqlite_path": "/tmp/replay.sqlite"}
+                },
+                "tools": []
+            }
+        }));
+        assert_eq!(
+            replay_store_path_from_envelope(&env).unwrap(),
+            Some("/tmp/replay.sqlite".to_string())
+        );
+    }
+
+    #[test]
+    fn replay_store_path_absent_is_none() {
+        let env = envelope(json!({
+            "epoch": 1,
+            "safety": {
+                "approval": {
+                    "control_file": "/tmp/approvals.ndjson",
+                    "ttl_seconds": 120
+                },
+                "tools": []
+            }
+        }));
+        assert_eq!(replay_store_path_from_envelope(&env).unwrap(), None);
+    }
+
+    #[test]
+    fn replay_store_path_rejects_malformed_field() {
+        let env = envelope(json!({
+            "epoch": 1,
+            "safety": {
+                "approval": {
+                    "control_file": "/tmp/approvals.ndjson",
+                    "ttl_seconds": 120,
+                    "replay_store": {"sqlite_path": ""}
+                },
+                "tools": []
+            }
+        }));
+        assert!(replay_store_path_from_envelope(&env).is_err());
+    }
 }
