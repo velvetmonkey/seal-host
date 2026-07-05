@@ -47,7 +47,7 @@ enum Channel {
 }
 
 impl Channel {
-    fn poll(&mut self) -> Vec<providers::ApprovalRecord> {
+    fn poll(&mut self) -> providers::ApprovalPoll {
         match self {
             Channel::File(p) => p.poll(),
             Channel::Ed(p) => p.poll(),
@@ -193,6 +193,22 @@ fn write_locked(lock: &Mutex<()>, line: &str) {
 fn emit_audit(receipts: &mut ReceiptChain, audit: &str) {
     eprintln!("{audit}");
     eprintln!("{}", receipts.observe(audit).to_json_line());
+}
+
+fn emit_approval_drop_warnings(warnings: &[providers::ApprovalDropWarning]) {
+    for w in warnings {
+        eprintln!(
+            "{}",
+            json!({
+                "approval_drop": {
+                    "source": w.source,
+                    "reason": w.reason,
+                    "record_id": w.record_id,
+                    "counter": w.counter
+                }
+            })
+        );
+    }
 }
 
 /// The Lean routing view of one wire line: the line terminator (`\n` or
@@ -402,10 +418,11 @@ fn run() -> i32 {
             }
         }
 
-        let (records, dropped) = a3.filter(provider.poll(), now);
-        for reason in &dropped {
-            eprintln!("{}", json!({"a3": reason}));
-        }
+        let poll = provider.poll();
+        let mut warnings = poll.warnings;
+        let (records, a3_warnings) = a3.filter(poll.records, now);
+        warnings.extend(a3_warnings);
+        emit_approval_drop_warnings(&warnings);
         let approvals: Vec<Value> = records
             .iter()
             .map(|r| json!({"target": r.target, "issuedAt": r.issued_at}))
@@ -446,7 +463,11 @@ fn run() -> i32 {
                         .and_then(extract_target_hex)
                     {
                         provider.queue_interactive(target);
-                        let (records, _) = a3.filter(provider.poll(), now);
+                        let poll = provider.poll();
+                        let mut warnings = poll.warnings;
+                        let (records, a3_warnings) = a3.filter(poll.records, now);
+                        warnings.extend(a3_warnings);
+                        emit_approval_drop_warnings(&warnings);
                         if !records.is_empty() {
                             let approvals: Vec<Value> = records
                                 .iter()

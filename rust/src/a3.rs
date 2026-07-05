@@ -12,7 +12,7 @@
 //! Lean's one-shot consumption. Signed-token records always carry nonces
 //! (the provider enforces it).
 
-use crate::providers::ApprovalRecord;
+use crate::providers::{record_redaction_material, ApprovalDropWarning, ApprovalRecord};
 use std::collections::HashSet;
 
 const MAX_FUTURE_SKEW_MS: u64 = 5_000;
@@ -20,6 +20,7 @@ const MAX_FUTURE_SKEW_MS: u64 = 5_000;
 pub struct A3Filter {
     seen_nonces: HashSet<String>,
     ttl_ms: u64,
+    drop_counter: u64,
 }
 
 impl A3Filter {
@@ -27,6 +28,7 @@ impl A3Filter {
         Self {
             seen_nonces: HashSet::new(),
             ttl_ms,
+            drop_counter: 0,
         }
     }
 
@@ -36,23 +38,38 @@ impl A3Filter {
         &mut self,
         records: Vec<ApprovalRecord>,
         now_ms: u64,
-    ) -> (Vec<ApprovalRecord>, Vec<String>) {
+    ) -> (Vec<ApprovalRecord>, Vec<ApprovalDropWarning>) {
         let mut ok = Vec::new();
         let mut dropped = Vec::new();
         for r in records {
             if let Some(issued) = r.issued_at {
                 if issued > now_ms.saturating_add(MAX_FUTURE_SKEW_MS) {
-                    dropped.push(format!("a3: future issuedAt for target {}", r.target));
+                    dropped.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        "a3",
+                        "future_issued_at",
+                        record_redaction_material(&r),
+                    ));
                     continue;
                 }
                 if now_ms.saturating_sub(issued) > self.ttl_ms {
-                    dropped.push(format!("a3: expired record for target {}", r.target));
+                    dropped.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        "a3",
+                        "expired",
+                        record_redaction_material(&r),
+                    ));
                     continue;
                 }
             }
             if let Some(nonce) = &r.nonce {
                 if !self.seen_nonces.insert(nonce.clone()) {
-                    dropped.push(format!("a3: replayed nonce for target {}", r.target));
+                    dropped.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        "a3",
+                        "replayed_nonce",
+                        record_redaction_material(&r),
+                    ));
                     continue;
                 }
             }
@@ -94,7 +111,7 @@ mod tests {
         );
         assert_eq!(ok.len(), 1);
         assert_eq!(dropped.len(), 1);
-        assert!(dropped[0].contains("replayed nonce"));
+        assert_eq!(dropped[0].reason, "replayed_nonce");
         // Replay in a later poll also rejected.
         let (ok2, dropped2) = a3.filter(
             vec![rec(
@@ -106,6 +123,7 @@ mod tests {
         );
         assert!(ok2.is_empty());
         assert_eq!(dropped2.len(), 1);
+        assert_eq!(dropped2[0].reason, "replayed_nonce");
     }
 
     #[test]
@@ -137,6 +155,8 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000003"
         );
         assert_eq!(dropped.len(), 2);
+        assert_eq!(dropped[0].reason, "expired");
+        assert_eq!(dropped[1].reason, "future_issued_at");
     }
 
     #[test]

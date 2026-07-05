@@ -6,6 +6,7 @@
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Deserializer};
+use sha2::{Digest, Sha256};
 use std::io::BufRead;
 
 fn is_target_hex(s: &str) -> bool {
@@ -45,10 +46,55 @@ pub struct ApprovalRecord {
     pub nonce: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalDropWarning {
+    pub source: &'static str,
+    pub reason: &'static str,
+    pub record_id: String,
+    pub counter: u64,
+}
+
+impl ApprovalDropWarning {
+    pub fn new(
+        counter: &mut u64,
+        source: &'static str,
+        reason: &'static str,
+        redaction_material: impl AsRef<[u8]>,
+    ) -> Self {
+        *counter += 1;
+        Self {
+            source,
+            reason,
+            record_id: redacted_record_id(redaction_material.as_ref()),
+            counter: *counter,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ApprovalPoll {
+    pub records: Vec<ApprovalRecord>,
+    pub warnings: Vec<ApprovalDropWarning>,
+}
+
+pub fn redacted_record_id(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("sha256:{}", &hex::encode(digest)[..16])
+}
+
+pub fn record_redaction_material(record: &ApprovalRecord) -> String {
+    format!(
+        "target={};issuedAt={:?};nonce={}",
+        record.target,
+        record.issued_at,
+        record.nonce.as_deref().unwrap_or("")
+    )
+}
+
 /// An approval source. Implementations mint records; they do NOT decide —
 /// the proven Lean core consumes the records (one-shot, target-bound).
 pub trait ApprovalProvider {
-    fn poll(&mut self) -> Vec<ApprovalRecord>;
+    fn poll(&mut self) -> ApprovalPoll;
     fn name(&self) -> &'static str;
 }
 
@@ -57,6 +103,7 @@ pub trait ApprovalProvider {
 pub struct ControlFileProvider {
     path: std::path::PathBuf,
     seen: usize,
+    drop_counter: u64,
 }
 
 impl ControlFileProvider {
@@ -64,14 +111,15 @@ impl ControlFileProvider {
         Self {
             path: path.into(),
             seen: 0,
+            drop_counter: 0,
         }
     }
 }
 
 impl ApprovalProvider for ControlFileProvider {
-    fn poll(&mut self) -> Vec<ApprovalRecord> {
+    fn poll(&mut self) -> ApprovalPoll {
         let Ok(text) = std::fs::read_to_string(&self.path) else {
-            return Vec::new();
+            return ApprovalPoll::default();
         };
         let lines: Vec<&str> = text
             .lines()
@@ -80,10 +128,20 @@ impl ApprovalProvider for ControlFileProvider {
             .collect();
         let fresh = lines[self.seen.min(lines.len())..].to_vec();
         self.seen = lines.len();
-        fresh
-            .into_iter()
-            .filter_map(|l| serde_json::from_str::<ApprovalRecord>(l).ok())
-            .collect()
+        let source = self.name();
+        let mut poll = ApprovalPoll::default();
+        for line in fresh {
+            match serde_json::from_str::<ApprovalRecord>(line) {
+                Ok(record) => poll.records.push(record),
+                Err(_) => poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    "parse_error",
+                    line.as_bytes(),
+                )),
+            }
+        }
+        poll
     }
 
     fn name(&self) -> &'static str {
@@ -108,6 +166,7 @@ pub struct Ed25519TokenProvider {
     path: std::path::PathBuf,
     key: VerifyingKey,
     seen: usize,
+    drop_counter: u64,
 }
 
 impl Ed25519TokenProvider {
@@ -122,14 +181,15 @@ impl Ed25519TokenProvider {
             path: path.into(),
             key,
             seen: 0,
+            drop_counter: 0,
         })
     }
 }
 
 impl ApprovalProvider for Ed25519TokenProvider {
-    fn poll(&mut self) -> Vec<ApprovalRecord> {
+    fn poll(&mut self) -> ApprovalPoll {
         let Ok(text) = std::fs::read_to_string(&self.path) else {
-            return Vec::new();
+            return ApprovalPoll::default();
         };
         let lines: Vec<&str> = text
             .lines()
@@ -138,21 +198,79 @@ impl ApprovalProvider for Ed25519TokenProvider {
             .collect();
         let fresh = lines[self.seen.min(lines.len())..].to_vec();
         self.seen = lines.len();
-        fresh
-            .into_iter()
-            .filter_map(|l| {
-                let token: SignedToken = serde_json::from_str(l).ok()?;
-                let sig_bytes = hex::decode(&token.signature).ok()?;
-                let sig = Signature::from_slice(&sig_bytes).ok()?;
-                self.key.verify(token.payload.as_bytes(), &sig).ok()?;
-                let record: ApprovalRecord = serde_json::from_str(&token.payload).ok()?;
-                // Signed tokens MUST carry nonce + issuedAt for A3.
-                if record.nonce.is_none() || record.issued_at.is_none() {
-                    return None;
+        let source = self.name();
+        let mut poll = ApprovalPoll::default();
+        for line in fresh {
+            let token: SignedToken = match serde_json::from_str(line) {
+                Ok(token) => token,
+                Err(_) => {
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        "parse_error",
+                        line.as_bytes(),
+                    ));
+                    continue;
                 }
-                Some(record)
-            })
-            .collect()
+            };
+            let sig_bytes = match hex::decode(&token.signature) {
+                Ok(bytes) => bytes,
+                Err(_) => {
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        "bad_signature",
+                        line.as_bytes(),
+                    ));
+                    continue;
+                }
+            };
+            let sig = match Signature::from_slice(&sig_bytes) {
+                Ok(sig) => sig,
+                Err(_) => {
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        "bad_signature",
+                        line.as_bytes(),
+                    ));
+                    continue;
+                }
+            };
+            if self.key.verify(token.payload.as_bytes(), &sig).is_err() {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    "bad_signature",
+                    line.as_bytes(),
+                ));
+                continue;
+            }
+            let record: ApprovalRecord = match serde_json::from_str(&token.payload) {
+                Ok(record) => record,
+                Err(_) => {
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        "parse_error",
+                        token.payload.as_bytes(),
+                    ));
+                    continue;
+                }
+            };
+            // Signed tokens MUST carry nonce + issuedAt for A3.
+            if record.nonce.is_none() || record.issued_at.is_none() {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    "missing_required_field",
+                    record_redaction_material(&record),
+                ));
+                continue;
+            }
+            poll.records.push(record);
+        }
+        poll
     }
 
     fn name(&self) -> &'static str {
@@ -185,9 +303,9 @@ impl<R: BufRead, W: std::io::Write> InteractiveProvider<R, W> {
 }
 
 impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, W> {
-    fn poll(&mut self) -> Vec<ApprovalRecord> {
+    fn poll(&mut self) -> ApprovalPoll {
         let Some(target) = self.pending_target.take() else {
-            return Vec::new();
+            return ApprovalPoll::default();
         };
         let _ = writeln!(self.output, "seal-host: approve target {target}? [y/N] ");
         let _ = self.output.flush();
@@ -197,13 +315,16 @@ impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, 
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            vec![ApprovalRecord {
-                target,
-                issued_at: Some(now),
-                nonce: None,
-            }]
+            ApprovalPoll {
+                records: vec![ApprovalRecord {
+                    target,
+                    issued_at: Some(now),
+                    nonce: None,
+                }],
+                warnings: Vec::new(),
+            }
         } else {
-            Vec::new()
+            ApprovalPoll::default()
         }
     }
 
@@ -234,8 +355,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("seal-tok-{}", std::process::id()));
         std::fs::write(&dir, format!("{good}\n{bad}\n")).unwrap();
         let mut p = Ed25519TokenProvider::new(&dir, &vk_hex).unwrap();
-        let records = p.poll();
+        let poll = p.poll();
         std::fs::remove_file(&dir).ok();
+        assert_eq!(poll.warnings.len(), 1, "tampered token emits one warning");
+        assert_eq!(poll.warnings[0].reason, "bad_signature");
+        let records = poll.records;
         assert_eq!(records.len(), 1, "tampered token must be dropped");
         assert_eq!(records[0].target, target);
     }
@@ -245,12 +369,12 @@ mod tests {
         let mut p = InteractiveProvider::new(std::io::Cursor::new(b"y\n".to_vec()), Vec::new());
         let target = "0000000000000000000000000000000000000000000000000000000000000007".to_string();
         p.queue(target.clone());
-        let records = p.poll();
+        let records = p.poll().records;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].target, target);
 
         let mut p = InteractiveProvider::new(std::io::Cursor::new(b"n\n".to_vec()), Vec::new());
         p.queue("0000000000000000000000000000000000000000000000000000000000000007".to_string());
-        assert!(p.poll().is_empty());
+        assert!(p.poll().records.is_empty());
     }
 }

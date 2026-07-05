@@ -20,7 +20,7 @@
 //! output line), so a forwarded line can never be mistaken for a block.
 
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -30,6 +30,7 @@ struct Oracle {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
+    stderr_lines: Receiver<String>,
     dir: PathBuf,
 }
 
@@ -90,14 +91,14 @@ impl Oracle {
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
 
-        // Audit/A3 telemetry: drain so the host never blocks on stderr, and
-        // surface it in the (captured) test output for post-mortems.
+        // Audit/A3 telemetry: drain so the host never blocks on stderr.
+        let (err_tx, stderr_lines) = channel::<String>();
         std::thread::spawn(move || {
-            let mut text = String::new();
-            let mut r = BufReader::new(stderr);
-            let _ = r.read_to_string(&mut text);
-            if !text.is_empty() {
-                eprintln!("[seal-host stderr]\n{text}");
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                if err_tx.send(line).is_err() {
+                    break;
+                }
             }
         });
 
@@ -115,6 +116,7 @@ impl Oracle {
             child,
             stdin,
             lines,
+            stderr_lines,
             dir,
         }
     }
@@ -143,6 +145,23 @@ impl Oracle {
             .open(self.dir.join("approvals.ndjson"))
             .unwrap();
         writeln!(f, "{{\"target\": \"{target}\"}}").unwrap();
+    }
+
+    fn append_approval_line(&mut self, line: &str) {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.dir.join("approvals.ndjson"))
+            .unwrap();
+        writeln!(f, "{line}").unwrap();
+    }
+
+    fn drain_stderr(&mut self, quiet_for: Duration) -> Vec<String> {
+        let mut lines = Vec::new();
+        while let Ok(line) = self.stderr_lines.recv_timeout(quiet_for) {
+            lines.push(line);
+        }
+        lines
     }
 }
 
@@ -302,6 +321,47 @@ fn mediation_obfuscation_and_one_shot_approval() {
     assert!(
         is_block(&resp),
         "approval must be one-shot; replay blocked: {resp}"
+    );
+}
+
+#[test]
+fn malformed_approval_record_denies_and_warns_once() {
+    let mut o = Oracle::spawn("malformed-approval");
+    let malformed = "not-json-approval-record";
+    o.append_approval_line(malformed);
+
+    let call = guarded_call(50, "drop table accounts");
+    o.send(&call);
+    let resp = o.expect_line();
+    assert!(
+        is_block(&resp),
+        "malformed approval evidence must not unlock the call: {resp}"
+    );
+
+    let stderr = o.drain_stderr(Duration::from_millis(100));
+    let warnings: Vec<serde_json::Value> = stderr
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v.get("approval_drop").is_some())
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected exactly one approval_drop warning, stderr={stderr:?}"
+    );
+    let warning = &warnings[0]["approval_drop"];
+    assert_eq!(warning["source"], "control-file");
+    assert_eq!(warning["reason"], "parse_error");
+    assert_eq!(warning["counter"], 1);
+    let record_id = warning["record_id"].as_str().unwrap_or_default();
+    assert!(
+        record_id.starts_with("sha256:") && record_id.len() == "sha256:".len() + 16,
+        "record id must be a redacted hash prefix: {record_id}"
+    );
+    assert!(
+        !warnings[0].to_string().contains(malformed),
+        "raw malformed record leaked into warning: {}",
+        warnings[0]
     );
 }
 
