@@ -74,7 +74,7 @@ fi
 run_step "seal-host: build vendored Ed25519 C leaf" "$ROOT/.lake/packages/mcp-seal" bash c/build.sh
 run_step "seal-host: lake build" "$ROOT" lake build
 run_step "seal-host: axiom_check" "$ROOT" lake exe axiom_check
-run_step "seal-host: lake build Ffi" "$ROOT" lake build Ffi
+run_step "seal-host: lake build Ffi native export" "$ROOT" lake build +Ffi:c.o.export
 run_step "seal-host: build FFI shared object" "$ROOT" scripts/build_ffi_so.sh
 run_step "seal-host: cargo fmt --check" "$ROOT/rust" cargo fmt --check
 run_step "seal-host: cargo clippy" "$ROOT/rust" cargo clippy --all-targets -- -D warnings

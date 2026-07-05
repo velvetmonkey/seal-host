@@ -29,7 +29,9 @@ jobs:
           use-github-cache: false
           build: false
       - run: test -d .lake/packages/mcp-seal || lake update
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: bash .lake/packages/mcp-seal/c/build.sh
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: lake build
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
@@ -75,8 +77,10 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: test -s wasm-spike/verified/seal.js && test -s wasm-spike/verified/seal.wasm
       - run: test -d .lake/packages/mcp-seal || lake update
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: bash .lake/packages/mcp-seal/c/build.sh
-      - run: lake build Ffi
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: lake build +Ffi:c.o.export
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: scripts/build_ffi_so.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
