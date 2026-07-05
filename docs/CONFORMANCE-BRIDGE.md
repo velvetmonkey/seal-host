@@ -143,7 +143,7 @@ bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEA
 before the differential, and driving the fresh artifact:
 
 - Lean HEAD: `4cf02241eff89cba3b8386cd80cc04ad70abde39`
-- `seal.wasm` sha256: `4bf99dc7957c5623df05b6f50d29fb435015457de2dce78d4ae3d1a8cc6a1475`
+- `seal.wasm` sha256: `ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
 - Supersedes the stale spike pin sha256 `1cc765c7…` (built 2026-06-16 from the
   Jun-15 Lean spike).
@@ -155,6 +155,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `4bf99dc7…`). That repin is a separate, audited step gated to the
+build (sha256 `ebd17c14…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

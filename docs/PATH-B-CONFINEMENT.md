@@ -44,17 +44,18 @@ from `rust/src/main.rs` / `route.rs` / `lean.rs`:
   (`[{literal},{arg}]`) is `read_to_string`'d and passed opaquely to
   `host.init`; `init` returns only file paths + TTL (`main.rs:242-277`) —
   Rust never sees the tool rules.
-* The `target` u64 that DOES exist on the Rust side (`ApprovalRecord.target`,
-  `providers.rs:36-44`; used by `a3.rs` for freshness) is the value an
-  **approver declared**, not the value the **current call resolves to**.
+* Pre-Stage-2, the `target` u64 on the Rust side (`ApprovalRecord.target`,
+  `providers.rs:36-44`; used by `a3.rs` for freshness) was the value an
+  **approver declared**, not the value the **current call resolved to**.
+  Current Rust transports accept only lowercase 64-hex SHA-256 targets.
 * The resolved target first becomes visible to Rust **only after** the gate,
-  and only on **block**, as a decimal substring of the kernel's response
-  ("`approval required: <target>`", `main.rs:426-436`; mirror
-  `host_path.rs:172-180`). On the **forward** path it is never exposed.
+  and only on **block**. Before Stage 2 this was a decimal substring of the
+  kernel's response; the current kernel emits "`approval required: <64hex>`".
+  On the **forward** path it is never exposed.
 
 **Consequence:** a host-layer pre-gate `pg ∈ U` check is not feasible
-without duplicating the frozen target-derivation TCB (argument parse +
-per-tool `[{literal},{arg}]` application + canonicalization + FNV hash) in
+without duplicating the target-derivation TCB (argument parse +
+per-tool `[{literal},{arg}]` application + canonicalization + hash) in
 Rust — which also re-introduces exactly the parser differential the design
 forbids (`route.rs:104`).
 
@@ -86,7 +87,7 @@ closed value set; the demo policy is not one.
 | dimension | verdict |
 |---|---|
 | touches frozen mcp-seal? | No — IF it could be built host-side. |
-| change surface | Would need a full `evalTargetParts` re-implementation in Rust (arg JSON parse, per-tool target-spec application, `"|".intercalate`, FNV-1a-64) + the allowlist file. |
+| change surface | Would need a full `evalTargetParts` re-implementation in Rust (arg JSON parse, per-tool target-spec application, exact target encoding/hash) + the allowlist file. |
 | breaks `.argPath`? | **Yes.** The demo's `sql` universe is open-ended (R2); any finite allowlist denies legitimate destructive-SQL approvals that don't pre-exist in the list. |
 | closes the residual? | **No, and not feasible.** (i) Rust has no resolved target pre-gate (R1) — the check cannot run where it must. (ii) Re-deriving the target in Rust duplicates the frozen TCB and creates a parser differential; a mismatch between the Rust re-derivation and the Lean classifier is a NEW bypass surface, not a fix. (iii) Even granting a perfect re-derivation, an open-ended legitimate universe makes the allowlist either unsound (too permissive) or function-breaking (too strict). |
 
@@ -107,12 +108,12 @@ label-domain design MAY be right for a *future* policy language where
 operators intend coarse grants — but that is a policy-model redesign, not a
 residual fix, and it is a council decision.)
 
-### (C) CR-hash swap (FNV-1a-64 → SHA-256) — RECOMMENDED, but frozen-gated
+### (C) CR-hash swap (FNV-1a-64 → SHA-256) — RECOMMENDED, now shipped
 
 | dimension | verdict |
 |---|---|
-| touches frozen mcp-seal? | **Yes.** `Seal.stableHashString` / `stableHashParts` (`Seal/Hash.lean:11-17`) is frozen. |
-| change surface (blast radius) | Large and enumerated below. |
+| touches frozen mcp-seal? | **Yes historically.** The private kernel now carries this change in `mcp-seal-dev`; the public frozen `mcp-seal` was not touched. |
+| change surface (blast radius) | Large; Stage 1-3 did the split, repin, and cross-language mirror update. |
 | breaks `.argPath`? | **No.** Keeps the exact per-call target semantics; `U` need not be finite. |
 | closes the residual? | **Yes, honestly.** Under SHA-256 collision resistance (a *standard, believed* assumption — vs FNV, a *known-false* one), `stableHashParts pg' = stableHashParts pa ⇒ pg' = pa` computationally, so an out-of-universe colliding `pg'` cannot be crafted. The `pg ∈ U` hypothesis of the landed theorem can then be RETIRED in favor of an injective-hash argument that holds for ALL `pg`, not just a finite universe. |
 
@@ -123,7 +124,7 @@ collisions are trivially findable) to one believed TRUE and standard for
 exactly this use. That is the real closure: the residual is a broken-hash
 residual, and (C) fixes the hash.
 
-**Blast radius of (C) (why it is a seal-day decision, not a tonight build):**
+**Historical blast radius of (C) (what Stage 1-3 executed):**
 
 * Frozen kernel: `Seal/Hash.lean` + every `SealCore`/`Kernels` consumer that
   keys on `Hash` (audit `certHash`, `Std.HashMap Hash Nat` approval state,
@@ -137,9 +138,8 @@ residual, and (C) fixes the hash.
   decide.cjs — the whole `capabilityTarget` convention in
   `docs/DECISION-RECEIPT-SCHEMA.md`) must swap to SHA-256 in lockstep, or
   the four-bodies conformance chain breaks.
-* `Hash = UInt64` widens to a 256-bit digest → type change through
-  `SealCore.Hash`, the audit format, and the receipt schema (`certHash`
-  decimal-string encoding).
+* Target commitments split from `Hash = UInt64` into `TargetHash = Digest256`;
+  audit `certHash` remained the legacy UInt64 decimal-string encoding.
 * Every landed proof that kernel-`decide`s over concrete FNV values
   (including `Host/CapabilityAdequacy.lean`'s `demoU_mirror_adequate` and
   the SealCore separation lemmas) re-derives against new digests.
@@ -148,37 +148,25 @@ residual, and (C) fixes the hash.
 
 ## Recommendation
 
-**(C) CR-hash swap is the only option that genuinely and honestly closes the
-residual** — (A) is infeasible at the host layer and function-breaking on the
-shipped policy, (B) is a frozen edit that weakens binding semantics. But (C)
-touches frozen `mcp-seal` and carries a repo-wide, cross-artifact,
-re-audit-the-wasm blast radius. **Per the Path-B stop rule, this is a
-seal-day / council decision, not a tonight build.** No spike is shipped:
-(A) — the only host-only, no-frozen-edit option — was shown non-viable by
-recon (R1) and function-breaking (R2), so spiking it would be building a
-known-wrong thing.
-
-**Interim honest posture (already in place, no code change):** the residual
-stays a NAMED, documented policy-coverage boundary in
-`Host/CapabilityAdequacy.lean`, with the theorem correctly conditioned on
-`pg ∈ U` and the operational detector shipped — the assurance kit's
-`seal adequacy check` / `seal adequacy find-collision`
-(`seal-assurance-kit`) is the deployment-side probe that FINDS an
-out-of-universe collision for a given policy universe. That is the honest
-mitigation until (C) is scheduled: the gap is disclosed, bounded, and
-detectable, not silently open.
+**(C) CR-hash swap was the only option that genuinely and honestly closed the
+residual** — (A) was infeasible at the host layer and function-breaking on the
+shipped policy, (B) was a frozen edit that weakened binding semantics. The
+private Stage 1-3 rollout shipped (C) by widening only the target commitment,
+leaving UInt64 `certHash` audit/demo hashes explicitly on `Seal.auditHashParts`.
+The remaining assumption is the theorem's named A-CR hypothesis over SHA-256,
+not the old known-false FNV target story.
 
 ## Exact change surface if (C) is approved (for the council)
 
-1. `mcp-seal` `Seal/Hash.lean`: `stableHashString` → SHA-256; `SealCore.Hash`
-   → 256-bit digest type. (Frozen-package change — requires unfreezing.)
-2. Re-derive every `#guard_msgs`-pinned proof that touches concrete hash
-   values (SealCore separation lemmas; `Host/CapabilityAdequacy.lean` —
-   whose `pg ∈ U` hypothesis can then be *dropped* for an all-`pg`
-   injective-hash theorem, strengthening the result).
+1. Private kernel `Seal/Hash.lean`: `stableHashString` → SHA-256;
+   `SealCore.TargetHash` → 256-bit digest type while `SealCore.Hash` remains
+   the UInt64 audit hash.
+2. Recheck every `#guard_msgs`-pinned proof that touches target hash values
+   without changing the landed capability theorem statements.
 3. Rebuild + audited repin of `seal.wasm`; update all four sha-pin sites.
 4. Swap the JS `stableHashParts` mirror to SHA-256 across seal-check / kit /
    seal-live-demo; re-run the four-bodies conformance chain.
-5. Widen the receipt-schema `certHash` encoding for the larger digest.
+5. Keep receipt `certHash` as legacy UInt64; only target fields move to hex.
 
-Nothing in this document executes any of the above.
+This document records the pre-rollout rationale; the implementation lives in
+the Stage 1-3 commits.

@@ -9,6 +9,7 @@ non-canonical tools/call is blocked, and a tampered config refuses to start.
 """
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -21,12 +22,10 @@ sys.path.insert(0, str(ROOT / "test" / "tools"))
 from sign_config import sign_payload  # noqa: E402
 
 
-def stable_hash(parts) -> int:
-    """Mirror of Seal.Hash.stableHashParts (FNV-style over '|'-joined parts)."""
-    acc = 14695981039346656037
-    for ch in "|".join(parts):
-        acc = (acc * 1099511628211 + ord(ch)) % 2**64
-    return acc
+def stable_hash(parts) -> str:
+    """Mirror of Seal.stableHashParts: SHA-256 over Lean's netstring encoding."""
+    framed = "".join(f"{len([*part])}:{part}" for part in parts)
+    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
 
 
 def safety_section(approval_file: Path) -> dict:
@@ -192,7 +191,7 @@ def main() -> int:
     assert "approval required" in blocked[0]["result"]["content"][0]["text"]
 
     # 2. Approval allows exactly once; replay is consumed -> blocked.
-    target = 7653913048106253087
+    target = stable_hash(["db.execute", "db", "prod", "write", "drop table users"])
     approved = run_case(
         [
             rpc(1, "db.execute", {"database": "prod", "sql": "drop table users"}),

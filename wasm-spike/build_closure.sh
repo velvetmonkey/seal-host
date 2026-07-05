@@ -24,6 +24,16 @@ mkdir -p "$OUTDIR"
 STUBLIST=$(mktemp)
 : > "$STUBLIST"
 
+# Preserve already-discovered external proof-library stubs across reruns.
+# Otherwise an existing stubs.o masks the gap in round 1, then an empty STUBLIST
+# rewrites stubs.o to no symbols and the strict link fails.
+if [ -f build-core/stubs.o ]; then
+  emnm build-core/stubs.o 2>/dev/null \
+    | awk '/ T initialize_/ {print $NF}' \
+    | grep -E "$STUB_RE" \
+    | sort -u > "$STUBLIST" || true
+fi
+
 emit_stubs() {
   { echo '#include <lean/lean.h>';
     sort -u "$STUBLIST" | while read -r m; do

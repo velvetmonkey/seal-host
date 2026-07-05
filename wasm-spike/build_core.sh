@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Compile the seal-host PROJECT Lean-C (.lake/build/ir/*.c) -> build-core/*.o for
-# the wasm decide path. This is the ir->build-core step that build_wasm.sh assumes
-# already exists: build_wasm.sh only recompiles the C glue and relinks build-core/*.o.
-# Run this FIRST to rebuild the project objects from the CURRENT Lean HEAD, so the
-# emitted seal.wasm reflects HEAD sources (not a stale spike build).
+# Compile the seal-host PROJECT Lean-C (.lake/build/ir/*.c) -> build-core/*.o
+# and the mcp-seal package Lean-C -> build-seal/*.o for the wasm decide path.
+# This is the ir->object step that build_wasm.sh assumes already exists:
+# build_wasm.sh only recompiles the C glue and relinks object trees.
+# Run this FIRST to rebuild from the CURRENT Lean HEAD, so the emitted seal.wasm
+# reflects HEAD sources (not a stale spike build).
 #
 # EXPLICIT ALLOW-LIST, not a glob: only the modules in Ffi's transitive import
 # closure that belong in the wasm. Native-only modules (Host, Host/Main,
@@ -22,8 +23,8 @@ ROOT=/home/monkey/src/seal-host
 IR="$ROOT/.lake/build/ir"
 CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 
-# Ffi-reachable project modules (ir-relative paths, no .c). Output name = path with
-# '/' -> '_'. NEW at this HEAD: Host/Step (Ffi now routes through Host.stepRoute).
+# Ffi-reachable project modules (ir-relative paths, no .c). Output name = path
+# with '/' -> '_'. Host/Step is present because Ffi routes through Host.stepRoute.
 MODULES=(
   Ffi
   Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Step
@@ -44,3 +45,25 @@ for m in "${MODULES[@]}"; do
   echo "  ok  $m -> $out"
 done
 echo "[build_core] done: $(ls build-core/*.o | grep -vcE 'stubs|seal_wrapper|ffi_shim') project objects"
+
+SEAL_IR="$ROOT/.lake/packages/mcp-seal/.lake/build/ir"
+SEAL_MODULES=(
+  SealCore SealCore/Automaton SealCore/Event SealCore/Safety SealCore/Sha256
+  Seal/Block Seal/Channel Seal/Classify Seal/Hash Seal/JsonUtil Seal/Policy
+  SealV2/Canonical SealV2/Crypto SealV2/Decide SealV2/Parser
+  SealV2/Serialization SealV2/Validation
+)
+
+mkdir -p build-seal
+rm -f build-seal/*.o build-seal/*.log
+echo "[build_core] compiling ${#SEAL_MODULES[@]} mcp-seal modules from $SEAL_IR"
+for m in "${SEAL_MODULES[@]}"; do
+  src="$SEAL_IR/$m.c"
+  out="build-seal/${m//\//_}.o"
+  if [ ! -f "$src" ]; then
+    echo "[build_core] MISSING mcp-seal ir source: $src (run 'lake build Ffi' first)"; exit 1
+  fi
+  emcc $CFLAGS -c "$src" -o "$out" || { echo "[build_core] MCP-SEAL COMPILE FAILED: $m"; exit 1; }
+  echo "  ok  $m -> $out"
+done
+echo "[build_core] done: $(ls build-seal/*.o | wc -l) mcp-seal objects"

@@ -48,7 +48,9 @@ const NOW = 1000;
 const WASM = process.argv.includes("--wasm");
 const WASM_JS = `${ROOT}/wasm-spike/verified/seal.js`;
 const WASM_WASM = `${ROOT}/wasm-spike/verified/seal.wasm`;
-const ARTIFACT = WASM ? "wasm (emscripten, in-browser seal-check shape)" : "native .so (libsealffi.so)";
+const ARTIFACT = WASM
+  ? "native .so + wasm (emscripten, in-browser seal-check shape)"
+  : "native .so (libsealffi.so)";
 
 const WORK = mkdtempSync(join(tmpdir(), "seal-conf-"));
 process.on("exit", () => { try { rmSync(WORK, { recursive: true, force: true }); } catch {} });
@@ -143,8 +145,12 @@ async function runWasm(corpusFile) {
   return lines.map((l) => M.ccall("seal_decide", "string", ["string"], [l])).join("\n") + "\n";
 }
 
-// The compiled artifact under test — native .so or wasm, per --wasm.
-async function runArtifact(corpusFile) { return WASM ? runWasm(corpusFile) : runNative(corpusFile); }
+async function runCompiled(kind, corpusFile) {
+  if (kind === "native") return runNative(corpusFile);
+  if (kind === "wasm") return runWasm(corpusFile);
+  throw new Error(`unknown compiled oracle: ${kind}`);
+}
+const compiledKinds = WASM ? ["native", "wasm"] : ["native"];
 
 // ---- STEP 1: derive the forward case's approval target from a real block -----
 console.log("===============================================================");
@@ -161,10 +167,25 @@ console.log(`corpus C: ${DISGUISES.length} destructive disguises + ${PASSTHROUGH
 
 const probeFile = join(WORK, "probe.jsonl");
 writeFileSync(probeFile, stepInput(wireCall(1, "drop table customers")) + "\n");
-const probeOut = JSON.parse((await runArtifact(probeFile)).trim());
-const m = /approval required: (\d+)/.exec(probeOut.response || "");
-if (!m) { console.error("could not derive approval target from a block; aborting"); process.exit(1); }
-const target = m[1];
+const probeOutputs = {
+  model: JSON.parse(runModel(probeFile).trim()),
+};
+for (const kind of compiledKinds) {
+  probeOutputs[kind] = JSON.parse((await runCompiled(kind, probeFile)).trim());
+}
+const targetMatches = Object.entries(probeOutputs).map(([kind, out]) => {
+  const m = /approval required: ([0-9a-f]{64})/.exec(out.response || "");
+  if (!m) fail(`${kind} did not emit a lowercase 64-hex approval target in the block response`);
+  return [kind, m?.[1] || ""];
+});
+const targetsSeen = new Set(targetMatches.map(([, t]) => t).filter(Boolean));
+if (targetsSeen.size !== 1) {
+  for (const [kind, t] of targetMatches) console.error(`  ${kind} target: ${t || "<missing>"}`);
+  console.error("could not derive one byte-identical approval target from all oracles; aborting");
+  process.exit(1);
+}
+const target = [...targetsSeen][0];
+ok(`target derivation: MODEL/NATIVE${WASM ? "/WASM" : ""} emit ${target}`);
 // approved canonical call: same bytes, now with a fresh live approval → FORWARD.
 corpus.push({
   name: "forward:approved drop",
@@ -176,50 +197,58 @@ corpus.push({
 const corpusFile = join(WORK, "corpus.jsonl");
 writeFileSync(corpusFile, corpus.map((c) => c.step).join("\n") + "\n");
 
-console.log(`\n[1] DECISION + audit byte agreement — ${ARTIFACT} vs interpreted Lean`);
-const artifactLines = (await runArtifact(corpusFile)).split("\n").filter(Boolean);
 const modelLines = runModel(corpusFile).split("\n").filter(Boolean);
+const compiledLines = {};
+for (const kind of compiledKinds) {
+  compiledLines[kind] = (await runCompiled(kind, corpusFile)).split("\n").filter(Boolean);
+}
+const primaryLines = compiledLines[WASM ? "wasm" : "native"];
+
+console.log(`\n[1] DECISION + audit byte agreement — ${ARTIFACT} vs interpreted Lean`);
 
 // Liveness: prove the harness is not vacuous before trusting a PASS.
 {
-  const routes = new Set(artifactLines.map((l) => JSON.parse(l).route));
+  const routes = new Set(primaryLines.map((l) => JSON.parse(l).route));
   if (!(routes.has("block") && routes.has("passthrough") && routes.has("forward")))
     fail(`liveness: corpus did not exercise all three routes (saw ${[...routes].join(",")})`);
-  const auds = artifactLines.map((l) => JSON.parse(l).audit).filter(Boolean);
+  const auds = primaryLines.map((l) => JSON.parse(l).audit).filter(Boolean);
   if (auds.length > 1 && chainHead(auds) === chainHead([...auds].reverse()))
     fail("liveness: chain head is order-insensitive — the comparator would miss a reorder");
   if (!failed) ok("harness liveness: all routes exercised; chain is order-sensitive (non-vacuous)");
 }
 
-if (artifactLines.length !== corpus.length || modelLines.length !== corpus.length) {
-  fail(`line count mismatch: corpus=${corpus.length} artifact=${artifactLines.length} model=${modelLines.length}`);
+if (modelLines.length !== corpus.length ||
+    compiledKinds.some((kind) => compiledLines[kind].length !== corpus.length)) {
+  fail(`line count mismatch: corpus=${corpus.length} model=${modelLines.length} ` +
+    compiledKinds.map((kind) => `${kind}=${compiledLines[kind].length}`).join(" "));
 } else {
   let diverged = 0;
   for (let i = 0; i < corpus.length; i++) {
-    const route = JSON.parse(artifactLines[i]).route;
-    if (artifactLines[i] !== modelLines[i]) { fail(`byte divergence @ ${corpus[i].name}`); diverged++; }
-    else if (route !== corpus[i].expect) { fail(`route mismatch @ ${corpus[i].name}: got ${route}, expected ${corpus[i].expect}`); diverged++; }
+    for (const kind of compiledKinds) {
+      const route = JSON.parse(compiledLines[kind][i]).route;
+      if (compiledLines[kind][i] !== modelLines[i]) { fail(`byte divergence ${kind} vs model @ ${corpus[i].name}`); diverged++; }
+      else if (route !== corpus[i].expect) { fail(`route mismatch ${kind} @ ${corpus[i].name}: got ${route}, expected ${corpus[i].expect}`); diverged++; }
+    }
   }
-  if (!diverged) ok(`${corpus.length}/${corpus.length} inputs: artifact == model, byte-for-byte, route as expected`);
+  if (!diverged) ok(`${corpus.length}/${corpus.length} inputs: ${["model", ...compiledKinds].join(" == ")}, byte-for-byte, route as expected`);
 }
 
 // ---- STEP 3: record-chain agreement (reduces to audit payload agreement) -----
 console.log("\n[2] RECORD chain agreement — SHA-256 head over artifact vs model audits");
 const auditOf = (line) => { const o = JSON.parse(line); return o.audit; };
-const artifactAudits = artifactLines.map(auditOf).filter((a) => a != null);
 const modelAudits = modelLines.map(auditOf).filter((a) => a != null);
-const artifactHead = chainHead(artifactAudits);
 const modelHead = chainHead(modelAudits);
-if (artifactHead === modelHead) ok(`chain heads equal: ${artifactHead}`);
-else fail(`chain head divergence: artifact ${artifactHead} vs model ${modelHead}`);
+const compiledHeads = Object.fromEntries(compiledKinds.map((kind) => {
+  const audits = compiledLines[kind].map(auditOf).filter((a) => a != null);
+  return [kind, chainHead(audits)];
+}));
+if (compiledKinds.every((kind) => compiledHeads[kind] === modelHead))
+  ok(`chain heads equal (${["model", ...compiledKinds].join(" == ")}): ${modelHead}`);
+else
+  fail(`chain head divergence: model ${modelHead}; ` +
+    compiledKinds.map((kind) => `${kind} ${compiledHeads[kind]}`).join("; "));
 
 // ---- STEP 4: the DEPLOYED binary's record matches the model -------------------
-// Native shape only: seal-host-rs is the deployed process. In --wasm mode the
-// in-proc wasm module IS the deployed browser artifact, already covered by [1]+[2].
-if (WASM) {
-  console.log("\n[3] DEPLOYED binary — skipped in --wasm mode");
-  ok("the in-proc wasm module is itself the deployed browser artifact ([1]+[2] cover it)");
-} else {
 console.log("\n[3] DEPLOYED binary — seal-host-rs record chain vs model");
 const wireSeq = ["drop table customers", "delete from ledger", "truncate audit"];
 const wireInput = wireSeq.map((sql, i) => wireCall(300 + i, sql)).join("\n") + "\n";
@@ -248,16 +277,16 @@ if (hostAudits.length === 3 && hostRecords.length === 3) {
 } else {
   fail(`expected 3 audit certs and 3 receipt records from the deployed binary, captured ${hostAudits.length}/${hostRecords.length}`);
 }
-}
 
 console.log("\n===============================================================");
 if (failed) { console.log(" CONFORMANCE BRIDGE: FAIL — a divergence was detected."); process.exit(1); }
 console.log(" CONFORMANCE BRIDGE: PASS");
 if (WASM) {
-  console.log("   • the rebuilt-at-HEAD emscripten wasm (in-browser seal-check shape)");
-  console.log("     conforms to the interpreted Lean model on corpus C");
-  console.log("     (decision + audit bytes, both routes)");
-  console.log("   • the SHA-256 record chain agrees across model / wasm");
+  console.log("   • native .so and rebuilt-at-HEAD emscripten wasm");
+  console.log("     both conform to the interpreted Lean model on corpus C");
+  console.log("     (decision + audit bytes, all routes)");
+  console.log("   • the SHA-256 record chain agrees across model / native / wasm");
+  console.log("   • the deployed seal-host-rs record chain agrees with the model");
 } else {
   console.log("   • compiled native .so conforms to the interpreted Lean model");
   console.log("     on corpus C (decision + audit bytes, both routes)");

@@ -172,7 +172,7 @@ invalid (`validateReceipt` rejects it). Their only v1 home is the separate
 Legacy `v0-live` receipts with the merged block are grandfathered: verifiers
 accept them as v0-live and base nothing on those fields either way.
 
-The wasm pin itself (`1cc765c7de2cead88eda2e8e5f5af5a5e070f35a767916e754b873733562c70a`)
+The wasm pin itself (`ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0`)
 is untouched by this spec; the pending audited repin
 (`docs/CONFORMANCE-BRIDGE.md`) is a separate step.
 

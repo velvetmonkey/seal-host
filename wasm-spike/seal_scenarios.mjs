@@ -4,16 +4,20 @@
 // inline) instead of the stdio binary + control files. Reused by the WASM node
 // harness (D1e) and the WASM<->native conformance gate (D3).
 
+import { createHash } from "node:crypto";
+
 export const PUBKEY = "test-pk";
 
-// FNV-style hash, exact mirror of Seal.Hash.stableHashParts.
+// SHA-256 target commitment, exact mirror of Seal.stableHashParts.
+export function encodeParts(parts) {
+  return parts.map((s) => {
+    const p = String(s);
+    return `${[...p].length}:${p}`;
+  }).join("");
+}
+
 export function stableHash(parts) {
-  let acc = 14695981039346656037n;
-  const M = 1099511628211n, MOD = 1n << 64n;
-  for (const ch of parts.join("|")) {
-    acc = (acc * M + BigInt(ch.codePointAt(0))) % MOD;
-  }
-  return acc;
+  return createHash("sha256").update(encodeParts(parts), "utf8").digest("hex");
 }
 
 // Canonical target hashes (tool name prepended to resolved target parts).
@@ -65,15 +69,8 @@ export function buildEnvelope(payload = configPayload, pubkey = PUBKEY) {
 const rpc = (id, name, args) =>
   JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
 
-// u64 cert/target hashes exceed Number.MAX_SAFE_INTEGER, so they must be emitted
-// as exact JSON integer literals (not JS numbers). Serialize BigInt via a sentinel
-// then strip the quotes so Lean's getNat reads the precise value.
-const stringifyBig = (obj) =>
-  JSON.stringify(obj, (_k, v) => (typeof v === "bigint" ? `__BIG__${v}__BIG__` : v))
-    .replace(/"__BIG__(\d+)__BIG__"/g, "$1");
-
 const step = (line, extra = {}) =>
-  stringifyBig({ line, now: 1000, approvals: [], votes: "", grants: "", forecasts: "", ...extra });
+  JSON.stringify({ line, now: 1000, approvals: [], votes: "", grants: "", forecasts: "", ...extra });
 
 const approve = (t) => ({ approvals: [{ target: t }] });
 const destructive = { database: "prod", sql: "drop table users" };
