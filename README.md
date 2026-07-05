@@ -1,5 +1,10 @@
 # seal-host
 
+![Lean](https://img.shields.io/badge/Lean-4.28.0-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Proofs](https://img.shields.io/badge/proofs-0%20sorry-brightgreen)
+![Axioms](https://img.shields.io/badge/axioms-propext·Classical.choice·Quot.sound-informational)
+
 **PRIVATE pre-award — do not push to any public remote yet.** Per the ARIA Track 1 bid commitment, the specification layer (kernel theorem statements, the composition theorem statement, `THREAT_MODEL`, `TCB`) is to be published openly ahead of submission and the full proof sources at grant kickoff; only the implementation (host, registry, harness) is retained under the 12-month commercialisation clawback.
 
 Verified Agent Kernels: one fail-closed MCP host, many verified kernels. Each
@@ -37,6 +42,15 @@ kernel interface, registry, composition theorem, harness — lives only here.
   `Host.Channel.deployed_O2`, `Host.Channel.deployed_nonvacuous`) are landed
   as Lean model theorems. Binary correspondence remains the finite-corpus
   conformance bridge, not a theorem.
+- **Capability adequacy (unconditional)**:
+  `Host.CapabilityAdequacy.approval_authorizes_only_its_target'` — a held
+  approval authorizes only the part-list it was minted for, for ALL runtime
+  targets (no finite-universe premise). It composes an injective netstring
+  encoding (`Host.Encoding.encodeParts_injective`, proved structurally) with a
+  reduction to commitment collision-resistance (assumption A-CR, carried as a
+  scoped hypothesis, never an in-Lean axiom). The deployed target commitment is
+  256-bit SHA-256, byte-identical across the Lean model, native `.so`, browser
+  wasm, deployed Rust host, and the JS checker (conformance bridge).
 - G7: see the build plan.
 
 ## Rust host build
