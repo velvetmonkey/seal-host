@@ -235,10 +235,12 @@ absent from the observer's projection (`lowPart s = []`): a cross-tenant
 spend cannot block the observer. Stated at the `contains?` layer per the
 brief; no live kernel Allow witness is attempted (Ed25519 signature
 verification is not kernel-evaluable), and the spending tenant's own-probe
-block (`.ok true` on its own namespace) is not evaluated concretely because
-the derived `BEq` on the nested-inductive `AST` inside `Target` is
-WF-compiled and not kernel-reducible — the false probe short-circuits on
-the key field before reaching it. -/
+block (`.ok true` on its own namespace) is not evaluated concretely (the
+hypothesis form sanctioned by the brief). Since mcp-seal e36fc98,
+`ReplayNamespace` carries the target as its canonical STRING key
+(`targetKey`), so the namespace `BEq` is over `String`s only — the old
+nested-`AST` derived-`BEq` reducibility trap no longer sits on this path;
+the witness literals here use a plain string key accordingly. -/
 theorem replay_isolation_nonvacuous :
     ∃ (s : SessionId) (other : ConsumedNonce) (ns : ReplayNamespace)
       (nonce : Nonce),
@@ -246,9 +248,9 @@ theorem replay_isolation_nonvacuous :
       lowPart s [other] = [] ∧
       listReplayStore.contains? [other] ns nonce = .ok false := by
   refine ⟨"alice",
-    ⟨⟨"pkB", ⟨"db", "write", "1", "md", .object []⟩, "bob", "v1"⟩,
+    ⟨⟨"pkB", "db write 1 md {}", "bob", "v1"⟩,
       ⟨String.ofList (List.replicate 64 'a'), by decide⟩, 10⟩,
-    ⟨"pkA", ⟨"db", "write", "1", "md", .object []⟩, "alice", "v1"⟩,
+    ⟨"pkA", "db write 1 md {}", "alice", "v1"⟩,
     ⟨String.ofList (List.replicate 64 'a'), by decide⟩,
     rfl, by decide, rfl, ?_, ?_⟩
   · show lowPart "alice" [_] = []

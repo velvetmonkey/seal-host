@@ -489,45 +489,35 @@ info: 'Host.Channel.deployed_live_license_of_allow' depends on axioms: [propext,
 -/
 #guard_msgs in #print axioms Host.Channel.deployed_live_license_of_allow
 
--- Capability adequacy: a held capability authorizes only its own target
--- (Host/CapabilityAdequacy.lean, ARIA S6)
+-- Capability adequacy, UNCONDITIONAL (Host/Encoding.lean +
+-- Host/CapabilityAdequacy.lean, ARIA S6): injective netstring encoding +
+-- the no-universe reduction to A-CR on the commitment.
 
 /--
-info: 'Host.CapabilityAdequacy.approval_authorizes_only_its_target' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.Encoding.encodeParts_injective' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.approval_authorizes_only_its_target
+#guard_msgs in #print axioms Host.Encoding.encodeParts_injective
 
 /--
-info: 'Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target' depends on axioms: [propext,
+info: 'Host.CapabilityAdequacy.capability_sound_or_commitment_clash' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
 -/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target
+#guard_msgs in #print axioms Host.CapabilityAdequacy.capability_sound_or_commitment_clash
 
 /--
-info: 'Host.CapabilityAdequacy.adequate_of_mirror' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.CapabilityAdequacy.approval_authorizes_only_its_target'' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
 -/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.adequate_of_mirror
+#guard_msgs in #print axioms Host.CapabilityAdequacy.approval_authorizes_only_its_target'
 
 /--
-info: 'Host.CapabilityAdequacy.demoU_mirror_adequate' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target'' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
 -/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.demoU_mirror_adequate
-
-/--
-info: 'Host.CapabilityAdequacy.demoU_adequate' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.demoU_adequate
-
-/--
-info: 'Host.CapabilityAdequacy.demo_held_capability_authorizes' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.demo_held_capability_authorizes
-
-/--
-info: 'Host.CapabilityAdequacy.demo_cross_capability_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms Host.CapabilityAdequacy.demo_cross_capability_refused
+#guard_msgs in #print axioms Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target'
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
