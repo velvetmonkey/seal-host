@@ -285,4 +285,151 @@ with each producer change).
    (`fixtures/receipt-crosstool.json`, byte-identical copy, wired into
    `npm test`).
 5. seal-live-demo stays as-is (`v0-live` accepted); its own bump to
-   `seal_receipt: "v1"` is a separate, later step.
+   `seal_receipt: "v1"` is a separate, later step. **Superseded by §11:** the
+   demo's bump goes straight to v2.
+
+## 11. Receipt schema v2 (DRAFT — frozen on merge of this section)
+
+**Status: DRAFT, 2026-07-08.** v2 extends v1 with an approval block, derived
+effect hashes, and class-gated payment fields, so one receipt schema serves
+every surface (Lean model via the conformance bridge, Rust host, wasm,
+browser, checker) and the payments/PO audit story. Nothing in v2 changes the
+host audit line or chain record (§8) — those artifacts stay byte-identical;
+the v2 decision receipt is emitted alongside them. Nothing here changes any
+Lean proof, the wasm binary, its pin, or decision logic.
+
+Version discriminator:
+
+```
+"seal_receipt": "v2"
+```
+
+**Acceptance ladder (ruled 2026-07-08):** verifiers accept `v2` (current),
+`v1` (accepted-legacy — grandfathered exactly as `v0-live` was under v1; no
+hard break), and `v0-live` (grandfathered). Schema K stays rejected.
+Producers converge repo-by-repo; a producer emits exactly one version.
+
+### 11.1 Field table (delta over §1)
+
+Every v1 field carries forward with unchanged semantics. New fields:
+
+| Field | Type | Required | Semantics |
+|---|---|---|---|
+| `approval` | object | yes when mediated and `verdict = "ALLOW"`; optional on BLOCK (present iff an approval was consulted) | the approval that authorized the effect — see 11.2 |
+| `approval.approval_identity` | object | yes within `approval` | `{channel, key_id?}`; `channel` ∈ `"file" \| "interactive" \| "ed25519"`; `key_id` = signer public-key fingerprint, present **iff** `channel = "ed25519"`. Never asserts a session id the producer did not parse. |
+| `approval.nonce` | string | yes iff `channel = "ed25519"`; absent otherwise unless the channel truly carried one | approval nonce (64 lowercase hex on the signed channel) |
+| `approval.issued_at` | integer (epoch ms) | yes iff the channel carried it | mint time as presented; producers MUST NOT invent it |
+| `approval.expiry` | integer (epoch ms) | yes iff derivable (`issued_at` + TTL) or carried | absolute expiry deadline |
+| `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the canonical `kernel_config` serialization — see 11.3 |
+| `args_hash` | 64-hex string | yes when mediated | SHA-256 of the canonical `arguments` serialization — see 11.3 |
+| `action` | string | optional | the SealV2 `params.action` binding when the producer parsed one; absent under the `compatible` profile, which does not parse it |
+| `amount` | number or string | yes iff payment-class (11.4) | copied **verbatim** from the argument field the policy's payment binding names |
+| `merchant` | string | yes iff payment-class | ditto |
+| `currency` | string | yes iff payment-class | ditto |
+
+**Honesty rule (normative):** a field whose value the producer does not hold
+is ABSENT — never null-filled, never fabricated. `approval_identity` states
+the channel that actually supplied the approval; `nonce`/`issued_at`/`expiry`
+appear only when that channel actually carried or derived them.
+
+### 11.2 Requiredness matrix
+
+| Context | `approval` | `nonce` | `issued_at` | `expiry` | `policy_hash` | `args_hash` | `amount`/`merchant`/`currency` |
+|---|---|---|---|---|---|---|---|
+| ALLOW via ed25519 channel | required | required | required | required | required | required | iff payment-class |
+| ALLOW via file channel | required | if carried | if carried | if derivable | required | required | iff payment-class |
+| ALLOW via interactive channel | required | if carried | if carried | if derivable | required | required | iff payment-class |
+| BLOCK (mediated) | optional | — | — | — | in `approval` if present | required | iff payment-class |
+| bypass | absent | — | — | — | — | absent | absent |
+
+### 11.3 Derived hashes (computable on every surface)
+
+Both hashes use the §2 serialization discipline — `JSON.stringify` of the
+object **in its stored key order**, SHA-256 over the UTF-8 bytes, lowercase
+hex. They are derived fields: any verifier recomputes them from the receipt's
+own `arguments` / `kernel_config` and REJECTS on mismatch.
+
+```
+args_hash   := sha256Hex(UTF8(JSON.stringify(arguments)))
+policy_hash := sha256Hex(UTF8(JSON.stringify(kernel_config)))
+```
+
+Frozen vectors (enforced by the format tests in seal-check and the kit):
+
+| # | input | sha256 |
+|---|---|---|
+| V5 (args of §2 V4) | `{"database":"prod","sql":"drop table users"}` | `46657b69f15f78859ead6dd0d416cbfc9809922757ba90aa16a56b7d73afafc8` |
+| V6 (args of §2 V1) | `{"operation":"insert","table":"staging_deploy_audit","payload":"{\"deploy_ref\":\"deploy-2026-06-30\"}"}` | `53ae7fa46f79dd2637b3d5af5a160834b755d0a00a66fec11cb313db8bca753c` |
+| V7 (policy_hash of the 11.4 example config) | see 11.4 | `436c50ce0860d500c188e7e7c8133eed1e41e626b01174727159f3f664e84407` |
+
+Rationale for `policy_hash`: the host's only policy identifier today is
+`config.epoch`; `policy_hash` binds the receipt to the exact config bytes
+without requiring new host knowledge, and `epoch` remains visible inside
+`kernel_config` itself.
+
+### 11.4 Payment-class tools (runtime config, never proof-bearing)
+
+A tool is payment-class iff the **host runtime config** declares it so.
+The declaration lives in the tool rule and never reaches the kernel or any
+proof (ruled 2026-07-08):
+
+```json
+{"name": "payments.send", "mode": "guarded",
+ "payment": {"class": "payment",
+             "bind": {"amount": "amount", "merchant": "to", "currency": "currency"}},
+ "target": [{"literal": "pay"}, {"arg": "to"}, {"arg": "amount"}]}
+```
+
+V7's exact input (stored key order): `{"epoch":1,"safety":{"approval":{"ttl_seconds":120},"tools":[{"name":"payments.send","mode":"guarded","payment":{"class":"payment","bind":{"amount":"amount","merchant":"to","currency":"currency"}},"target":[{"literal":"pay"},{"arg":"to"},{"arg":"amount"}]}]}}`
+
+The producer copies each bound argument value verbatim into the top-level
+payment field. Verifier obligation: for a payment-class receipt, each payment
+field MUST byte-equal the bound argument (`receipt.amount ==
+arguments[bind.amount]`, etc.); any mismatch is a REJECT — this is the
+`gate:amount-merchant-mismatch` negative gate. Non-payment tools carry none
+of the three fields; the live-demo `db.execute` gateway emits none.
+
+### 11.5 Canonical serialization and roundtrip stability
+
+v2 key order (extends the §1/`V1_KEY_ORDER` pattern; producers emit exactly
+this top-level order):
+
+```
+seal_receipt, tool, action, arguments, args_hash, now,
+canonical_request, canonical_request_sha256, bypass, verdict, reason,
+deny_kernel, amount, merchant, currency, approval, certs, emitted_bytes,
+kernel_identity, asserted_provenance, kernel_config, granted_capabilities,
+policy_id, signature
+```
+
+Within `approval`: `approval_identity, nonce, issued_at, expiry,
+policy_hash`; within `approval_identity`: `channel, key_id`.
+
+**Roundtrip obligation (normative):** for any valid v2 receipt `r`,
+`assembleReceiptV2(parse(serialize(r)))` is byte-identical to
+`serialize(r)`. Every producing repo ships a vector test asserting this on
+its fixtures.
+
+### 11.6 Verifier obligations (delta over §7)
+
+6. Recompute `args_hash` and `approval.policy_hash` from the receipt's own
+   `arguments` / `kernel_config`; REJECT on mismatch.
+7. Payment-class receipts: check the 11.4 byte-equalities; REJECT on
+   mismatch. A receipt carrying payment fields for a tool the supplied
+   config does not declare payment-class is REJECTED (fabrication).
+8. `approval_identity` consistency: known `channel` value; `key_id` present
+   iff `channel = "ed25519"`.
+9. v1 receipts remain verifiable under §7 unchanged (accepted-legacy).
+
+### 11.7 Surfaces and emitters
+
+| Surface | v2 role |
+|---|---|
+| Rust host (seal-host) | NEW additive emitter assembling v2 from step output + config + approval channel; audit line + chain record unchanged (§8) |
+| Lean model | via the conformance bridge: v2 assembled from the model oracle's step output through the shared JS assembly; any in-Lean serializer is a separate proposal, not part of this spec |
+| wasm / browser (seal-check) | `buildReceipt` emits v2 via `assembleReceiptV2` |
+| checker (seal-assurance-kit) | `seal verify` accepts v2 + v1 + v0-live; fixtures regenerate as v2 |
+| live demo (seal-live-demo) | gateway emits v2 (kills the v0 drift); evidence + bundle regenerate via the real docker run |
+
+Shared implementation stays the §9 frozen seam: `seal-check/receipt-format.js`
+is canonical; the kit and the live demo vendor byte-identical copies.
