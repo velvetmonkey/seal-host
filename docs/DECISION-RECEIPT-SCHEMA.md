@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Decision-Receipt Schema v1 (normative)
+# Decision-Receipt Schema (normative: v2 current, v1 legacy)
 
 **Status: v1 CONVERGED (Day-2 complete, 2026-07-04).** The Day-1 freeze was
 reviewed and passed; the two parked decisions were ruled: (1) neutral
