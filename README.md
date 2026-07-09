@@ -65,6 +65,8 @@ _All Seal-family repositories are currently private; these links resolve only fo
 - [seal-check](https://github.com/velvetmonkey/seal-check): Don't trust. Verify.
 - [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo): Watch it work.
 - [seal-assurance-kit](https://github.com/velvetmonkey/seal-assurance-kit): Check your own boundary.
+- [witness-check](https://github.com/velvetmonkey/witness-check): The sufficiency analyzer. (private/proprietary)
+- [seal-verify-action](https://github.com/velvetmonkey/seal-verify-action): Gate receipts in CI.
 
 ## Documentation
 
