@@ -40,6 +40,12 @@ Mandatory non-claims (canonical copy: [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
 - Axiom footprint {propext, Classical.choice, Quot.sound} is the minimal classical fragment; no extra axioms.
 <!-- claims:end -->
 
+## Beyond mediation: the receipt is not a covert channel
+
+The audit record does not leak the protected state. `observe_noninterference` (see [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md)) proves, machine-checked, that any two `ApprovalState`s agreeing on the single authorized bit for a request produce byte-identical decisions **and** byte-identical audit records. Secrets in the state, other sessions' approvals, the public key, consumed nonces, policy version, TTL caps, the clock, cannot flow into what an observer of the gate sees, except through that one declassified authorization bit (Goguen-Meseguer conditional non-interference). The record chain is tamper-evident under an injective hash step (`Host.Record.tamper_evident`).
+
+Boundary (stated, not hidden): this is **single-request, model-level** non-interference over `SealV2.decide` and `Host.auditLine`. It does not cover timing or size side-channels, cross-request or stateful correlation, or a deployment that routes `ApprovalState`-derived data into a host `reason` string (that flow is outside the theorem). Axiom footprint `{propext, Classical.choice, Quot.sound}`.
+
 ## Verify in five minutes
 
 ```sh
