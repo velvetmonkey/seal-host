@@ -15,6 +15,7 @@ import Host.ChannelModel
 import Host.SealAdapter
 import Host.NonInterference
 import Host.ReplayIsolation
+import Host.StatefulNI
 import Host.DeployedAdapter
 import Host.CapabilityAdequacy
 import Kernels
@@ -461,6 +462,39 @@ info: 'Host.ReplayIsolation.replay_isolation_nonvacuous' depends on axioms: [pro
 info: 'Host.ReplayIsolation.listReplayStore_namespaceLocal' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.ReplayIsolation.listReplayStore_namespaceLocal
+
+-- Two-state stateful non-interference over the composed replay seam
+-- (Host/StatefulNI.lean)
+
+/--
+info: 'Host.StatefulNI.authView_eq_consumeView_isSome' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.authView_eq_consumeView_isSome
+
+/--
+info: 'Host.StatefulNI.leaky_probe_fails' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.leaky_probe_fails
+
+/--
+info: 'Host.StatefulNI.stateful_step' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.stateful_step
+
+/--
+info: 'Host.StatefulNI.stateful_noninterference_trace' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.stateful_noninterference_trace
+
+/--
+info: 'Host.StatefulNI.stateful_ni_nonvacuous' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.stateful_ni_nonvacuous
+
+/--
+info: 'Host.StatefulNI.policyVersion_declassification_necessary' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.policyVersion_declassification_necessary
 
 -- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
 -- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
