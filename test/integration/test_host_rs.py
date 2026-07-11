@@ -155,9 +155,12 @@ def make_ed25519():
     return sk, pk_hex
 
 
-def sign_token(sk, target, issued_at, nonce):
-    payload = json.dumps({"target": target, "issuedAt": issued_at, "nonce": nonce},
-                         separators=(",", ":"))
+def sign_token(sk, target, issued_at, nonce, allow=True):
+    """Compat signer used by ed25519 tests; supports explicit deny via allow=False."""
+    payload_obj = {"target": target, "issuedAt": issued_at, "nonce": nonce}
+    if not allow:
+        payload_obj["decision"] = "deny"
+    payload = json.dumps(payload_obj, separators=(",", ":"))
     sig = sk.sign(payload.encode()).hex()
     return json.dumps({"payload": payload, "signature": sig}, separators=(",", ":"))
 

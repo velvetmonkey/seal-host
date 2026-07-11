@@ -496,6 +496,7 @@ fn run() -> i32 {
         let (records, a3_warnings) = a3.filter(poll.records, now);
         warnings.extend(a3_warnings);
         emit_approval_drop_warnings(&warnings);
+        let declines = poll.declines;
         let approvals: Vec<Value> = records
             .iter()
             .map(|r| json!({"target": r.target, "issuedAt": r.issued_at}))
@@ -524,6 +525,33 @@ fn run() -> i32 {
                 if let Some(a) = audit {
                     emit_audit(&mut receipts, &a);
                 }
+
+                // Explicit signed decline short-circuit (first-class deny):
+                // if a decline for the target (from this poll) is present on
+                // an approval-required block, emit "refused" (not "timed out"
+                // or plain deny) + host audit label. The decline itself is
+                // host-layer (not a Lean Event). This is the signed origin
+                // path; see docs for TCB and "what this proves".
+                if let Some(target) = response
+                    .split("approval required: ")
+                    .nth(1)
+                    .and_then(extract_target_hex)
+                {
+                    if declines.iter().any(|d| d.target == target) {
+                        let refused_audit = format!(
+                            "approval refused: {} (explicit signed decline)",
+                            target
+                        );
+                        emit_audit(&mut receipts, &refused_audit);
+                        let refused = format!(
+                            "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",
+                            target
+                        );
+                        write_locked(&stdout_lock, &refused);
+                        continue;
+                    }
+                }
+
                 // Interactive channel: a missing-approval deny queues a human
                 // question; a "y" mints the approval and the call retries once.
                 // The target is parsed from the KERNEL's response text (never
@@ -541,6 +569,8 @@ fn run() -> i32 {
                         let (records, a3_warnings) = a3.filter(poll.records, now);
                         warnings.extend(a3_warnings);
                         emit_approval_drop_warnings(&warnings);
+                        // Also check fresh declines from retry poll (e.g. signed decline arrived).
+                        let inner_declines = poll.declines;
                         if !records.is_empty() {
                             let approvals: Vec<Value> = records
                                 .iter()
@@ -574,6 +604,19 @@ fn run() -> i32 {
                                     eprintln!("{}", json!({"error": reason}));
                                     response = SEAM_ERROR_RESPONSE.to_string();
                                 }
+                            }
+                        }
+                        // Post-retry interactive block: if decline now visible, refuse.
+                        if let Some(t2) = response.split("approval required: ").nth(1).and_then(extract_target_hex) {
+                            if inner_declines.iter().any(|d| d.target == t2) {
+                                let refused_audit = format!("approval refused: {} (explicit signed decline)", t2);
+                                emit_audit(&mut receipts, &refused_audit);
+                                let refused = format!(
+                                    "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",
+                                    t2
+                                );
+                                write_locked(&stdout_lock, &refused);
+                                continue;
                             }
                         }
                     }
