@@ -16,6 +16,7 @@ import Host.SealAdapter
 import Host.NonInterference
 import Host.ReplayIsolation
 import Host.StatefulNI
+import Host.AuthorityFrontierBridge
 import Host.DeployedAdapter
 import Host.CapabilityAdequacy
 import Kernels
@@ -495,6 +496,26 @@ info: 'Host.StatefulNI.stateful_ni_nonvacuous' depends on axioms: [propext, Clas
 info: 'Host.StatefulNI.policyVersion_declassification_necessary' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.StatefulNI.policyVersion_declassification_necessary
+
+-- SealV2 ↔ AuthoritySystem applicability bridge (Host/AuthorityFrontierBridge.lean):
+-- the abstract no-double-spend theorem applied to the gate's real nonce seam.
+
+/--
+info: 'Host.AuthorityFrontierBridge.bridgeConsume_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.bridgeConsume_eq
+
+/--
+info: 'Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability
+
+/--
+info: 'Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one
 
 -- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
 -- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
