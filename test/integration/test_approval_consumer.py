@@ -47,7 +47,10 @@ def main() -> int:
             tool_args={"database": "prod", "sql": "drop table users"},
         )
         combined = (obs.get("stdout") or "") + "\n" + (obs.get("stderr") or "")
+        block = obs.get("block_text") or ""
         print("FULL TRANSCRIPT (stdout + stderr):")
+        if block:
+            print("INITIAL_BLOCK:", block.strip())
         print(combined)
         if "approval refused (signed decline" not in combined:
             print("Step B FAILED: refused string not found in host output")

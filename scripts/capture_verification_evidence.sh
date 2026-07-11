@@ -18,7 +18,7 @@ export LIBRARY_PATH="/home/monkey/.elan/toolchains/leanprover--lean4---v4.28.0/l
 export LD_LIBRARY_PATH="/home/monkey/.elan/toolchains/leanprover--lean4---v4.28.0/lib/lean:/home/monkey/src/seal-host/.lake/build/lib:${LD_LIBRARY_PATH:-}"
 
 echo "=== 1. branch + status ===" | tee "$SCRATCH/branch.log"
-( cd "$ROOT"; echo "BRANCH:"; git branch --show-current; echo "PORCELAIN:"; git status --porcelain; echo "PORCELAIN_END" ) | tee -a "$SCRATCH/branch.log"
+( cd "$ROOT"; echo "BRANCH:"; git branch --show-current; echo "PORCELAIN:"; P=$(git status --porcelain); if [ -z "$P" ]; then echo "(clean committed tree - no modified/untracked files)"; else echo "$P"; fi; echo "PORCELAIN_END" ) | tee -a "$SCRATCH/branch.log"
 
 echo "=== 2. cargo test (providers decline) ===" | tee "$SCRATCH/cargo-test.log"
 ( cd "$ROOT/rust"; \
@@ -43,5 +43,7 @@ grep -q "ed25519_provider_accepts_signed_decline_and_allow ... ok" "$SCRATCH/car
 grep -q "SYNTHETIC side-effect observed" "$SCRATCH/quickstart-1.log" || { echo "FAIL: no SYNTHETIC side-effect in quickstart-1"; exit 1; }
 grep -q "host-emitted refused" "$SCRATCH/quickstart-2.log" || { echo "FAIL: no host-emitted refused in quickstart-2"; exit 1; }
 grep -q "approval refused (signed decline" "$SCRATCH/signer-consumer.log" || { echo "FAIL: signer-consumer.log missing explicit refused string from host"; exit 1; }
+grep -q "approval required" "$SCRATCH/quickstart-1.log" || { echo "FAIL: quickstart-1.log missing 'approval required' + hex"; exit 1; }
+grep -q "approval required" "$SCRATCH/quickstart-2.log" || { echo "FAIL: quickstart-2.log missing 'approval required' + hex"; exit 1; }
 
 echo "ALL MECHANICAL OBSERVATIONS PASS"

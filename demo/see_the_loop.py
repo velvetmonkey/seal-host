@@ -38,6 +38,8 @@ def main() -> int:
             tool_name="db.execute",
             tool_args={"database": "prod", "sql": sql1},
         )
+        if o1.get("block_text"):
+            print("BLOCK:", o1["block_text"].strip())
         print(f"--- approve target={o1['target']} flowed={o1['flowed']} refused={o1['refused']}")
         if o1.get("cli_out"):
             print("CLI:", o1["cli_out"].strip()[:300])
@@ -53,6 +55,8 @@ def main() -> int:
             tool_name="db.execute",
             tool_args={"database": "prod", "sql": sql2},
         )
+        if o2.get("block_text"):
+            print("BLOCK:", o2["block_text"].strip())
         print(f"--- deny   target={o2['target']} flowed={o2['flowed']} refused={o2['refused']}")
         if o2.get("cli_out"):
             print("CLI:", o2["cli_out"].strip()[:300])

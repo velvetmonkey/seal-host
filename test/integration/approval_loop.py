@@ -181,7 +181,8 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
 
     - Always uses ed25519 signed tokens (target-bound signed allow/decline).
     - Extracts target dynamically from host block response; asserts success (no fallback).
-    - Returns dict with: target, flowed, refused, stdout, stderr, cli_out.
+    - Returns dict with: target, flowed, refused, stdout, stderr, cli_out, block_text.
+    - 'block_text' contains the raw first host response lines with 'approval required: <hex>'.
     - 'refused' True only if host emitted the explicit 'approval refused (signed decline...' string.
     """
     if tool_args is None:
@@ -215,7 +216,7 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
     proc = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, env=env)
 
-    obs = {"target": None, "flowed": False, "refused": False, "stdout": "", "stderr": "", "cli_out": ""}
+    obs = {"target": None, "flowed": False, "refused": False, "stdout": "", "stderr": "", "cli_out": "", "block_text": ""}
 
     try:
         # passthrough init
@@ -255,6 +256,7 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
             raise AssertionError(f"failed to extract dynamic target from host block response: {blocked[:400]}")
 
         obs["target"] = t
+        obs["block_text"] = blocked  # raw host block response containing "approval required: <hex>" for demo visibility + evidence
 
         # Real CLI approver signs the target-bound record (allow or decline)
         cli_out = apply_cli_signed_decision(CLI := (ROOT / "demo" / "approve_cli.py"), tokens, t, allow, appr_priv)
