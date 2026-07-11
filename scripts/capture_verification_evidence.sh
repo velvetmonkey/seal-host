@@ -35,9 +35,9 @@ ls -l "$SCRATCH"/{branch.log,cargo-test.log,quickstart-*.log,signer-consumer.log
 
 # Basic mechanical assertions (the harness + see_the_loop also assert internally)
 grep -q "feat/approval-ingress" "$SCRATCH/branch.log" || { echo "FAIL: not on feat/approval-ingress"; exit 1; }
+grep -q "PORCELAIN_END" "$SCRATCH/branch.log" || { echo "FAIL: branch.log missing PORCELAIN_END"; exit 1; }
 grep -q "ed25519_provider_accepts_signed_decline_and_allow ... ok" "$SCRATCH/cargo-test.log" || { echo "FAIL: decline provider test not ok"; exit 1; }
 grep -q "SYNTHETIC_LEDGER_ACTION" "$SCRATCH/quickstart-1.log" || { echo "FAIL: no SYNTHETIC side-effect in quickstart-1"; exit 1; }
-grep -qi "refused" "$SCRATCH/quickstart-1.log" || { echo "FAIL: no refused in quickstart-1"; exit 1; }
-grep -q "real Ed25519TokenProvider" "$SCRATCH/signer-consumer.log" || { echo "FAIL: consumer did not mention real provider"; exit 1; }
+grep -q "approval refused (signed decline" "$SCRATCH/signer-consumer.log" || { echo "FAIL: signer-consumer.log missing explicit refused string from host"; exit 1; }
 
 echo "ALL MECHANICAL OBSERVATIONS PASS"

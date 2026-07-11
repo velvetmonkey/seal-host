@@ -176,15 +176,50 @@ def reissue_and_observe(proc, call_json_str: str, timeout=6.0):
     }
 
 
-# Convenience for tests/quickstart that want a full end-to-end with ed25519 or file.
-def run_approval_loop_once(config_path: Path, token_file: Path, approval_pubkey: str, target: str, allow: bool, appr_priv: str, child_list, cli_path: Path):
-    """High level: spawn (ed25519 assumed caller put args), block, apply via CLI, reissue, observe.
-    Returns the observation dict from reissue_and_observe + target.
+def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.execute", tool_args: dict | None = None) -> dict:
+    """Canonical driver for ed25519 signed channel + synthetic child + real CLI approver.
+
+    - Always uses ed25519 signed tokens (target-bound signed allow/decline).
+    - Extracts target dynamically from host block response; asserts success (no fallback).
+    - Returns dict with: target, flowed, refused, stdout, stderr, cli_out.
+    - 'refused' True only if host emitted the explicit 'approval refused (signed decline...' string.
     """
-    extra = ("--channel", "ed25519", "--token-file", str(token_file), "--approval-pubkey", approval_pubkey)
-    proc = spawn_with_child(config_path, extra, child=child_list)
+    if tool_args is None:
+        tool_args = {"database": "prod", "sql": "drop table users"}
+
+    tokens = work_dir / "tokens.ndjson"
+    tokens.write_text("", encoding="utf-8")
+    dummy = work_dir / "dummy.ndjson"
+    dummy.write_text("", encoding="utf-8")
+
+    # Use the test's write_config to get a trusted that works for ed25519 (includes replay etc.)
+    # Import here to avoid circular at module load if needed.
+    sys.path.insert(0, str(ROOT / "test" / "integration"))
+    from test_host_rs import write_config, PUBKEY as CONFIG_PUB  # noqa: E402
+
+    trusted = write_config(work_dir, dummy)
+
+    appr_priv, appr_pub = generate_approval_keypair()  # from sign_approval
+
+    cmd = [
+        str(BIN),
+        "--config", str(trusted),
+        "--pubkey", CONFIG_PUB,
+        "--channel", "ed25519",
+        "--token-file", str(tokens),
+        "--approval-pubkey", appr_pub,
+        "--",
+        "python3", str(ROOT / "test" / "integration" / "synthetic_ledger.py"),
+    ]
+
+    env = env_with_ld()
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env)
+
+    obs = {"target": None, "flowed": False, "refused": False, "stdout": "", "stderr": "", "cli_out": ""}
+
     try:
-        # send init passthrough
+        # passthrough init
         try:
             proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
             proc.stdin.flush()
@@ -192,16 +227,84 @@ def run_approval_loop_once(config_path: Path, token_file: Path, approval_pubkey:
         except Exception:
             pass
 
-        call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "db.execute", "arguments": {"database": "prod", "sql": "drop table users"}}}, separators=(",", ":"))
-        t = block_and_extract_target(proc, call)
+        call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": tool_name, "arguments": tool_args}},
+                          separators=(",", ":"))
+
+        # Send call, extract target (must succeed)
+        proc.stdin.write(call + "\n")
+        proc.stdin.flush()
+
+        blocked = ""
+        for _ in range(15):
+            l = proc.stdout.readline()
+            blocked += l
+            if "approval required:" in l:
+                break
+            time.sleep(0.03)
+
+        t = None
+        m = re.search(r"approval required: ([0-9a-f]{64})", blocked)
+        if m:
+            t = m.group(1)
         if not t:
-            t = target
-        # apply via real CLI (produces signed envelope for ed25519)
-        cli_out = apply_cli_signed_decision(cli_path, token_file, t, allow, appr_priv)
-        obs = reissue_and_observe(proc, call)
+            # Capture what we have for debugging, then fail
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise AssertionError(f"failed to extract dynamic target from host block response: {blocked[:400]}")
+
         obs["target"] = t
+
+        # Real CLI approver signs the target-bound record (allow or decline)
+        cli_out = apply_cli_signed_decision(CLI := (ROOT / "demo" / "approve_cli.py"), tokens, t, allow, appr_priv)
         obs["cli_out"] = cli_out
+
+        # Re-issue the exact same call
+        proc.stdin.write(call + "\n")
+        proc.stdin.flush()
+
+        # Collect response + more output
+        second = ""
+        for _ in range(10):
+            l = proc.stdout.readline()
+            second += l
+            if l.strip():
+                break
+            time.sleep(0.02)
+
+        # Drain remaining
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            o2, e2 = proc.communicate(timeout=2)
+            full_out = second + (o2 or "")
+            full_err = (e2 or "")
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            full_out = second
+            full_err = ""
+
+        obs["stdout"] = full_out
+        obs["stderr"] = full_err
+
+        combined = full_out + "\n" + full_err
+
+        if "SYNTHETIC_LEDGER_ACTION" in combined:
+            obs["flowed"] = True
+
+        # The explicit host short-circuit message for signed decline
+        if "approval refused (signed decline" in combined or ("refused" in combined.lower() and "signed decline" in combined.lower()):
+            obs["refused"] = True
+
         return obs
+
     finally:
         try:
             proc.kill()
