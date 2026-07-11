@@ -21,7 +21,7 @@ The proof story (Lean kernel, TCB, non-interference) comes after you have watche
 
 **Luxury 30-second showcase (one command, zero external setup)**
 
-After the one-time build, run:
+One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold `lake build` of the Lean core, which pulls the toolchain and can run tens of minutes on a fresh machine. After that the loop is instant. Then run:
 
 ```bash
 bash scripts/showcase.sh
@@ -51,6 +51,23 @@ TELEGRAM_BOT_TOKEN=… SEAL_TG_ALLOWED=<id> python3 demo/dogfood_telegram.py   #
 ```
 
 Each prints the raw `approval required: <64-hex>` block and the raw second response (`SYNTHETIC_LEDGER_ACTION … committed via approval`, or an explicit refusal). `dogfood_failclosed.py` is one-command and needs no human; `dogfood_telegram.py` exits 2 with 3-step BotFather setup if no bot token is set — nothing is mocked.
+
+**Prove the receipt (5-minute cold-reviewer walkthrough)**
+
+The showcase shows the *decision*; this shows the *evidence is tamper-evident*. One command, no external setup:
+
+```bash
+bash scripts/receipt_demo.sh
+```
+
+A destructive `db.execute` is BLOCKED by the real Lean-verified gate, the decisions are sealed into a SHA-256 hash-chain, the intact chain VERIFIES, and then the script mutates and reorders entries to show both are REJECTED. This is the concrete instance of the machine-checked `Host.Record.tamper_evident` theorem. Real output (this machine):
+
+```
+VERIFY OK: 3 entries, chain intact.
+VERIFY FAIL: entry 1 — recorded head does not match recomputed chain.  ✓ mutation REJECTED.
+VERIFY FAIL: entry 0 — recorded head does not match recomputed chain.  ✓ reorder REJECTED
+RECEIPT DEMO PASSED
+```
 
 ## What happens when an agent tries to use a production tool
 
