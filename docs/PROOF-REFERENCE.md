@@ -18,3 +18,5 @@ The file and line numbers below were verified by grep in this repository.
 | Two disconnected replicas never both consume the same approval (bridge corollary) | `Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability` | `Host/AuthorityFrontierBridge.lean:190`; pinned at `Test/Axioms.lean:513` | `{propext, Classical.choice, Quot.sound}` |
 
 The axiom gate is `lake exe axiom_check`; it is pinned with `#guard_msgs`, so drift in these footprints breaks the build.
+
+Two rows deserve a closer look. The record-chain rows (`head_after_append`, `tamper_evident`) carry an **empty** axiom footprint — stronger than the family's usual minimal classical fragment: collision resistance (A-CR) and genesis freshness (A-GEN) enter `tamper_evident` as explicit hypotheses in the statement, not as axioms, so the theorem itself is axiom-free. The two bridge rows are instances of the abstract coordination-free impossibility proven in [crdt-lean](https://github.com/velvetmonkey/crdt-lean) (`Crdt/AuthorityFrontier.lean`), applied to this repo's real consume seam (`validateAndConsumeWithStore`) as a TTL-scoped instance mapping.
