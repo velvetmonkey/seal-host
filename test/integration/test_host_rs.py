@@ -275,12 +275,49 @@ def test_ed25519_signed_decline_produces_refused():
         assert "refused" in (e or "").lower() or "approval refused" in (e or "").lower()
 
 
+def test_control_file_plain_decline_produces_refused():
+    """Control-file channel + real providers decline support + main short-circuit.
+    After a real block, write a plain decline record (with decision:"deny").
+    The host must short-circuit to explicit refused (not timed out/generic deny).
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"
+        approvals.write_text("", encoding="utf-8")
+        config = write_config(tmp, approvals)
+        # Use synthetic child so we have a real observable child (optional for this test)
+        child = ["python3", str(ROOT / "test" / "integration" / "synthetic_ledger.py")]
+        proc = spawn(config, child=child)
+        r = call(proc, 300, "db.execute", DESTRUCTIVE)
+        assert r["result"]["isError"] is True
+        t = None
+        for c in r.get("result", {}).get("content", []):
+            mm = re.search(r"approval required: ([0-9a-f]{64})", c.get("text", ""))
+            if mm:
+                t = mm.group(1)
+                break
+        if not t:
+            t = DB_TARGET
+        # plain decline line supported by ControlFileProvider
+        dl = json.dumps({"target": t, "issuedAt": int(time.time() * 1000), "nonce": "plain-decline-cf-1", "decision": "deny"}, separators=(",", ":"))
+        with approvals.open("a", encoding="utf-8") as f:
+            f.write(dl + "\n")
+        r2 = call(proc, 301, "db.execute", DESTRUCTIVE)
+        txt = ""
+        for c in r2.get("result", {}).get("content", []):
+            txt += c.get("text", "")
+        assert "refused" in txt.lower() or "refused" in str(r2).lower(), f"control decline must produce refused: {r2}"
+        _, e = proc.communicate(timeout=5)
+        assert "refused" in (e or "").lower() or "approval refused" in (e or "").lower()
+
+
 def main() -> int:
     assert BIN.exists(), f"build first: cargo build (missing {BIN})"
     test_file_channel_all_kernels()
     test_ed25519_channel_and_a3()
     test_ed25519_requires_signed_config_and_key_separation()
     test_ed25519_signed_decline_produces_refused()
+    test_control_file_plain_decline_produces_refused()
     print("all rust-host e2e tests passed")
     return 0
 
