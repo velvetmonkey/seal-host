@@ -27,8 +27,9 @@ from sign_approval import generate_approval_keypair, sign_approval_token  # noqa
 def main() -> int:
     sk, vk = generate_approval_keypair()
     target = "deadbeef" * 8
-    allow_line = sign_approval_token(sk, target, 1720000000000, "nonce-allow-c", allow=True)
-    deny_line = sign_approval_token(sk, target, 1720000000001, "nonce-deny-c", allow=False)
+    now = int(time.time() * 1000)
+    allow_line = sign_approval_token(sk, target, now, "nonce-allow-c", allow=True)
+    deny_line = sign_approval_token(sk, target, now + 1000, "nonce-deny-c", allow=False)
 
     ndjson = allow_line + "\n" + deny_line + "\n"
 
