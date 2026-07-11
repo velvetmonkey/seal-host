@@ -40,6 +40,18 @@ Distinct targets, real Ed25519 signed channel, explicit refused path, full audit
 
 The rest of this page (and DEPLOY.md) tells you how to stand it in front of a real MCP server.
 
+**Dogfood it (real approval channel, you are the human)**
+
+The showcase scripts one signer. These three demos put *you* in the loop on the real Ed25519 token channel — no mocks, raw host output, exit code follows the actual decision:
+
+```bash
+python3 demo/dogfood_cli.py          # host BLOCKS; you sign in another terminal → the identical call FLOWS
+python3 demo/dogfood_failclosed.py   # signed DENY + a tampered token → both stay blocked, fully automated
+TELEGRAM_BOT_TOKEN=… SEAL_TG_ALLOWED=<id> python3 demo/dogfood_telegram.py   # tap Approve on your phone
+```
+
+Each prints the raw `approval required: <64-hex>` block and the raw second response (`SYNTHETIC_LEDGER_ACTION … committed via approval`, or an explicit refusal). `dogfood_failclosed.py` is one-command and needs no human; `dogfood_telegram.py` exits 2 with 3-step BotFather setup if no bot token is set — nothing is mocked.
+
 ## What happens when an agent tries to use a production tool
 
 <!-- TODO(asset, shot #5, PROMO-GRADE): real terminal GIF (asciinema) of the full loop —
