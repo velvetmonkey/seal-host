@@ -183,6 +183,8 @@ Append one line to the approval file. `target` is the hex from the block message
 `issuedAt` is optional epoch **milliseconds**:
 
 ```sh
+# DEV-ONLY / UNAUTHENTICATED — use only for the first 10 seconds of local smoke.
+# Real work uses the signed ed25519-token channel (CLI or Telegram approver below).
 echo '{"target": "<64-hex-from-block-message>", "issuedAt": '"$(date +%s000)"'}' \
   >> /tmp/seal-approvals.ndjson
 ```
@@ -215,6 +217,84 @@ check the log two ways, and they prove different things:
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
 once, and every decision written to a tamper-evident audit chain you can verify yourself.
+
+## Developer ingress: two approval channels (CLI + Telegram)
+
+For rapid local iteration you can stand up the approval loop in minutes over a synthetic
+ledger (no real MCP server, no external accounts).
+
+One-command (CLI path, zero external setup):
+
+```sh
+python3 demo/see_the_loop.py
+```
+
+It prints:
+- `approval required: <64-hex target>`
+- CLI approver signs a **target-bound** record (`target ‖ nonce ‖ issuedAt` [ + `decision:"deny"` ])
+- signed NDJSON appended to the token file
+- provider accepts (sig verified)
+- action flows (observable `SYNTHETIC_LEDGER_ACTION`) **or** explicit `refused` (for deny)
+- audit / receipt lines
+
+The CLI and Telegram approvers live in `demo/`. They are **not** the signing key; they are
+intent delivery. The key does the signature.
+
+### The two channels and their TCB
+
+**ed25519-token (recommended for anything beyond throwaway)**
+
+- Wire: NDJSON `{"payload":"<compact JSON of target+issuedAt+nonce[+decision]>","signature":"<hex>"}`
+- The approver (CLI/TG) only collects intent; the bridge/CLI holds the key and emits the
+  signed token.
+- **TCB (CLI):** seal-host process + CLI process + the local key file on the same machine.
+  A co-resident attacker who can read the key, ptrace the signer, or tamper the token file
+  before the next poll can forge approvals for any target.
+- **TCB (Telegram demo bridge):** seal-host + bridge process + its signing key + your
+  allowlisted from.id list + Telegram's delivery for those users. The callback is HMAC-bound
+  to `(target, nonce, decision)` so a tampered button press is rejected. The bridge still
+  holds the key (demo-grade).
+- **Production tightening for Telegram:** device-held key via deep-link / mini-app / custom
+  client. The user's device signs; the bridge only relays the already-signed token. The
+  origin TCB shrinks to the audited device client.
+
+**control-file (NDJSON plain records)**
+
+- `echo '{"target":"<hex>"}' >> /tmp/seal-approvals.ndjson`
+- **DEV-ONLY, UNAUTHENTICATED.** No signature, no origin, positional seen counter only.
+  Labeled everywhere in code, docs, and demos. Use only for the absolute first 30 seconds
+  of local smoke. Never in any environment that matters.
+
+### ORDERING vs ORIGIN (what is Lean-proven)
+
+- **ORDERING / consumption / one-shot / TTL / A3 freshness / non-interference** — these are
+  Lean-proven in the kernels (`SealCore`, `Host.*`). A matching live approval for the exact
+  target is required; it is consumed exactly once within the TTL; the audit is deterministic.
+- **ORIGIN (who was allowed to mint the token)** — this is channel key custody, **not**
+  proven by Lean. The demo proves the wire format and the host accept/decline short-circuit
+  paths work with real signatures. It does **not** prove that the key never left a particular
+  device, that Telegram delivery is uncompromised, or that the human intended the bytes.
+
+### What this demo proves / does NOT prove
+
+**Proves (with the shipped code):**
+- The Rust providers accept and verify target-bound ed25519 signed allows and explicit
+  signed declines (decision:"deny").
+- Explicit decline produces "refused" in audit (not a timeout or generic deny).
+- The CLI approver emits exactly the envelope the provider verifies.
+- The one-command path (synthetic) drives block → signed record → (flow | refused) → receipt.
+
+**Does NOT prove:**
+- End-to-end correctness of a production deployment.
+- That the key was held only on a user device (demo bridge holds it).
+- Absence of all bugs in the Rust host or the approver scripts.
+- That "approval" equals "the human understood and wanted the real-world effect".
+- Tamper-proofing (only tamper-evidence via the chain).
+
+No unqualified "verified", "proven", or "trustless" is used for the channel origin.
+
+See also `demo/approve_cli.py`, `demo/approve_telegram.py`, `demo/see_the_loop.py` (and the
+Rust provider tests) for the honest labels and TCB statements.
 
 ---
 
