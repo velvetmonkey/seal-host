@@ -15,7 +15,7 @@ SCRATCH="${SCRATCH:-/tmp/grok-goal-0011268d014e/implementer}"
 mkdir -p "$SCRATCH"
 
 echo "=== 1. branch + status ===" | tee "$SCRATCH/branch.log"
-( cd "$ROOT"; git branch --show-current; git status --porcelain ) | tee -a "$SCRATCH/branch.log"
+( cd "$ROOT"; echo "BRANCH:"; git branch --show-current; echo "PORCELAIN:"; git status --porcelain; echo "PORCELAIN_END" ) | tee -a "$SCRATCH/branch.log"
 
 echo "=== 2. cargo test (providers decline) ===" | tee "$SCRATCH/cargo-test.log"
 ( cd "$ROOT/rust"; \
