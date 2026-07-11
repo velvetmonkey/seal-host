@@ -87,6 +87,14 @@ decision/record trace or the observer's slice of the durable store.
 * `policyVersion_declassification_necessary` — the checked counterexample
   (hypothesis form, see below): dropping `policyVersion` from the
   declassified view makes the composed NI FALSE.
+* `publicKey_declassification_necessary`,
+  `session_declassification_necessary`,
+  `now_declassification_necessary` — the lower bound COMPLETED: the same
+  counterexample shape for every remaining `replayView` field. Together
+  with the capstone, `replayView` is the EXACT minimal declassification
+  interface: sufficient, and per-field necessary — no strictly smaller
+  declassified tuple supports the composed NI. (See the section docstring
+  above the three theorems.)
 
 ## Honest non-claims and hypothesis-form scope
 
@@ -503,6 +511,227 @@ theorem policyVersion_declassification_necessary
       simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
         SealV2.listReplayStore, hv2, hprune1, List.any_cons, List.any_nil,
         hmiss, Bool.false_and, Bool.or_false]
+    rw [h1, h2] at hcontra
+    exact SealV2.Decision.noConfusion hcontra
+
+/-! ## The lower bound, completed: `replayView` is EXACTLY minimal
+
+Probe verdict, recorded before the proofs: all four declassified fields are
+NECESSARY — no tightening is available, and `replayView` + the capstone are
+therefore untouched by this section (the additive-only case).
+
+With the three theorems below, every component of
+`replayView = (publicKey, session, policyVersion, now)` carries a checked
+state-twist counterexample in the exact shape of
+`policyVersion_declassification_necessary`: two states agreeing on
+`authView` for the request (the T1 declassification — both validate, by
+hypothesis), over the SAME store seeded with the original's consumed entry,
+whose composed decisions DIVERGE. Together with the capstone
+(`stateful_noninterference_trace`, sufficiency), this characterizes
+`replayView` as the EXACT minimal declassification interface of the
+composed replay seam: declassifying the tuple suffices for trace NI, and
+dropping ANY single field falsifies it. No strictly smaller declassified
+tuple supports stateful non-interference.
+
+Mechanism per field: `publicKey`, `session`, `policyVersion` are the 1st,
+3rd, and 4th components of `replayNamespace` — twisting any one of them
+makes the twin's probe MISS the entry the original's probe HITS (deny vs
+allow). `now` is not in the namespace but is the PRUNE CLOCK: a seeded
+entry with `expiresAt = s1.now` survives the original's prune and hits
+(deny), while a twin one tick later prunes it away and allows — prune is
+not symmetric once the store is non-empty.
+
+Witness-existence notes (hypothesis form, per the module boundary): the
+twisted validation success `hv2` is a hypothesis in all three. For
+`session` and `now` the twin's HIGH fields (its approvals) can carry the
+twisted-session / longer-expiry approval, so the witness exists modulo
+state-indexed transport — the same bureaucracy note as the landed theorem.
+For `publicKey` the hypothesis additionally names the Ed25519 boundary
+itself: `validate` reads `publicKey` through the non-kernel-evaluable
+`verifySignature`, exactly the boundary `replay_isolation_nonvacuous`
+states.
+
+Receipt-sufficiency relation: this is the witness-refinement thesis at the
+NI layer — `replayView ∪ consumeView` is the minimal field set that must be
+visible to replay an authorization decision across a session, the same
+"smallest tuple that carries the claim" shape as `witness-check` / v2's
+`args_hash` at the receipt layer. -/
+
+/-- **`publicKey` MUST be declassified.** Same shape as
+`policyVersion_declassification_necessary`, with the namespace mismatch in
+the FIRST component: the twin's probe namespace differs in exactly
+`publicKey`, so the original's seeded entry hits (deny) while the twin
+misses (allow). Hypothesis form; note the twisted validation hypothesis
+here leans on the named Ed25519 boundary (`verifySignature` reads
+`publicKey` and is not kernel-evaluable). -/
+theorem publicKey_declassification_necessary
+    (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
+    (c1 : Σ a, SealV2.ValidCapability a s1)
+    (c2 : Σ a, SealV2.ValidCapability a
+      { s1 with publicKey := s1.publicKey ++ "x" })
+    (hp : parse raw = some ast)
+    (hv1 : validate ast s1 = some c1)
+    (hv2 : validate ast { s1 with publicKey := s1.publicKey ++ "x" }
+      = some c2) :
+    authView raw s1
+      = authView raw { s1 with publicKey := s1.publicKey ++ "x" } ∧
+    ∃ st : List ConsumedNonce,
+      storeLowEq s1.session st st ∧
+      (decideConsume raw s1 st).1
+        ≠ (decideConsume raw
+            { s1 with publicKey := s1.publicKey ++ "x" } st).1 := by
+  refine ⟨?_, ⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+    s1.now⟩ :: [], rfl, ?_⟩
+  · simp [Host.NonInterference.authView, hp, hv1, hv2]
+  · have hself : ((⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+        s1.now⟩ : ConsumedNonce).ns == replayNamespace s1 c1.snd.target
+          && (⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+            s1.now⟩ : ConsumedNonce).nonce == c1.snd.approval.nonce) = true := by
+      simp [ns_beq_refl, nonce_beq_refl]
+    have hmiss : ((⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+        s1.now⟩ : ConsumedNonce).ns ==
+          replayNamespace { s1 with publicKey := s1.publicKey ++ "x" }
+            c2.snd.target) = false := by
+      show ((s1.publicKey == s1.publicKey ++ "x"
+        && (serializeTargetKey c1.snd.target == serializeTargetKey c2.snd.target
+        && (s1.session == s1.session
+        && (s1.policyVersion == s1.policyVersion)))) = false)
+      have : (s1.publicKey == s1.publicKey ++ "x") = false := by
+        rw [beq_eq_false_iff_ne]
+        exact string_ne_append_x _
+      simp [this]
+    have hprune1 : pruneConsumedNonces s1.now
+        [(⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+          s1.now⟩ : ConsumedNonce)]
+        = [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩] := by
+      simp [SealV2.pruneConsumedNonces]
+    intro hcontra
+    have h1 : (decideConsume raw s1
+        [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩]).1
+        = Decision.Block := by
+      simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
+        SealV2.listReplayStore, hv1, hprune1, List.any_cons, List.any_nil,
+        hself, Bool.or_false]
+    have h2 : (decideConsume raw
+        { s1 with publicKey := s1.publicKey ++ "x" }
+        [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩]).1
+        = Decision.Allow (serialize c2) := by
+      simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
+        SealV2.listReplayStore, hv2, hprune1, List.any_cons, List.any_nil,
+        hmiss, Bool.false_and, Bool.or_false]
+    rw [h1, h2] at hcontra
+    exact SealV2.Decision.noConfusion hcontra
+
+/-- **`session` MUST be declassified.** Same shape, mismatch in the THIRD
+namespace component. The twin's approvals are HIGH, so a twisted-session
+approval exists modulo the state-indexed transport (the landed bureaucracy
+note); its validation success is the usual hypothesis. -/
+theorem session_declassification_necessary
+    (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
+    (c1 : Σ a, SealV2.ValidCapability a s1)
+    (c2 : Σ a, SealV2.ValidCapability a
+      { s1 with session := s1.session ++ "x" })
+    (hp : parse raw = some ast)
+    (hv1 : validate ast s1 = some c1)
+    (hv2 : validate ast { s1 with session := s1.session ++ "x" }
+      = some c2) :
+    authView raw s1
+      = authView raw { s1 with session := s1.session ++ "x" } ∧
+    ∃ st : List ConsumedNonce,
+      storeLowEq s1.session st st ∧
+      (decideConsume raw s1 st).1
+        ≠ (decideConsume raw
+            { s1 with session := s1.session ++ "x" } st).1 := by
+  refine ⟨?_, ⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+    s1.now⟩ :: [], rfl, ?_⟩
+  · simp [Host.NonInterference.authView, hp, hv1, hv2]
+  · have hself : ((⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+        s1.now⟩ : ConsumedNonce).ns == replayNamespace s1 c1.snd.target
+          && (⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+            s1.now⟩ : ConsumedNonce).nonce == c1.snd.approval.nonce) = true := by
+      simp [ns_beq_refl, nonce_beq_refl]
+    have hmiss : ((⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+        s1.now⟩ : ConsumedNonce).ns ==
+          replayNamespace { s1 with session := s1.session ++ "x" }
+            c2.snd.target) = false := by
+      show ((s1.publicKey == s1.publicKey
+        && (serializeTargetKey c1.snd.target == serializeTargetKey c2.snd.target
+        && (s1.session == s1.session ++ "x"
+        && (s1.policyVersion == s1.policyVersion)))) = false)
+      have : (s1.session == s1.session ++ "x") = false := by
+        rw [beq_eq_false_iff_ne]
+        exact string_ne_append_x _
+      simp [this]
+    have hprune1 : pruneConsumedNonces s1.now
+        [(⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+          s1.now⟩ : ConsumedNonce)]
+        = [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩] := by
+      simp [SealV2.pruneConsumedNonces]
+    intro hcontra
+    have h1 : (decideConsume raw s1
+        [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩]).1
+        = Decision.Block := by
+      simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
+        SealV2.listReplayStore, hv1, hprune1, List.any_cons, List.any_nil,
+        hself, Bool.or_false]
+    have h2 : (decideConsume raw
+        { s1 with session := s1.session ++ "x" }
+        [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩]).1
+        = Decision.Allow (serialize c2) := by
+      simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
+        SealV2.listReplayStore, hv2, hprune1, List.any_cons, List.any_nil,
+        hmiss, Bool.false_and, Bool.or_false]
+    rw [h1, h2] at hcontra
+    exact SealV2.Decision.noConfusion hcontra
+
+/-- **`now` MUST be declassified — prune is not symmetric on a seeded
+store.** The prune clock is not a namespace component, so the twist works
+through EXPIRY instead: the seeded entry carries `expiresAt = s1.now`; the
+original's prune keeps it (`now ≤ expiresAt`) and the probe hits (deny);
+the twin, one tick later, prunes it away and the probe misses (allow). The
+twin's validation success at the later clock is the usual hypothesis (its
+HIGH approvals can carry a longer-expiry approval). -/
+theorem now_declassification_necessary
+    (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
+    (c1 : Σ a, SealV2.ValidCapability a s1)
+    (c2 : Σ a, SealV2.ValidCapability a { s1 with now := s1.now + 1 })
+    (hp : parse raw = some ast)
+    (hv1 : validate ast s1 = some c1)
+    (hv2 : validate ast { s1 with now := s1.now + 1 } = some c2) :
+    authView raw s1 = authView raw { s1 with now := s1.now + 1 } ∧
+    ∃ st : List ConsumedNonce,
+      storeLowEq s1.session st st ∧
+      (decideConsume raw s1 st).1
+        ≠ (decideConsume raw { s1 with now := s1.now + 1 } st).1 := by
+  refine ⟨?_, ⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+    s1.now⟩ :: [], rfl, ?_⟩
+  · simp [Host.NonInterference.authView, hp, hv1, hv2]
+  · have hself : ((⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+        s1.now⟩ : ConsumedNonce).ns == replayNamespace s1 c1.snd.target
+          && (⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+            s1.now⟩ : ConsumedNonce).nonce == c1.snd.approval.nonce) = true := by
+      simp [ns_beq_refl, nonce_beq_refl]
+    have hprune1 : pruneConsumedNonces s1.now
+        [(⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+          s1.now⟩ : ConsumedNonce)]
+        = [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩] := by
+      simp [SealV2.pruneConsumedNonces]
+    have hprune2 : pruneConsumedNonces (s1.now + 1)
+        [(⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce,
+          s1.now⟩ : ConsumedNonce)] = [] := by
+      simp [SealV2.pruneConsumedNonces]
+    intro hcontra
+    have h1 : (decideConsume raw s1
+        [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩]).1
+        = Decision.Block := by
+      simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
+        SealV2.listReplayStore, hv1, hprune1, List.any_cons, List.any_nil,
+        hself, Bool.or_false]
+    have h2 : (decideConsume raw { s1 with now := s1.now + 1 }
+        [⟨replayNamespace s1 c1.snd.target, c1.snd.approval.nonce, s1.now⟩]).1
+        = Decision.Allow (serialize c2) := by
+      simp only [decideConsume, hp, SealV2.validateAndConsumeWithStore,
+        SealV2.listReplayStore, hv2, hprune2, List.any_nil]
     rw [h1, h2] at hcontra
     exact SealV2.Decision.noConfusion hcontra
 

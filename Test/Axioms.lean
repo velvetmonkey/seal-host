@@ -497,6 +497,25 @@ info: 'Host.StatefulNI.policyVersion_declassification_necessary' depends on axio
 -/
 #guard_msgs in #print axioms Host.StatefulNI.policyVersion_declassification_necessary
 
+-- The lower bound completed: every replayView field is necessary
+-- (Host/StatefulNI.lean §exact minimality — replayView is the exact
+-- minimal declassification interface)
+
+/--
+info: 'Host.StatefulNI.publicKey_declassification_necessary' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.publicKey_declassification_necessary
+
+/--
+info: 'Host.StatefulNI.session_declassification_necessary' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.session_declassification_necessary
+
+/--
+info: 'Host.StatefulNI.now_declassification_necessary' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.StatefulNI.now_declassification_necessary
+
 -- SealV2 ↔ AuthoritySystem applicability bridge (Host/AuthorityFrontierBridge.lean):
 -- the abstract no-double-spend theorem applied to the gate's real nonce seam.
 
