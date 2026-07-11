@@ -517,6 +517,39 @@ info: 'Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one' depends on axio
 -/
 #guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one
 
+-- Sufficiency on the seam: the shared-store no-go + the single-delivery
+-- deployment with Safe PROVEN (Host/AuthorityFrontierBridge.lean §Sufficiency)
+
+/--
+info: 'Host.AuthorityFrontierBridge.sealv2_shared_not_sealed_senders' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_shared_not_sealed_senders
+
+/-- info: 'Host.AuthorityFrontierBridge.bridgeConsume_sealed_none' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.bridgeConsume_sealed_none
+
+/--
+info: 'Host.AuthorityFrontierBridge.sealed_delivery_sealed_senders' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealed_delivery_sealed_senders
+
+/-- info: 'Host.AuthorityFrontierBridge.sealv2_partitioned_safe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_partitioned_safe
+
+/--
+info: 'Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability'' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability'
+
+/--
+info: 'Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one'' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one'
+
 -- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
 -- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
 

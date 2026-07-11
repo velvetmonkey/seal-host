@@ -7,7 +7,7 @@ moreLinkArgs = [".lake/packages/mcp-seal/c/build/libsealcrypto.o"]
 [[require]]
 name = "crdt-lean"
 git = "https://github.com/velvetmonkey/crdt-lean.git"
-rev = "da53988c0a9f912eeff5cf1152b733f012c116f6"
+rev = "08e06785db8b175ad814357319dce17863090d9b"
 
 [[require]]
 name = "temporal-logic-lean"
