@@ -120,7 +120,9 @@ def main() -> int:
                     break
                 time.sleep(0.05)
             try:
-                proc.stdin.close()
+                # communicate() closes stdin itself; pre-closing it makes
+                # communicate() raise (it flushes stdin) and the host audit on
+                # stderr would be silently dropped from the "raw" output below.
                 out2, err2 = proc.communicate(timeout=3)
             except Exception:
                 proc.kill()

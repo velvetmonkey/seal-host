@@ -89,7 +89,10 @@ def leg2_tampered() -> bool:
                     break
                 time.sleep(0.05)
             try:
-                proc.stdin.close()
+                # communicate() closes stdin itself (sending EOF). Do NOT
+                # pre-close it: communicate() flushes stdin internally, so a
+                # prior close() raises ValueError and the stderr — which carries
+                # the approval_drop warning — would be silently discarded.
                 out2, err2 = proc.communicate(timeout=3)
             except Exception:
                 proc.kill()
@@ -101,7 +104,11 @@ def leg2_tampered() -> bool:
             print("=" * 72)
             flowed = "SYNTHETIC_LEDGER_ACTION" in combined
             still_blocked = "approval required:" in combined
-            warned = "approval_drop" in combined
+            # The provider emits an approval_drop / bad_signature warning to the
+            # host's stderr when it rejects a tampered signature (providers.rs
+            # Ed25519TokenProvider::poll -> main.rs emit_approval_drop_warnings).
+            # This is a real, deterministic signal — assert it, don't hope for it.
+            warned = "approval_drop" in combined and "bad_signature" in combined
             if flowed:
                 print("LEG 2 FAILED: a TAMPERED token flowed. That would be a real bug.")
                 return False
@@ -109,11 +116,12 @@ def leg2_tampered() -> bool:
                 print("LEG 2 FAILED: expected the identical call to be blocked again.")
                 return False
             if not warned:
-                print("LEG 2 NOTE: no approval_drop warning seen (expected one); "
-                      "still blocked though.")
-            print("LEG 2 OK: tampered signature dropped"
-                  + (" with warning" if warned else "")
-                  + "; call stayed BLOCKED. Forgery bought nothing.")
+                print("LEG 2 FAILED: expected an approval_drop/bad_signature warning "
+                      "on host stderr; none observed. (call stayed blocked, but the "
+                      "demo claims a warning — claim must match reality.)")
+                return False
+            print("LEG 2 OK: tampered signature dropped with an approval_drop "
+                  "(bad_signature) warning; call stayed BLOCKED. Forgery bought nothing.")
             return True
         finally:
             try:
