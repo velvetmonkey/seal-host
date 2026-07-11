@@ -5,7 +5,7 @@
       "control_file": "/tmp/seal-approvals.ndjson",
       "ttl_seconds": 120,
       "replay_store": {
-        "sqlite_path": "/var/lib/seal-host/replay.sqlite"
+        "sqlite_path": "/tmp/seal-host-replay.sqlite"
       }
     },
     "tools": [
