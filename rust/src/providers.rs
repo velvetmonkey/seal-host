@@ -71,9 +71,20 @@ impl ApprovalDropWarning {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeclineRecord {
+    #[serde(deserialize_with = "target_hex")]
+    pub target: String,
+    #[serde(rename = "issuedAt", default, deserialize_with = "opt_u64_str_or_num")]
+    pub issued_at: Option<u64>,
+    #[serde(default)]
+    pub nonce: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ApprovalPoll {
     pub records: Vec<ApprovalRecord>,
+    pub declines: Vec<DeclineRecord>,
     pub warnings: Vec<ApprovalDropWarning>,
 }
 
@@ -131,6 +142,25 @@ impl ApprovalProvider for ControlFileProvider {
         let source = self.name();
         let mut poll = ApprovalPoll::default();
         for line in fresh {
+            // Support dev unauth declines via "decision":"deny" (still unauthenticated).
+            // IMPORTANT: if the line claims to be a deny, we MUST parse as DeclineRecord
+            // or drop it. Never fall through to ApprovalRecord (that would treat decline as allow).
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                if v.get("decision").and_then(|d| d.as_str()) == Some("deny") {
+                    match serde_json::from_str::<DeclineRecord>(line) {
+                        Ok(d) => { poll.declines.push(d); continue; }
+                        Err(_) => {
+                            poll.warnings.push(ApprovalDropWarning::new(
+                                &mut self.drop_counter,
+                                source,
+                                "parse_error",
+                                line.as_bytes(),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+            }
             match serde_json::from_str::<ApprovalRecord>(line) {
                 Ok(record) => poll.records.push(record),
                 Err(_) => poll.warnings.push(ApprovalDropWarning::new(
@@ -157,13 +187,26 @@ struct SignedToken {
     signature: String,
 }
 
+/// Internal for parsing signed payloads that may carry decision (decline).
+#[derive(Debug, Clone, Deserialize)]
+struct SignedPayload {
+    #[serde(deserialize_with = "target_hex")]
+    target: String,
+    #[serde(rename = "issuedAt", default, deserialize_with = "opt_u64_str_or_num")]
+    issued_at: Option<u64>,
+    #[serde(default)]
+    nonce: Option<String>,
+    #[serde(default)]
+    decision: Option<String>,
+}
+
 /// Ed25519 token file: NDJSON `{"payload": "<json>", "signature": "<hex>"}`
-/// where payload parses to an ApprovalRecord with a MANDATORY nonce and
-/// issuedAt. The signature is verified over the exact payload bytes against
-/// the trusted verifying key. This host provider signs ApprovalRecord JSON
-/// payload bytes; the SealV2 canonical approval token signs
-/// `(target, session, issuedAt, expiry, nonce)` bytes in mcp-seal-dev, and the
-/// trusted config envelope is a separate Ed25519-signed payload channel.
+/// where payload parses to an ApprovalRecord (or DeclineRecord) with a
+/// MANDATORY nonce and issuedAt. The signature is verified over the exact
+/// payload bytes against the trusted verifying key.
+/// Decision field: absent or "allow" => approval record; "deny" => decline.
+/// NOTE: `echo >> ndjson` (control-file) and unsigned tokens are DEV-ONLY
+/// and UNAUTHENTICATED — the ed25519 channel is the signed origin path.
 pub struct Ed25519TokenProvider {
     path: std::path::PathBuf,
     key: VerifyingKey,
@@ -248,8 +291,9 @@ impl ApprovalProvider for Ed25519TokenProvider {
                 ));
                 continue;
             }
-            let record: ApprovalRecord = match serde_json::from_str(&token.payload) {
-                Ok(record) => record,
+            // Parse to common signed payload (supports optional decision for decline).
+            let sp: SignedPayload = match serde_json::from_str(&token.payload) {
+                Ok(sp) => sp,
                 Err(_) => {
                     poll.warnings.push(ApprovalDropWarning::new(
                         &mut self.drop_counter,
@@ -260,17 +304,34 @@ impl ApprovalProvider for Ed25519TokenProvider {
                     continue;
                 }
             };
-            // Signed tokens MUST carry nonce + issuedAt for A3.
-            if record.nonce.is_none() || record.issued_at.is_none() {
+            // Signed tokens MUST carry nonce + issuedAt (for both allow and decline).
+            if sp.nonce.is_none() || sp.issued_at.is_none() {
+                let red = record_redaction_material(&ApprovalRecord {
+                    target: sp.target.clone(),
+                    issued_at: sp.issued_at,
+                    nonce: sp.nonce.clone(),
+                });
                 poll.warnings.push(ApprovalDropWarning::new(
                     &mut self.drop_counter,
                     source,
                     "missing_required_field",
-                    record_redaction_material(&record),
+                    red,
                 ));
                 continue;
             }
-            poll.records.push(record);
+            if sp.decision.as_deref() == Some("deny") {
+                poll.declines.push(DeclineRecord {
+                    target: sp.target,
+                    issued_at: sp.issued_at,
+                    nonce: sp.nonce,
+                });
+            } else {
+                poll.records.push(ApprovalRecord {
+                    target: sp.target,
+                    issued_at: sp.issued_at,
+                    nonce: sp.nonce,
+                });
+            }
         }
         poll
     }
@@ -323,6 +384,7 @@ impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, 
                     issued_at: Some(now),
                     nonce: None,
                 }],
+                declines: vec![],
                 warnings: Vec::new(),
             }
         } else {
@@ -367,6 +429,33 @@ mod tests {
     }
 
     #[test]
+    fn ed25519_provider_accepts_signed_decline_and_allow() {
+        let sk = SigningKey::from_bytes(&[11u8; 32]);
+        let vk_hex = hex::encode(sk.verifying_key().to_bytes());
+        let target = "00000000000000000000000000000000000000000000000000000000000000ab";
+        let nonce = "decline-n1";
+        let allow_p = format!(r#"{{"target":"{target}","issuedAt":2000,"nonce":"n-allow"}}"#);
+        let allow_sig = hex::encode(sk.sign(allow_p.as_bytes()).to_bytes());
+        let allow_tok = format!(r#"{{"payload":{},"signature":"{}"}}"#, serde_json::to_string(&allow_p).unwrap(), allow_sig);
+
+        let dec_p = format!(r#"{{"target":"{target}","issuedAt":2001,"nonce":"{nonce}","decision":"deny"}}"#);
+        let dec_sig = hex::encode(sk.sign(dec_p.as_bytes()).to_bytes());
+        let dec_tok = format!(r#"{{"payload":{},"signature":"{}"}}"#, serde_json::to_string(&dec_p).unwrap(), dec_sig);
+
+        let dir = std::env::temp_dir().join(format!("seal-decline-{}", std::process::id()));
+        std::fs::write(&dir, format!("{allow_tok}\n{dec_tok}\n")).unwrap();
+        let mut p = Ed25519TokenProvider::new(&dir, &vk_hex).unwrap();
+        let poll = p.poll();
+        std::fs::remove_file(&dir).ok();
+        assert!(poll.warnings.is_empty(), "valid signed allow+decline must have zero warnings");
+        assert_eq!(poll.records.len(), 1);
+        assert_eq!(poll.records[0].target, target);
+        assert_eq!(poll.declines.len(), 1);
+        assert_eq!(poll.declines[0].target, target);
+        assert_eq!(poll.declines[0].nonce.as_deref(), Some(nonce));
+    }
+
+    #[test]
     fn interactive_provider_mints_on_yes_only() {
         let mut p = InteractiveProvider::new(std::io::Cursor::new(b"y\n".to_vec()), Vec::new());
         let target = "0000000000000000000000000000000000000000000000000000000000000007".to_string();
@@ -377,6 +466,8 @@ mod tests {
 
         let mut p = InteractiveProvider::new(std::io::Cursor::new(b"n\n".to_vec()), Vec::new());
         p.queue("0000000000000000000000000000000000000000000000000000000000000007".to_string());
-        assert!(p.poll().records.is_empty());
+        let p2 = p.poll();
+        assert!(p2.records.is_empty());
+        assert!(p2.declines.is_empty());
     }
 }
