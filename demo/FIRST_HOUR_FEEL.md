@@ -4,6 +4,7 @@ Ran `python3 demo/see_the_loop.py` (and twice more for verification).
 
 Immediate impression:
 - 15s to first "approval required: <target>" (synthetic, no setup).
+- The one-command demo now prints the raw host BLOCK response containing "approval required: <64-hex>" (full wire message) before the summary, making the loop visible end-to-end in captured logs.
 - CLI approver is a single invocation with --target --approve; it prints the exact TCB warning and appends a compact signed line.
 - The "provider" simulation (real crypto verify) immediately accepts and prints "record accepted: allow".
 - Side effect line appears: SYNTHETIC_LEDGER_ACTION...
