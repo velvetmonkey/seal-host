@@ -199,16 +199,22 @@ tamper-evident chain record as a single JSON line
 stderr when you start the host (e.g. append `2>>/tmp/seal-audit.log` to the command in
 step 5).
 
-That chain record is an append-only audit chain: each `head` commits to every prior
-decision, so a dropped or altered line breaks head-continuity — recompute the chain to
-check its integrity. It is the deployed host's audit trail. It is **not** the fully
-re-derivable schema-v2 *decision* receipt that `seal-check` and `seal verify` validate;
-that receipt — where you re-derive the verdict from the request bytes in a browser — is
-shown end-to-end in [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo) and
-checkable with `seal-check` there.
+That chain record is an append-only audit chain: each `head` is
+`sha256(prevHead || 0x1f || payload)`, so it commits to every prior decision. You can
+check the log two ways, and they prove different things:
+
+- **The log is intact.** Run `scripts/seal_log.mjs verify` — the executable witness of the
+  `tamper_evident` theorem (`Host/Record.lean`). It rebuilds the SHA-256 head chain from the
+  audit lines and exits non-zero if any line was inserted, reordered, or mutated. The head
+  is an injective function of the whole log, so tampering is always detected. This is the
+  deployed host's own audit trail; nothing external is needed to check its integrity.
+- **A single decision is correct.** That is the schema-v2 *decision* receipt, where you
+  re-derive the verdict from the request bytes and check it with `seal-check` / `seal verify`.
+  It is shown end-to-end in [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo).
+  The compatible-profile host emits the audit chain above, not this v2 receipt.
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
-once, and every decision written to a tamper-evident audit chain.
+once, and every decision written to a tamper-evident audit chain you can verify yourself.
 
 ---
 
