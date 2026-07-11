@@ -569,6 +569,27 @@ info: 'Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one'' depends on axi
 -/
 #guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one'
 
+-- The third shape: mesh-coordinated replicas over the SHARED store
+-- (Host/AuthorityFrontierBridge.lean §Composition — seal × crdt-lean)
+
+/-- info: 'Host.AuthorityFrontierBridge.meshReach_snd' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.meshReach_snd
+
+/-- info: 'Host.AuthorityFrontierBridge.mesh_sealed_senders' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.mesh_sealed_senders
+
+/-- info: 'Host.AuthorityFrontierBridge.sealv2_mesh_safe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_mesh_safe
+
+/-- info: 'Host.AuthorityFrontierBridge.tokenMesh_sealed_senders' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.tokenMesh_sealed_senders
+
+/-- info: 'Host.AuthorityFrontierBridge.mesh_holder_live_at_init' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.mesh_holder_live_at_init
+
+/-- info: 'Host.AuthorityFrontierBridge.sealv2_token_mesh_safe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_token_mesh_safe
+
 -- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
 -- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
 

@@ -458,4 +458,237 @@ theorem sealv2_frontier_card_le_one'
 
 end Sufficiency
 
+/-! ## The third shape: mesh-coordinated replicas over the SHARED store
+
+**Probe verdict (recorded before the proofs): it COMPOSES — by product.**
+The load-bearing question was whether an external coordination fact can
+attach to the shared-store system so the composition satisfies
+`SealedSenders` where the bare store provably cannot
+(`sealv2_shared_not_sealed_senders`), without the store's replay
+vocabulary re-obstructing. It can, because the obstruction was never about
+attachment: the no-go says the STORE's only non-liveness is a receipt. The
+mesh's liveness vocabulary is free — so the composed system's enablement is
+the CONJUNCTION `store-live ∧ mesh-live`, and the seal rides the mesh
+conjunct, which the store never constrains.
+
+**The exact interface the mesh must expose** (the sharp finding): a
+`GeneratedAuthoritySystem D` over the SAME failure domains satisfying
+`SealedSenders` — uniform never-liveness of every non-designated domain at
+every mesh-reachable configuration. That is precisely the predicate the
+landed no-go proves the shared store structurally cannot carry (its only
+way to make a domain non-live is a receipt, which contradicts empty-start
+generation). The mesh CAN carry it because its `live` field is
+unconstrained by the replay seam.
+
+**The composed system (`SealReplicaMeshSystem`):** configurations are
+pairs (replica store family, mesh configuration); a consume step at `d`
+fires the REAL gate call on `d`'s store AND a mesh step at `d` (the gate
+call spends the mesh grant); enablement is the conjunction; receipts are
+the STORE receipts (safety is still judged on the gate's own consumed
+entries); disconnection is disconnection in BOTH layers. Every store-side
+law is the landed proof unchanged; every mesh-side law is `M`'s law.
+
+**What transfers:** if the mesh satisfies `SealedSenders` (hypothesis
+`hM` — establishable upstream by crdt-lean's coordination discipline),
+the composition does too (`mesh_sealed_senders`, via the reachability
+projection `meshReach_snd`), hence is Safe (`sealv2_mesh_safe`) — the
+`hsafe` obligation discharged for the mesh-coordinated deployment. The
+composition is what neither brick has alone: the store contributes the
+real consume seam and replay dedup; the mesh contributes the seal.
+
+**Kill-line:** without the mesh fact the same shared store fails the
+predicate — `sealv2_shared_not_sealed_senders` is the standing witness.
+Non-vacuity is concrete: `TokenMesh` (the minimal mesh: one domain holds
+the grant) satisfies `SealedSenders` non-vacuously, and on the composed
+system the designated holder is GENUINELY live at the empty start
+(`mesh_holder_live_at_init`) — the composition does not seal everyone.
+
+**Deployment meaning + CutWorld relation:** this names the
+mesh-coordinated fleet over shared/replicated approval state — every
+replica could validate the approval, but a coordination layer (a token
+service, a sealed-handoff CRDT, a leader lease within the TTL window)
+designates the single consumer. The mesh fact is `CutWorld.SealedHandoff`
+one more level up: the disable-in-the-causal-past becomes the mesh's
+never-granting of non-holders, carried by the coordination layer instead
+of by store entries (which the no-go forbids) or by validation partition
+(the single-delivery shape). All landed scope governs: TTL window, one
+approval per instance, hypothesis-form validation, model-level. -/
+
+section Composition
+
+open Crdt.AuthorityFrontier (GeneratedAuthoritySystem SealedSenders
+  sealed_senders_safe)
+
+/-- Reachability of the composed system: empty stores + the mesh's initial
+configuration; a step fires the real gate call on one replica's store AND
+a mesh step at the same domain. -/
+inductive MeshReach (st : ApprovalState) (ast : AST)
+    (M : GeneratedAuthoritySystem D) :
+    BridgeConfig D × M.Config → Prop
+  | init : MeshReach st ast M (fun _ => [], M.init)
+  | step {p : BridgeConfig D × M.Config} {d : D}
+      {r : List ConsumedNonce × Σ a, ValidCapability a st} {m' : M.Config} :
+      MeshReach st ast M p → bridgeConsume st ast (p.1 d) = some r →
+      M.step p.2 d m' →
+      MeshReach st ast M (Function.update p.1 d r.1, m')
+
+/-- **The mesh-coordinated shared-store instance.** The store side is the
+landed `SealReplicaSystem` seam verbatim; the mesh side is `M`'s own
+structure; enablement and steps are the conjunction/product. Receipts are
+the STORE receipts — safety is still judged on the gate's consumed
+entries. -/
+def SealReplicaMeshSystem (hv : validate ast st = some c0)
+    (M : GeneratedAuthoritySystem D) : AuthoritySystem D where
+  Config := BridgeConfig D × M.Config
+  reachable := MeshReach st ast M
+  step p d p' := (∃ r, bridgeConsume st ast (p.1 d) = some r ∧
+      p'.1 = Function.update p.1 d r.1) ∧ M.step p.2 d p'.2
+  receipts p := Finset.univ.filter
+    (fun d => (p.1 d).any (isReceipt st c0) = true)
+  live p d := (bridgeConsume st ast (p.1 d)).isSome ∧ M.live p.2 d
+  disconnected p d₁ d₂ := d₁ ≠ d₂ ∧ M.disconnected p.2 d₁ d₂
+  step_live p d h := by
+    obtain ⟨hs, hm⟩ := h
+    obtain ⟨r, hr⟩ := Option.isSome_iff_exists.mp hs
+    obtain ⟨m', hm'⟩ := M.step_live p.2 d hm
+    exact ⟨(Function.update p.1 d r.1, m'), ⟨r, hr, rfl⟩, hm'⟩
+  step_reachable p d p' hreach hs := by
+    obtain ⟨⟨r, hr, h1⟩, h2⟩ := hs
+    have hp' : p' = (Function.update p.1 d r.1, p'.2) := by
+      exact Prod.ext h1 rfl
+    rw [hp']
+    exact MeshReach.step hreach hr h2
+  receipts_step p d p' hs := by
+    obtain ⟨⟨r, hr, h1⟩, _⟩ := hs
+    rw [bridgeConsume_eq st ast c0 hv (p.1 d)] at hr
+    by_cases hb : (pruneConsumedNonces st.now (p.1 d)).any (isReceipt st c0) = true
+    · rw [if_pos hb] at hr; exact absurd hr (by simp)
+    · rw [if_neg hb] at hr
+      have hr1 : r.1 = bridgeEntry st c0 :: pruneConsumedNonces st.now (p.1 d) := by
+        have := Option.some.inj hr
+        exact congrArg Prod.fst this.symm
+      apply Finset.ext
+      intro x
+      simp only [Finset.mem_filter, Finset.mem_univ, true_and, Finset.mem_insert]
+      by_cases hx : x = d
+      · subst hx
+        rw [h1, Function.update_self, hr1]
+        simp only [List.any_cons]
+        have hself : isReceipt st c0 (bridgeEntry st c0) = true := by
+          simp [isReceipt, bridgeEntry, ns_beq_refl, nonce_beq_refl]
+        simp [hself]
+      · rw [h1, Function.update_of_ne hx]
+        simp [hx]
+  frozen_live p d₁ d₂ p₁ hdis hs h := by
+    obtain ⟨hne, hmdis⟩ := hdis
+    obtain ⟨⟨r, hr, h1⟩, h2⟩ := hs
+    obtain ⟨hstore, hmesh⟩ := h
+    refine ⟨?_, M.frozen_live p.2 d₁ d₂ p₁.2 hmdis h2 hmesh⟩
+    rw [h1, Function.update_of_ne (Ne.symm hne)]
+    exact hstore
+
+/-- The composed instance carries the generated structure: empty stores +
+`M.init`, generated reachability, conjunction-gated steps. -/
+def SealReplicaMeshGenerated (hv : validate ast st = some c0)
+    (M : GeneratedAuthoritySystem D) : GeneratedAuthoritySystem D where
+  toAuthoritySystem := SealReplicaMeshSystem st ast c0 hv M
+  init := (fun _ => [], M.init)
+  init_reachable := MeshReach.init
+  init_receipts := by
+    simp [SealReplicaMeshSystem]
+  step_requires_live p d p' hs := by
+    obtain ⟨⟨r, hr, _⟩, h2⟩ := hs
+    exact ⟨Option.isSome_iff_exists.mpr ⟨r, hr⟩,
+      M.step_requires_live p.2 d p'.2 h2⟩
+  reachable_generated P hinit hstep p hp := by
+    induction hp with
+    | init => exact hinit
+    | @step p d r m' hprev hcons hmst ih =>
+        exact hstep p d _ hprev ih ⟨⟨r, hcons, rfl⟩, hmst⟩
+
+/-- A composed-reachable configuration's mesh component is mesh-reachable:
+the projection that lets `M`'s `SealedSenders` fact speak about every
+composed configuration. -/
+theorem meshReach_snd (M : GeneratedAuthoritySystem D)
+    {p : BridgeConfig D × M.Config} (hp : MeshReach st ast M p) :
+    M.reachable p.2 := by
+  induction hp with
+  | init => exact M.init_reachable
+  | @step p d r m' _ _ hmst ih => exact M.step_reachable p.2 d m' ih hmst
+
+/-- **The seal rides the mesh.** If the coordination layer satisfies
+`SealedSenders`, so does the composition: composed liveness includes mesh
+liveness, and the mesh component of every composed-reachable configuration
+is mesh-reachable. The store conjunct never re-obstructs — it is not
+consulted. -/
+theorem mesh_sealed_senders (hv : validate ast st = some c0)
+    (M : GeneratedAuthoritySystem D) (hM : SealedSenders M) :
+    SealedSenders (SealReplicaMeshGenerated st ast c0 hv M) := by
+  obtain ⟨d₀, hseal⟩ := hM
+  exact ⟨d₀, fun p hp d hd hlive =>
+    hseal p.2 (meshReach_snd st ast M hp) d hd hlive.2⟩
+
+/-- **Safety, discharged for the mesh-coordinated deployment.** The shared
+durable store, plus a mesh coordination fact, is Safe — at most one replica
+ever holds a consumed entry for the approval — with no `hsafe` hypothesis:
+the composition of seal's consume seam and crdt-lean's coordination spine,
+which neither carries alone. -/
+theorem sealv2_mesh_safe (hv : validate ast st = some c0)
+    (M : GeneratedAuthoritySystem D) (hM : SealedSenders M) :
+    Safe (SealReplicaMeshSystem st ast c0 hv M) :=
+  sealed_senders_safe _ (mesh_sealed_senders st ast c0 hv M hM)
+
+/-- Token-mesh reachability: grant consumption only ever happens at the
+designated holder. -/
+inductive TokenReach (d₀ : D) : Finset D → Prop
+  | init : TokenReach d₀ ∅
+  | step {m : Finset D} : TokenReach d₀ m → TokenReach d₀ (insert d₀ m)
+
+/-- **The minimal witness mesh:** one domain holds the grant, forever;
+consuming records it. Satisfies every `AuthoritySystem` and generated law;
+`SealedSenders` holds non-vacuously (the holder IS live). -/
+def TokenMesh (d₀ : D) : GeneratedAuthoritySystem D where
+  Config := Finset D
+  reachable := TokenReach d₀
+  step m d m' := d = d₀ ∧ m' = insert d m
+  receipts m := m
+  live _ d := d = d₀
+  disconnected _ d₁ d₂ := d₁ ≠ d₂
+  step_live m d h := ⟨insert d m, h, rfl⟩
+  step_reachable m d m' hr hs := by
+    obtain ⟨rfl, rfl⟩ := hs
+    exact TokenReach.step hr
+  receipts_step m d m' hs := hs.2
+  frozen_live _ _ _ _ _ _ h := h
+  init := ∅
+  init_reachable := TokenReach.init
+  init_receipts := rfl
+  step_requires_live _ _ _ hs := hs.1
+  reachable_generated P hinit hstep m hm := by
+    induction hm with
+    | init => exact hinit
+    | @step m hprev ih => exact hstep m d₀ (insert d₀ m) hprev ih ⟨rfl, rfl⟩
+
+/-- The token mesh is a sealed-senders system, non-vacuously. -/
+theorem tokenMesh_sealed_senders (d₀ : D) :
+    SealedSenders (TokenMesh d₀) :=
+  ⟨d₀, fun _ _ d hd h => hd h⟩
+
+/-- **Non-vacuity of the composition:** on the token-mesh composition the
+designated holder is GENUINELY live at the empty start — its gate call
+succeeds and it holds the grant. The composition seals the others, not
+everyone. -/
+theorem mesh_holder_live_at_init (hv : validate ast st = some c0) (d₀ : D) :
+    (SealReplicaMeshSystem st ast c0 hv (TokenMesh d₀)).live
+      (fun _ => [], (∅ : Finset D)) d₀ :=
+  ⟨shared_all_live_at_init st ast c0 hv d₀, rfl⟩
+
+/-- **The concrete discharged deployment:** shared store + token mesh is
+Safe, outright. -/
+theorem sealv2_token_mesh_safe (hv : validate ast st = some c0) (d₀ : D) :
+    Safe (SealReplicaMeshSystem st ast c0 hv (TokenMesh d₀)) :=
+  sealv2_mesh_safe st ast c0 hv (TokenMesh d₀) (tokenMesh_sealed_senders d₀)
+
+end Composition
+
 end Host.AuthorityFrontierBridge
