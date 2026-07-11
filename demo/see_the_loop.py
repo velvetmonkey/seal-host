@@ -30,12 +30,13 @@ def main() -> int:
     print("=== seal developer-ingress one-command (REAL ed25519 signed + synthetic via harness) ===")
 
     # First run (approve)
+    sql1 = os.environ.get("QS_SQL1", "drop table users")
     with tempfile.TemporaryDirectory(prefix="see-qs-1-") as td:
         o1 = run_signed_ed25519_loop(
             Path(td),
             allow=True,
             tool_name="db.execute",
-            tool_args={"database": "prod", "sql": "drop table users"},
+            tool_args={"database": "prod", "sql": sql1},
         )
         print(f"--- approve target={o1['target']} flowed={o1['flowed']} refused={o1['refused']}")
         if o1.get("cli_out"):
@@ -44,12 +45,13 @@ def main() -> int:
             print("  (SYNTHETIC side-effect observed — action flowed)")
 
     # Second run (deny) — different SQL so target differs
+    sql2 = os.environ.get("QS_SQL2", "truncate table audit")
     with tempfile.TemporaryDirectory(prefix="see-qs-2-") as td:
         o2 = run_signed_ed25519_loop(
             Path(td),
             allow=False,
             tool_name="db.execute",
-            tool_args={"database": "prod", "sql": "truncate table audit"},
+            tool_args={"database": "prod", "sql": sql2},
         )
         print(f"--- deny   target={o2['target']} flowed={o2['flowed']} refused={o2['refused']}")
         if o2.get("cli_out"):
