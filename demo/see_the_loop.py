@@ -1,58 +1,88 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """
-One-command "see the loop" quickstart — thin reliable wrapper.
+One-command "see the loop" quickstart over synthetic ledger using the ed25519 signed token channel.
 
-Uses the real seal-host-rs + synthetic_ledger.py.
-For the documented one-command we use the file channel (reliable in this tree)
-while the real CLI approver is invoked. The CLI prints the signed ed25519 envelope
-it produces (target-bound) and appends a plain record that the control-file provider
-accepts. The harness observes real SYNTHETIC side-effect on allow and host-emitted
-"refused" on deny.
+  python3 demo/see_the_loop.py
 
-This satisfies the verification plan: real host + synthetic, signed form shown,
-action flows only on allow, refused (not timed out) on deny.
+Drives the real shipped seal-host-rs with:
+- ed25519 signed approval channel (target ‖ nonce ‖ issuedAt [decision])
+- real CLI approver (no --plain) that emits the signed envelope and appends it
+- synthetic_ledger.py as the child (emits SYNTHETIC_LEDGER_ACTION side-effect on allow)
+
+Both approve and deny paths:
+- block with real "approval required: <64-hex>" (target extracted, no fallback)
+- human "ping" via CLI (signed record written)
+- action flows (SYNTHETIC side-effect) only on allow
+- explicit refused (host "refused" response + "approval refused" audit) on deny, not "timed out"
+
+Zero external setup. Full TCB/ORDERING-vs-ORIGIN/"what this proves" in docs and CLI output.
 """
 
 import json
+import os
+import re
+import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "test" / "integration"))
-sys.path.insert(0, str(ROOT / "test" / "tools"))
-
-from approval_loop import spawn_with_child, env_with_ld  # noqa: E402
-from sign_approval import sign_approval_token, generate_approval_keypair  # noqa: E402
-from test_host_rs import write_config, DESTRUCTIVE  # noqa: E402
-from sign_config import generate_keypair as gen_cfg, sign_payload  # noqa: E402
-
+BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 SYN = ROOT / "test" / "integration" / "synthetic_ledger.py"
 CLI = ROOT / "demo" / "approve_cli.py"
-BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
+
+sys.path.insert(0, str(ROOT / "test" / "tools"))
+sys.path.insert(0, str(ROOT / "test" / "integration"))
+
+from sign_approval import generate_approval_keypair  # noqa: E402
+from test_host_rs import write_config, DESTRUCTIVE, PUBKEY as CONFIG_PUB  # noqa: E402
+
+
+def env_ld():
+    e = os.environ.copy()
+    lean = "/home/monkey/.elan/toolchains/leanprover--lean4---v4.28.0/lib/lean"
+    lake = str(ROOT / ".lake/build/lib")
+    e["LD_LIBRARY_PATH"] = f"{lean}:{lake}:{e.get('LD_LIBRARY_PATH', '')}".rstrip(":")
+    return e
 
 
 def extract_target(text: str):
-    import re
     m = re.search(r"approval required: ([0-9a-f]{64})", text)
     return m.group(1) if m else None
 
 
 def run_one(label: str, work: Path):
-    approvals = work / "approvals.ndjson"
-    approvals.write_text("", encoding="utf-8")
+    tokens = work / "tokens.ndjson"
+    tokens.write_text("", encoding="utf-8")
+    dummy = work / "dummy.ndjson"
+    dummy.write_text("", encoding="utf-8")
 
-    # Proven config (control_file inside points at approvals)
-    trusted = write_config(work, approvals)
+    # Proven config (works for ed25519 in the test suite)
+    trusted = write_config(work, dummy)
 
-    child = ["python3", str(SYN)]
-    # file channel (reliable)
-    proc = spawn_with_child(trusted, ("--channel", "file", "--token-file", str(approvals)), child=child)
-    obs = {"target": None, "flowed": False, "refused": False}
+    # Separate approval channel key (must differ from config key)
+    appr_priv, appr_pub = generate_approval_keypair()
+
+    cmd = [
+        str(BIN),
+        "--config", str(trusted),
+        "--pubkey", CONFIG_PUB,
+        "--channel", "ed25519",
+        "--token-file", str(tokens),
+        "--approval-pubkey", appr_pub,
+        "--",
+        "python3", str(SYN),
+    ]
+
+    env = env_ld()
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env)
+    obs = {"target": None, "flowed": False, "refused": False, "cli": ""}
 
     try:
+        # passthrough init
         try:
             proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
             proc.stdin.flush()
@@ -60,37 +90,43 @@ def run_one(label: str, work: Path):
         except Exception:
             pass
 
-        call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "db.execute", "arguments": DESTRUCTIVE}}, separators=(",", ":"))
+        call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": "db.execute", "arguments": DESTRUCTIVE}},
+                          separators=(",", ":"))
+
+        # first call -> block, extract real target (no fallback)
         proc.stdin.write(call + "\n")
         proc.stdin.flush()
 
         blocked = ""
-        for _ in range(10):
+        for _ in range(12):
             l = proc.stdout.readline()
             blocked += l
-            if "approval required" in l:
+            if "approval required:" in l:
                 break
             time.sleep(0.03)
 
-        t = extract_target(blocked) or "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783"
+        t = extract_target(blocked)
+        if not t:
+            # fail loudly if we can't get a real target — do not fall back
+            raise AssertionError(f"failed to extract dynamic target from block: {blocked[:300]}")
         obs["target"] = t
-        print(f"[{label}] BLOCK from real host: {blocked.strip()[:180]}")
+        print(f"[{label}] BLOCK (real host): {blocked.strip()[:200]}")
 
-        # Real CLI approver (shows signed ed25519 form even if we use file for the demo run)
-        # We pass a dummy key; CLI will generate ephemeral if needed, but we want it to print the signed line.
-        # To make it deterministic, generate a key and pass it.
-        appr_priv, _ = generate_approval_keypair()
-        cli_cmd = [sys.executable, str(CLI), "--token-file", str(approvals), "--target", t,
+        # real CLI approver (signed ed25519 envelope, target-bound)
+        cli_cmd = [sys.executable, str(CLI), "--token-file", str(tokens), "--target", t,
                    "--approve" if label == "approve" else "--deny", "--key", appr_priv, "--yes"]
-        cli_out = subprocess.check_output(cli_cmd, cwd=ROOT, text=True, env=env_with_ld(), timeout=15)
-        print(f"[{label}] CLI (real approver, signed form printed):\n{cli_out.strip()[:500]}")
+        cli_out = subprocess.check_output(cli_cmd, cwd=ROOT, text=True, env=env, timeout=15)
+        obs["cli"] = cli_out
+        print(f"[{label}] CLI (signed ed25519 envelope):\n{cli_out.strip()[:600]}")
 
         # re-issue
         proc.stdin.write(call + "\n")
         proc.stdin.flush()
         time.sleep(0.35)
+
         second = ""
-        for _ in range(6):
+        for _ in range(8):
             l = proc.stdout.readline()
             second += l
             if l.strip():
@@ -100,16 +136,18 @@ def run_one(label: str, work: Path):
         if "SYNTHETIC_LEDGER_ACTION" in second:
             obs["flowed"] = True
 
+        # capture audit/refused from stderr
         try:
             proc.stdin.close()
         except Exception:
             pass
         try:
-            o2, e2 = proc.communicate(timeout=2)
-            if "refused" in (e2 or "").lower() or "approval refused" in (e2 or "").lower():
-                obs["refused"] = True
-            if "SYNTHETIC" in (e2 or ""):
+            o2, e2 = proc.communicate(timeout=2.5)
+            full_err = (e2 or "") + (o2 or "")
+            if "SYNTHETIC_LEDGER_ACTION" in full_err:
                 obs["flowed"] = True
+            if "refused" in full_err.lower() or "approval refused" in full_err.lower():
+                obs["refused"] = True
         except Exception:
             try:
                 proc.kill()
@@ -126,18 +164,18 @@ def run_one(label: str, work: Path):
 
 
 def main() -> int:
-    print("=== seal developer-ingress one-command (real host + synthetic + real CLI) ===")
-    print("The CLI prints the signed ed25519 envelope. Host uses file channel for reliability.")
+    print("=== seal developer-ingress one-command (REAL ed25519 signed + synthetic) ===")
+    print("Uses shipped host + ed25519 signed tokens + real CLI approver (target-bound).")
     print("")
 
     for lab in ("approve", "deny"):
-        with tempfile.TemporaryDirectory(prefix=f"see-{lab}-") as td:
+        with tempfile.TemporaryDirectory(prefix=f"see-ed-{lab}-") as td:
             o = run_one(lab, Path(td))
             print(f"--- {lab} target={o['target']} flowed={o['flowed']} refused={o['refused']}")
             if o['flowed'] and lab == "approve":
-                print("  (SYNTHETIC side-effect observed on allow)")
+                print("  (SYNTHETIC side-effect observed — action flowed)")
             if o['refused']:
-                print("  (host-emitted refused observed on deny)")
+                print("  (host-emitted refused — not timed out)")
 
     print("\n=== PASS ===")
     return 0

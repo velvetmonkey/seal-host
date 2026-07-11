@@ -23,9 +23,9 @@ echo "=== 2. cargo test (providers decline) ===" | tee "$SCRATCH/cargo-test.log"
   export LD_LIBRARY_PATH="/home/monkey/.elan/toolchains/leanprover--lean4---v4.28.0/lib/lean:/home/monkey/src/seal-host/.lake/build/lib:${LD_LIBRARY_PATH:-}"; \
   cargo test ed25519_provider_accepts_signed_decline_and_allow --lib 2>&1 ) | tee -a "$SCRATCH/cargo-test.log" || true
 
-echo "=== 3. quickstart x2 (documented entrypoint over synthetic) ===" | tee "$SCRATCH/quickstart-1.log"
+echo "=== 3. quickstart x2 (documented entrypoint over synthetic, fresh state each) ==="
 ( cd "$ROOT"; python3 demo/see_the_loop.py ) 2>&1 | tee "$SCRATCH/quickstart-1.log" || true
-cp "$SCRATCH/quickstart-1.log" "$SCRATCH/quickstart-2.log" || true
+( cd "$ROOT"; python3 demo/see_the_loop.py ) 2>&1 | tee "$SCRATCH/quickstart-2.log" || true
 
 echo "=== 4. consumer (real Ed25519TokenProvider) ===" | tee "$SCRATCH/signer-consumer.log"
 ( cd "$ROOT"; python3 test/integration/test_approval_consumer.py ) 2>&1 | tee "$SCRATCH/signer-consumer.log" || true
