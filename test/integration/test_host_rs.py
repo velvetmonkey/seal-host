@@ -63,10 +63,13 @@ def rpc(mid, name, arguments):
     return {"jsonrpc": "2.0", "id": mid, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
 
 
-def spawn(config: Path, extra_args=()):
+def spawn(config: Path, extra_args=(), child=None):
+    """Spawn the real rust host. child: list for the command after -- (defaults to mock)."""
+    if child is None:
+        child = ["python3", str(ROOT / "test" / "integration" / "mock_mcp_server.py")]
     return subprocess.Popen(
         [str(BIN), "--config", str(config), "--pubkey", PUBKEY, *extra_args,
-         "--", "python3", str(ROOT / "test" / "integration" / "mock_mcp_server.py")],
+         "--", *child],
         cwd=ROOT,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

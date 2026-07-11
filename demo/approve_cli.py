@@ -32,6 +32,7 @@ Exactly what Ed25519TokenProvider verifies.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -79,6 +80,7 @@ def main() -> int:
     p.add_argument("--nonce", help="override nonce (default: random uuid)")
     p.add_argument("--issued-at", type=int, help="override issuedAt ms (default: now)")
     p.add_argument("--yes", "-y", action="store_true", help="do not prompt for confirmation")
+    p.add_argument("--plain", action="store_true", help="DEV-ONLY: write plain unauth record (for control-file demo); default is signed envelope for ed25519-token")
     args = p.parse_args()
 
     if args.approve and args.deny:
@@ -104,7 +106,13 @@ def main() -> int:
     nonce = args.nonce or uuid.uuid4().hex
     issued = args.issued_at or now_ms()
 
-    line = sign_approval_token(priv, target, issued, nonce, allow=allow)
+    if args.plain:
+        # DEV-ONLY unauth path for control-file quickstart demos
+        plain = json.dumps({"target": target, "issuedAt": issued, "nonce": nonce} | ({"decision": "deny"} if not allow else {}), separators=(",", ":"))
+        line = plain
+        print("WARNING: --plain writes DEV-ONLY UNAUTHENTICATED record (control-file). Real usage uses the signed envelope (no --plain).")
+    else:
+        line = sign_approval_token(priv, target, issued, nonce, allow=allow)
 
     # Append atomically enough for demo (single writer assumption)
     with token_path.open("a", encoding="utf-8") as f:
