@@ -10,6 +10,7 @@ package if available; the ed25519 scenarios are skipped (loudly) without it.
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -239,11 +240,47 @@ def test_ed25519_requires_signed_config_and_key_separation():
         assert "config signing key must differ from approval signing key" in err
 
 
+def test_ed25519_signed_decline_produces_refused():
+    """Real Ed25519TokenProvider + main short-circuit for explicit signed decline.
+    After a block, a signed decline for the target must produce 'refused' response
+    and 'approval refused' / 'refused' in audit (not a plain timeout or generic deny).
+    """
+    keys = make_ed25519()
+    if keys is None:
+        print("SKIP decline e2e (no crypto)", file=sys.stderr)
+        return
+    sk, pk_hex = keys
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        approvals = tmp / "approvals.ndjson"; approvals.write_text("", encoding="utf-8")
+        tokens = tmp / "tokens.ndjson"; tokens.write_text("", encoding="utf-8")
+        config = write_config(tmp, approvals)
+        proc = spawn(config, ("--channel", "ed25519", "--token-file", str(tokens), "--approval-pubkey", pk_hex))
+        r = call(proc, 99, "db.execute", DESTRUCTIVE)
+        assert r["result"]["isError"] is True
+        t = DB_TARGET
+        for c in r.get("result", {}).get("content", []):
+            mm = re.search(r"approval required: ([0-9a-f]{64})", c.get("text", ""))
+            if mm: t = mm.group(1)
+        now = int(time.time() * 1000)
+        dl = sign_token(sk, t, now, "decline-e2e-1", allow=False)
+        with tokens.open("a", encoding="utf-8") as f:
+            f.write(dl + "\n")
+        r2 = call(proc, 100, "db.execute", DESTRUCTIVE)
+        txt = ""
+        for c in r2.get("result", {}).get("content", []):
+            txt += c.get("text", "")
+        assert "refused" in txt.lower() or "refused" in str(r2).lower(), f"decline must produce refused: {r2}"
+        _, e = proc.communicate(timeout=5)
+        assert "refused" in (e or "").lower() or "approval refused" in (e or "").lower()
+
+
 def main() -> int:
     assert BIN.exists(), f"build first: cargo build (missing {BIN})"
     test_file_channel_all_kernels()
     test_ed25519_channel_and_a3()
     test_ed25519_requires_signed_config_and_key_separation()
+    test_ed25519_signed_decline_produces_refused()
     print("all rust-host e2e tests passed")
     return 0
 

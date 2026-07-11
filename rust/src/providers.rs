@@ -143,11 +143,21 @@ impl ApprovalProvider for ControlFileProvider {
         let mut poll = ApprovalPoll::default();
         for line in fresh {
             // Support dev unauth declines via "decision":"deny" (still unauthenticated).
+            // IMPORTANT: if the line claims to be a deny, we MUST parse as DeclineRecord
+            // or drop it. Never fall through to ApprovalRecord (that would treat decline as allow).
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
                 if v.get("decision").and_then(|d| d.as_str()) == Some("deny") {
                     match serde_json::from_str::<DeclineRecord>(line) {
                         Ok(d) => { poll.declines.push(d); continue; }
-                        Err(_) => {}
+                        Err(_) => {
+                            poll.warnings.push(ApprovalDropWarning::new(
+                                &mut self.drop_counter,
+                                source,
+                                "parse_error",
+                                line.as_bytes(),
+                            ));
+                            continue;
+                        }
                     }
                 }
             }

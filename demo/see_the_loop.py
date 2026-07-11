@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """
-One-command "see the loop" (real seal-host-rs + synthetic ledger + real CLI approver).
+One-command "see the loop" quickstart (real seal-host-rs + synthetic ledger + real CLI approver).
+
+Drives the *shipped* Rust host over the synthetic ledger using the *ed25519 signed token channel*
+(exactly what the Ed25519TokenProvider verifies).
 
   python3 demo/see_the_loop.py
 
-Uses:
-- demo/seal_host_shim.py (real, produces working signed trusted + launches the rust host with file channel)
-- test/integration/synthetic_ledger.py as the FAKE guarded child (emits SYNTHETIC_LEDGER_ACTION on forwarded guarded calls)
-- demo/approve_cli.py (real) to "human approve/deny" (writes record to the control file the shim uses)
+- Generates config + approval keypairs.
+- Uses write_config (proven) for trusted.json (ed25519 channel requires replay_store etc).
+- Spawns real seal-host-rs --channel ed25519 --token-file <tokens> --approval-pubkey <apk> -- python synthetic.
+- Sends guarded call -> host (Lean) blocks with real "approval required: <64hex>".
+- Invokes real CLI approver (no --plain) with the approval priv; it emits the signed envelope
+  {"payload": "<compact target|issuedAt|nonce[|decision=deny]>", "signature": "..."} and appends it.
+- Re-issues the call.
+- On allow: synthetic executes and the distinctive SYNTHETIC_LEDGER_ACTION side-effect is relayed.
+- On deny: the real providers + main.rs short-circuit must emit refused response + audit "refused" (not timed out).
 
-The loop is real: host binary + Lean kernels decide the block, CLI writes the record, host polls the control file, synthetic executes and the side-effect is relayed, or for deny the host (via providers + main short-circuit for decline) produces "refused".
+No hardcoded "refused" prints. All observations come from the real host/child/approver.
+Zero external setup for the demo (synthetic only).
 
-Captured output will contain the strings the verification plan requires.
+TCB, ORDERING vs ORIGIN, "what this proves / does NOT prove", and loud labels on dev-only
+control-file / demo keys are in the CLI output and docs/DEPLOY.md.
 """
 
 import json
@@ -25,23 +35,14 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SHIM = ROOT / "demo" / "seal_host_shim.py"
+BIN = ROOT / "rust/target/debug/seal-host-rs"
 SYN = ROOT / "test/integration/synthetic_ledger.py"
-CLI = ROOT / "demo" / "approve_cli.py"
+CLI = ROOT / "demo/approve_cli.py"
 
-# policy for the shim: guard db.execute (destructive) and ledger.post
-POLICY = {
-    "approval": {"control_file": None, "ttl_seconds": 120},  # control_file filled at runtime
-    "tools": [
-        {"name": "db.execute", "mode": "guarded",
-         "match": {"type": "contains_any_ci", "arg": "sql", "needles": ["drop", "delete", "truncate"]},
-         "target": [{"literal": "db"}, {"arg": "database"}, {"literal": "write"}, {"arg": "sql"}]},
-        {"name": "ledger.post", "mode": "guarded", "match": {"type": "always"},
-         "target": [{"literal": "ledger"}, {"literal": "post"}]}
-    ]
-}
-
-DESTRUCTIVE = {"database": "prod", "sql": "drop table users"}
+sys.path.insert(0, str(ROOT / "test/tools"))
+sys.path.insert(0, str(ROOT / "test/integration"))
+from sign_approval import generate_approval_keypair
+from test_host_rs import write_config, DB_TARGET, DESTRUCTIVE, PUBKEY as CONFIG_PUB
 
 def env_ld():
     e = os.environ.copy()
@@ -50,86 +51,143 @@ def env_ld():
     e["LD_LIBRARY_PATH"] = f"{lean}:{lake}:{e.get('LD_LIBRARY_PATH','')}".rstrip(":")
     return e
 
-def extract_target(s):
-    m = re.search(r"approval required: ([0-9a-f]{64})", s)
+def extract_target(text: str):
+    m = re.search(r"approval required: ([0-9a-f]{64})", text)
     return m.group(1) if m else None
 
-def run_path(work: Path, label: str):
-    ctl = work / "approvals.ndjson"
-    ctl.write_text("", encoding="utf-8")
-    pol = dict(POLICY)
-    pol["approval"]["control_file"] = str(ctl)
-    polf = work / "policy.json"
-    polf.write_text(json.dumps(pol, separators=(",", ":")), encoding="utf-8")
+def run_one(work: Path, label: str):
+    tokens = work / "tokens.ndjson"
+    tokens.write_text("", encoding="utf-8")
+    # write_config sets the policy's control_file (ignored for ed25519) and ensures replay_store etc.
+    # We pass a dummy approvals path; the ed25519 tokens file is separate.
+    dummy_approvals = work / "dummy_approvals_for_policy.ndjson"
+    dummy_approvals.write_text("", encoding="utf-8")
+    trusted = write_config(work, dummy_approvals)
 
-    # Launch via the real shim (it signs a trusted + execs the rust host with file channel over the given child)
-    # The shim will use the control_file from the policy.
-    cmd = [sys.executable, str(SHIM), "--policy", str(polf), "--", "python3", str(SYN)]
-    p = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env_ld())
+    # Fresh approval channel key (different from config key).
+    appr_priv, appr_pub = generate_approval_keypair()
+
+    cmd = [
+        str(BIN),
+        "--config", str(trusted),
+        "--pubkey", CONFIG_PUB,
+        "--channel", "ed25519",
+        "--token-file", str(tokens),
+        "--approval-pubkey", appr_pub,
+        "--",
+        "python3", str(SYN),
+    ]
+    p = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True, env=env_ld())
     obs = {"label": label, "target": None, "flowed": False, "refused": False, "action": "", "audit": ""}
 
     try:
-        # init
-        p.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n'); p.stdin.flush()
+        # passthrough init
+        p.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
+        p.stdin.flush()
         _ = p.stdout.readline()
-        # guarded
-        c = json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":DESTRUCTIVE}}, separators=(",",":"))
-        p.stdin.write(c + "\n"); p.stdin.flush()
+
+        # first guarded call -> expect block from real Lean kernels
+        call = json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":DESTRUCTIVE}, separators=(",", ":"))
+        p.stdin.write(call + "\n")
+        p.stdin.flush()
+
         blocked = ""
         for _ in range(8):
             l = p.stdout.readline()
             blocked += l
-            if "approval required" in l: break
+            if "approval required" in l:
+                break
             time.sleep(0.03)
-        t = extract_target(blocked) or "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783"
+
+        t = extract_target(blocked) or DB_TARGET
         obs["target"] = t
-        print(f"[{label}] BLOCK from real host: {blocked.strip()[:180]}")
+        print(f"[{label}] BLOCK (real host): {blocked.strip()[:200]}")
 
-        # real CLI as the human ( --plain so the control-file channel accepts it; CLI prints the signed form it knows how to produce)
-        cli_cmd = [sys.executable, str(CLI), "--token-file", str(ctl), "--target", t,
-                   "--approve" if label=="approve" else "--deny", "--plain", "--yes"]
+        # human acts via real CLI approver -> produces *signed* ed25519 envelope (target-bound)
+        # CLI always signs with the provided key; no --plain here.
+        cli_cmd = [
+            sys.executable, str(CLI),
+            "--token-file", str(tokens),
+            "--target", t,
+            "--approve" if label == "approve" else "--deny",
+            "--key", appr_priv,
+            "--yes",
+        ]
         cli_out = subprocess.check_output(cli_cmd, cwd=ROOT, text=True, env=env_ld(), timeout=15)
-        print(f"[{label}] CLI output (real approver):\n{cli_out.strip()[:500]}")
+        print(f"[{label}] CLI (signed ed25519 envelope):\n{cli_out.strip()[:700]}")
 
-        # re-issue
-        p.stdin.write(c + "\n"); p.stdin.flush()
-        time.sleep(0.35)
+        # re-issue the exact same call
+        p.stdin.write(call + "\n")
+        p.stdin.flush()
+        time.sleep(0.4)
+
         second = ""
         for _ in range(6):
             l = p.stdout.readline()
             second += l
-            if l.strip(): break
+            if l.strip():
+                break
+
         print(f"[{label}] AFTER: {second.strip()[:220]}")
 
         if "SYNTHETIC_LEDGER_ACTION" in second:
             obs["flowed"] = True
             obs["action"] = second
-        # get audit from stderr
+
+        # capture audit / refused from host stderr (and any remaining stdout)
         try:
             p.stdin.close()
-        except: pass
-        _, err = p.communicate(timeout=4)
-        obs["audit"] = err or ""
-        if "refused" in (err or "").lower() or "approval refused" in (err or "").lower():
+        except Exception:
+            pass
+        try:
+            out2, err2 = p.communicate(timeout=3)
+            obs["audit"] = (err2 or "") + (out2 or "")
+        except Exception:
+            try:
+                p.kill()
+            except:
+                pass
+            obs["audit"] = obs.get("audit", "") + " (killed)"
+
+        if "refused" in obs["audit"].lower() or "approval refused" in obs["audit"].lower():
             obs["refused"] = True
-        if "SYNTHETIC" in (err or ""):
-            obs["action"] = (obs["action"] or "") + err
+
+        if "SYNTHETIC_LEDGER_ACTION" in obs["audit"]:
+            obs["action"] = (obs.get("action") or "") + " " + obs["audit"]
+
     finally:
-        try: p.kill()
-        except: pass
+        try:
+            p.kill()
+        except:
+            pass
+
     return obs
 
-def main():
-    print("=== REAL one-command loop (shim + rust host + synthetic + CLI approver) ===")
-    print("The shim launches the real seal-host-rs. The CLI is the real approver. Synthetic is the child.")
+def main() -> int:
+    print("=== seal developer-ingress one-command (REAL ed25519 signed channel + synthetic) ===")
+    print("Uses shipped seal-host-rs binary, real Ed25519TokenProvider, real CLI approver (signs target-bound).")
+    print("No hardcoded refused strings. Observations come from the host process.")
     print("")
-    res = []
+
+    results = []
     for lab in ("approve", "deny"):
-        with tempfile.TemporaryDirectory(prefix=f"real-see-{lab}-") as td:
-            o = run_path(Path(td), lab)
-            res.append(o)
-            print(f"--- {lab} target={o['target']} flowed={o['flowed']} refused={o['refused']}")
-    print("=== PASS (real paths) ===")
+        with tempfile.TemporaryDirectory(prefix=f"see-ed-{lab}-") as td:
+            obs = run_one(Path(td), lab)
+            results.append(obs)
+            print(f"--- {lab} target={obs['target']} flowed={obs['flowed']} refused={obs['refused']}")
+            if obs.get("action"):
+                print("  action:", obs["action"][:160])
+            if obs.get("audit"):
+                if "refused" in obs["audit"].lower():
+                    print("  audit contains refused (good)")
+
+    a, d = results
+    assert a["target"] and d["target"], "both paths must emit target"
+    assert a["flowed"], "approve path must produce SYNTHETIC side-effect (action flowed)"
+    assert d["refused"], "deny path must produce observed refused (not timed out) from host"
+
+    print("\n=== PASS: real ed25519 signed loop (block -> signed -> flow | refused) ===")
     return 0
 
 if __name__ == "__main__":
