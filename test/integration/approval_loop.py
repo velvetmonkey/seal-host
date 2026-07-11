@@ -28,8 +28,8 @@ BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 
 # Import sign helpers (real ones)
 sys.path.insert(0, str(ROOT / "test" / "tools"))
-from sign_approval import sign_approval_token  # noqa: E402
-from sign_config import sign_payload, generate_keypair as gen_cfg  # noqa: E402
+from sign_approval import sign_approval_token, generate_approval_keypair  # noqa: E402
+from sign_config import sign_payload  # noqa: E402
 
 
 def env_with_ld():
@@ -193,13 +193,12 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
     dummy.write_text("", encoding="utf-8")
 
     # Use the test's write_config to get a trusted that works for ed25519 (includes replay etc.)
-    # Import here to avoid circular at module load if needed.
     sys.path.insert(0, str(ROOT / "test" / "integration"))
     from test_host_rs import write_config, PUBKEY as CONFIG_PUB  # noqa: E402
 
     trusted = write_config(work_dir, dummy)
 
-    appr_priv, appr_pub = generate_approval_keypair()  # from sign_approval
+    appr_priv, appr_pub = generate_approval_keypair()
 
     cmd = [
         str(BIN),
