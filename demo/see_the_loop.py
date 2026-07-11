@@ -135,6 +135,8 @@ def run_one(label: str, work: Path):
 
         if "SYNTHETIC_LEDGER_ACTION" in second:
             obs["flowed"] = True
+        if "refused" in second.lower() or "approval refused" in second.lower():
+            obs["refused"] = True
 
         # capture audit/refused from stderr
         try:
