@@ -190,19 +190,25 @@ echo '{"target": "<64-hex-from-block-message>", "issuedAt": '"$(date +%s000)"'}'
 The approval is **one-shot** (consumed by the first matching call) and expires after the
 policy's ttl. Malformed lines are skipped fail-closed.
 
-## 9. Re-run and read the receipt
+## 9. Re-run and read the audit record
 
-Re-issue the same call. It now passes to the child server, and the host emits a receipt
-for the decision. Where it lands: **the host's stderr**, two lines per decision — the raw
-audit line, then the receipt-chain record as a single JSON line. To keep them, redirect
-stderr when you start the host (e.g. append `2>>/tmp/seal-receipts.log` to the command in
-step 5) and pull the last JSON line. Verify it independently:
+Re-issue the same call. It now passes to the child server, and the host records the
+decision on **its stderr** — two lines per decision: the raw audit line, then a
+tamper-evident chain record as a single JSON line
+(`{"seal_record":"v1","entry":N,"commitment":"...","head":"..."}`). To keep them, redirect
+stderr when you start the host (e.g. append `2>>/tmp/seal-audit.log` to the command in
+step 5).
 
-- in a browser with `seal-check`, or
-- at the CLI with `seal verify` from `seal-assurance-kit`.
+That chain record is an append-only audit chain: each `head` commits to every prior
+decision, so a dropped or altered line breaks head-continuity — recompute the chain to
+check its integrity. It is the deployed host's audit trail. It is **not** the fully
+re-derivable schema-v2 *decision* receipt that `seal-check` and `seal verify` validate;
+that receipt — where you re-derive the verdict from the request bytes in a browser — is
+shown end-to-end in [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo) and
+checkable with `seal-check` there.
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
-once, and a receipt anyone can re-check.
+once, and every decision written to a tamper-evident audit chain.
 
 ---
 
