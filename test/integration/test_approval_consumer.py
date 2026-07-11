@@ -11,6 +11,7 @@ with matching tool args, assert the explicit "approval refused (signed decline" 
 is present in combined stdout+stderr, print the full transcript.
 """
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -24,12 +25,18 @@ def main() -> int:
     ROOT = Path(__file__).resolve().parents[2]
 
     print("=== Step A: real Ed25519TokenProvider unit test ===")
+    env = os.environ.copy()
+    lean = "/home/monkey/.elan/toolchains/leanprover--lean4---v4.28.0/lib/lean"
+    lake = str(ROOT / ".lake/build/lib")
+    env["LIBRARY_PATH"] = f"{lean}:{lake}:{env.get('LIBRARY_PATH', '')}".rstrip(":")
+    env["LD_LIBRARY_PATH"] = f"{lean}:{lake}:{env.get('LD_LIBRARY_PATH', '')}".rstrip(":")
     res = subprocess.run(
         ["cargo", "test", "ed25519_provider_accepts_signed_decline_and_allow", "--lib"],
         cwd=ROOT / "rust",
         capture_output=True,
         text=True,
         timeout=120,
+        env=env,
     )
     print(res.stdout)
     print(res.stderr)
