@@ -31,7 +31,7 @@ matching one-shot approval into the approval channel.
 
 ## 0. Prerequisites
 
-- The Lean toolchain (`lean-toolchain` pins the version) and Rust (stable) for building.
+- The Lean toolchain (`lean-toolchain` pins the version; install via [`elan`](https://github.com/leanprover/elan)) and Rust (stable) for building.
 - Python 3 with the `cryptography` package (for the config signer).
 - A child MCP server to guard. Anything stdio works; a filesystem or sqlite MCP server
   makes the destructive-call demo obvious.
@@ -44,11 +44,16 @@ One-shot, from the repo root:
 scripts/build_all.sh          # runs all four steps below in order
 ```
 
-Or run them by hand:
+The first `lake build` is the long pole of this whole guide — the Lean core compiles from
+source. Good use of that time: read the family's proved-vs-deployed map,
+[EVALUATOR-START.md](https://github.com/velvetmonkey/seal/blob/main/EVALUATOR-START.md) —
+by the time the build finishes you will know exactly what this host does and does not claim.
+
+Or run the steps by hand:
 
 ```sh
 lake build                    # Lean core + FFI
-lake exe axiom_check          # optional: confirm the axiom footprint
+lake exe axiom_check          # confirm the axiom footprint (the one-shot script always runs it)
 scripts/build_ffi_so.sh       # build the FFI shared object the Rust host loads
 cd rust && cargo build && cd ..
 # binary: rust/target/debug/seal-host-rs
@@ -167,6 +172,11 @@ Have the agent call a guarded tool (e.g. a `db.execute` whose SQL contains `drop
 call is blocked before the child server sees it, and the block message prints the exact
 **target commitment** (a 64-hex SHA-256). Copy that hex.
 
+Where you see it: the block goes back to the **caller** as the JSON-RPC error on the MCP
+wire (your agent client will surface it, `approval required: <64-hex>`), and the decision's
+audit line lands on the **host's stderr**. The hex appears in both — whichever surface is
+in front of you works.
+
 ## 8. Approve, one shot
 
 Append one line to the approval file. `target` is the hex from the block message;
@@ -180,16 +190,25 @@ echo '{"target": "<64-hex-from-block-message>", "issuedAt": '"$(date +%s000)"'}'
 The approval is **one-shot** (consumed by the first matching call) and expires after the
 policy's ttl. Malformed lines are skipped fail-closed.
 
-## 9. Re-run and read the receipt
+## 9. Re-run and read the audit record
 
-Re-issue the same call. It now passes to the child server, and the host emits a receipt
-(a signed JSON line) for the decision. Verify it independently:
+Re-issue the same call. It now passes to the child server, and the host records the
+decision on **its stderr** — two lines per decision: the raw audit line, then a
+tamper-evident chain record as a single JSON line
+(`{"seal_record":"v1","entry":N,"commitment":"...","head":"..."}`). To keep them, redirect
+stderr when you start the host (e.g. append `2>>/tmp/seal-audit.log` to the command in
+step 5).
 
-- in a browser with `seal-check`, or
-- at the CLI with `seal verify` from `seal-assurance-kit`.
+That chain record is an append-only audit chain: each `head` commits to every prior
+decision, so a dropped or altered line breaks head-continuity — recompute the chain to
+check its integrity. It is the deployed host's audit trail. It is **not** the fully
+re-derivable schema-v2 *decision* receipt that `seal-check` and `seal verify` validate;
+that receipt — where you re-derive the verdict from the request bytes in a browser — is
+shown end-to-end in [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo) and
+checkable with `seal-check` there.
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
-once, and a receipt anyone can re-check.
+once, and every decision written to a tamper-evident audit chain.
 
 ---
 

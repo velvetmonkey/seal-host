@@ -17,6 +17,14 @@ This is the thing you actually run. An agent's tool calls pass through seal-host
 
 ## What happens when an agent tries to use a production tool
 
+<!-- TODO(asset, shot #5, PROMO-GRADE): real terminal GIF (asciinema) of the full loop —
+     guarded db.execute BLOCKED with the 64-hex target commitment visible, human appends the
+     approval line, the identical call passes, receipt JSON line printed. Capture from the
+     docs/DEPLOY.md walkthrough. Do NOT fake or mock this capture. -->
+<!-- TODO(asset, shot #6, AI-generatable): clean diagram — agent → seal-host (guard) →
+     real MCP server, approval channel as side input, receipt as output. Cleaner render of
+     the ASCII art in docs/DEPLOY.md. -->
+
 The Rust host receives MCP traffic and forwards ordinary traffic unchanged. When a guarded `tools/call` arrives, it gathers approval records, filters them for freshness and replay, and calls the Lean kernel through the FFI surface. A matching approval routes the original call forward. No match returns a JSON-RPC error before the downstream tool sees anything.
 
 The host also writes records. The production record chain uses SHA-256. Per-kernel `certHash` values remain the legacy UInt64 audit seals; they are not the target commitment and they are not the record-chain commitment.
@@ -26,6 +34,8 @@ The host also writes records. The production record chain uses SHA-256. Per-kern
 Seal's proof story is intentionally narrow. The Lean theorems cover the mediation kernel and selected model properties. The binaries and browser artifacts are connected to that proof by reproducible conformance tests, not by a theorem about every compiled instruction.
 
 Start with the family [claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md) (one table: proven / tested / assumed / not claimed), then [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md) for theorem names and file locations, [docs/CONFORMANCE.md](docs/CONFORMANCE.md) for the byte-identity claim, and [docs/TCB.md](docs/TCB.md) for what remains trusted.
+
+This repo also carries the distributed transfer: the coordination-free no-double-spend impossibility (proven abstractly in [crdt-lean](https://github.com/velvetmonkey/crdt-lean)) applied to the gate model's real consume seam as a TTL-scoped instance — within the approval's TTL window, per concurrent replica, never "single-use forever" (`Host.AuthorityFrontierBridge`; see [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md) and the family [authorization mesh](https://github.com/velvetmonkey/seal/blob/main/docs/AUTHORIZATION-MESH.md)).
 
 Mandatory non-claims (canonical copy: [docs/LIMITATIONS.md](docs/LIMITATIONS.md)):
 
@@ -42,13 +52,9 @@ Mandatory non-claims (canonical copy: [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
 
 ## Beyond mediation: the receipt is not a covert channel
 
-The audit record does not leak the protected state. `observe_noninterference` (see [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md)) proves, machine-checked, that any two `ApprovalState`s agreeing on the single authorized bit for a request produce byte-identical decisions **and** byte-identical audit records. Secrets in the state, other sessions' approvals, the public key, consumed nonces, policy version, TTL caps, the clock, cannot flow into what an observer of the gate sees, except through that one declassified authorization bit (Goguen-Meseguer conditional non-interference). The record chain is tamper-evident under an injective hash step (`Host.Record.tamper_evident`).
+Machine-checked non-interference: any two approval states that agree on the single authorized bit for a request produce byte-identical decisions **and** byte-identical audit records — for one request (`observe_noninterference`) and across a whole session trace with the durable replay store varying (`stateful_noninterference_trace`). The record chain is tamper-evident under an injective hash step (`Host.Record.tamper_evident` — notably an **axiom-free** theorem: collision resistance and genesis freshness enter as explicit hypotheses, not axioms).
 
-**Cross-session, too.** The single-request guarantee extends across a session (`stateful_noninterference_trace`). Over a whole request trace, with both the protected `ApprovalState` **and** the durable replay store varying, the observable decision-plus-record trace reveals nothing about internal policy or other tenants beyond the entitled per-step verdicts.
-
-The honest boundary, stated not buried: the stateful guarantee declassifies **more** than the single-request one. The namespace fields it must expose to route replay, `publicKey`, `session`, `policyVersion`, and the prune clock, become observable across a session (`policyVersion_declassification_necessary` proves this widening is forced, not sloppy). What stays hidden: the deep secrets, `manifestDigest`, tools, approvals, `maxApprovalTtl`, `consumedNonces`. So: single-request hides all but the one auth bit; cross-session additionally reveals the namespace fields and the clock, and nothing deeper.
-
-Boundary (stated, not hidden): these are **model-level** non-interference results over `SealV2.decide` and `Host.auditLine` (single-request `observe_noninterference`; cross-session `stateful_noninterference_trace` + `replay_isolation_trace`). They do not cover timing or size side-channels, or a deployment that routes `ApprovalState`-derived data into a host `reason` string (that flow is outside the theorem). Axiom footprint `{propext, Classical.choice, Quot.sound}`.
+Boundary, stated not hidden: these are **model-level** results over `SealV2.decide` and `Host.auditLine`; the cross-session guarantee necessarily declassifies the replay-routing namespace fields (`publicKey`, `session`, `policyVersion`, and the prune clock — `policyVersion_declassification_necessary` proves that widening is forced, not sloppy), and timing/size side-channels are out of scope. Theorem-by-theorem detail, including exactly what stays hidden: [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md).
 
 ## Verify in five minutes
 
@@ -78,9 +84,10 @@ _All Seal-family repositories are currently private; these links resolve only fo
 
 ## Documentation
 
+- **[Deploy: stand the gate up in front of your own agent](docs/DEPLOY.md)** — clone → build → first blocked call → approve → receipt
 - [What Seal is NOT](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/WHAT-SEAL-IS-NOT.md) — read this first (private kit repo)
 - [Family claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md) · [family architecture map](https://github.com/velvetmonkey/seal/blob/main/docs/ARCHITECTURE.md) (private umbrella)
-- [Deployment: install to first PASS/FAIL](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/DEPLOYMENT.md) (private kit repo)
+- [Receipt-evidence deployment (assurance kit): install to first PASS/FAIL](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/DEPLOYMENT.md) (private kit repo)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Threat model](docs/THREAT-MODEL.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
