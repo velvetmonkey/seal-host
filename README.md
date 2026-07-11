@@ -1,6 +1,12 @@
 # seal-host
 
-The deployable MCP host that puts the proven Seal rulebook between an agent and real tools. **Role:** The guard at the door.
+**Stops the unapproved prod action before it ever reaches your real MCP server.**
+
+An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching human approval for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident receipt.
+
+One command shows the full loop over a fake ledger in seconds (block with 64-hex target, signed approval via CLI, action or explicit refused, side-effect or audit).
+
+The proof story (Lean kernel, TCB, non-interference) comes after you have watched it work.
 
 ![Lean](https://img.shields.io/badge/Lean-4.28.0-blue)
 ![Rust](https://img.shields.io/badge/Rust-host-orange)
@@ -13,7 +19,26 @@ The deployable MCP host that puts the proven Seal rulebook between an agent and 
 <!-- truthbox:end -->
 > Map: [EVALUATOR-START.md](https://github.com/velvetmonkey/seal/blob/main/EVALUATOR-START.md) · profile detail: [PROFILE.md](PROFILE.md).
 
-This is the thing you actually run. An agent's tool calls pass through seal-host; the guarded ones stop at the door until a human has approved that exact request, and every decision walks away with a receipt. The Lean kernel decides what's allowed; the Rust host you deploy runs that decision byte-for-byte and records it. The proof says what the guard must do. The conformance tests show this host does exactly that.
+**Luxury 30-second showcase (one command, zero external setup)**
+
+After the one-time build, run:
+
+```bash
+bash scripts/showcase.sh
+```
+
+What you see:
+- `BLOCK: ... "approval required: <64-hex>"`
+- CLI signs target-bound record
+- On allow: `SYNTHETIC_LEDGER_ACTION ... (committed via approval)`
+- On deny: host emits `approval refused (signed decline...)` (not a timeout)
+- `=== PASS ===`
+
+Distinct targets, real Ed25519 signed channel, explicit refused path, full audit lines. The synthetic ledger is the fake guarded tool — pure demo, no setup.
+
+(Delegates to shipped demo/see_the_loop.py with LD paths. Setup in DEPLOY.md.)
+
+The rest of this page (and DEPLOY.md) tells you how to stand it in front of a real MCP server.
 
 ## What happens when an agent tries to use a production tool
 
