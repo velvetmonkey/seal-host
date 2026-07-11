@@ -38,6 +38,14 @@ matching one-shot approval into the approval channel.
 
 ## 1. Build the host
 
+One-shot, from the repo root:
+
+```sh
+scripts/build_all.sh          # runs all four steps below in order
+```
+
+Or run them by hand:
+
 ```sh
 lake build                    # Lean core + FFI
 lake exe axiom_check          # optional: confirm the axiom footprint
@@ -62,6 +70,9 @@ PY
 The private seed signs your config; the public hex is what the host verifies against. The
 signing key is **separate** from any approval-channel key.
 
+> Run this from the **repo root** (same for step 4): `test.tools.sign_config` is imported
+> as a package path, so `python3` must see `test/` on its path or the import fails.
+
 ## 3. Write your policy (`payload.json`)
 
 The policy names the tools you guard and what each approval binds to. Start from the
@@ -78,7 +89,7 @@ Minimal shape:
     "approval": {
       "control_file": "/tmp/seal-approvals.ndjson",
       "ttl_seconds": 120,
-      "replay_store": { "sqlite_path": "/var/lib/seal-host/replay.sqlite" }
+      "replay_store": { "sqlite_path": "/tmp/seal-host-replay.sqlite" }
     },
     "tools": [
       {
@@ -91,6 +102,11 @@ Minimal shape:
   }
 }
 ```
+
+`sqlite_path` here points at `/tmp` so the walkthrough runs on a fresh box with no
+`sudo`/`mkdir`. For a real deployment use a durable, service-owned path (e.g.
+`/var/lib/seal-host/replay.sqlite`); the durable store is what makes replay survive a
+host restart.
 
 Key facts (from the schema reference, not invented here):
 - A tool **not listed** is blocked — the policy is a fail-closed allowlist for `tools/call`.
