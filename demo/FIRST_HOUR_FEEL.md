@@ -18,6 +18,8 @@ The separation is obvious even in the first run:
 
 The loud labels ("DEV-ONLY / UNAUTHENTICATED", "button is only an intent signal", "TCB = host + CLI + key", "co-resident attacker") are right there in the CLI output and in the quickstart banner. No one can miss them.
 
+> The unsigned control-file / `approve_cli.py --plain` path exists only for keyless local smoke: it accepts approvals with no signature, so anyone who can write the token file can approve any call (the 64-hex target is not a secret). It is a disclosed dev convenience, never a production approval channel — production uses the signed ed25519-token channel. Full disclosure and the exact `--channel ed25519` swap: the "Control-file channel" section of [DEPLOY.md](../docs/DEPLOY.md).
+
 Running twice produces structurally identical transcripts (different nonces and temps), exactly what the harness wants for captured logs.
 
 Took < 3 minutes from "I wonder what this does" to having both paths and the audit evidence on disk. The docs section added to DEPLOY.md made the ORDERING (Lean) vs ORIGIN (key custody) split and the "does NOT prove" panel impossible to overlook.

@@ -143,7 +143,10 @@ rust/target/debug/seal-host-rs \
 ```
 
 - `--config` / `--pubkey`: the signed policy and the key that verifies it.
-- `--channel file`: approvals arrive as NDJSON lines in a file a human writes.
+- `--channel file`: approvals arrive as NDJSON lines in a file a human writes. **This is the
+  unauthenticated DEV-ONLY channel** used here to keep the walkthrough keyless — anyone who can
+  write the file can approve any call. For anything past a local smoke test, switch to
+  `--channel ed25519` (see "Control-file channel" below for the exact swap and why).
 - `--token-file`: that file (match `control_file` in your policy).
 - everything after `--`: the child MCP server. seal-host spawns it and proxies to it.
 
@@ -184,7 +187,9 @@ Append one line to the approval file. `target` is the hex from the block message
 
 ```sh
 # DEV-ONLY / UNAUTHENTICATED — use only for the first 10 seconds of local smoke.
+# This line has NO signature: anyone who can write the file can approve any call.
 # Real work uses the signed ed25519-token channel (CLI or Telegram approver below).
+# Full disclosure + the exact swap to --channel ed25519: "Control-file channel" section below.
 echo '{"target": "<64-hex-from-block-message>", "issuedAt": '"$(date +%s000)"'}' \
   >> /tmp/seal-approvals.ndjson
 ```
@@ -258,12 +263,33 @@ intent delivery. The key does the signature.
   client. The user's device signs; the bridge only relays the already-signed token. The
   origin TCB shrinks to the audited device client.
 
-**control-file (NDJSON plain records)**
+**Control-file channel (`--channel file`): unauthenticated, DEV-ONLY, NEVER a production approval channel**
 
-- `echo '{"target":"<hex>"}' >> /tmp/seal-approvals.ndjson`
-- **DEV-ONLY, UNAUTHENTICATED.** No signature, no origin, positional seen counter only.
-  Labeled everywhere in code, docs, and demos. Use only for the absolute first 30 seconds
-  of local smoke. Never in any environment that matters.
+- `echo '{"target":"<hex>"}' >> /tmp/seal-approvals.ndjson` — a plain NDJSON record with **no
+  signature, no origin, positional seen counter only**.
+- **What "unauthenticated" means, plainly:** the host accepts the record on nothing but its
+  presence in the file. No signature, no key, no origin check — so **anyone (or anything) that
+  can write that file can approve any call.** The 64-hex `target` is **not a secret**: it is
+  printed in the block message, on the MCP wire and on stderr, so knowing it grants no
+  authority. The *only* thing between an attacker and an approval is filesystem write access to
+  the token file — and that is a permission, not authentication.
+- **Why it exists:** a keyless path so the first ~30 seconds of a local smoke test need no key
+  material. That is its entire purpose.
+- **Do not mistake it for a guard.** It is a disclosed dev convenience, not a weak security
+  control. There is nothing to harden here and no flag makes it safe — the same goes for the
+  CLI approver's `--plain` mode, which writes exactly one of these unsigned records. Never
+  point either at anything that matters.
+- **Production MUST use the ed25519-token channel instead.** Select it by swapping the channel
+  flags — `--channel file --token-file F` becomes:
+  ```sh
+  seal-host-rs --config trusted.json --pubkey <config-hex> \
+    --channel ed25519 --token-file /path/tokens.ndjson --approval-pubkey <approval-pub-hex> \
+    -- <your-mcp-server-cmd> <args...>
+  ```
+  Now every approval must carry a valid Ed25519 signature over `(target ‖ issuedAt ‖ nonce)`
+  from the key behind `--approval-pubkey`; an unsigned or tampered line is dropped with a
+  `bad_signature` warning on stderr and the call stays blocked. Labeled everywhere in code,
+  docs, and demos; use the control-file only for the absolute first 30 seconds of local smoke.
 
 ### ORDERING vs ORIGIN (what is Lean-proven)
 
