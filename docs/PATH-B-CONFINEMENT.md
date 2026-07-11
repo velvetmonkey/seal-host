@@ -140,8 +140,7 @@ residual, and (C) fixes the hash.
 * Target commitments split from `Hash = UInt64` into `TargetHash = Digest256`;
   audit `certHash` remained the legacy UInt64 decimal-string encoding.
 * Every landed proof that kernel-`decide`s over concrete FNV values
-  (including `Host/CapabilityAdequacy.lean`'s `demoU_mirror_adequate` and
-  the SealCore separation lemmas) re-derives against new digests.
+  (for example the SealCore separation lemmas) re-derives against new digests.
 
 ---
 
