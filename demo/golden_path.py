@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Premium Seal shell golden path: deterministic CI gate + live Claude Code demo."""
+"""Premium Seal golden paths: deterministic CI gates + live Claude Code demos."""
 
 from __future__ import annotations
 
@@ -662,9 +662,13 @@ def execute(deterministic: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["shell"])
+    parser.add_argument("demo", choices=["shell", "postgres"])
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
     args = parser.parse_args()
+    if args.demo == "postgres":
+        command = [sys.executable, str(ROOT / "demo" / "golden_path_postgres.py")]
+        if args.deterministic: command.append("--deterministic")
+        return subprocess.run(command, cwd=ROOT).returncode
     try:
         return execute(args.deterministic)
     except DemoSkip as error:
