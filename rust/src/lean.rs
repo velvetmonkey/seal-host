@@ -20,8 +20,12 @@
 //!   guess.
 
 use std::ffi::c_void;
+#[cfg(unix)]
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_uint};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 type LeanObj = *mut c_void;
@@ -202,4 +206,29 @@ impl Default for LeanHost {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Resolve the shared object that supplied the decision export actually
+/// linked into this process. This is provenance only: hashing this artifact
+/// identifies the native executor; it does not prove equivalence to the wasm
+/// re-derivation body named by a decision receipt.
+#[cfg(unix)]
+pub fn loaded_ffi_path() -> Option<PathBuf> {
+    unsafe {
+        let mut info: libc::Dl_info = std::mem::zeroed();
+        let symbol = seal_host_step as *const () as *const c_void;
+        if libc::dladdr(symbol, &mut info) == 0 || info.dli_fname.is_null() {
+            return None;
+        }
+        Some(PathBuf::from(
+            CStr::from_ptr(info.dli_fname)
+                .to_string_lossy()
+                .into_owned(),
+        ))
+    }
+}
+
+#[cfg(not(unix))]
+pub fn loaded_ffi_path() -> Option<std::path::PathBuf> {
+    None
 }

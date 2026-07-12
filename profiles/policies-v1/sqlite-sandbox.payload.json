@@ -1,0 +1,38 @@
+{
+  "epoch": 1,
+  "safety": {
+    "approval": {
+      "control_file": "/ABS/PATH/.seal/unused-approvals.ndjson",
+      "ttl_seconds": 120,
+      "replay_store": {
+        "sqlite_path": "/ABS/PATH/.seal/replay.sqlite"
+      }
+    },
+    "tools": [
+      {
+        "name": "execute_sql",
+        "mode": "guarded",
+        "match": {"type": "always"},
+        "target": [
+          {"literal": "seal-sqlite-sandbox"},
+          {"arg": "sql"}
+        ]
+      },
+      {
+        "name": "search_objects",
+        "mode": "guarded",
+        "match": {"type": "always"},
+        "target": [
+          {"literal": "seal-sqlite-sandbox"},
+          {"arg": "query"}
+        ]
+      },
+      {
+        "name": "approve",
+        "mode": "deny",
+        "match": {"type": "always"},
+        "target": []
+      }
+    ]
+  }
+}

@@ -40,6 +40,7 @@ export const configPayload = {
   safety: {
     approval: { control_file: "/tmp/approvals.ndjson", ttl_seconds: 120 },
     tools: [
+      { name: "docs.read", mode: "allow", match: { type: "always" } },
       { name: "db.execute", mode: "guarded",
         match: { type: "contains_any_ci", arg: "sql", needles: ["drop", "delete", "truncate"] },
         target: [{ literal: "db" }, { arg: "database" }, { literal: "write" }, { arg: "sql" }] },
@@ -81,6 +82,8 @@ const destructive = { database: "prod", sql: "drop table users" };
 // Each scenario starts a fresh session (seal_init) then runs ordered steps.
 // expect = route the combined verdict must yield.
 export const scenarios = [
+  { name: "S/safety: explicit policy allow -> forward", kernel: "safety", steps: [
+      { input: step(rpc(1, "docs.read", { path: "README.md" })), expect: "forward" } ] },
   { name: "S/safety: guarded call, no approval -> block", kernel: "safety", steps: [
       { input: step(rpc(1, "db.execute", destructive)), expect: "block" } ] },
   // Approval is a one-time event; supplied once, the replay has no fresh approval.

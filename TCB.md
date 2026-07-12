@@ -1,5 +1,10 @@
 # Trusted Computing Base
 
+For the current policy evaluator’s proven-versus-glue map and the policy-v2
+proof backlog, see [`docs/POLICY-ASSURANCE-BOUNDARY.md`](docs/POLICY-ASSURANCE-BOUNDARY.md).
+The v2 producer's field provenance and FFI sizing are recorded in
+[`docs/RECEIPT-PRODUCER-AUDIT.md`](docs/RECEIPT-PRODUCER-AUDIT.md).
+
 What must be correct (beyond the Lean kernel checking the proofs) for the
 seal-host guarantees to hold, per deployment shape.
 

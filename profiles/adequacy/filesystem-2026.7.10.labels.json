@@ -1,0 +1,8 @@
+{
+  "monitors": ["server", "tool", "arguments"],
+  "states": [
+    {"id": "write-a", "label": "write-a", "evidence": {"server": "@modelcontextprotocol/server-filesystem@2026.7.10", "tool": "write_file", "arguments": "{\"path\":\"/workspace/a\",\"content\":\"x\"}"}},
+    {"id": "write-b", "label": "write-b", "evidence": {"server": "@modelcontextprotocol/server-filesystem@2026.7.10", "tool": "write_file", "arguments": "{\"path\":\"/workspace/b\",\"content\":\"x\"}"}},
+    {"id": "read-a", "label": "explicit-read-allow", "evidence": {"server": "@modelcontextprotocol/server-filesystem@2026.7.10", "tool": "read_text_file", "arguments": "{\"path\":\"/workspace/a\"}"}}
+  ]
+}

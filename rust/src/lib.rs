@@ -4,6 +4,7 @@
 //! (no test-mirror differential). The binary entry point is `main.rs`.
 
 pub mod a3;
+pub mod decision_receipt;
 pub mod lean;
 pub mod providers;
 pub mod receipt;

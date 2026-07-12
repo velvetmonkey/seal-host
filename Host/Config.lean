@@ -137,6 +137,21 @@ def parseCanonicalConfigPayload (payload : String) :
   if epoch == 0 then
     throw "config epoch must be ≥ 1"
   let safetyJson ← json.getObjVal? "safety"
+  let outerServer ← match ← getObjValOpt json "server" with
+    | some value => pure (some (← value.getStr?))
+    | none => pure none
+  let innerServer ← match ← getObjValOpt safetyJson "server" with
+    | some value => pure (some (← value.getStr?))
+    | none => pure none
+  if outerServer.isSome && innerServer.isSome && outerServer != innerServer then
+    throw "server identity conflicts between trusted config and safety policy"
+  -- Enrich the exact JSON handed to the policy core. Policy-v1 ignores this
+  -- unknown field; policy-v2 parses it and commits server + tool + arguments.
+  -- This keeps the host compatible with the immutable v1 pin while making the
+  -- v2 evaluator authoritative once that pin is promoted.
+  let safetyJson := match outerServer, innerServer with
+    | some server, none => safetyJson.setObjVal! "server" (.str server)
+    | _, _ => safetyJson
   let safety ← Seal.parsePolicyJson safetyJson
   let temporal ← parseTemporalSection json
   let consensus ← parseConsensusSection json

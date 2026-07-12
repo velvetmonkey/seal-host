@@ -30,6 +30,7 @@
 //! never reconstructs, re-encodes, or trims what the child receives.
 
 use seal_host_rs::a3;
+use seal_host_rs::decision_receipt::{ApprovalIdentity, DecisionInput, ReceiptWriter};
 use seal_host_rs::lean;
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
@@ -38,6 +39,7 @@ use seal_host_rs::route::{
     route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 /// The active back-channel. Enum (not a trait object) so the transport can
 /// reach the interactive provider's queue without downcasting.
@@ -75,6 +77,7 @@ struct Args {
     channel: String,
     token_file: Option<String>,
     approval_pubkey: Option<String>,
+    receipt_dir: Option<String>,
     cmd: Vec<String>,
 }
 
@@ -85,6 +88,7 @@ fn parse_args() -> Result<Args, String> {
     let mut channel = "file".to_string();
     let mut token_file = None;
     let mut approval_pubkey = None;
+    let mut receipt_dir = None;
     let mut cmd = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -109,6 +113,10 @@ fn parse_args() -> Result<Args, String> {
                 approval_pubkey = argv.get(i + 1).cloned();
                 i += 2
             }
+            "--receipt-dir" => {
+                receipt_dir = argv.get(i + 1).cloned();
+                i += 2
+            }
             "--" => {
                 cmd = argv[i + 1..].to_vec();
                 break;
@@ -122,6 +130,7 @@ fn parse_args() -> Result<Args, String> {
         channel,
         token_file,
         approval_pubkey,
+        receipt_dir,
         cmd: if cmd.is_empty() {
             return Err("server command required after --".into());
         } else {
@@ -162,6 +171,69 @@ fn same_ed25519_key_hex(left: &str, right: &str) -> bool {
     match (hex::decode(left), hex::decode(right)) {
         (Ok(left), Ok(right)) => left.len() == 32 && right.len() == 32 && left == right,
         _ => false,
+    }
+}
+
+fn approval_key_id(public_key_hex: &str) -> Result<String, String> {
+    let bytes = hex::decode(public_key_hex).map_err(|e| format!("bad approval public key: {e}"))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+fn config_payload_from_envelope(envelope: &str) -> Result<Value, String> {
+    let envelope_json: Value =
+        serde_json::from_str(envelope).map_err(|e| format!("bad envelope JSON: {e}"))?;
+    let payload = envelope_json
+        .get("payload")
+        .and_then(Value::as_str)
+        .ok_or("missing string payload")?;
+    serde_json::from_str(payload).map_err(|e| format!("bad payload JSON: {e}"))
+}
+
+fn default_receipt_dir(config_path: &str) -> std::path::PathBuf {
+    std::path::Path::new(config_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("seal-receipts")
+}
+
+fn persist_decision(
+    writer: &mut ReceiptWriter,
+    line: &str,
+    now: u64,
+    emitted_bytes: &str,
+    kernel_config: &Value,
+    records: &[providers::ApprovalRecord],
+    identity: &ApprovalIdentity,
+    ttl_ms: u64,
+) -> Result<Option<String>, ()> {
+    match writer.persist(DecisionInput {
+        line,
+        now,
+        emitted_bytes,
+        kernel_config,
+        approvals: records,
+        approval_identity: identity,
+        approval_ttl_ms: ttl_ms,
+    }) {
+        Ok(receipt) => {
+            eprintln!("{}", json!({"decision_receipt": receipt.path}));
+            Ok(receipt.consumed_target)
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"error": "receipt persistence failure", "detail": error})
+            );
+            Err(())
+        }
+    }
+}
+
+fn consume_pending_approval(records: &mut Vec<providers::ApprovalRecord>, target: Option<String>) {
+    if let Some(target) = target {
+        if let Some(index) = records.iter().position(|record| record.target == target) {
+            records.remove(index);
+        }
     }
 }
 
@@ -295,7 +367,8 @@ fn run() -> i32 {
             eprintln!(
                 "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
-                [--approval-pubkey <hex>] -- <server-cmd> <args...>\nerror: {e}"
+                [--approval-pubkey <hex>] [--receipt-dir <path>] \
+                -- <server-cmd> <args...>\nerror: {e}"
             );
             return 2;
         }
@@ -332,6 +405,13 @@ fn run() -> i32 {
         );
         return 3;
     }
+    let kernel_config = match config_payload_from_envelope(&envelope) {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("trusted config rejected: {e}");
+            return 3;
+        }
+    };
     let ttl_ms = summary["approval_ttl_ms"].as_u64().unwrap_or(0);
     let approval_file = summary["approval_file"].as_str().unwrap_or("").to_string();
     let votes_file = summary["votes_file"].as_str().unwrap_or("").to_string();
@@ -381,6 +461,42 @@ fn run() -> i32 {
             return 2;
         }
     };
+    let approval_identity = ApprovalIdentity {
+        channel: match args.channel.as_str() {
+            "file" => "file",
+            "interactive" => "interactive",
+            "ed25519" => "ed25519",
+            _ => unreachable!(),
+        }
+        .to_string(),
+        key_id: if args.channel == "ed25519" {
+            match approval_key_id(
+                args.approval_pubkey
+                    .as_deref()
+                    .expect("validated approval key"),
+            ) {
+                Ok(key_id) => Some(key_id),
+                Err(e) => {
+                    eprintln!("ed25519 channel: {e}");
+                    return 2;
+                }
+            }
+        } else {
+            None
+        },
+    };
+    let receipt_dir = args
+        .receipt_dir
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| default_receipt_dir(&args.config));
+    let mut decision_receipts = match ReceiptWriter::new(&receipt_dir) {
+        Ok(writer) => writer,
+        Err(e) => {
+            eprintln!("receipt sink rejected: {e}");
+            return 4;
+        }
+    };
     let mut a3 = if args.channel == "ed25519" {
         let Some(path) = replay_store_path else {
             eprintln!(
@@ -407,6 +523,7 @@ fn run() -> i32 {
         a3::A3Filter::new(ttl_ms)
     };
     let mut receipts = ReceiptChain::new();
+    let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
     let interactive = args.channel == "interactive";
 
     let mut child = match Command::new(&args.cmd[0])
@@ -494,6 +611,7 @@ fn run() -> i32 {
         let poll = provider.poll();
         let mut warnings = poll.warnings;
         let (records, a3_warnings) = a3.filter(poll.records, now);
+        pending_approvals.extend(records.iter().cloned());
         warnings.extend(a3_warnings);
         emit_approval_drop_warnings(&warnings);
         let declines = poll.declines;
@@ -510,11 +628,36 @@ fn run() -> i32 {
             "grants": grants.fresh(),
             "forecasts": read_or_empty(&forecasts_file),
         });
-        match route_of_step_output(host.step(&input.to_string())) {
+        let step_output = match host.step(&input.to_string()) {
+            Ok(output) => output,
+            Err(error) => {
+                eprintln!("{}", json!({"error": format!("seam error: {error}")}));
+                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                continue;
+            }
+        };
+        match route_of_step_output(Ok(step_output.clone())) {
             Route::Forward { audit } => {
                 if let Some(a) = audit {
                     emit_audit(&mut receipts, &a);
                 }
+                let consumed = match persist_decision(
+                    &mut decision_receipts,
+                    line,
+                    now,
+                    &step_output,
+                    &kernel_config,
+                    &pending_approvals,
+                    &approval_identity,
+                    ttl_ms,
+                ) {
+                    Ok(consumed) => consumed,
+                    Err(()) => {
+                        write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                        continue;
+                    }
+                };
+                consume_pending_approval(&mut pending_approvals, consumed);
                 let _ = child_in.write_all(&wire);
                 let _ = child_in.flush();
             }
@@ -524,6 +667,21 @@ fn run() -> i32 {
             } => {
                 if let Some(a) = audit {
                     emit_audit(&mut receipts, &a);
+                }
+                if persist_decision(
+                    &mut decision_receipts,
+                    line,
+                    now,
+                    &step_output,
+                    &kernel_config,
+                    &pending_approvals,
+                    &approval_identity,
+                    ttl_ms,
+                )
+                .is_err()
+                {
+                    write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                    continue;
                 }
 
                 // Explicit signed decline short-circuit (first-class deny):
@@ -538,10 +696,8 @@ fn run() -> i32 {
                     .and_then(extract_target_hex)
                 {
                     if declines.iter().any(|d| d.target == target) {
-                        let refused_audit = format!(
-                            "approval refused: {} (explicit signed decline)",
-                            target
-                        );
+                        let refused_audit =
+                            format!("approval refused: {} (explicit signed decline)", target);
                         emit_audit(&mut receipts, &refused_audit);
                         let refused = format!(
                             "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",
@@ -567,6 +723,7 @@ fn run() -> i32 {
                         let poll = provider.poll();
                         let mut warnings = poll.warnings;
                         let (records, a3_warnings) = a3.filter(poll.records, now);
+                        pending_approvals.extend(records.iter().cloned());
                         warnings.extend(a3_warnings);
                         emit_approval_drop_warnings(&warnings);
                         // Also check fresh declines from retry poll (e.g. signed decline arrived).
@@ -582,11 +739,40 @@ fn run() -> i32 {
                                 "grants": grants.fresh(),
                                 "forecasts": read_or_empty(&forecasts_file),
                             });
-                            match route_of_step_output(host.step(&retry.to_string())) {
+                            let retry_now = retry["now"].as_u64().unwrap_or(0);
+                            let retry_output = match host.step(&retry.to_string()) {
+                                Ok(output) => output,
+                                Err(error) => {
+                                    eprintln!(
+                                        "{}",
+                                        json!({"error": format!("seam error: {error}")})
+                                    );
+                                    write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                    continue;
+                                }
+                            };
+                            match route_of_step_output(Ok(retry_output.clone())) {
                                 Route::Forward { audit } => {
                                     if let Some(a) = audit {
                                         emit_audit(&mut receipts, &a);
                                     }
+                                    let consumed = match persist_decision(
+                                        &mut decision_receipts,
+                                        line,
+                                        retry_now,
+                                        &retry_output,
+                                        &kernel_config,
+                                        &pending_approvals,
+                                        &approval_identity,
+                                        ttl_ms,
+                                    ) {
+                                        Ok(consumed) => consumed,
+                                        Err(()) => {
+                                            write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                            continue;
+                                        }
+                                    };
+                                    consume_pending_approval(&mut pending_approvals, consumed);
                                     let _ = child_in.write_all(&wire);
                                     let _ = child_in.flush();
                                     continue;
@@ -598,6 +784,21 @@ fn run() -> i32 {
                                     if let Some(a) = audit {
                                         emit_audit(&mut receipts, &a);
                                     }
+                                    if persist_decision(
+                                        &mut decision_receipts,
+                                        line,
+                                        retry_now,
+                                        &retry_output,
+                                        &kernel_config,
+                                        &pending_approvals,
+                                        &approval_identity,
+                                        ttl_ms,
+                                    )
+                                    .is_err()
+                                    {
+                                        write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                        continue;
+                                    }
                                     response = r2;
                                 }
                                 Route::SeamFailure { reason } => {
@@ -607,9 +808,14 @@ fn run() -> i32 {
                             }
                         }
                         // Post-retry interactive block: if decline now visible, refuse.
-                        if let Some(t2) = response.split("approval required: ").nth(1).and_then(extract_target_hex) {
+                        if let Some(t2) = response
+                            .split("approval required: ")
+                            .nth(1)
+                            .and_then(extract_target_hex)
+                        {
                             if inner_declines.iter().any(|d| d.target == t2) {
-                                let refused_audit = format!("approval refused: {} (explicit signed decline)", t2);
+                                let refused_audit =
+                                    format!("approval refused: {} (explicit signed decline)", t2);
                                 emit_audit(&mut receipts, &refused_audit);
                                 let refused = format!(
                                     "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",

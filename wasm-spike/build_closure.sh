@@ -9,7 +9,7 @@
 #  - External proof libs (mathlib/aesop/batteries/LeanSearchClient): STUB to no-op.
 #    These set up elaboration-time tactic metadata only; nothing the decide path
 #    reads at runtime. Compiling them is infeasible (whole of mathlib).
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 
@@ -41,6 +41,34 @@ emit_stubs() {
     done
   } > "$STUBS_C"
   emcc $CFLAGS -c "$STUBS_C" -o build-core/stubs.o
+}
+
+# The stage-0 Init.System.IO C checked out with Lean 4.28 still uses the old
+# erased-world declaration for these two opaque IO primitives, while the
+# runtime archive exports the current one-world-argument ABI. Native ABIs can
+# accidentally tolerate this; wasm-ld correctly reports a type mismatch.
+# Normalize the generated closure object and fail if upstream changes the
+# source shape, so the compatibility patch cannot silently stop applying.
+normalize_init_system_io_abi() {
+  local src="$STDLIB/Init/System/IO.c"
+  local patched="build-core/Init_System_IO.wasm.c"
+  local out="$OUTDIR/Init_System_IO.o"
+  [ -f "$out" ] || return 0
+  grep -qF 'lean_object* lean_io_create_tempfile();' "$src"
+  grep -qF 'lean_object* lean_io_create_tempdir();' "$src"
+  grep -qF 'x_2 = lean_io_create_tempfile();' "$src"
+  grep -qF 'x_2 = lean_io_create_tempdir();' "$src"
+  sed \
+    -e 's/lean_object\* lean_io_create_tempfile();/lean_object* lean_io_create_tempfile(lean_object*);/g' \
+    -e 's/lean_object\* lean_io_create_tempdir();/lean_object* lean_io_create_tempdir(lean_object*);/g' \
+    -e 's/lean_io_create_tempfile();/lean_io_create_tempfile(lean_box(0));/g' \
+    -e 's/lean_io_create_tempdir();/lean_io_create_tempdir(lean_box(0));/g' \
+    "$src" > "$patched"
+  if grep -Eq 'lean_io_create_temp(file|dir)\(\)' "$patched"; then
+    echo "[closure] failed to normalize Init.System.IO runtime ABI" >&2
+    exit 1
+  fi
+  emcc $CFLAGS -c "$patched" -o "$out"
 }
 
 # One batched emnm pass over every object -> the global symbol table for the round.
@@ -79,19 +107,20 @@ while :; do
         if emcc $CFLAGS -c "$src" -o "$out" 2>"$OUTDIR/$mod.log"; then
           progress=1
         else
-          echo "[closure] COMPILE FAIL $mod (see $OUTDIR/$mod.log) -> stubbing"
-          echo "$sym" >> "$STUBLIST"; progress=1
+          echo "[closure] COMPILE FAIL $mod (see $OUTDIR/$mod.log)" >&2
+          exit 1
         fi
       fi
     else
-      echo "[closure] NO SOURCE for $sym ($rel) -> stubbing"
-      echo "$sym" >> "$STUBLIST"; progress=1
+      echo "[closure] NO SOURCE for non-proof runtime initializer $sym ($rel)" >&2
+      exit 1
     fi
   done < /tmp/gap.txt
   emit_stubs
   [ "$progress" -eq 0 ] && { echo "[closure] no progress, stopping"; break; }
 done
 emit_stubs
+normalize_init_system_io_abi
 echo "[closure] compiled objs: $(ls "$OUTDIR"/*.o 2>/dev/null | wc -l), stubbed: $(sort -u "$STUBLIST" | grep -c .)"
 echo "[closure] stub list:"; sort -u "$STUBLIST" | sed 's/^/   /'
 rm -f "$STUBLIST"

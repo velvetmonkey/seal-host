@@ -11,11 +11,16 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 const envelope = buildEnvelope();
 
 // Build the shared command stream + a flat label list (one per command).
-const commands = [], labels = [];
+const commands = [], labels = [], expectedRoutes = [];
 for (const s of scenarios) {
   commands.push(`INIT\t${envelope}\t${PUBKEY}`);
   labels.push(`${s.name} :: INIT`);
-  s.steps.forEach((st, i) => { commands.push(`STEP\t${st.input}`); labels.push(`${s.name} :: step ${i}`); });
+  expectedRoutes.push(null);
+  s.steps.forEach((st, i) => {
+    commands.push(`STEP\t${st.input}`);
+    labels.push(`${s.name} :: step ${i}`);
+    expectedRoutes.push(st.expect);
+  });
 }
 
 // --- WASM target (in-process) ---
@@ -50,12 +55,16 @@ let mismatches = 0;
 const norm = (s) => { try { return JSON.stringify(JSON.parse(s)); } catch { return s; } };
 for (let i = 0; i < commands.length; i++) {
   const w = norm(wasmOut[i]), n = norm(nativeOut[i]), f = norm(fixture[i]);
-  if (!(w === n && n === f)) {
+  let actualRoute = null;
+  try { actualRoute = JSON.parse(nativeOut[i]).route ?? null; } catch {}
+  const routeMatches = expectedRoutes[i] === null || actualRoute === expectedRoutes[i];
+  if (!(w === n && n === f && routeMatches)) {
     mismatches++;
     console.log(`  MISMATCH  ${labels[i]}`);
     console.log(`    wasm:    ${w}`);
     console.log(`    native:  ${n}`);
     console.log(`    fixture: ${f}`);
+    if (!routeMatches) console.log(`    route:   ${actualRoute} (expected ${expectedRoutes[i]})`);
   }
 }
 console.log(`\nconformance: ${commands.length - mismatches}/${commands.length} identical (wasm == native == fixture)`);

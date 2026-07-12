@@ -1,0 +1,41 @@
+{
+  "epoch": 1,
+  "server": "github/github-mcp-server@v1.0.5",
+  "safety": {
+    "approval": {
+      "control_file": "/ABS/PATH/.seal/unused-approvals.ndjson",
+      "ttl_seconds": 120,
+      "replay_store": {"sqlite_path": "/ABS/PATH/.seal/replay.sqlite"}
+    },
+    "tools": [
+      {"name": "get_file_contents", "mode": "allow", "match": {"type": "all", "matches": [
+        {"type": "equals", "arg": "owner", "value": "YOUR_ORG"},
+        {"type": "equals", "arg": "repo", "value": "YOUR_REPO"},
+        {"type": "starts_with", "arg": "path", "value": "docs/"}
+      ]}},
+      {"name": "get_commit", "mode": "allow", "match": {"type": "all", "matches": [
+        {"type": "equals", "arg": "owner", "value": "YOUR_ORG"},
+        {"type": "equals", "arg": "repo", "value": "YOUR_REPO"}
+      ]}},
+      {"name": "search_code", "mode": "allow", "match": {"type": "starts_with", "arg": "query", "value": "repo:YOUR_ORG/YOUR_REPO "}},
+      {"name": "issue_read", "mode": "allow", "match": {"type": "all", "matches": [
+        {"type": "equals", "arg": "method", "value": "get"},
+        {"type": "equals", "arg": "owner", "value": "YOUR_ORG"},
+        {"type": "equals", "arg": "repo", "value": "YOUR_REPO"}
+      ]}},
+      {"name": "pull_request_read", "mode": "allow", "match": {"type": "all", "matches": [
+        {"type": "equals", "arg": "method", "value": "get"},
+        {"type": "equals", "arg": "owner", "value": "YOUR_ORG"},
+        {"type": "equals", "arg": "repo", "value": "YOUR_REPO"}
+      ]}},
+      {"name": "create_branch", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "create_or_update_file", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "delete_file", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "push_files", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "create_repository", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "issue_write", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "pull_request_review_write", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []}
+    ]
+  }
+}

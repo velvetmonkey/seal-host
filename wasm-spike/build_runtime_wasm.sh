@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 cd /home/monkey/src/seal-host/wasm-spike
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 SRC=lean4-src/src
@@ -16,4 +16,9 @@ for f in $SRC/runtime/*.cpp; do
     echo "$b" >> "$OUT/FAIL.txt"; fail=$((fail+1))
   fi
 done
+if [ "$fail" -ne 0 ]; then
+  echo "RUNTIME_BUILD_FAILED pass=$pass fail=$fail" | tee "$OUT/SUMMARY.txt"
+  exit 1
+fi
+emar rcs "$OUT/libleanrt.a" "$OUT"/*.o
 echo "RUNTIME_BUILD_DONE pass=$pass fail=$fail" | tee "$OUT/SUMMARY.txt"

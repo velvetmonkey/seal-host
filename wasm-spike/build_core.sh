@@ -15,7 +15,7 @@
 # Flags are byte-identical to build_wasm.sh:13 / build_closure.sh:19.
 #
 # Usage: ./build_core.sh
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1 || { echo "[build_core] emsdk activate FAILED"; exit 1; }
 
@@ -46,11 +46,18 @@ for m in "${MODULES[@]}"; do
 done
 echo "[build_core] done: $(ls build-core/*.o | grep -vcE 'stubs|seal_wrapper|ffi_shim') project objects"
 
-SEAL_IR="$ROOT/.lake/packages/mcp-seal/.lake/build/ir"
+MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
+if [ "$MCP_TYPE" = "path" ]; then
+  MCP_DIR="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .dir' "$ROOT/lake-manifest.json")"
+  SEAL_ROOT="$(realpath "$ROOT/$MCP_DIR")"
+else
+  SEAL_ROOT="$ROOT/.lake/packages/mcp-seal"
+fi
+SEAL_IR="$SEAL_ROOT/.lake/build/ir"
 SEAL_MODULES=(
   SealCore SealCore/Automaton SealCore/Event SealCore/Safety SealCore/Sha256
   Seal/Block Seal/Channel Seal/Classify Seal/Hash Seal/JsonUtil Seal/Policy
-  SealV2/Canonical SealV2/Crypto SealV2/Decide SealV2/Parser
+  SealV2/Canonical SealV2/Crypto SealV2/Decide SealV2/Escape SealV2/Parser
   SealV2/Serialization SealV2/Validation
 )
 

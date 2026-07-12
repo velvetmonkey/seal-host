@@ -12,6 +12,21 @@ extern uint8_t      seal_lean_io_result_is_ok(b_lean_obj_arg r);
 extern lean_object* seal_host_init(lean_object*, lean_object*);
 extern lean_object* seal_host_step(lean_object*);
 
+/* Browser mediation never creates temporary files. Lean's native runtime
+ * implementations pull libuv, which is deliberately absent from this wasm
+ * build. Keep the current one-world-argument ABI so generated callers type
+ * check, and trap fail-closed if a future reachable path starts using either
+ * primitive. */
+LEAN_EXPORT lean_object* lean_io_create_tempfile(lean_object* world) {
+    (void)world;
+    __builtin_trap();
+}
+
+LEAN_EXPORT lean_object* lean_io_create_tempdir(lean_object* world) {
+    (void)world;
+    __builtin_trap();
+}
+
 static int g_inited = 0;
 static int ensure_init(void) {
     if (g_inited) return 1;

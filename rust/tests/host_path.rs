@@ -133,6 +133,23 @@ impl Oracle {
         self.send_bytes(format!("{line}\n").as_bytes());
     }
 
+    fn receipt_dir(&self) -> PathBuf {
+        self.dir.join("seal-receipts")
+    }
+
+    fn receipts(&self) -> Vec<serde_json::Value> {
+        let mut paths: Vec<_> = std::fs::read_dir(self.receipt_dir())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())
+            .collect()
+    }
+
     /// One output line per input line (lockstep). `BufRead::lines` strips
     /// the terminator (and a trailing `\r`), so callers compare content.
     fn expect_line(&mut self) -> String {
@@ -323,6 +340,20 @@ fn mediation_obfuscation_and_one_shot_approval() {
         approved,
         "approved canonical call must forward"
     );
+    let receipts = o.receipts();
+    let allow = receipts
+        .iter()
+        .rev()
+        .find(|receipt| receipt["verdict"] == "ALLOW")
+        .expect("forwarded decision persisted an ALLOW receipt");
+    assert_eq!(allow["seal_receipt"], "v2");
+    assert_eq!(allow["approval"]["approval_identity"]["channel"], "file");
+    assert_eq!(allow["approval"]["policy_hash"].as_str().unwrap().len(), 64);
+    assert_eq!(allow["host_identity"]["equivalence"], "not_proven");
+    assert_eq!(
+        allow["kernel_identity"]["wasm_sha256"],
+        seal_host_rs::decision_receipt::VERIFIED_WASM_SHA256
+    );
 
     // One-shot: the same call again must block — the approval was consumed.
     let replay = guarded_call(32, "drop table accounts");
@@ -331,6 +362,39 @@ fn mediation_obfuscation_and_one_shot_approval() {
     assert!(
         is_block(&resp),
         "approval must be one-shot; replay blocked: {resp}"
+    );
+}
+
+#[test]
+fn receipt_sink_failure_blocks_before_child_forward() {
+    let mut o = Oracle::spawn("receipt-sink-failure");
+    let receipt_dir = o.receipt_dir();
+    for _ in 0..200 {
+        if receipt_dir.is_dir() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        receipt_dir.is_dir(),
+        "host did not initialize its receipt sink"
+    );
+    std::fs::remove_dir(&receipt_dir).unwrap();
+    std::fs::write(&receipt_dir, b"not a directory").unwrap();
+
+    let call = guarded_call(70, "drop table accounts");
+    o.send(&call);
+    assert_eq!(
+        o.expect_line(),
+        SEAM_ERROR_RESPONSE.trim_end(),
+        "receipt persistence failure must never reach the child"
+    );
+    let stderr = o.drain_stderr(Duration::from_millis(100));
+    assert!(
+        stderr
+            .iter()
+            .any(|line| line.contains("receipt persistence failure")),
+        "operator must see the availability failure: {stderr:?}"
     );
 }
 

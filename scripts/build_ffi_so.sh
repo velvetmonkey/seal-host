@@ -13,7 +13,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.lake/build/lib/libsealffi.so"
 TMP="$ROOT/.lake/build/ffi-archives"
 LEAN_PREFIX="$(lean --print-prefix)"
-CRYPTO_ROOT="$ROOT/.lake/packages/mcp-seal"
+MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
+if [ "$MCP_TYPE" = "path" ]; then
+  MCP_DIR="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .dir' "$ROOT/lake-manifest.json")"
+  CRYPTO_ROOT="$(realpath "$ROOT/$MCP_DIR")"
+else
+  CRYPTO_ROOT="$ROOT/.lake/packages/mcp-seal"
+fi
 CRYPTO_OBJ="$CRYPTO_ROOT/c/build/libsealcrypto.o"
 CRYPTO_TWEET_PIC="$TMP/tweetnacl_pic.o"
 CRYPTO_ED25519_PIC="$TMP/seal_ed25519_pic.o"
@@ -23,27 +29,59 @@ if [ ! -f "$CRYPTO_OBJ" ]; then
   (cd "$CRYPTO_ROOT" && bash c/build.sh)
 fi
 
-# The default `lake build Ffi` refreshes Lean artifacts (`.olean`, `.c`) but
-# not always the exported native objects this linker consumes. Build the
-# module object facet explicitly so edited Lean code cannot leave a stale
-# `.c.o.export` in the shared library.
-(cd "$ROOT" && lake build +Ffi:o)
+# Build only the runtime import closure. Dependency module object facets are
+# named explicitly because `+Ffi:o` otherwise materializes their C/olean inputs
+# but can leave old `.c.o.export` files from a previous dependency revision.
+LAKE_FLAGS=()
+if [ "${SEAL_LAKE_OLD:-0}" = "1" ]; then
+  # Compatibility-probe escape hatch for a memory-constrained developer box.
+  # This is never the release build: --old deliberately ignores transitive
+  # invalidation. A promoted immutable dependency must receive a clean build
+  # on the release runner before its artifact hashes are published.
+  LAKE_FLAGS+=(--old)
+fi
+MCP_MODULES=(
+  SealCore SealCore.Automaton SealCore.Event SealCore.Safety SealCore.Sha256
+  Seal.Block Seal.Channel Seal.Classify Seal.Hash Seal.JsonUtil Seal.Policy
+  SealV2.Canonical SealV2.Crypto SealV2.Decide SealV2.Escape SealV2.Parser
+  SealV2.Serialization SealV2.Validation
+)
+PROJECT_MODULES=(
+  Ffi
+  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Step
+  Kernels
+  Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
+  Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/Safety Kernels/Temporal
+)
+MCP_TARGETS=()
+for module in "${MCP_MODULES[@]}"; do
+  MCP_TARGETS+=("@mcp-seal/+${module}:o")
+done
+PROJECT_TARGETS=()
+for module in "${PROJECT_MODULES[@]}"; do
+  PROJECT_TARGETS+=("+${module//\//.}:o")
+done
+(cd "$ROOT" && lake "${LAKE_FLAGS[@]}" build "${PROJECT_TARGETS[@]}" "${MCP_TARGETS[@]}")
 
-# Project objects: the Ffi module + Host/Kernels modules. Test modules and
-# Host/Main are excluded — they carry their own `main` symbols.
-mapfile -t PROJ_OBJS < <(find "$ROOT/.lake/build/ir" -name '*.c.o.export' \
-  ! -path '*/Test/*' ! -name 'Test.c.o.export' ! -path '*/Host/Main.c.o.export' | sort)
-[ "${#PROJ_OBJS[@]}" -gt 0 ] || { echo "no project objects; run lake build Ffi first" >&2; exit 1; }
+# Project objects: the exact Ffi runtime closure, excluding theorem/off-path
+# modules even if stale objects for them exist in the build directory.
+PROJ_OBJS=()
+for module in "${PROJECT_MODULES[@]}"; do
+  object="$ROOT/.lake/build/ir/$module.c.o.export"
+  [ -f "$object" ] || { echo "missing runtime object: $object" >&2; exit 1; }
+  PROJ_OBJS+=("$object")
+done
 
 ARCHIVES=()
-for pkgdir in "$ROOT"/.lake/packages/*/; do
+archive_package_ir() {
+  local pkgdir="$1" force="${2:-0}"
   pkg="$(basename "$pkgdir")"
   irdir="$pkgdir/.lake/build/ir"
-  [ -d "$irdir" ] || continue
+  [ -d "$irdir" ] || return 0
   objs="$(find "$irdir" -name '*.c.o.export' | sort)"
-  [ -n "$objs" ] || continue
+  [ -n "$objs" ] || return 0
   archive="$TMP/lib_${pkg}.a"
-  if [ ! -f "$archive" ] || [ "$(find "$irdir" -name '*.c.o.export' -newer "$archive" | head -1)" ]; then
+  if [ "$force" = "1" ] || [ ! -f "$archive" ] || [ "$(find "$irdir" -name '*.c.o.export' -newer "$archive" | head -1)" ]; then
     rm -f "$archive"
     # Thin archive built by chunked quick-append (q), then indexed (s) once
     # at the end — replace-mode chunking silently truncated earlier.
@@ -51,7 +89,23 @@ for pkgdir in "$ROOT"/.lake/packages/*/; do
     ar sT "$archive"
   fi
   ARCHIVES+=("$archive")
+}
+
+for pkgdir in "$ROOT"/.lake/packages/*/; do
+  if [ "$MCP_TYPE" = "path" ] && [ "$(basename "$pkgdir")" = "mcp-seal" ]; then
+    continue
+  fi
+  if [ "$(basename "$pkgdir")" = "mcp-seal" ]; then
+    # Git preserves checkout mtimes poorly enough that a newly pinned commit
+    # can look older than this thin archive. Never link a stale policy core.
+    archive_package_ir "$pkgdir" 1
+  else
+    archive_package_ir "$pkgdir"
+  fi
 done
+if [ "$MCP_TYPE" = "path" ]; then
+  archive_package_ir "$CRYPTO_ROOT" 1
+fi
 
 cc -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
 CRYPTO_CFLAGS="-O2 -fPIC -fwrapv -fno-strict-aliasing"

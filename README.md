@@ -8,6 +8,9 @@ One command shows the full loop over a fake ledger in seconds (block with 64-hex
 
 The proof story (Lean kernel, TCB, non-interference) comes after you have watched it work.
 
+To wire the host into Claude Code, Claude Desktop, Cursor, or VS Code and run
+the real destructive SQLite sandbox, start with [CONFIG.md](CONFIG.md).
+
 ## Quick start
 
 One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold `lake build` of the Lean core, which pulls the toolchain and can run tens of minutes on a fresh machine. After that the loop is instant. From a fresh checkout, run:

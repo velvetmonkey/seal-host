@@ -27,7 +27,9 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 [[require]]
 name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
-rev = "872ac50"
+# Local canonical base. Fresh machines cannot resolve this object until the
+# human-approved upstream push; developer builds must seed it locally first.
+rev = "88168e130c894c23aa7ecdd1e0d36be1c31bda82"
 
 # One library for the host + kernels + FFI surface. Host and Kernels modules
 # import each other across the prefix boundary (Kernels implement Host.Kernel;
@@ -61,6 +63,10 @@ root = "Test.Axioms"
 [[lean_exe]]
 name = "host_unit_tests"
 root = "Test.HostUnit"
+
+[[lean_exe]]
+name = "policy_server_identity_tests"
+root = "Test.PolicyServerIdentity"
 
 [[lean_exe]]
 name = "sha256_selfcheck"

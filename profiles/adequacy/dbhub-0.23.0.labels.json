@@ -1,0 +1,8 @@
+{
+  "monitors": ["server", "tool", "arguments"],
+  "states": [
+    {"id": "drop-users", "label": "drop-users", "evidence": {"server": "bytebase/dbhub@0.23.0", "tool": "execute_sql", "arguments": "{\"sql\":\"DROP TABLE users\"}"}},
+    {"id": "drop-audit", "label": "drop-audit", "evidence": {"server": "bytebase/dbhub@0.23.0", "tool": "execute_sql", "arguments": "{\"sql\":\"DROP TABLE audit\"}"}},
+    {"id": "search", "label": "explicit-read-allow", "evidence": {"server": "bytebase/dbhub@0.23.0", "tool": "search_objects", "arguments": "{\"query\":\"users\"}"}}
+  ]
+}

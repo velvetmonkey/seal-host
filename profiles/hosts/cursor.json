@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "sealSqliteSandbox": {
+      "command": "/ABS/PATH/rust/target/debug/seal-host-rs",
+      "args": [
+        "--config", "/ABS/PATH/.seal/trusted.json",
+        "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
+        "--channel", "ed25519",
+        "--token-file", "/ABS/PATH/.seal/approval-tokens.ndjson",
+        "--approval-pubkey", "APPROVAL_PUBLIC_KEY_HEX",
+        "--receipt-dir", "/ABS/PATH/.seal/receipts",
+        "--", "python3", "/ABS/PATH/demo/sqlite_mcp_server.py",
+        "--database", "/ABS/PATH/.seal/sandbox.sqlite"
+      ]
+    }
+  }
+}

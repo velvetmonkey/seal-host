@@ -1,7 +1,7 @@
 # WASM browser demo spike — resume state (2026-06-16)
 
 ## STATUS: WORKING ✅ — init-trap fixed; seal_decide runs end-to-end in node AND browser.
-- All 7 kernels decide correctly; determinism proven (100 runs node / 50 browser, identical certs).
+- All 7 kernels decide correctly; determinism tested (100 runs node / 50 browser, identical certs).
 - Strict link: ZERO undefined symbols (no DCE-hides-undefined trickery).
 - Conformance: WASM == native (libsealffi.so) == fixture, 25/25 steps identical (incl. cert hashes).
 
@@ -27,9 +27,9 @@ Two stacked bugs, the second masked by the first:
    ZERO" was a fiction. Once #1 was fixed, `initialize_Init` (the umbrella) called
    ~80 submodule initializers absent from the subset → `Aborted(missing function:
    initialize_Init_*)`. FIX: `build_closure.sh` compiles the FULL transitive
-   module-initializer closure (617 stdlib .o) from lean4-src/stage0/stdlib, stubbing
-   only the 3 external proof libs (mathlib/aesop/batteries) whose inits set up no
-   runtime-read data. Plus: drop native-only Host_Main/Host/Host_Composition .o (pulled
+   module-initializer closure from lean4-src/stage0/stdlib, stubbing only the two
+   external proof-library umbrella initializers (Mathlib and Batteries) whose inits
+   set up no runtime-read data. Plus: drop native-only Host_Main/Host/Host_Composition .o (pulled
    Std.Time); define 4 compiler-shared specializations (List.elem etc.) referenced by
    Kernels_Temporal + Consensus_Checker, by compiling their defining .c in isolation
    (build-spec/*.o, DCE keeps only the needed symbol).
@@ -37,15 +37,30 @@ Two stacked bugs, the second masked by the first:
 ## BUILD (reproduce from a clean tree)
     source ./emsdk/emsdk_env.sh           # emsdk/ + lean4-src/ via earlier fetch
     ./build_runtime_wasm.sh               # 1. Lean runtime -> build-wasm-rt/libleanrt.a
-    ./build_closure.sh                    # 2. module-init closure -> build-stdlib-closure/*.o + stubs
-    ./build_wasm.sh                       # 3. recompile wrapper+shim, link -> build-core/seal.{js,wasm}
+    ./build_core.sh                       # 2. current host + mcp-seal Lean-C -> wasm objects
+    ./build_base.sh                       # 3. runtime package/stdlib/specialization objects
+    ./build_closure.sh                    # 4. module-init closure -> build-stdlib-closure/*.o + stubs
+    ./build_wasm.sh                       # 5. recompile wrapper+shim, link -> build-core/seal.{js,wasm}
     ./build_wasm.sh strict                #    (optional) prove ZERO undefined symbols
+    ./build_native_conformance.sh         # 6. native comparator (needs ../.lake/build/lib/libsealffi.so)
     node test_kernels.mjs                 # 7 kernels + determinism (100 runs)
     node conformance.mjs                  # wasm == native == fixture (needs build-core/conformance_native)
 
-(build-core/*.o, build-seal/*.o, build-pkg/*.o, build-stdlib/*.o already on disk from the
-earlier spike; build_closure.sh + build_wasm.sh reuse them. Native conformance CLI:
-cc conformance_native.c -lsealffi -lleanshared -> build-core/conformance_native.)
+No ignored object directory is assumed to survive from an earlier build.
+`build_core.sh` and `build_base.sh` recreate every project/package/base object;
+`build_closure.sh` derives the remaining initializer closure. Native conformance
+CLI is built with the checked-in `build_native_conformance.sh`, including the
+required Lean and host-library runtime search paths.
+
+`build_closure.sh` also normalizes the two obsolete erased-world declarations
+in stage-0 `Init.System.IO.c` (`lean_io_create_tempfile` and
+`lean_io_create_tempdir`) to the current runtime ABI. It checks the expected
+generated-source shape before patching and fails if that shape changes; this
+keeps strict linking free of function-signature warnings. Because browser
+mediation does not provide Lean's native libuv filesystem runtime,
+`seal_wrapper.c` supplies ABI-correct wasm-only trap implementations. An
+unexpected future call therefore stops the gate instead of creating an
+untracked filesystem dependency.
 
 ## Exports (build-core/seal.js, MODULARIZE, EXPORT_NAME=SealModule)
 - `seal_init(envelopeJson, pubkey) -> summaryJson` — load signed trusted-config; call once.

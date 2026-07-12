@@ -316,6 +316,7 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | Field | Type | Required | Semantics |
 |---|---|---|---|
 | `approval` | object | yes when mediated and `verdict = "ALLOW"`; optional on BLOCK (present iff an approval was consulted) | the approval that authorized the effect — see 11.2 |
+| `authorization` | `"approval"` \| `"explicit_policy_allow"` | required on new mediated ALLOW producers; absent on BLOCK | distinguishes a human-approved guarded ALLOW from policy-v2's explicit safe ALLOW. Legacy v2 ALLOW receipts without it are interpreted as `approval`. |
 | `approval.approval_identity` | object | yes within `approval` | `{channel, key_id?}`; `channel` ∈ `"file" \| "interactive" \| "ed25519"`; `key_id` = signer public-key fingerprint, present **iff** `channel = "ed25519"`. Never asserts a session id the producer did not parse. |
 | `approval.nonce` | string | yes iff `channel = "ed25519"`; absent otherwise unless the channel truly carried one | approval nonce (64 lowercase hex on the signed channel) |
 | `approval.issued_at` | integer (epoch ms) | yes iff the channel carried it | mint time as presented; producers MUST NOT invent it |
@@ -323,6 +324,7 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the canonical `kernel_config` serialization — see 11.3 |
 | `args_hash` | 64-hex string | yes when mediated | SHA-256 of the canonical `arguments` serialization — see 11.3 |
 | `action` | string | optional | the SealV2 `params.action` binding when the producer parsed one; absent under the `compatible` profile, which does not parse it |
+| `host_identity` | object | optional; required for the native Rust host | `{native_executable_sha256, lean_ffi_sha256, equivalence:"not_proven"}`. Identifies the native artifacts that executed the decision. It does **not** prove them equivalent to `kernel_identity.wasm_sha256`; that remains the Lane C gap. |
 | `amount` | number or string | yes iff payment-class (11.4) | copied **verbatim** from the argument field the policy's payment binding names |
 | `merchant` | string | yes iff payment-class | ditto |
 | `currency` | string | yes iff payment-class | ditto |
@@ -396,9 +398,9 @@ this top-level order):
 
 ```
 seal_receipt, tool, action, arguments, args_hash, now,
-canonical_request, canonical_request_sha256, bypass, verdict, reason,
+canonical_request, canonical_request_sha256, bypass, verdict, authorization, reason,
 deny_kernel, amount, merchant, currency, approval, certs, emitted_bytes,
-kernel_identity, asserted_provenance, kernel_config, granted_capabilities,
+kernel_identity, host_identity, asserted_provenance, kernel_config, granted_capabilities,
 policy_id, signature
 ```
 

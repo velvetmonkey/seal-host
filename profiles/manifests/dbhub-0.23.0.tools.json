@@ -1,0 +1,7 @@
+{
+  "server": "bytebase/dbhub@0.23.0",
+  "tools": [
+    {"name": "search_objects", "description": "Search and explore database objects", "annotations": {"readOnlyHint": true}},
+    {"name": "execute_sql", "description": "Execute SQL with transaction support", "annotations": {"destructiveHint": true}}
+  ]
+}

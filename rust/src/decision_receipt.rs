@@ -1,0 +1,377 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Canonical v2 decision receipts for the deployed native host.
+//!
+//! The Lean step output remains the authority for verdicts and certificates.
+//! This module only assembles that material with the exact request, signed
+//! config and approval records the host supplied to Lean, then persists the
+//! result before any ALLOW is forwarded.
+
+use crate::lean;
+use crate::providers::ApprovalRecord;
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+const VERIFIED_WASM: &[u8] = include_bytes!("../../receipt-verifier/wasm/seal.wasm");
+pub const VERIFIED_WASM_SHA256: &str =
+    "ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0";
+
+#[derive(Debug, Clone)]
+pub struct ApprovalIdentity {
+    pub channel: String,
+    pub key_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct DecisionInput<'a> {
+    pub line: &'a str,
+    pub now: u64,
+    pub emitted_bytes: &'a str,
+    pub kernel_config: &'a Value,
+    pub approvals: &'a [ApprovalRecord],
+    pub approval_identity: &'a ApprovalIdentity,
+    pub approval_ttl_ms: u64,
+}
+
+#[derive(Debug)]
+pub struct ReceiptWriter {
+    dir: PathBuf,
+    next_entry: u64,
+    native_executable_sha256: String,
+    lean_ffi_sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PersistedReceipt {
+    pub path: PathBuf,
+    pub consumed_target: Option<String>,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn hash_file(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("cannot read identity artifact {}: {e}", path.display()))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn canonical_json_sha256(value: &Value) -> Result<String, String> {
+    serde_json::to_vec(value)
+        .map(|bytes| sha256_hex(&bytes))
+        .map_err(|e| format!("cannot serialize canonical JSON: {e}"))
+}
+
+fn canonical_request(tool: &str, arguments: &Value) -> Value {
+    let mut params = Map::new();
+    params.insert("name".into(), Value::String(tool.to_owned()));
+    params.insert("arguments".into(), arguments.clone());
+    let mut request = Map::new();
+    request.insert("jsonrpc".into(), Value::String("2.0".into()));
+    request.insert("id".into(), Value::from(1));
+    request.insert("method".into(), Value::String("tools/call".into()));
+    request.insert("params".into(), Value::Object(params));
+    Value::Object(request)
+}
+
+fn request_parts(line: &str) -> Result<(String, Value), String> {
+    let request: Value = serde_json::from_str(line.trim())
+        .map_err(|e| format!("cannot parse mediated request for receipt: {e}"))?;
+    let tool = request
+        .pointer("/params/name")
+        .and_then(Value::as_str)
+        .ok_or("mediated request lacks params.name")?
+        .to_owned();
+    let arguments = request
+        .pointer("/params/arguments")
+        .filter(|v| v.is_object())
+        .ok_or("mediated request lacks object params.arguments")?
+        .clone();
+    Ok((tool, arguments))
+}
+
+fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
+    let step: Value = serde_json::from_str(input.emitted_bytes)
+        .map_err(|e| format!("cannot parse authoritative Lean step output: {e}"))?;
+    let route = step
+        .get("route")
+        .and_then(Value::as_str)
+        .ok_or("authoritative Lean step output lacks route")?;
+    if route != "forward" && route != "block" {
+        return Err(format!(
+            "no decision receipt for non-mediated route {route}"
+        ));
+    }
+    let audit_text = step
+        .get("audit")
+        .and_then(Value::as_str)
+        .ok_or("authoritative Lean step output lacks audit")?;
+    let audit: Value = serde_json::from_str(audit_text)
+        .map_err(|e| format!("cannot parse authoritative Lean audit: {e}"))?;
+    let certs = audit
+        .get("certs")
+        .and_then(Value::as_array)
+        .ok_or("authoritative Lean audit lacks certs")?
+        .clone();
+    let denied = certs
+        .iter()
+        .find(|c| c.get("verdict").and_then(Value::as_str) == Some("deny"));
+    let (verdict, reason, deny_kernel) = if route == "block" {
+        match denied {
+            Some(cert) => {
+                let kernel = cert
+                    .get("kernel")
+                    .and_then(Value::as_str)
+                    .ok_or("deny certificate lacks kernel")?;
+                let why = cert
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .ok_or("deny certificate lacks reason")?;
+                (
+                    "BLOCK",
+                    format!("{kernel} kernel: {why}"),
+                    Value::String(kernel.to_owned()),
+                )
+            }
+            None => ("BLOCK", "no kernel gated this call".to_owned(), Value::Null),
+        }
+    } else {
+        (
+            "ALLOW",
+            "every gating kernel allows".to_owned(),
+            Value::Null,
+        )
+    };
+
+    let (tool, arguments) = request_parts(input.line)?;
+    let canonical = canonical_request(&tool, &arguments);
+    let canonical_text = serde_json::to_string(&canonical)
+        .map_err(|e| format!("cannot serialize canonical request: {e}"))?;
+
+    let safety_target = certs
+        .iter()
+        .find(|c| c.get("kernel").and_then(Value::as_str) == Some("safety"))
+        .and_then(|c| c.get("reason"))
+        .and_then(Value::as_str);
+    let explicit_policy_allow =
+        verdict == "ALLOW" && safety_target == Some("explicit policy allow");
+    let consumed: Option<&ApprovalRecord> = if verdict == "ALLOW" && !explicit_policy_allow {
+        Some(
+            safety_target
+                .and_then(|target| input.approvals.iter().find(|r| r.target == target))
+                .ok_or("approval-authorized ALLOW has no exact consumed approval record")?,
+        )
+    } else {
+        None
+    };
+
+    let mut receipt = Map::new();
+    receipt.insert("seal_receipt".into(), Value::String("v2".into()));
+    receipt.insert("tool".into(), Value::String(tool));
+    receipt.insert("arguments".into(), arguments.clone());
+    receipt.insert(
+        "args_hash".into(),
+        Value::String(canonical_json_sha256(&arguments)?),
+    );
+    receipt.insert("now".into(), Value::from(input.now));
+    receipt.insert(
+        "canonical_request".into(),
+        Value::String(canonical_text.clone()),
+    );
+    receipt.insert(
+        "canonical_request_sha256".into(),
+        Value::String(sha256_hex(canonical_text.as_bytes())),
+    );
+    receipt.insert("bypass".into(), Value::Bool(false));
+    receipt.insert("verdict".into(), Value::String(verdict.into()));
+    if verdict == "ALLOW" {
+        receipt.insert(
+            "authorization".into(),
+            Value::String(
+                if explicit_policy_allow {
+                    "explicit_policy_allow"
+                } else {
+                    "approval"
+                }
+                .into(),
+            ),
+        );
+    }
+    receipt.insert("reason".into(), Value::String(reason));
+    receipt.insert("deny_kernel".into(), deny_kernel);
+
+    if let Some(record) = consumed {
+        let mut identity = Map::new();
+        identity.insert(
+            "channel".into(),
+            Value::String(input.approval_identity.channel.clone()),
+        );
+        if let Some(key_id) = &input.approval_identity.key_id {
+            identity.insert("key_id".into(), Value::String(key_id.clone()));
+        }
+        let mut approval = Map::new();
+        approval.insert("approval_identity".into(), Value::Object(identity));
+        if let Some(nonce) = &record.nonce {
+            approval.insert("nonce".into(), Value::String(nonce.clone()));
+        }
+        if let Some(issued_at) = record.issued_at {
+            approval.insert("issued_at".into(), Value::from(issued_at));
+            approval.insert(
+                "expiry".into(),
+                Value::from(issued_at.saturating_add(input.approval_ttl_ms)),
+            );
+        }
+        approval.insert(
+            "policy_hash".into(),
+            Value::String(canonical_json_sha256(input.kernel_config)?),
+        );
+        receipt.insert("approval".into(), Value::Object(approval));
+    }
+
+    receipt.insert("certs".into(), Value::Array(certs));
+    receipt.insert(
+        "emitted_bytes".into(),
+        Value::String(input.emitted_bytes.to_owned()),
+    );
+    receipt.insert("kernel_identity".into(), serde_json::json!({
+        "wasm_sha256": VERIFIED_WASM_SHA256,
+        "self_verified": sha256_hex(VERIFIED_WASM) == VERIFIED_WASM_SHA256,
+        "note": "Re-derive against this wasm; the native executor is identified separately, not proven equivalent."
+    }));
+    receipt.insert("host_identity".into(), Value::Null); // filled by ReceiptWriter
+    receipt.insert("asserted_provenance".into(), serde_json::json!({
+        "verified_in_browser": false,
+        "lean_toolchain": "leanprover/lean4:v4.28.0",
+        "axioms": ["propext", "Classical.choice", "Quot.sound"],
+        "note": "Source-level provenance asserted by the producer; not established by this receipt."
+    }));
+    receipt.insert("kernel_config".into(), input.kernel_config.clone());
+    receipt.insert(
+        "granted_capabilities".into(),
+        Value::Array(
+            input
+                .approvals
+                .iter()
+                .map(|r| serde_json::json!({"target": r.target}))
+                .collect(),
+        ),
+    );
+    Ok(Value::Object(receipt))
+}
+
+impl ReceiptWriter {
+    pub fn new(dir: impl Into<PathBuf>) -> Result<Self, String> {
+        let dir = dir.into();
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("cannot create receipt directory {}: {e}", dir.display()))?;
+        let probe = dir.join(format!(".seal-receipt-probe-{}", std::process::id()));
+        File::create(&probe)
+            .and_then(|mut f| {
+                f.write_all(b"probe")?;
+                f.sync_all()
+            })
+            .map_err(|e| format!("receipt directory {} is not writable: {e}", dir.display()))?;
+        std::fs::remove_file(&probe)
+            .map_err(|e| format!("cannot clean receipt probe {}: {e}", probe.display()))?;
+
+        let exe =
+            std::env::current_exe().map_err(|e| format!("cannot identify host executable: {e}"))?;
+        let ffi = lean::loaded_ffi_path().ok_or("cannot identify loaded Lean FFI artifact")?;
+        Ok(Self {
+            dir,
+            next_entry: 0,
+            native_executable_sha256: hash_file(&exe)?,
+            lean_ffi_sha256: hash_file(&ffi)?,
+        })
+    }
+
+    pub fn persist(&mut self, input: DecisionInput<'_>) -> Result<PersistedReceipt, String> {
+        let mut receipt = receipt_from_step(&input)?;
+        receipt.as_object_mut().expect("receipt object").insert(
+            "host_identity".into(),
+            serde_json::json!({
+                "native_executable_sha256": self.native_executable_sha256,
+                "lean_ffi_sha256": self.lean_ffi_sha256,
+                "equivalence": "not_proven"
+            }),
+        );
+        let request_hash = receipt
+            .get("canonical_request_sha256")
+            .and_then(Value::as_str)
+            .ok_or("receipt lacks canonical request hash")?;
+        let consumed_target = receipt
+            .get("approval")
+            .and_then(|a| a.get("approval_identity"))
+            .and_then(|_| {
+                receipt
+                    .get("certs")?
+                    .as_array()?
+                    .iter()
+                    .find(|c| c.get("kernel").and_then(Value::as_str) == Some("safety"))?
+                    .get("reason")?
+                    .as_str()
+                    .map(str::to_owned)
+            });
+        let bytes = serde_json::to_string_pretty(&receipt)
+            .map_err(|e| format!("cannot serialize v2 receipt: {e}"))?
+            + "\n";
+
+        loop {
+            let name = format!("receipt-{:020}-{}.json", self.next_entry, request_hash);
+            let final_path = self.dir.join(name);
+            let tmp_path = self.dir.join(format!(
+                ".receipt-{}-{:020}.tmp",
+                std::process::id(),
+                self.next_entry
+            ));
+            self.next_entry = self.next_entry.saturating_add(1);
+            if final_path.exists() {
+                continue;
+            }
+            let write_result = (|| -> std::io::Result<()> {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_path)?;
+                file.write_all(bytes.as_bytes())?;
+                file.sync_all()?;
+                std::fs::rename(&tmp_path, &final_path)?;
+                Ok(())
+            })();
+            if let Err(e) = write_result {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(format!(
+                    "cannot persist decision receipt in {}: {e}",
+                    self.dir.display()
+                ));
+            }
+            return Ok(PersistedReceipt {
+                path: final_path,
+                consumed_target,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_wasm_matches_the_pinned_rederivation_identity() {
+        assert_eq!(sha256_hex(VERIFIED_WASM), VERIFIED_WASM_SHA256);
+    }
+
+    #[test]
+    fn canonical_request_preserves_argument_order() {
+        let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
+        let line = serde_json::to_string(&canonical_request("x", &args)).unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2}}}"#
+        );
+    }
+}

@@ -14,8 +14,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "==> lake build"
-lake build
+echo "==> lake build +Ffi (runtime import closure)"
+lake build +Ffi
 
 echo "==> lake exe axiom_check"
 lake exe axiom_check

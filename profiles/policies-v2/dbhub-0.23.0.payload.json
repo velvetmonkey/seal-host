@@ -1,0 +1,19 @@
+{
+  "epoch": 1,
+  "server": "bytebase/dbhub@0.23.0",
+  "safety": {
+    "approval": {
+      "control_file": "/ABS/PATH/.seal/unused-approvals.ndjson",
+      "ttl_seconds": 120,
+      "replay_store": {"sqlite_path": "/ABS/PATH/.seal/replay.sqlite"}
+    },
+    "tools": [
+      {"name": "search_objects", "mode": "allow", "match": {"type": "all", "matches": [
+        {"type": "equals", "arg": "object_type", "value": "table"},
+        {"type": "equals", "arg": "detail_level", "value": "names"}
+      ]}},
+      {"name": "execute_sql", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []}
+    ]
+  }
+}

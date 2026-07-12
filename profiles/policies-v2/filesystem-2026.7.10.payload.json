@@ -1,0 +1,27 @@
+{
+  "epoch": 1,
+  "server": "@modelcontextprotocol/server-filesystem@2026.7.10",
+  "safety": {
+    "approval": {
+      "control_file": "/ABS/PATH/.seal/unused-approvals.ndjson",
+      "ttl_seconds": 120,
+      "replay_store": {"sqlite_path": "/ABS/PATH/.seal/replay.sqlite"}
+    },
+    "tools": [
+      {"name": "read_text_file", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "read_media_file", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "read_multiple_files", "mode": "deny", "match": {"type": "always"}},
+      {"name": "list_directory", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "list_directory_with_sizes", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "directory_tree", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "search_files", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "get_file_info", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},
+      {"name": "list_allowed_directories", "mode": "allow", "match": {"type": "always"}},
+      {"name": "write_file", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "edit_file", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "create_directory", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "move_file", "mode": "guard", "match": {"type": "always"}, "target": [{"full_arguments": true}]},
+      {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []}
+    ]
+  }
+}

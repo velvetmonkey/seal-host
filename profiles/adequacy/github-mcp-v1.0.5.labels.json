@@ -1,0 +1,8 @@
+{
+  "monitors": ["server", "tool", "arguments"],
+  "states": [
+    {"id": "delete-main", "label": "delete-main", "evidence": {"server": "github/github-mcp-server@v1.0.5", "tool": "delete_file", "arguments": "{\"owner\":\"acme\",\"repo\":\"app\",\"path\":\"main\",\"branch\":\"main\"}"}},
+    {"id": "delete-test", "label": "delete-test", "evidence": {"server": "github/github-mcp-server@v1.0.5", "tool": "delete_file", "arguments": "{\"owner\":\"acme\",\"repo\":\"app\",\"path\":\"test\",\"branch\":\"main\"}"}},
+    {"id": "read-main", "label": "explicit-read-allow", "evidence": {"server": "github/github-mcp-server@v1.0.5", "tool": "get_file_contents", "arguments": "{\"owner\":\"acme\",\"repo\":\"app\",\"path\":\"main\"}"}}
+  ]
+}

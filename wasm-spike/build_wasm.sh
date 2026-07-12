@@ -5,21 +5,28 @@
 #
 # Usage: ./build_wasm.sh [strict]
 #   strict -> link with -sERROR_ON_UNDEFINED_SYMBOLS=1 (proves full symbol closure)
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 
 ROOT=/home/monkey/src/seal-host
 CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
+MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
+if [ "$MCP_TYPE" = "path" ]; then
+  MCP_DIR="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .dir' "$ROOT/lake-manifest.json")"
+  SEAL_ROOT="$(realpath "$ROOT/$MCP_DIR")"
+else
+  SEAL_ROOT="$ROOT/.lake/packages/mcp-seal"
+fi
 
 echo "[build_wasm] recompiling wrapper + shim"
 emcc $CFLAGS -c seal_wrapper.c          -o build-core/seal_wrapper.o || exit 1
 emcc $CFLAGS -c "$ROOT/scripts/ffi_shim.c" -o build-core/ffi_shim.o  || exit 1
-emcc $CFLAGS -I "$ROOT/.lake/packages/mcp-seal/c" \
-  -c "$ROOT/.lake/packages/mcp-seal/c/tweetnacl.c" \
+emcc $CFLAGS -I "$SEAL_ROOT/c" \
+  -c "$SEAL_ROOT/c/tweetnacl.c" \
   -o build-core/tweetnacl.o || exit 1
-emcc $CFLAGS -I "$ROOT/.lake/packages/mcp-seal/c" \
-  -c "$ROOT/.lake/packages/mcp-seal/c/seal_ed25519.c" \
+emcc $CFLAGS -I "$SEAL_ROOT/c" \
+  -c "$SEAL_ROOT/c/seal_ed25519.c" \
   -o build-core/seal_ed25519.o || exit 1
 
 # Undefined-symbol policy: lax by default (DCE drops unreachable refs), strict on demand.

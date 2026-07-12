@@ -1,0 +1,18 @@
+{
+  "server": "github/github-mcp-server@v1.0.5",
+  "note": "Starter subset, not a complete export. Run the server's tool inventory and seal scan before trusting.",
+  "tools": [
+    {"name": "get_file_contents", "annotations": {"readOnlyHint": true}},
+    {"name": "get_commit", "annotations": {"readOnlyHint": true}},
+    {"name": "search_code", "annotations": {"readOnlyHint": true}},
+    {"name": "issue_read", "annotations": {"readOnlyHint": true}},
+    {"name": "pull_request_read", "annotations": {"readOnlyHint": true}},
+    {"name": "create_branch", "annotations": {"destructiveHint": true}},
+    {"name": "create_or_update_file", "annotations": {"destructiveHint": true}},
+    {"name": "delete_file", "annotations": {"destructiveHint": true}},
+    {"name": "push_files", "annotations": {"destructiveHint": true}},
+    {"name": "create_repository", "annotations": {"destructiveHint": true}},
+    {"name": "issue_write", "annotations": {"destructiveHint": true}},
+    {"name": "pull_request_review_write", "annotations": {"destructiveHint": true}}
+  ]
+}
