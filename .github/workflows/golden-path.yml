@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: Golden Path - deterministic shell
+
+on:
+  push:
+
+jobs:
+  deterministic-shell:
+    runs-on: ubuntu-latest
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+      SEAL_GOLDEN_PATH_IMAGE: node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4
+      SEAL_ASSURANCE_KIT_ROOT: ${{ github.workspace }}/seal-assurance-kit
+    steps:
+      - uses: actions/checkout@v6.0.3
+
+      - name: Require private dependency access
+        run: |
+          test -n "$SEAL_CI_READ_TOKEN" || {
+            echo "::error::SEAL_CI_READ_TOKEN is required; deterministic acceptance was not run."
+            exit 1
+          }
+
+      - name: Check out pinned assurance kit
+        uses: actions/checkout@v6.0.3
+        with:
+          repository: velvetmonkey/seal-assurance-kit
+          ref: 8a3103087e91e5e6d3fcac7aab01e25fb1a2e586
+          token: ${{ secrets.SEAL_CI_READ_TOKEN }}
+          path: seal-assurance-kit
+
+      - name: Configure private Lake dependency auth
+        run: |
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+
+      - uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+        with:
+          toolchain: "1.96.0"
+          cache: false
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "22"
+
+      - name: Stage pinned container image
+        run: docker pull "$SEAL_GOLDEN_PATH_IMAGE"
+
+      - name: Deterministic shell acceptance (no model, no operator auth)
+        run: |
+          python3 demo/golden_path.py shell --deterministic | tee /tmp/golden-path.txt
+          grep -F "policy tamper fail-closed" /tmp/golden-path.txt
+          grep -F "approval tamper fail-closed" /tmp/golden-path.txt
+          grep -F "downstream non-receipt" /tmp/golden-path.txt
+          grep -F "receipt verify + tier" /tmp/golden-path.txt
+          grep -F "local deterministic-tested, ci_tested=false, operator_verified=false" /tmp/golden-path.txt
+          grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path.txt
+          grep -F "operator-untested until run by Ben" /tmp/golden-path.txt
