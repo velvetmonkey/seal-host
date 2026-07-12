@@ -8,24 +8,17 @@ One command shows the full loop over a fake ledger in seconds (block with 64-hex
 
 The proof story (Lean kernel, TCB, non-interference) comes after you have watched it work.
 
-![Lean](https://img.shields.io/badge/Lean-4.28.0-blue)
-![Rust](https://img.shields.io/badge/Rust-host-orange)
-![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+## Quick start
 
-<!-- truthbox:begin -->
-> **Runtime profile: `compatible`.** Strict `canonical-l0` is proved and modelled, not the deployed route yet.
-> **Claim:** policy-covered request-effects recognised by the compatible MCP boundary require a matching live human approval and an allowing Lean kernel verdict; seam failures block; every decision emits replayable evidence.
-> **Non-claim:** the deployed host is not proved end to end, and canonical parser rejection is not currently the runtime gate. Host `ApprovalRecord` tokens are a separate signed channel from the v2 canonical approval tuple.
-<!-- truthbox:end -->
-> Map: [EVALUATOR-START.md](https://github.com/velvetmonkey/seal/blob/main/EVALUATOR-START.md) · profile detail: [PROFILE.md](PROFILE.md).
-
-**Luxury 30-second showcase (one command, zero external setup)**
-
-One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold `lake build` of the Lean core, which pulls the toolchain and can run tens of minutes on a fresh machine. After that the loop is instant. Then run:
+One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold `lake build` of the Lean core, which pulls the toolchain and can run tens of minutes on a fresh machine. After that the loop is instant. From a fresh checkout, run:
 
 ```bash
-bash scripts/showcase.sh
+bash scripts/build_all.sh && bash scripts/showcase.sh
 ```
+
+## What the showcase proves
+
+**Luxury 30-second showcase (one command, zero external setup)**
 
 What you see:
 - `BLOCK: ... "approval required: <64-hex>"`
@@ -39,6 +32,17 @@ Distinct targets, real Ed25519 signed channel, explicit refused path, full audit
 (Delegates to shipped demo/see_the_loop.py with LD paths. Setup in DEPLOY.md.)
 
 The rest of this page (and DEPLOY.md) tells you how to stand it in front of a real MCP server.
+
+![Lean](https://img.shields.io/badge/Lean-4.28.0-blue)
+![Rust](https://img.shields.io/badge/Rust-host-orange)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+
+<!-- truthbox:begin -->
+> **Runtime profile: `compatible`.** Strict `canonical-l0` is proved and modelled, not the deployed route yet.
+> **Claim:** policy-covered request-effects recognised by the compatible MCP boundary require a matching live human approval and an allowing Lean kernel verdict; seam failures block; every decision emits replayable evidence.
+> **Non-claim:** the deployed host is not proved end to end, and canonical parser rejection is not currently the runtime gate. Host `ApprovalRecord` tokens are a separate signed channel from the v2 canonical approval tuple.
+<!-- truthbox:end -->
+> Map: [EVALUATOR-START.md](https://github.com/velvetmonkey/seal/blob/main/EVALUATOR-START.md) · profile detail: [PROFILE.md](PROFILE.md).
 
 **Dogfood it (real approval channel, you are the human)**
 
