@@ -59,4 +59,34 @@ def dispatch (registry : Registry) (act : CanonicalAction) :
       commit
   pure (combined, verdicts)
 
+/-- One registered kernel instance at decision time, purely: its config, the
+    evidence gathered for this call, and the session state it decides against —
+    no `IO.Ref`. This mirrors exactly the inputs phase 1 of `dispatch` feeds
+    each gating kernel's pure `decide`. The IO realization (evidence gathering,
+    ref state, commit discipline) remains TCB; the composition theorems in
+    `Host.Composition` quantify over this pure model. -/
+structure PureInst where
+  kernel : Kernel
+  config : kernel.Config
+  evidence : kernel.Evidence
+  state : kernel.State
+
+/-- The verdict list phase 1 of `dispatch` produces for these instances, as a
+    pure fold: every gating instance contributes its `decide` verdict, in
+    registry order; non-gating instances contribute nothing. -/
+def pureVerdicts (insts : List PureInst) (act : CanonicalAction) : List Verdict :=
+  insts.filterMap fun i =>
+    if i.kernel.gates i.config act
+    then some (i.kernel.decide act i.config i.evidence i.state).1
+    else none
+
+/-- Membership: a registered, gating instance's verdict is among the combined
+    verdicts — the hook the composition theorems' membership hypotheses attach
+    to, for ANY registry subset in ANY order. -/
+theorem pureVerdicts_mem (insts : List PureInst) (act : CanonicalAction)
+    (i : PureInst) (hi : i ∈ insts) (hg : i.kernel.gates i.config act = true) :
+    (i.kernel.decide act i.config i.evidence i.state).1 ∈ pureVerdicts insts act := by
+  simp only [pureVerdicts, List.mem_filterMap]
+  exact ⟨i, hi, by simp [hg]⟩
+
 end Host
