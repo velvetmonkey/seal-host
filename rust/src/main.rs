@@ -30,7 +30,9 @@
 //! never reconstructs, re-encodes, or trims what the child receives.
 
 use seal_host_rs::a3;
-use seal_host_rs::decision_receipt::{ApprovalIdentity, DecisionInput, ReceiptWriter};
+use seal_host_rs::decision_receipt::{
+    ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
+};
 use seal_host_rs::lean;
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
@@ -179,14 +181,30 @@ fn approval_key_id(public_key_hex: &str) -> Result<String, String> {
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
-fn config_payload_from_envelope(envelope: &str) -> Result<Value, String> {
+fn signed_config_from_envelope(
+    envelope: &str,
+    pubkey: &str,
+) -> Result<(Value, SignedConfig), String> {
     let envelope_json: Value =
         serde_json::from_str(envelope).map_err(|e| format!("bad envelope JSON: {e}"))?;
     let payload = envelope_json
         .get("payload")
         .and_then(Value::as_str)
         .ok_or("missing string payload")?;
-    serde_json::from_str(payload).map_err(|e| format!("bad payload JSON: {e}"))
+    let signature = envelope_json
+        .get("signature")
+        .and_then(Value::as_str)
+        .ok_or("missing string signature")?;
+    let kernel_config =
+        serde_json::from_str(payload).map_err(|e| format!("bad payload JSON: {e}"))?;
+    Ok((
+        kernel_config,
+        SignedConfig {
+            payload: payload.to_owned(),
+            signature: signature.to_owned(),
+            pubkey: pubkey.to_owned(),
+        },
+    ))
 }
 
 fn default_receipt_dir(config_path: &str) -> std::path::PathBuf {
@@ -202,6 +220,7 @@ fn persist_decision(
     now: u64,
     emitted_bytes: &str,
     kernel_config: &Value,
+    signed_config: &SignedConfig,
     records: &[providers::ApprovalRecord],
     identity: &ApprovalIdentity,
     ttl_ms: u64,
@@ -211,6 +230,7 @@ fn persist_decision(
         now,
         emitted_bytes,
         kernel_config,
+        signed_config,
         approvals: records,
         approval_identity: identity,
         approval_ttl_ms: ttl_ms,
@@ -405,7 +425,8 @@ fn run() -> i32 {
         );
         return 3;
     }
-    let kernel_config = match config_payload_from_envelope(&envelope) {
+    let (kernel_config, signed_config) = match signed_config_from_envelope(&envelope, &args.pubkey)
+    {
         Ok(value) => value,
         Err(e) => {
             eprintln!("trusted config rejected: {e}");
@@ -647,6 +668,7 @@ fn run() -> i32 {
                     now,
                     &step_output,
                     &kernel_config,
+                    &signed_config,
                     &pending_approvals,
                     &approval_identity,
                     ttl_ms,
@@ -674,6 +696,7 @@ fn run() -> i32 {
                     now,
                     &step_output,
                     &kernel_config,
+                    &signed_config,
                     &pending_approvals,
                     &approval_identity,
                     ttl_ms,
@@ -762,6 +785,7 @@ fn run() -> i32 {
                                         retry_now,
                                         &retry_output,
                                         &kernel_config,
+                                        &signed_config,
                                         &pending_approvals,
                                         &approval_identity,
                                         ttl_ms,
@@ -790,6 +814,7 @@ fn run() -> i32 {
                                         retry_now,
                                         &retry_output,
                                         &kernel_config,
+                                        &signed_config,
                                         &pending_approvals,
                                         &approval_identity,
                                         ttl_ms,

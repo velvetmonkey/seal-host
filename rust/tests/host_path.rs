@@ -341,6 +341,25 @@ fn mediation_obfuscation_and_one_shot_approval() {
         "approved canonical call must forward"
     );
     let receipts = o.receipts();
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(o.dir.join("trusted.json")).unwrap()).unwrap();
+    let expected_payload = envelope["payload"].as_str().unwrap();
+    let expected_signature = envelope["signature"].as_str().unwrap();
+    let expected_pubkey = hex::encode(
+        SigningKey::from_bytes(&[7u8; 32])
+            .verifying_key()
+            .to_bytes(),
+    );
+    for receipt in &receipts {
+        assert_eq!(receipt["signed_config"]["payload"], expected_payload);
+        assert_eq!(receipt["signed_config"]["signature"], expected_signature);
+        assert_eq!(receipt["signed_config"]["pubkey"], expected_pubkey);
+        assert_eq!(
+            serde_json::to_string(&receipt["kernel_config"]).unwrap(),
+            expected_payload,
+            "preserve_order must keep kernel_config byte-identical to the signed payload"
+        );
+    }
     let allow = receipts
         .iter()
         .rev()

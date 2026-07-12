@@ -664,11 +664,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("demo", choices=["shell", "postgres", "filesystem"])
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
+    parser.add_argument("--receipt-output", help="preserve selected deterministic filesystem receipts")
     args = parser.parse_args()
     if args.demo in {"postgres", "filesystem"}:
+        if args.receipt_output and (args.demo != "filesystem" or not args.deterministic):
+            parser.error("--receipt-output requires filesystem --deterministic")
         command = [sys.executable, str(ROOT / "demo" / f"golden_path_{args.demo}.py")]
         if args.deterministic: command.append("--deterministic")
+        if args.receipt_output: command.extend(["--receipt-output", args.receipt_output])
         return subprocess.run(command, cwd=ROOT).returncode
+    if args.receipt_output:
+        parser.error("--receipt-output requires filesystem --deterministic")
     try:
         return execute(args.deterministic)
     except DemoSkip as error:

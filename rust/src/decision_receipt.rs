@@ -24,12 +24,20 @@ pub struct ApprovalIdentity {
     pub key_id: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SignedConfig {
+    pub payload: String,
+    pub signature: String,
+    pub pubkey: String,
+}
+
 #[derive(Debug)]
 pub struct DecisionInput<'a> {
     pub line: &'a str,
     pub now: u64,
     pub emitted_bytes: &'a str,
     pub kernel_config: &'a Value,
+    pub signed_config: &'a SignedConfig,
     pub approvals: &'a [ApprovalRecord],
     pub approval_identity: &'a ApprovalIdentity,
     pub approval_ttl_ms: u64,
@@ -248,6 +256,14 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         "axioms": ["propext", "Classical.choice", "Quot.sound"],
         "note": "Source-level provenance asserted by the producer; not established by this receipt."
     }));
+    receipt.insert(
+        "signed_config".into(),
+        serde_json::json!({
+            "payload": input.signed_config.payload,
+            "signature": input.signed_config.signature,
+            "pubkey": input.signed_config.pubkey,
+        }),
+    );
     receipt.insert("kernel_config".into(), input.kernel_config.clone());
     receipt.insert(
         "granted_capabilities".into(),

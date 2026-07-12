@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -22,7 +23,7 @@ import golden_path as gp
 
 ROOT = gp.ROOT
 KIT = gp.KIT
-HOST = gp.HOST
+HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 PHASE_B_KIT_REV = "0db03efd27fc3775988d5e4bd527d8e6206b6c47"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
@@ -158,6 +159,14 @@ def print_table() -> None:
     print("\n=============== FILESYSTEM ADVERSARIAL ACCEPTANCE ===============")
     for row in CHECKS: print(f"{row.status:<4} | {row.name:<35} | {row.evidence}")
     print("=================================================================")
+
+
+def build_named_release_targets() -> None:
+    env = os.environ.copy(); env.pop("SEAL_LAKE_OLD", None)
+    gp.run(["bash", "scripts/build_ffi_so.sh"], env=env)
+    gp.run(["cargo", "build", "--release", "--manifest-path", "rust/Cargo.toml", "--bin", "seal-host-rs"], env=env)
+    if not HOST.is_file(): raise gp.DemoFailure("named release host build did not produce seal-host-rs")
+    check("named release build", "PASS", "exact FFI runtime closure + release seal-host-rs")
 
 
 def preflight(deterministic: bool) -> None:
@@ -346,6 +355,41 @@ def token(key: Path,target: str,label: str)->dict: return gp.approval_token(key,
 def receipt(path: Path)->dict: return json.loads(path.read_text(encoding="utf-8"))
 
 
+def sha256_file(path: Path)->str:
+    digest=hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024*1024),b""): digest.update(chunk)
+    return digest.hexdigest()
+
+
+def export_gate0a_receipts(work: Path,output: Path,trusted: Path,config_pub: str)->None:
+    read_records=sorted((work/"read-receipts").glob("receipt-*.json"))
+    one_shot_records=sorted((work/"one-shot-receipts").glob("receipt-*.json"))
+    if len(read_records)!=1 or len(one_shot_records)<2: raise gp.DemoFailure("Gate 0A receipt selection is ambiguous")
+    selected={"allow.json":read_records[0],"block.json":one_shot_records[0]}
+    expected={
+        "native_executable_sha256":sha256_file(HOST),
+        "lean_ffi_sha256":sha256_file(ROOT/".lake"/"build"/"lib"/"libsealffi.so"),
+        "equivalence":"not_proven",
+    }
+    envelope=json.loads(trusted.read_text(encoding="utf-8"))
+    expected_signed_config={"payload":envelope["payload"],"signature":envelope["signature"],"pubkey":config_pub}
+    records={name:receipt(path) for name,path in selected.items()}
+    if records["allow.json"].get("verdict")!="ALLOW" or records["allow.json"].get("authorization")!="explicit_policy_allow": raise gp.DemoFailure("selected Gate 0A ALLOW receipt is not explicit-policy ALLOW")
+    if records["block.json"].get("verdict")!="BLOCK": raise gp.DemoFailure("selected Gate 0A BLOCK receipt is not BLOCK")
+    for name,record in records.items():
+        if record.get("host_identity")!=expected: raise gp.DemoFailure(f"{name} host_identity does not match release artifacts")
+        if record.get("signed_config")!=expected_signed_config: raise gp.DemoFailure(f"{name} signed_config does not equal the init envelope + pubkey")
+        if gp.compact(record.get("kernel_config"))!=expected_signed_config["payload"]: raise gp.DemoFailure(f"{name} kernel_config is not byte-identical to signed_config.payload")
+    output.mkdir(parents=True,exist_ok=False)
+    for name,source in selected.items(): shutil.copyfile(source,output/name)
+    print("\n=== GATE 0A PRESERVED RECEIPTS ===")
+    for name in ["allow.json","block.json"]:
+        record=records[name]
+        print(json.dumps({"file":str(output/name),"verdict":record["verdict"],"authorization":record.get("authorization"),"signed_config":record["signed_config"],"host_identity":record["host_identity"]},indent=2))
+    check("Gate 0A receipt export", "PASS", "release ALLOW + BLOCK carry the exact init envelope + matching config pubkey; host hashes match live artifacts; equivalence=not_proven")
+
+
 def verify_receipt(seal: Path,path: Path,verdict: str)->None:
     record=receipt(path)
     if record.get("kernel_config",{}).get("safety",{}).get("_seal_demo_tier")!=FILESYSTEM_TIER: raise gp.DemoFailure("receipt tier mismatch")
@@ -484,6 +528,13 @@ RECEIPTS / CONTAINMENT EVIDENCE
   runtime integration evidence; adapter/path resolver/Node/Docker/symlink
   behavior remain TCB. Session/trace receipt verification is future work.
 
+HOST IDENTITY NON-CLAIM
+  host_identity is ASSERTED provenance. The portable verifier checks shape
+  only; a valid-hex substitution is NOT detected. Cross-checking the binary/FFI
+  hashes requires the artifacts out-of-band. equivalence stays not_proven.
+  Cryptographically binding host_identity is a future seal-check design
+  question; this demo does not implement it.
+
 DOES NOT ESTABLISH — LOUDLY
   MEDIATED MCP PATH ONLY. Direct host filesystem access, another MCP server,
   Docker access, or unmediated container exec is OUT OF SCOPE. No host path is
@@ -530,8 +581,9 @@ def live_claude(name: str,trusted: Path,config_pub: str,key: Path,approval_pub: 
     finally: proc.close()
 
 
-def execute(deterministic: bool)->int:
-    preflight(deterministic); gp.build_named_targets()
+def execute(deterministic: bool,receipt_output: Path|None=None)->int:
+    if receipt_output is not None and not deterministic: raise gp.DemoFailure("receipt export requires deterministic mode")
+    preflight(deterministic); build_named_release_targets()
     with tempfile.TemporaryDirectory(prefix="seal-filesystem-golden-path-") as td:
         work=Path(td); name=start_container()
         try:
@@ -540,13 +592,14 @@ def execute(deterministic: bool)->int:
                 read_leg(name,seal,trusted,config_pub,approval_pub,work); policy_tamper(name,trusted,config_pub,approval_pub,work); approval_tamper(name,seal,trusted,config_pub,key,approval_pub,work); path_escape_leg(name,trusted,config_pub,key,approval_pub,work); one_shot(name,seal,trusted,config_pub,key,approval_pub,work); budget_leg(name,trusted,config_pub,key,approval_pub,work); check("live authenticated Claude","SKIP","not invoked by deterministic/CI mode; operator-verified remains NO")
             else: live_claude(name,trusted,config_pub,key,approval_pub,work)
             scan(seal,manifest,policy); boundary_card(config_pub,approval_pub)
+            if receipt_output is not None: export_gate0a_receipts(work,receipt_output,trusted,config_pub)
         finally: stop_container(name)
     return 0
 
 
 def main()->int:
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--deterministic",action="store_true"); args=parser.parse_args()
-    try: return execute(args.deterministic)
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--deterministic",action="store_true"); parser.add_argument("--receipt-output"); args=parser.parse_args()
+    try: return execute(args.deterministic,Path(args.receipt_output).resolve() if args.receipt_output else None)
     except gp.DemoSkip as error: check("demo","SKIP",str(error)); return 2
     except Exception as error: check("demo","FAIL",str(error)); return 1
     finally:
