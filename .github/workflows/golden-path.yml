@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: Golden Path - deterministic shell + Postgres
+name: Golden Path - deterministic shell + Postgres + filesystem
 
 on:
   push:
@@ -11,6 +11,7 @@ jobs:
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
       SEAL_GOLDEN_PATH_IMAGE: node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4
+      SEAL_FILESYSTEM_IMAGE: node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4
       SEAL_POSTGRES_IMAGE: postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
       SEAL_ASSURANCE_KIT_ROOT: ${{ github.workspace }}/seal-assurance-kit
     steps:
@@ -86,3 +87,26 @@ jobs:
           grep -F "receipt not called independently verified" /tmp/golden-path-postgres.txt
           grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-postgres.txt
           grep -F "operator-untested until run by Ben" /tmp/golden-path-postgres.txt
+
+      - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
+        run: |
+          python3 demo/golden_path.py filesystem --deterministic | tee /tmp/golden-path-filesystem.txt
+          grep -F "containment preflight" /tmp/golden-path-filesystem.txt
+          grep -F "only /workspace writable" /tmp/golden-path-filesystem.txt
+          grep -F "init + add-kernel B policy" /tmp/golden-path-filesystem.txt
+          grep -F "ACTIVE {S,B}" /tmp/golden-path-filesystem.txt
+          grep -F "benign read flows" /tmp/golden-path-filesystem.txt
+          grep -F "policy tamper fail-closed" /tmp/golden-path-filesystem.txt
+          grep -F "approval tamper fail-closed" /tmp/golden-path-filesystem.txt
+          grep -F "path escape rejection" /tmp/golden-path-filesystem.txt
+          grep -F "PATH_REJECTED both before filesystem access" /tmp/golden-path-filesystem.txt
+          grep -F "approved one-shot real write" /tmp/golden-path-filesystem.txt
+          grep -F "replayed_nonce BLOCK" /tmp/golden-path-filesystem.txt
+          grep -F "accumulated Budget cap" /tmp/golden-path-filesystem.txt
+          grep -F "Budget stateful evidence" /tmp/golden-path-filesystem.txt
+          grep -F "fresh write receipt verification" /tmp/golden-path-filesystem.txt
+          grep -F "seal scan composition" /tmp/golden-path-filesystem.txt
+          grep -F "Budget enforcement is machine-checked by composed_budget_cap" /tmp/golden-path-filesystem.txt
+          grep -F "receipt not called independently verified" /tmp/golden-path-filesystem.txt
+          grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-filesystem.txt
+          grep -F "operator-untested until run by Ben" /tmp/golden-path-filesystem.txt

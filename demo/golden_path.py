@@ -662,11 +662,11 @@ def execute(deterministic: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["shell", "postgres"])
+    parser.add_argument("demo", choices=["shell", "postgres", "filesystem"])
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
     args = parser.parse_args()
-    if args.demo == "postgres":
-        command = [sys.executable, str(ROOT / "demo" / "golden_path_postgres.py")]
+    if args.demo in {"postgres", "filesystem"}:
+        command = [sys.executable, str(ROOT / "demo" / f"golden_path_{args.demo}.py")]
         if args.deterministic: command.append("--deterministic")
         return subprocess.run(command, cwd=ROOT).returncode
     try:
