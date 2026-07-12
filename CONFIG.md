@@ -14,6 +14,220 @@ and forwards the original bytes only after the Lean gate allows. This guide
 uses a disposable SQLite MCP server in the repository. It performs a real
 `DROP TABLE`, but only against `.seal/sandbox.sqlite`.
 
+## Trusted configuration reference
+
+The host authenticates one whole `Host.TrustedConfig` payload with Ed25519.
+The signature covers the exact payload string bytes in the envelope; the
+startup `--pubkey` is the trust root and is not read from that envelope. The
+top-level keys understood by the host are `epoch`, optional `server`, and the
+seven kernel sections below. `seal policy sign` and `seal scan` reject any
+other top-level key: a typo such as `temporral` must not silently leave a
+kernel off.
+
+`epoch` is a required natural number greater than zero. `server`, when
+present, is a string. `safety` is required; the other six sections are
+optional and absence means that no configured, non-vacuous guarantee from
+that kernel participates. A present section can still be ineffective: an
+empty tool/policy set enforces nothing, and Calibration with `enabled:false`
+is explicitly inactive. The authoring tools report these separately as
+`ACTIVE`, `PRESENT-BUT-INACTIVE`, and `ABSENT/OFF`.
+
+The schemas below follow the `parse*` functions in `Host/Config.lean`. A
+“natural” is a non-negative JSON integer. Dotted argument paths are split on
+`.` and empty path components are discarded.
+
+### Safety (S) — required
+
+```json
+{
+  "safety": {
+    "server": "optional/server-identity",
+    "approval": {
+      "control_file": "/path/to/approvals.ndjson",
+      "ttl_seconds": 120
+    },
+    "tools": [
+      {
+        "name": "tool_name",
+        "mode": "allow | guard | guarded | deny",
+        "match": { "type": "always" },
+        "target": [{ "full_arguments": true }]
+      }
+    ]
+  }
+}
+```
+
+- `approval`, `approval.control_file` (string), and `tools` (array) are
+  required. `ttl_seconds` is an optional natural, defaults to 120, and is
+  clamped to at most 300 seconds by the parser.
+- `safety.server` is an optional string. If both top-level `server` and
+  `safety.server` are present they must be equal. If only the top-level value
+  is present, the host supplies it to Safety.
+- Every tool rule requires string `name` and one of the four displayed modes.
+  `match` is optional and defaults to `always`. Other matcher schemas are
+  `{type:"equals"|"starts_with", arg:string, value:string}`,
+  `{type:"contains_any_ci", arg:string, needles:string[]}`, and recursive
+  `{type:"all"|"any", matches:match[]}`.
+- `target` is optional and defaults to `[]`. Target parts parse as a string
+  `literal`, a string dotted `arg` path, or `full_arguments:true`. The host
+  parser checks `literal` first; without it, `arg` and `full_arguments` must
+  be exclusive. The authoring signer deliberately applies the stricter safe
+  subset: guarded rules need a non-empty target, target parts must be
+  unambiguous, rule names and matcher argument paths must be non-empty, and
+  `all`/`any` need at least one child. The signer also requires a non-empty
+  top-level `server` when that optional field is supplied.
+
+**Guarantee:** a composed allow for a Safety-guarded call implies a live,
+matching approval for its classified target. Safety gates every tool call and
+remains effective even when its rule list is empty because unmatched calls
+deny by default.
+
+### Temporal (T) — optional
+
+```json
+{
+  "temporal": {
+    "policies": [
+      {
+        "name": "freeze-after-revoke",
+        "type": "no_after",
+        "trigger": ["revoke"],
+        "forbidden": ["write_item"]
+      }
+    ]
+  }
+}
+```
+
+`policies` is a required array when the section is present. Each policy
+requires string `name`, the exact type `no_after`, and string arrays `trigger`
+and `forbidden`. A section with no policy having both trigger and forbidden
+tools is present but vacuous.
+
+**Guarantee:** a composed allow implies no configured `no_after` policy
+forbids the call in the current executed-call trace.
+
+### Consensus (C) — optional
+
+```json
+{
+  "consensus": {
+    "roster": [1, 2, 3],
+    "votes_file": "/path/to/votes.ndjson",
+    "high_stakes": ["deploy"]
+  }
+}
+```
+
+All three fields are required: `roster` is an array of naturals,
+`votes_file` is a string, and `high_stakes` is a string array. An empty
+`high_stakes` list is present but vacuous. An empty roster is accepted by the
+parser but cannot supply a quorum.
+
+**Guarantee:** two composed allows against the same trusted roster and votes
+ratify the same tool-name value. The deployed certificate binds the tool
+name, not its full argument bytes.
+
+### Convergence (V) — optional
+
+```json
+{
+  "convergence": {
+    "tools": [{ "tool": "store.update", "op_arg": "operation.kind" }]
+  }
+}
+```
+
+`tools` is required when present. Every entry requires string `tool` and
+string dotted `op_arg`. An empty list is present but vacuous. The admissible
+operation set is fixed in code: `gset.add`, `gcounter.inc`, `pncounter.inc`,
+`pncounter.dec`, `orset.add`, `orset.remove`, `rga.insert`, and `rga.remove`.
+
+**Guarantee:** a composed allow for a V-gated call implies the resolved
+operation is in that fixed, kernel-checked convergent set.
+
+### Calibration (K) — optional, EXPERIMENTAL
+
+```json
+{
+  "calibration": {
+    "enabled": false,
+    "delta_num": 1,
+    "delta_den": 20,
+    "min_samples": 100,
+    "records_file": "/path/to/forecasts.ndjson",
+    "gated_tools": ["auto_publish"]
+  }
+}
+```
+
+`enabled` is an optional boolean defaulting to `false`. All other displayed
+fields remain required even while disabled: `delta_num`, `delta_den`, and
+`min_samples` are naturals; `records_file` is a string; `gated_tools` is a
+string array. The fraction must satisfy `0 < delta_num/delta_den < 1`. K is
+active only when enabled and at least one tool is gated.
+
+**Guarantee:** a composed allow for a K-gated call implies the executable
+Float calibration check passed. The statistical delta theorem is **not**
+formally connected to that Float computation. K is EXPERIMENTAL and is not
+part of recommended configuration recipes.
+
+### Linear resources (L) — optional
+
+```json
+{
+  "linear": {
+    "grants_file": "/path/to/grants.ndjson",
+    "tools": [{ "tool": "spend", "cap_arg": "capability.id" }]
+  }
+}
+```
+
+`grants_file` (string) and `tools` (array) are required when present. Every
+tool entry requires string `tool` and string dotted `cap_arg`. An empty tool
+list is present but vacuous.
+
+**Guarantee:** a composed allow for an L-gated call implies the spend was
+backed by a held capability and consumed exactly one use; denied calls spend
+nothing.
+
+### Budget/rate (B) — optional
+
+```json
+{
+  "budget": {
+    "budgets": [
+      {
+        "name": "write-units",
+        "cap": 100,
+        "tools": ["write_item"],
+        "cost_arg": "usage.units"
+      }
+    ]
+  }
+}
+```
+
+`budgets` is required when the section is present. Every entry requires
+string `name`, natural `cap`, and string-array `tools`; string dotted
+`cost_arg` is optional. Without `cost_arg`, each covered call costs 1. The
+section is present but vacuous when no budget covers any tool.
+
+**Guarantee:** a composed allow for a B-gated call implies every covering
+budget resolved its cost and admitted it without exceeding its cap.
+
+### Composed guarantee and boundary
+
+A mediated host ALLOW requires Safety and every configured kernel whose gate
+covers that call to allow. For every effectively active kernel, the matching
+guarantee above rides the composed allow. Absent, disabled, and vacuous
+sections add no non-vacuous protection. These are safety implications, not
+liveness promises; the trusted config, runtime evidence gathering, and IO
+realization remain in the TCB. See
+[`docs/PROOF-REFERENCE.md`](docs/PROOF-REFERENCE.md) for theorem names, axiom
+footprints, and the full non-claims.
+
 ## 1. Build and prepare the sandbox
 
 From the `seal-host` checkout:
