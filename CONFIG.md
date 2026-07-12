@@ -228,6 +228,111 @@ realization remain in the TCB. See
 [`docs/PROOF-REFERENCE.md`](docs/PROOF-REFERENCE.md) for theorem names, axiom
 footprints, and the full non-claims.
 
+## Manifest-aware authoring recipes
+
+Recipes are scaffolding strategies applied to the real names in a captured
+`tools/list` manifest. They are not generic policy templates. Every emitted
+kernel section references at least one real manifest tool and `seal init`
+refuses to emit a recipe when it cannot create a non-vacuous section.
+
+Safety always starts from the proven exact-name scaffold: server-described
+read-only tools are visible unverified `allow` suggestions, while destructive,
+unknown, and conflicting tools are guarded. Recipe placeholders deliberately
+fail closed. A budget `cap:0`, empty consensus roster, placeholder evidence
+file, or unresolved argument path can block the covered call until edited.
+Review every `EDIT-ME` before signing.
+
+When the manifest has no literal archetype match, the CLI chooses a
+deterministic guarded best-fit tool and prints the same warning into the
+policy, for example:
+
+```text
+EDIT-ME: best-fit mapping: role 'deploy' → tool 'execute_sql'.
+Review whether this recipe suits this server at all.
+```
+
+That mapping proves only that the section is wired to a real tool. It is not
+an endorsement that a deploy recipe belongs on a database server. One tool
+may fill multiple roles on a sparse manifest.
+
+### `prod-db` — Safety + Temporal + Budget (S + T + B)
+
+```bash
+seal init --recipe prod-db profiles/manifests/dbhub-0.23.0.tools.json
+```
+
+Safety guards every destructive or unknown tool. Budget covers that same
+guarded set, initially with `cap:0`. Temporal uses the real guarded tool set
+as both the trigger and forbidden set, so after the first mapped destructive
+or unknown call, subsequent mapped calls freeze. Edit the cap and narrow the
+trigger set if a different lifecycle event should start the freeze.
+
+### `deploy` — Linear + Consensus + Safety (L + C + S)
+
+```bash
+seal init --recipe deploy profiles/manifests/github-mcp-v1.0.5.tools.json
+```
+
+Linear requires a capability for the selected deploy tool, Consensus marks it
+`high_stakes`, and Safety visibly marks the guarded rollback role. Edit
+`capability.id`, `EDIT-ME/seal-grants.ndjson`, the empty roster, and
+`EDIT-ME/seal-votes.ndjson`. Until then the Linear and Consensus placeholders
+fail closed.
+
+### `token-governor` — Budget + Safety (B + S)
+
+```bash
+seal init --recipe token-governor captured.tools.json
+```
+
+Budget caps the selected token/LLM role and wires the placeholder cost path
+`usage.tokens`; Safety visibly marks the guarded payment role. Edit the
+initial `cap:0` and verify `cost_arg` against the server's actual argument
+schema before use.
+
+### `mesh` — Convergence + Safety (V + S)
+
+```bash
+seal init --recipe mesh captured.tools.json
+```
+
+Convergence covers the selected shared-state tool and Safety visibly marks
+the guarded publish role. Edit `operation.kind` to the real operation argument
+path and confirm the server emits one of V's fixed admissible convergent
+operations.
+
+### Add one kernel incrementally
+
+`add-kernel` edits the sibling policy created by `seal init` by default:
+
+```bash
+seal add-kernel B captured.tools.json
+```
+
+For a moved or hand-authored policy, select it explicitly:
+
+```bash
+seal add-kernel V captured.tools.json --policy config/reviewed-policy.json
+```
+
+The command validates the whole result before writing and refuses malformed
+policies, server-identity conflicts, or an already-present section rather
+than overwriting edits. S, T, C, V, L, and B use the same real-tool selection
+and fail-closed placeholder rules as the catalog above.
+
+Calibration K is EXPERIMENTAL, excluded from every recipe, and outside the
+recommended path. The only authoring route requires explicit consent and
+prints a loud warning:
+
+```bash
+seal add-kernel K captured.tools.json --policy config/policy.json --experimental
+```
+
+**Evidence tier:** dev-box deterministic-tested against snapshots of the
+three shipped manifests; the standing `npm test` CI gate is configured but
+has not run remotely for this change; operator verification is not applicable
+to this non-model authoring surface.
+
 ## 1. Build and prepare the sandbox
 
 From the `seal-host` checkout:
