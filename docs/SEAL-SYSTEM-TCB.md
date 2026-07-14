@@ -49,6 +49,10 @@ Specifically, seal does **NOT** claim:
 - **that the deployed wasm provably equals the Lean model** — the equivalence
   is a *trusted compile* (Lean C codegen + emscripten) plus *differential
   testing*, **not** a proof (§3B, §4);
+- **that the deployed host runs the strict `canonical-l0` profile** — do not
+  describe the deployed host as strict canonical-l0; it is `compatible`
+  (CLAIMS.md — `canonical-l0` is implemented at the proof layer, not the
+  deployed routing path);
 - that a deployment actually routes its calls through the gate (an integration
   property of the operator, not a theorem);
 - any third-party endorsement, outcome, or affiliation.

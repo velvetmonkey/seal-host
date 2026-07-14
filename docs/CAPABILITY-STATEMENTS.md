@@ -60,6 +60,10 @@ from liveness, and `hACR` lifts that to part-list equality.
   target-part split lives) → `SealCore.step`/`live`
   (`SealCore/Automaton.lean:20`): a **hash-keyed** `Std.HashMap
   TargetHash Nat` lookup. The deployed broker compares SHA-256 target digests.
+  The deployed routing profile is `compatible`, not strict `canonical-l0`
+  (CLAIMS.md: do not describe the deployed host as strict canonical-l0 — it is
+  `compatible`; `canonical-l0` is implemented at the proof layer, not the
+  deployed routing path).
 * **Value model (SealV2):** `validate`/`ValidCapability`
   (`SealV2/Validation.lean:272-309`) compares full `Target` STRUCTS
   (`approval.target == target`, derived BEq over all fields including
