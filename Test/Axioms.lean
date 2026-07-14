@@ -647,5 +647,84 @@ info: 'Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target'' depe
 -/
 #guard_msgs in #print axioms Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target'
 
+-- The commit discipline: deny-side and allow-side state commits over the pure
+-- two-phase model, and the product corollaries at the committed trace
+-- (Host/Commit.lean)
+
+/-- info: 'Host.pureCommit' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.pureCommit
+
+/--
+info: 'Host.pureCommit_deny_no_decide_commit' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_no_decide_commit
+
+/--
+info: 'Host.pureCommit_allow_commits_decide' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_allow_commits_decide
+
+/--
+info: 'Host.pureCommit_allow_closed_algebra' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_allow_closed_algebra
+
+/--
+info: 'Host.pureCommit_head_commitStep' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_head_commitStep
+
+/-- info: 'Host.budget_commitStep_deny' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.budget_commitStep_deny
+
+/--
+info: 'Host.budget_committed_trace_within_cap' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.budget_committed_trace_within_cap
+
+/-- info: 'Host.budgetCapsConsistent_caps_eq' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.budgetCapsConsistent_caps_eq
+
+/--
+info: 'Host.budget_committed_trace_within_cap_of_consistent' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.budget_committed_trace_within_cap_of_consistent
+
+/-- info: 'Host.linear_commitStep_deny' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.linear_commitStep_deny
+
+/--
+info: 'Host.linear_committed_trace_conservation' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.linear_committed_trace_conservation
+
+/--
+info: 'Host.linear_committed_trace_no_double_spend' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.linear_committed_trace_no_double_spend
+
+-- Provenance separation: the principal is never populated from the request
+-- (Host/Provenance.lean)
+
+/--
+info: 'Host.Provenance.factored_separated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.factored_separated
+
+/--
+info: 'Host.Provenance.spoofingAssigner_not_separated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.spoofingAssigner_not_separated
+
+/--
+info: 'Host.Provenance.boot_principal_constant' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.boot_principal_constant
+
+/--
+info: 'Host.Provenance.replayNamespace_trusted_plane' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.replayNamespace_trusted_plane
+
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"

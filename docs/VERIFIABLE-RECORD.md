@@ -88,7 +88,7 @@ node scripts/seal_log.mjs head   <sealed.json>                 # print the curre
   construction (the log is exactly the per-decision audits in reverse order).
 - Footprint `[propext, Classical.choice, Quot.sound]` (baseline), zero `sorry`.
 - Scope: the record of ADMITTED (forwarded) effects — the security-relevant log.
-  Composed with `tamper_evident`, the record is both unforgeable and a faithful
+  Composed with `tamper_evident`, the record is both tamper-evident and a faithful
   witness of what passed the gate.
 
 ## Not claimed

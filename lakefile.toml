@@ -1,6 +1,6 @@
 name = "seal-host"
 version = "0.1.0"
-defaultTargets = ["seal-host", "axiom_check"]
+defaultTargets = ["seal-host", "axiom_check", "host_unit_tests"]
 moreLinkArgs = [".lake/packages/mcp-seal/c/build/libsealcrypto.o"]
 
 # Mathlib-carrying libraries first so mathlib's transitive pins win resolution order.
