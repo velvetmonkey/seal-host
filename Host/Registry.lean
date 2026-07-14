@@ -30,11 +30,23 @@ def denyReason (verdicts : List Verdict) : String :=
   | some v => v.reason
   | none => "no kernel gated this call"
 
+/-- Phase 1 for one gating kernel, purely: the verdict, the post-ingest state
+    (committed immediately — evidence must survive a deny), and the HELD
+    execution-transition state (committed only on a combined allow). This is
+    `dispatch`'s per-kernel state logic in one pure function; the
+    commit-discipline theorems in `Host.Commit` (`phase1Held_verdict`,
+    `phase1Held_ingest`, `phase1Held_held`) bind it to the proven model. -/
+def phase1Held (K : Kernel) (cfg : K.Config) (act : CanonicalAction)
+    (ev : K.Evidence) (st0 : K.State) : Verdict × K.State × K.State :=
+  let st1 := K.ingest ev st0
+  let (verdict, st2) := K.decide act cfg ev st1
+  (verdict, st1, st2)
+
 /-- Run every kernel whose `gates` matches, in registry order. Two-phase:
 
-    1. For each gating kernel: gather evidence, commit `ingest` immediately
-       (evidence must survive a deny), then run the pure `decide` and hold the
-       returned execution-transition state.
+    1. For each gating kernel: gather evidence, run the pure `phase1Held`,
+       commit its `ingest` state immediately (evidence must survive a deny),
+       and hold its `decide` execution-transition state.
     2. Combine fail-closed. Only on combined ALLOW are the held states
        committed — a denied call never executed, so no kernel's
        trace/automaton advances on it.
@@ -48,9 +60,8 @@ def dispatch (registry : Registry) (act : CanonicalAction) :
     if r.kernel.gates r.config act then
       let evidence ← r.gather act
       let st0 ← r.stateRef.get
-      let st1 := r.kernel.ingest evidence st0
+      let (verdict, st1, st2) := phase1Held r.kernel r.config act evidence st0
       r.stateRef.set st1
-      let (verdict, st2) := r.kernel.decide act r.config evidence st1
       commits := commits ++ [r.stateRef.set st2]
       verdicts := verdicts ++ [verdict]
   let combined := combineVerdicts verdicts
