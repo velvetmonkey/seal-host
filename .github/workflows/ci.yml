@@ -38,6 +38,8 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: lake exe host_unit_tests
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
 
   rust-conformance:
     runs-on: ubuntu-latest

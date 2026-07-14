@@ -50,9 +50,10 @@ private def decideS (act : CanonicalAction) (ev : Kernels.SafetyEvidence)
 private def goodLine : String :=
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"db.execute\",\"arguments\":{\"sql\":\"drop table users\"}}}"
 
--- Lean.Json accepts the \t escape; the SealV2 canonical parser rejects
--- escape sequences, so this is a tools/call by V1 routing that the canonical
--- gate must block.
+-- The SealV2 canonical parser is escape-aware: the canonical escape form
+-- (SealV2/Escape.lean) encodes ALL Unicode strings with exactly one byte
+-- representation, and \t IS the canonical escape of a tab. A line carrying
+-- it is genuinely canonical — both views agree.
 private def escapedLine : String :=
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"db.execute\",\"arguments\":{\"sql\":\"a\\tb\"}}}"
 
@@ -75,11 +76,15 @@ def main : IO Unit := do
      | .passthrough => true | _ => false)
   check "tools/call canonical -> act with tool name"
     (match classifyLine goodLine with | .act a => a.tool == "db.execute" | _ => false)
-  -- A tools/call carrying an escape is non-canonical (ast? = none) but is
-  -- still mediated on the V1 view — legitimate multiline/Unicode tool args
-  -- are decided, not refused. The canonical gate does not block traffic.
-  check "tools/call with escape -> mediated act, no canonical ast"
-    (match classifyLine escapedLine with | .act a => a.ast?.isNone | _ => false)
+  -- Pin of the escape-aware parser: a tools/call carrying an escape is
+  -- mediated AND carries a canonical ast — \t is the canonical escape of a
+  -- tab, so escaped/Unicode tool args are canonical, decided, never refused.
+  -- (Previously the canonical parser rejected escapes and this asserted
+  -- ast?.isNone; that parser no longer exists.)
+  check "tools/call with escape -> mediated act WITH canonical ast (escape-aware)"
+    (match classifyLine escapedLine with
+     | .act a => a.tool == "db.execute" && a.ast?.isSome
+     | _ => false)
   check "canonical tools/call -> act carries canonical ast"
     (match classifyLine goodLine with | .act a => a.ast?.isSome | _ => false)
 
@@ -106,12 +111,41 @@ def main : IO Unit := do
   check "epoch 0 rejected"
     (match checkTrustedConfig configPk payloadE0 payloadE0Sig with
      | .error _ => true | .ok _ => false)
-  -- \t escape makes the payload non-canonical even though Lean.Json parses it
-  let payloadNc := "{\"epoch\":1,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a\\tb\",\"ttl_seconds\":120},\"tools\":[]}}"
-  let payloadNcSig := "fc29ff1d44e60d90373783b3b85e2648840729a3ce602b158562f772d0bbf8431189520dbe6e2aeaf57c01dfbd78571ed7ea3a29047db331e0cffc1489396f0f"
-  check "non-canonical payload rejected"
-    (match checkTrustedConfig configPk payloadNc payloadNcSig with
-     | .error _ => true | .ok _ => false)
+  -- Non-canonicality now lives in numbers/structure, not strings (the
+  -- escape-aware parser admits every string in its one canonical byte form).
+  -- A leading-zero integer is non-canonical; Lean.Json would parse past it,
+  -- the SealV2 gate must reject it. Asserting the EXACT canonicality error
+  -- proves the rejection came from the canonical gate, not from the (garbage)
+  -- signature — checkTrustedConfig checks canonicality first.
+  let payloadNc := "{\"epoch\":01,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a.ndjson\",\"ttl_seconds\":120},\"tools\":[]}}"
+  check "non-canonical payload (leading-zero int) rejected by the canonical gate"
+    (match checkTrustedConfig configPk payloadNc zeroSig with
+     | .error msg => msg == "config payload is not canonical (SealV2 parse rejected it)"
+     | .ok _ => false)
+  -- Second structural witness: a duplicate key is non-canonical even though
+  -- Lean.Json would swallow it (last write wins).
+  let payloadDup := "{\"epoch\":1,\"epoch\":1,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a.ndjson\",\"ttl_seconds\":120},\"tools\":[]}}"
+  check "non-canonical payload (duplicate key) rejected by the canonical gate"
+    (match checkTrustedConfig configPk payloadDup zeroSig with
+     | .error msg => msg == "config payload is not canonical (SealV2 parse rejected it)"
+     | .ok _ => false)
+  -- Pin of the new behaviour at the config level: a payload whose string
+  -- carries a \t escape IS canonical now. This payload was this suite's old
+  -- "non-canonical" witness; its rejection today must come from the
+  -- signature (garbage here), NOT from the canonical gate.
+  let payloadEsc := "{\"epoch\":1,\"safety\":{\"approval\":{\"control_file\":\"/tmp/a\\tb\",\"ttl_seconds\":120},\"tools\":[]}}"
+  check "escaped payload is canonical now (rejection is signature-only)"
+    (match checkTrustedConfig configPk payloadEsc zeroSig with
+     | .error msg => msg == "config signature verification failed"
+     | .ok _ => false)
+  -- And positively: under its genuine signature the escaped payload is
+  -- ACCEPTED end-to-end (this signature was minted for the old
+  -- "non-canonical payload rejected" test, which never got as far as
+  -- verifying it).
+  let payloadEscSig := "fc29ff1d44e60d90373783b3b85e2648840729a3ce602b158562f772d0bbf8431189520dbe6e2aeaf57c01dfbd78571ed7ea3a29047db331e0cffc1489396f0f"
+  check "escaped payload accepted under its genuine signature"
+    (match checkTrustedConfig configPk payloadEsc payloadEscSig with
+     | .ok c => c.epoch == 1 | .error _ => false)
 
   -- kernel S decision traces (V1 semantics)
   let now := 1000000
