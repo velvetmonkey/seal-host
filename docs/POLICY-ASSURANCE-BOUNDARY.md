@@ -20,7 +20,7 @@ signed envelope
   → Lean checkEnvelope / parseCanonicalConfigPayload
   → Lean classifyLine / Seal.toolsCall?
   → Lean classifyToolCall
-       first matching tool rule
+       every rule evaluated → resolveRuleDecisions
        → matchRule
        → evalTargetParts
        → stableHashParts(tool :: target parts)
@@ -39,7 +39,7 @@ policy meaning out of the current core and enlarge the TCB.
 |---|---|---|
 | Config signature and canonical payload check | Lean `Host.Config.checkEnvelope` / `checkTrustedConfig`; Ed25519 extern | Parsing and rejection are in Lean. The cryptographic leaf, key provision and exact loaded native code remain trusted. |
 | MCP recognition | Lean `Host.classifyLine` using `Lean.Json.parse` and `Seal.toolsCall?` | `step_forward_non_bypass` provides a parse/recognition witness for forwarded calls. The deployed profile is compatible JSON, not strict canonical L0. |
-| Rule selection | Lean `Seal.classifyToolCall` | First rule whose tool name equals the call name. Unknown tool defaults to deny. No theorem currently characterizes overlap or author intent. |
+| Rule selection | Lean `Seal.classifyToolCall` | Not first-match: EVERY rule is evaluated against the call and the full decision list is resolved by `Seal.resolveRuleDecisions`. Overlap is characterized in `Host.PolicyOverlap`: any matching deny/invalid rule forces the deny outcome regardless of other rules or order (`classify_blocking_rule_denies`, `deny_mode_rule_wins`); matching guards that commit to different targets fail closed as `defaultDeny "ambiguous guard target"`, never `guarded` (`conflicting_guards_ambiguous`, `classify_conflicting_guards_deny`); unknown tool or no matching rule defaults to deny. Permuting the rule list provably never changes the security-relevant outcome — the `SealCore.Event` constructor and, when guarded, the target hash (`classify_perm_toEvent`). Granularity is exact: the human-readable reason string IS order-dependent (first blocking reason wins; exhibited by `reason_string_is_order_dependent`), and no theorem characterizes author intent. |
 | Match evaluation | Lean `Seal.matchRule` | `always` or case-insensitive substring matching over one argument path. Missing/non-scalar paths do not match and therefore deny. No semantic parser is implied. |
 | Target evaluation | Lean `Seal.evalTargetParts` and `stableHashParts` | Missing target fields deny. The commitment is SHA-256 over tool plus configured literal/argument parts. There is no current theorem that the selected parts are adequate for every intended effect. |
 | Approval decision | Lean `SealCore.step` | Default deny, exact-target separation, expiry and one-shot consumption are proved in `SealCore.Safety`. |
