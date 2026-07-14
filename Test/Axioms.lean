@@ -695,5 +695,28 @@ info: 'Host.linear_committed_trace_no_double_spend' depends on axioms: [propext,
 -/
 #guard_msgs in #print axioms Host.linear_committed_trace_no_double_spend
 
+-- Provenance separation: the principal is never populated from the request
+-- (Host/Provenance.lean)
+
+/--
+info: 'Host.Provenance.factored_separated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.factored_separated
+
+/--
+info: 'Host.Provenance.spoofingAssigner_not_separated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.spoofingAssigner_not_separated
+
+/--
+info: 'Host.Provenance.boot_principal_constant' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.boot_principal_constant
+
+/--
+info: 'Host.Provenance.replayNamespace_trusted_plane' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Provenance.replayNamespace_trusted_plane
+
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"

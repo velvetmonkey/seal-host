@@ -7,4 +7,5 @@ import Host.Config
 import Host.Registry
 import Host.Composition
 import Host.Commit
+import Host.Provenance
 import Host.Audit
