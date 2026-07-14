@@ -105,7 +105,7 @@ def parseBudgetSection (json : Json) : Except String Kernels.BudgetConfig := do
   | none => pure []
   | some section_ =>
       let budgetsJson ← (← section_.getObjVal? "budgets").getArr?
-      budgetsJson.toList.mapM fun j => do
+      let cfg ← budgetsJson.toList.mapM fun j => do
         let name ← getObjString j "name"
         let cap ← (← j.getObjVal? "cap").getNat?
         let tools ← parseStringList (← j.getObjVal? "tools")
@@ -113,6 +113,11 @@ def parseBudgetSection (json : Json) : Except String Kernels.BudgetConfig := do
           | some v => pure (some (splitPath (← v.getStr?)))
           | none => pure none
         pure { name, cap, tools, costArg : Kernels.BudgetSpec }
+      -- Fail closed: same-name budgets share one counter, so conflicting caps
+      -- would leave the smaller cap silently unenforceable (see
+      -- `Kernels.budgetCapsConsistent`). Equal-cap duplicates stay legal.
+      if Kernels.budgetCapsConsistent cfg then pure cfg
+      else throw "duplicate budget name with conflicting caps"
 
 /-- Real Ed25519 verification for the trusted config envelope. The config
     signing key is a startup trust root, separate from approval-token keys.

@@ -637,6 +637,39 @@ theorem budget_committed_trace_from_init (cfg : Kernels.BudgetConfig)
         Kernels.budgetKernel.init) spec.name).spent ≤ spec.cap :=
   budget_committed_trace_within_cap cfg spec hdom calls _ (Nat.zero_le _)
 
+/-- The config lint pins caps: in a `budgetCapsConsistent` config, any two
+    specs sharing a name carry the SAME cap. This is exactly what the loader
+    gate in `parseBudgetSection` enforces fail-closed. -/
+theorem budgetCapsConsistent_caps_eq (cfg : Kernels.BudgetConfig)
+    (h : Kernels.budgetCapsConsistent cfg = true)
+    {s s' : Kernels.BudgetSpec} (hs : s ∈ cfg) (hs' : s' ∈ cfg)
+    (hname : s'.name = s.name) : s'.cap = s.cap := by
+  unfold Kernels.budgetCapsConsistent at h
+  have h2 := List.all_eq_true.mp (List.all_eq_true.mp h s hs) s' hs'
+  simp only [Bool.or_eq_true, bne_iff_ne, ne_eq, beq_iff_eq] at h2
+  rcases h2 with hne | hcap
+  · exact absurd hname hne
+  · exact hcap
+
+/-- **`hdom` DISCHARGED FOR DEPLOYED CONFIGS.** For any config the loader
+    accepts (`budgetCapsConsistent`, enforced fail-closed by
+    `parseBudgetSection`), the committed-trace budget bound holds for EVERY
+    spec in the config — the honest-scope hypothesis `hdom` of
+    `budget_committed_trace_within_cap` is discharged automatically: name-
+    sharers carry equal caps, so every spec dominates its name-sharers. -/
+theorem budget_committed_trace_within_cap_of_consistent
+    (cfg : Kernels.BudgetConfig) (spec : Kernels.BudgetSpec)
+    (hconsist : Kernels.budgetCapsConsistent cfg = true)
+    (hspec : spec ∈ cfg)
+    (calls : List (PureCall Kernels.budgetKernel)) (st0 : Kernels.BudgetState)
+    (h0 : (Kernels.budgetStateFor st0 spec.name).spent ≤ spec.cap) :
+    (Kernels.budgetStateFor (commitRun Kernels.budgetKernel cfg calls st0)
+        spec.name).spent ≤ spec.cap :=
+  budget_committed_trace_within_cap cfg spec
+    (fun _s hs hname =>
+      Nat.le_of_eq (budgetCapsConsistent_caps_eq cfg hconsist hspec hs hname))
+    calls st0 h0
+
 /-! ## Kernel L over the committed trace (target 4, linear half) -/
 
 /-- A denying `decide` of kernel L returns its input state unchanged. -/
@@ -922,6 +955,12 @@ info: 'Host.budget_committed_trace_within_cap' depends on axioms: [propext, Clas
 info: 'Host.budget_committed_trace_from_init' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.budget_committed_trace_from_init
+/-- info: 'Host.budgetCapsConsistent_caps_eq' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.budgetCapsConsistent_caps_eq
+/--
+info: 'Host.budget_committed_trace_within_cap_of_consistent' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.budget_committed_trace_within_cap_of_consistent
 /-- info: 'Host.linear_decide_deny_snd' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.linear_decide_deny_snd
 /-- info: 'Host.linear_commitStep_deny' depends on axioms: [propext, Classical.choice, Quot.sound] -/

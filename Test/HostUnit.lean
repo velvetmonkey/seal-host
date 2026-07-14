@@ -366,4 +366,35 @@ def main : IO Unit := do
      | .ok [b] => b.cap == 2 && b.costArg.isNone
      | _ => false)
 
+  -- budget config lint: same-name budgets share one counter, so conflicting
+  -- caps are a silent misconfiguration — the loader rejects them fail-closed
+  let budgetDupConflict : Except String Kernels.BudgetConfig := do
+    let json ← Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]},{\"name\":\"b\",\"cap\":5,\"tools\":[\"y\"]}]}}"
+    parseBudgetSection json
+  check "duplicate budget name with conflicting caps rejected with exact message"
+    (match budgetDupConflict with
+     | .error msg => msg == "duplicate budget name with conflicting caps"
+     | .ok _ => false)
+  let budgetDupEqual : Except String Kernels.BudgetConfig := do
+    let json ← Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]},{\"name\":\"b\",\"cap\":2,\"tools\":[\"y\"]}]}}"
+    parseBudgetSection json
+  check "same-name equal-cap budgets accepted (one shared counter)"
+    (match budgetDupEqual with
+     | .ok [a, b] => a.name == "b" && b.name == "b" && a.cap == 2 && b.cap == 2
+     | _ => false)
+  check "budgetCapsConsistent: empty config consistent"
+    (Kernels.budgetCapsConsistent [])
+  check "budgetCapsConsistent: distinct names always consistent"
+    (Kernels.budgetCapsConsistent
+      [{ name := "a", cap := 1, tools := [], costArg := none },
+       { name := "b", cap := 9, tools := [], costArg := none }])
+  check "budgetCapsConsistent: same name same cap consistent"
+    (Kernels.budgetCapsConsistent
+      [{ name := "a", cap := 3, tools := [], costArg := none },
+       { name := "a", cap := 3, tools := [], costArg := none }])
+  check "budgetCapsConsistent: same name conflicting caps inconsistent"
+    (!Kernels.budgetCapsConsistent
+      [{ name := "a", cap := 3, tools := [], costArg := none },
+       { name := "a", cap := 4, tools := [], costArg := none }])
+
   IO.println "all host unit tests passed"

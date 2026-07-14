@@ -19,6 +19,15 @@ structure BudgetSpec where
 
 abbrev BudgetConfig := List BudgetSpec
 
+/-- Config lint: budgets sharing a name share ONE counter (`budgetStateFor` /
+    `setBudgetState` key by name), so a same-name spec with a larger cap can
+    push the shared counter past a smaller same-name cap — the smaller cap
+    would look configured but be unenforceable. Same-name SAME-cap stays legal
+    (one counter deliberately shared across tool groups); only conflicting
+    caps are inconsistent. -/
+def budgetCapsConsistent (cfg : BudgetConfig) : Bool :=
+  cfg.all fun s => cfg.all fun s' => s'.name != s.name || s'.cap == s.cap
+
 /-- Per-budget counters, keyed by budget name. Missing entry = nothing spent. -/
 abbrev BudgetState := List (String × BudgetCore.BState)
 
