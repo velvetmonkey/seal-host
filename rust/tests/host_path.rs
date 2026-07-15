@@ -610,18 +610,32 @@ fn pinned_defect_denied_call_retires_valid_approval() {
 #[test]
 fn receipt_sink_failure_blocks_before_child_forward() {
     let mut o = Oracle::spawn("receipt-sink-failure");
+
+    // READINESS BY ROUND-TRIP, not by stat. `ReceiptChain::new` calls
+    // `create_dir_all` and only THEN probes the sink
+    // (decision_receipt.rs:326-336), so "the receipt directory exists" goes
+    // true BEFORE the host is past its probe. Sabotaging inside that window
+    // makes the host fail the probe and exit 4 ("receipt sink rejected")
+    // without ever answering -- a DIFFERENT failure than the one under test,
+    // and the source of this test's flake. Only a completed round-trip proves
+    // the probe is done and the host is serving. This call is guarded with no
+    // approval on file, so it blocks: a deterministic answer.
+    o.send(&guarded_call(69, "drop table accounts"));
+    assert!(
+        is_block(&o.expect_line()),
+        "host must be serving (probe complete) before the sink is sabotaged"
+    );
+
     let receipt_dir = o.receipt_dir();
-    for _ in 0..200 {
-        if receipt_dir.is_dir() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
     assert!(
         receipt_dir.is_dir(),
         "host did not initialize its receipt sink"
     );
-    std::fs::remove_dir(&receipt_dir).unwrap();
+    // `remove_dir_all`, not `remove_dir`: the warm-up above has already written
+    // a decision receipt, so the directory is NOT empty and `remove_dir` would
+    // fail ENOTEMPTY. Contents are irrelevant -- the scenario only needs the
+    // sink PATH to stop being a directory.
+    std::fs::remove_dir_all(&receipt_dir).unwrap();
     std::fs::write(&receipt_dir, b"not a directory").unwrap();
 
     let call = guarded_call(70, "drop table accounts");
