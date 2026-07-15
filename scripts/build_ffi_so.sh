@@ -90,15 +90,28 @@ ARCHIVES=()
 # a hard error — a silently skipped package is precisely how CI shipped a
 # libsealffi.so with unresolved dependency initializers while this script
 # printed "built" and exited 0.
-# calibration-lean is PROOF-ONLY and verified so, not assumed: no module under
-# Ffi.lean / Host / Kernels imports Calibration.* (Kernels/Calibration.lean pulls
-# only Seal.Hash and Host.Kernel), the sole importer in the repo is
-# Test/Axioms.lean, and Calibration/CondHoeffding.lean is 2 theorems and 0 defs.
-# It is a declared dependency that mathlib does not pull transitively either, so
-# nothing ever materializes its C objects and it contributes none by design. The
-# calibration kernel's RUNTIME needs nothing from it; the package supplies the
-# mathematics the kernel's bound cites, which the axiom gate elaborates.
-CLOSURE_EXEMPT=(Cli calibration-lean)
+# PROOF-ONLY dependencies. Each supplies mathematics that proof modules cite,
+# not code any kernel runs, so the exe build never materializes their C objects
+# and they contribute none BY DESIGN. Verified against PROJECT_MODULES above —
+# the declared runtime closure — rather than assumed:
+#
+#   calibration-lean  Calibration.* is imported ONLY by Test/Axioms.lean.
+#                     Kernels/Calibration.lean pulls just Seal.Hash and
+#                     Host.Kernel. CondHoeffding.lean is 2 theorems, 0 defs.
+#   crdt-lean         Crdt.* is imported ONLY by Host/AuthorityFrontierBridge.lean,
+#                     Kernels/ConvergencePotential.lean and Test/Axioms.lean —
+#                     none of which appear in PROJECT_MODULES. (Note the runtime
+#                     kernel is Kernels/Convergence; ConvergencePotential is its
+#                     proof.)
+#
+# For contrast, consensus-lean and temporal-logic-lean ARE runtime: the closure
+# imports Consensus and Temporal directly, so they must contribute objects and a
+# FATAL for either is a real defect, not a missing exemption.
+#
+# Before adding to this list: grep the package's root module across the
+# PROJECT_MODULES files ONLY. Grepping all of Host/ will mislead you — most of
+# Host/ is proofs the runtime never loads.
+CLOSURE_EXEMPT=(Cli calibration-lean crdt-lean)
 
 archive_package_ir() {
   local pkgdir="$1" force="${2:-0}"
