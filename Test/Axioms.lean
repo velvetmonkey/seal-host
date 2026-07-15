@@ -20,6 +20,7 @@ import Host.StatefulNI
 import Host.AuthorityFrontierBridge
 import Host.DeployedAdapter
 import Host.CapabilityAdequacy
+import FfiSpec
 import Kernels
 import Kernels.ConsensusBytes
 import Kernels.ConvergencePotential
@@ -756,6 +757,48 @@ info: 'Host.Record.log_reflects_l0_decisions' depends on axioms: [propext, Class
 info: 'Host.step_forward_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.step_forward_non_bypass
+
+-- The deployed registry's specification (FfiSpec.lean): `Ffi.registryFor` —
+-- the ONE function that selects which proven kernels run — registers exactly
+-- `activeKernels s.config`, Safety and Temporal unconditionally. Closes the
+-- selection gap between `registry_closed_algebra` (composition over any
+-- subset) and `step_forward_non_bypass` (enactment). FfiSpec is imported
+-- HERE so the gate builds it: the `Ffi` lib glob alone is not a proof gate.
+
+/-- info: 'Ffi.registryFor_kernels' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.registryFor_kernels
+
+/-- info: 'Ffi.safety_always_registered' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.safety_always_registered
+
+/--
+info: 'Ffi.temporal_always_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.temporal_always_registered
+
+/-- info: 'Ffi.consensus_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.consensus_registered_iff
+
+/--
+info: 'Ffi.convergence_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.convergence_registered_iff
+
+/--
+info: 'Ffi.calibration_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.calibration_registered_iff
+
+/-- info: 'Ffi.linear_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.linear_registered_iff
+
+/-- info: 'Ffi.budget_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.budget_registered_iff
+
+/--
+info: 'Ffi.byteConsensus_never_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.byteConsensus_never_registered
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"

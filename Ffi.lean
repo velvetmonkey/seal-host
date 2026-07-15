@@ -77,8 +77,13 @@ private def initImpl (envelopeText publicKey : String) : IO String := do
 
 /-- Build the same registry `Host.Main` builds, with evidence injected from
     the step input instead of gathered from IO — `Host.dispatch` (two-phase
-    ingest/decide commit) is reused verbatim. -/
-private def registryFor (s : Session) (now : Nat)
+    ingest/decide commit) is reused verbatim.
+
+    Public for SPECIFICATION only (see `FfiSpec.lean`: `registryFor_kernels`
+    proves this list selects exactly `activeKernels s.config`, Safety and
+    Temporal unconditionally). NOT callable API — the sole call site is
+    `stepImpl` below; do not add another. -/
+def registryFor (s : Session) (now : Nat)
     (approvalEvents : List SealCore.Event)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
