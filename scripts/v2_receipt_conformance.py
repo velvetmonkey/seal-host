@@ -31,10 +31,11 @@ def run(command, *, cwd=None, env=None, expect=0):
     return result
 
 
-def verify_action(receipt_dir: Path, expect: int):
+def verify_action(receipt_dir: Path, expect: int, config_pub: str):
     env = os.environ.copy()
     env.update({
         "INPUT_RECEIPTS": "*.json",
+        "INPUT_EXPECTED-CONFIG-PUBKEY": config_pub,
         "INPUT_WORKING-DIRECTORY": str(receipt_dir),
         "GITHUB_OUTPUT": str(receipt_dir / "github-output"),
         "GITHUB_STEP_SUMMARY": str(receipt_dir / "github-summary"),
@@ -107,10 +108,16 @@ def main():
         if len(produced) != 2:
             raise RuntimeError(f"expected BLOCK+ALLOW receipts, got {produced}\n{stderr}")
 
+        # The seal-check CLI and the action are authority-aware (tri-state):
+        # without the operator pin they exit 3/UNPINNED by design, so the
+        # harness supplies the pin it just generated. (This script predated
+        # those exits and ran pinless — it could never have passed; found
+        # 2026-07-15 while gating the kernel-request-commitment change.)
         for receipt in produced:
-            run(["node", str(CHECK), str(receipt)])
+            run(["node", str(CHECK), str(receipt),
+                 "--expected-config-pubkey", config_pub])
             run(["node", str(KIT), "verify", str(receipt)])
-        verify_action(receipts, 0)
+        verify_action(receipts, 0, config_pub)
 
         tamper_dir = work / "tampered"
         tamper_dir.mkdir()
@@ -118,9 +125,9 @@ def main():
         tampered["arguments"]["sql"] = "drop table different_target"
         tamper_path = tamper_dir / "tampered.json"
         tamper_path.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
-        run(["node", str(CHECK), str(tamper_path)], expect=1)
+        run(["node", str(CHECK), str(tamper_path), "--expected-config-pubkey", config_pub], expect=1)
         run(["node", str(KIT), "verify", str(tamper_path)], expect=1)
-        verify_action(tamper_dir, 1)
+        verify_action(tamper_dir, 1, config_pub)
 
         print("PASS native host produced BLOCK+ALLOW v2 receipts")
         print("PASS seal-check, seal verify, and CI action accepted the exact files")
