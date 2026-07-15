@@ -16,7 +16,7 @@
 | Ed25519-token channel: signed target-bound (target ‖ nonce ‖ issuedAt [+ decision:deny]); control-file is DEV-ONLY / UNAUTHENTICATED. | Yes (implemented + labeled) | rust/src/providers.rs:Ed25519TokenProvider (sig verify + decision branch, nonce+issuedAt required), ControlFileProvider (explicit deny handling + warning), demo/approve_cli.py (loud DEV-ONLY comment + TCB), DEPLOY.md | keep |
 | Explicit signed decline produces "refused" (not timeout) + host audit label. | Yes (implemented + tested) | rust/src/main.rs (decline short-circuit in Block arm: "approval refused (signed decline...)"), providers (DeclineRecord), test_approval_consumer + approval_loop (assert + transcript), see_the_loop (host-emitted refused) | keep |
 | CLI approver / Telegram: button is intent only; signing key produces the token. TCB stated (co-resident for CLI; bridge+allowlist for demo TG; device-held key upgrade). | Yes (implemented + documented) | demo/approve_cli.py (header + TCB print), approve_telegram.py (HMAC + from.id + device note + TCB), sign_approval.py (pure target-bound), DEPLOY.md (per-channel TCB + ORDERING vs ORIGIN) | keep |
-| One-command demo over synthetic shows block → signed record → flow or refused → receipt. | Yes (runnable + captured) | demo/see_the_loop.py (thin over run_signed...), synthetic_ledger.py (SYNTHETIC_LEDGER_ACTION), approval_loop harness (dynamic target, CLI signed, refused string) | keep |
+| One-command demo over synthetic shows block → signed record → flow or refused → receipt. | Yes (runnable + captured; produces visible BLOCK hex + SYNTHETIC side-effect or host-emitted 'refused' when run) | demo/see_the_loop.py (thin over run_signed…; prints BLOCK, SYNTHETIC or refused, === PASS ===), synthetic_ledger.py (SYNTHETIC_LEDGER_ACTION), approval_loop harness (dynamic target, CLI signed, refused string); run captured in glowup evidence | keep |
 | Seal proves properties of the mediation KERNEL, not of the whole deployed system. | Yes (documented + true) | README truthbox + non-claims, CLAIMS.md, docs/LIMITATIONS.md (verbatim blocks) | keep |
 | Deployed bodies tied by byte-exact conformance over corpus, not proven bug-free. | Yes (tested + documented) | scripts/conformance_bridge.mjs, rust/tests/, docs/CONFORMANCE.md | keep |
 | Audit chain is tamper-EVIDENT, not tamper-IMPOSSIBLE. | Yes (documented + proven under hypotheses) | docs/LIMITATIONS.md (verbatim), seal-host Host/Record.lean (tamper_evident) | keep |
@@ -34,4 +34,4 @@ See CLAIMS.md (single source), docs/DEPLOY.md (onboarding + TCB + ORDERING/ORIGI
 
 ---
 
-Committed as part of the seal-host docs glow-up on docs-glowup-seal-host.
+Committed as part of the seal-host docs glow-up on docs-glowup-seal-host. The glow-up changes only README and FINDINGS (docs + light description); demo code is pre-existing shipped.
