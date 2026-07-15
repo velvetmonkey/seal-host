@@ -68,6 +68,14 @@ root = "Test.HostUnit"
 name = "policy_server_identity_tests"
 root = "Test.PolicyServerIdentity"
 
+# A2 — derives the honesty matrix's machine-derivable cells (proven/wired/
+# arithmetic) by term-binding the nine FfiSpec theorems and evaluating
+# `activeKernels` over all 32 deployable configs. Rendered by
+# scripts/honesty-matrix.mjs into docs/HONESTY-MATRIX.md; CI diffs the two.
+[[lean_exe]]
+name = "honesty_matrix"
+root = "Test.HonestyMatrix"
+
 [[lean_exe]]
 name = "sha256_selfcheck"
 root = "Test.Sha256SelfCheck"

@@ -97,6 +97,10 @@ jobs:
         working-directory: rust
       - run: lake build
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: lake exe honesty_matrix > /tmp/honesty.json
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: node scripts/conformance_bridge.mjs --wasm
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: bash scripts/receipt_demo.sh
