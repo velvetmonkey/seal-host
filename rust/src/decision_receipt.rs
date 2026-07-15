@@ -228,10 +228,7 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
     // receipt, and the only request identity when the line is unparseable.
     // Cross-checked above against the kernel-attested hash in the audit, so
     // this value is kernel-backed, not merely host-asserted.
-    receipt.insert(
-        "request_sha256".into(),
-        Value::String(host_request_sha256),
-    );
+    receipt.insert("request_sha256".into(), Value::String(host_request_sha256));
     if let Err(parse_error) = &request_material {
         receipt.insert(
             "request_parse_error".into(),
@@ -497,7 +494,8 @@ mod tests {
     #[test]
     fn unparseable_line_yields_receipt_with_raw_hash_not_an_error() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1e309}}}"#;
-        let receipt = build(line, &allow_step_output(line)).expect("de-parsed receipt must persist");
+        let receipt =
+            build(line, &allow_step_output(line)).expect("de-parsed receipt must persist");
         assert_eq!(
             receipt["request_sha256"],
             Value::String(sha256_hex(line.as_bytes()))

@@ -155,7 +155,9 @@ impl InteractiveHost {
     }
 
     fn send(&mut self, line: &str) {
-        self.stdin.write_all(format!("{line}\n").as_bytes()).unwrap();
+        self.stdin
+            .write_all(format!("{line}\n").as_bytes())
+            .unwrap();
         self.stdin.flush().unwrap();
     }
 

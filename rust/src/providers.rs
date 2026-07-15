@@ -481,18 +481,31 @@ mod tests {
         let nonce = "decline-n1";
         let allow_p = format!(r#"{{"target":"{target}","issuedAt":2000,"nonce":"n-allow"}}"#);
         let allow_sig = hex::encode(sk.sign(allow_p.as_bytes()).to_bytes());
-        let allow_tok = format!(r#"{{"payload":{},"signature":"{}"}}"#, serde_json::to_string(&allow_p).unwrap(), allow_sig);
+        let allow_tok = format!(
+            r#"{{"payload":{},"signature":"{}"}}"#,
+            serde_json::to_string(&allow_p).unwrap(),
+            allow_sig
+        );
 
-        let dec_p = format!(r#"{{"target":"{target}","issuedAt":2001,"nonce":"{nonce}","decision":"deny"}}"#);
+        let dec_p = format!(
+            r#"{{"target":"{target}","issuedAt":2001,"nonce":"{nonce}","decision":"deny"}}"#
+        );
         let dec_sig = hex::encode(sk.sign(dec_p.as_bytes()).to_bytes());
-        let dec_tok = format!(r#"{{"payload":{},"signature":"{}"}}"#, serde_json::to_string(&dec_p).unwrap(), dec_sig);
+        let dec_tok = format!(
+            r#"{{"payload":{},"signature":"{}"}}"#,
+            serde_json::to_string(&dec_p).unwrap(),
+            dec_sig
+        );
 
         let dir = std::env::temp_dir().join(format!("seal-decline-{}", std::process::id()));
         std::fs::write(&dir, format!("{allow_tok}\n{dec_tok}\n")).unwrap();
         let mut p = Ed25519TokenProvider::new(&dir, &vk_hex).unwrap();
         let poll = p.poll();
         std::fs::remove_file(&dir).ok();
-        assert!(poll.warnings.is_empty(), "valid signed allow+decline must have zero warnings");
+        assert!(
+            poll.warnings.is_empty(),
+            "valid signed allow+decline must have zero warnings"
+        );
         assert_eq!(poll.records.len(), 1);
         assert_eq!(poll.records[0].target, target);
         assert_eq!(poll.declines.len(), 1);
@@ -549,8 +562,9 @@ mod tests {
         let vk_hex = hex::encode(sk.verifying_key().to_bytes());
         let target = "00000000000000000000000000000000000000000000000000000000000000ef";
         let absent_p = format!(r#"{{"target":"{target}","issuedAt":4000,"nonce":"n-abs"}}"#);
-        let allow_p =
-            format!(r#"{{"target":"{target}","issuedAt":4001,"nonce":"n-alw","decision":"allow"}}"#);
+        let allow_p = format!(
+            r#"{{"target":"{target}","issuedAt":4001,"nonce":"n-alw","decision":"allow"}}"#
+        );
         let mut lines = String::new();
         for p in [&absent_p, &allow_p] {
             let sig = hex::encode(sk.sign(p.as_bytes()).to_bytes());

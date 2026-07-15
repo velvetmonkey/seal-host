@@ -157,9 +157,7 @@ impl Oracle {
         }
     }
 
-    fn spawn_process(
-        args: &[String],
-    ) -> (Child, ChildStdin, Receiver<String>, Receiver<String>) {
+    fn spawn_process(args: &[String]) -> (Child, ChildStdin, Receiver<String>, Receiver<String>) {
         let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
             .args(args)
             .stdin(Stdio::piped())
@@ -577,7 +575,10 @@ fn pinned_defect_denied_call_retires_valid_approval() {
     let call_d = guarded_call(11, "delete from users");
     o.send(&call_d);
     let resp_d = o.expect_line();
-    assert!(is_block(&resp_d), "unrelated call D stays blocked: {resp_d}");
+    assert!(
+        is_block(&resp_d),
+        "unrelated call D stays blocked: {resp_d}"
+    );
     assert_ne!(
         block_target(&resp_d).expect("D names its own target"),
         target_t,
@@ -706,7 +707,6 @@ fn non_utf8_line_refused_and_session_survives() {
     );
 }
 
-
 /// The kernel is deliberately the more tolerant parser (the differential
 /// corpus pins lines Lean mediates that serde rejects). The receipt layer
 /// must therefore never veto a kernel verdict it cannot re-parse: an
@@ -755,7 +755,13 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
         allow["request_parse_error"].is_string(),
         "receipt must name the parse failure"
     );
-    for absent in ["tool", "arguments", "args_hash", "canonical_request", "canonical_request_sha256"] {
+    for absent in [
+        "tool",
+        "arguments",
+        "args_hash",
+        "canonical_request",
+        "canonical_request_sha256",
+    ] {
         assert!(
             allow.get(absent).is_none(),
             "field {absent} must be ABSENT (honesty rule), not fabricated"
@@ -766,9 +772,12 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
     // The kernel-attested request commitment inside emitted_bytes agrees
     // with the receipt's request_sha256 — for exactly this unparseable
     // class of line, the binding is now kernel-backed, not host-asserted.
-    let emitted: serde_json::Value =
-        serde_json::from_str(allow["emitted_bytes"].as_str().expect("emitted_bytes string"))
-            .expect("emitted bytes parse");
+    let emitted: serde_json::Value = serde_json::from_str(
+        allow["emitted_bytes"]
+            .as_str()
+            .expect("emitted_bytes string"),
+    )
+    .expect("emitted bytes parse");
     let audit: serde_json::Value =
         serde_json::from_str(emitted["audit"].as_str().expect("audit string"))
             .expect("audit parses");
@@ -795,7 +804,8 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
     // The rest of the divergent corpus: shapes Lean's act parse admits but
     // request_parts rejects. Each must get the kernel's own block response
     // (here: no matching policy rule), never the seam error.
-    let argless = r#"{"jsonrpc":"2.0","id":92,"method":"tools/call","params":{"name":"db.execute"}}"#;
+    let argless =
+        r#"{"jsonrpc":"2.0","id":92,"method":"tools/call","params":{"name":"db.execute"}}"#;
     let non_object_args = r#"{"jsonrpc":"2.0","id":93,"method":"tools/call","params":{"name":"db.execute","arguments":"drop"}}"#;
     for line in [argless, non_object_args] {
         o.send(line);
@@ -830,9 +840,12 @@ fn multibyte_request_commitment_survives_the_ffi_seam() {
     let receipt = receipts.last().expect("block receipt persisted");
     let expected = hex::encode(sha2::Sha256::digest(line.as_bytes()));
     assert_eq!(receipt["request_sha256"], expected);
-    let emitted: serde_json::Value =
-        serde_json::from_str(receipt["emitted_bytes"].as_str().expect("emitted_bytes string"))
-            .expect("emitted bytes parse");
+    let emitted: serde_json::Value = serde_json::from_str(
+        receipt["emitted_bytes"]
+            .as_str()
+            .expect("emitted_bytes string"),
+    )
+    .expect("emitted bytes parse");
     let audit: serde_json::Value =
         serde_json::from_str(emitted["audit"].as_str().expect("audit string"))
             .expect("audit parses");
