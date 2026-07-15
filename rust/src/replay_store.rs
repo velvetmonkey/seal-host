@@ -5,7 +5,7 @@
 //! The SQLite implementation is the production channel; the in-memory
 //! implementation keeps legacy/demo/tests lightweight.
 
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use rusqlite::{params, Connection, ErrorCode};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
@@ -36,7 +36,6 @@ impl From<rusqlite::Error> for ReplayStoreError {
 }
 
 pub trait ReplayStore {
-    fn contains(&mut self, nonce: &str) -> Result<bool, ReplayStoreError>;
     fn insert_returning_is_new(
         &mut self,
         nonce: &str,
@@ -77,20 +76,26 @@ impl SqliteReplayStore {
     }
 }
 
-impl ReplayStore for SqliteReplayStore {
-    fn contains(&mut self, nonce: &str) -> Result<bool, ReplayStoreError> {
-        let found = self
-            .conn
+impl SqliteReplayStore {
+    /// Test-only READ-ONLY presence probe. Not part of the production trait
+    /// (nothing in the live path asks "is this nonce present" without
+    /// committing); tests must observe the store without mutating it.
+    #[cfg(test)]
+    fn contains_nonce(&self, nonce: &str) -> bool {
+        use rusqlite::OptionalExtension;
+        self.conn
             .query_row(
                 "SELECT 1 FROM nonces WHERE nonce = ?1 LIMIT 1",
                 params![nonce],
                 |_| Ok(()),
             )
-            .optional()?
-            .is_some();
-        Ok(found)
+            .optional()
+            .unwrap()
+            .is_some()
     }
+}
 
+impl ReplayStore for SqliteReplayStore {
     fn insert_returning_is_new(
         &mut self,
         nonce: &str,
@@ -157,13 +162,15 @@ impl InMemoryReplayStore {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Test-only READ-ONLY presence probe; see SqliteReplayStore::contains_nonce.
+    #[cfg(test)]
+    fn contains_nonce(&self, nonce: &str) -> bool {
+        self.entries.contains_key(nonce)
+    }
 }
 
 impl ReplayStore for InMemoryReplayStore {
-    fn contains(&mut self, nonce: &str) -> Result<bool, ReplayStoreError> {
-        Ok(self.entries.contains_key(nonce))
-    }
-
     fn insert_returning_is_new(
         &mut self,
         nonce: &str,
@@ -232,7 +239,7 @@ mod tests {
         }
         {
             let mut store = SqliteReplayStore::open(&path).unwrap();
-            assert!(store.contains("nonce-1").unwrap());
+            assert!(store.contains_nonce("nonce-1"));
             assert_eq!(
                 store.load_unexpired(2_000).unwrap(),
                 vec![StoredNonce {
@@ -261,8 +268,8 @@ mod tests {
             }]
         );
         store.prune_expired(3_000).unwrap();
-        assert!(!store.contains("old").unwrap());
-        assert!(store.contains("fresh").unwrap());
+        assert!(!store.contains_nonce("old"));
+        assert!(store.contains_nonce("fresh"));
         remove_sqlite_files(&path);
     }
 
@@ -275,7 +282,7 @@ mod tests {
             .unwrap());
         store.prune_expired(3_000).unwrap();
         assert_eq!(store.len(), 1);
-        assert!(!store.contains("old").unwrap());
-        assert!(store.contains("fresh").unwrap());
+        assert!(!store.contains_nonce("old"));
+        assert!(store.contains_nonce("fresh"));
     }
 }

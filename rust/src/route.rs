@@ -2,10 +2,10 @@
 //! The ONLY translation from kernel output to transport action. Pure, total
 //! functions: every possible seam result maps to exactly one action, and
 //! `Route::Forward` is constructible ONLY from a successfully parsed kernel
-//! step output whose `route` is literally `"forward"` or `"passthrough"`
-//! (with, for a block, a present response string). Everything else — seam
-//! errors, unparseable output, missing/unknown routes, non-string fields —
-//! lands in `SeamFailure`, which never forwards.
+//! step output whose `route` is literally `"forward"` (with, for a block, a
+//! present response string). Everything else — seam errors, unparseable
+//! output, missing/unknown routes, non-string fields — lands in
+//! `SeamFailure`, which never forwards.
 //!
 //! `main.rs` and the conformance tests call these SAME functions, so there
 //! is no test-mirror differential: the property the tests pin is the code
@@ -17,9 +17,8 @@ use serde_json::Value;
 /// Transport action for one mediated line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// Kernel verdict allows the bytes through (step route `forward`, or
-    /// step-level `passthrough`). The only variant that may write wire bytes
-    /// to the child.
+    /// Kernel verdict allows the bytes through (step route `forward`). The
+    /// only variant that may write wire bytes to the child.
     Forward { audit: Option<String> },
     /// Kernel verdict blocks: `response` (kernel-authored, newline-terminated)
     /// goes to the client; nothing goes to the child.
@@ -77,8 +76,14 @@ pub fn route_of_step_output(out: Result<String, SeamError>) -> Route {
         }
     };
     let audit = v["audit"].as_str().map(str::to_owned);
+    // Step-level "passthrough" is NOT a forward. The host calls step only on
+    // lines classify already gated to mediate, and the kernel re-runs the same
+    // pure classifyLine on the identical string — so a step output carrying
+    // route "passthrough" cannot come from the deployed flow (Ffi.lean emits
+    // it only from the classify-passthrough branch). An impossible route is a
+    // broken seam, and a broken seam never forwards.
     match v["route"].as_str() {
-        Some("forward") | Some("passthrough") => Route::Forward { audit },
+        Some("forward") => Route::Forward { audit },
         Some("block") => match v["response"].as_str() {
             Some(r) => Route::Block {
                 response: r.to_owned(),

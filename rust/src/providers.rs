@@ -49,7 +49,7 @@ pub struct ApprovalRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovalDropWarning {
     pub source: &'static str,
-    pub reason: &'static str,
+    pub reason: String,
     pub record_id: String,
     pub counter: u64,
 }
@@ -58,13 +58,13 @@ impl ApprovalDropWarning {
     pub fn new(
         counter: &mut u64,
         source: &'static str,
-        reason: &'static str,
+        reason: impl Into<String>,
         redaction_material: impl AsRef<[u8]>,
     ) -> Self {
         *counter += 1;
         Self {
             source,
-            reason,
+            reason: reason.into(),
             record_id: redacted_record_id(redaction_material.as_ref()),
             counter: *counter,
         }
@@ -86,6 +86,14 @@ pub struct ApprovalPoll {
     pub records: Vec<ApprovalRecord>,
     pub declines: Vec<DeclineRecord>,
     pub warnings: Vec<ApprovalDropWarning>,
+}
+
+/// Warning reason for a record whose `decision` value is outside the
+/// allowlist {absent, "allow", "deny"}. Names the value (truncated) so the
+/// audit log shows WHAT was refused, never silently reinterpreted.
+fn unknown_decision_reason(value: &str) -> String {
+    let shown: String = value.chars().take(64).collect();
+    format!("unknown_decision:{shown}")
 }
 
 pub fn redacted_record_id(bytes: &[u8]) -> String {
@@ -143,21 +151,40 @@ impl ApprovalProvider for ControlFileProvider {
         let mut poll = ApprovalPoll::default();
         for line in fresh {
             // Support dev unauth declines via "decision":"deny" (still unauthenticated).
-            // IMPORTANT: if the line claims to be a deny, we MUST parse as DeclineRecord
-            // or drop it. Never fall through to ApprovalRecord (that would treat decline as allow).
+            // IMPORTANT: `decision` is an ALLOWLIST — absent/null or "allow" is an
+            // approval, exactly "deny" is a decline, and ANY other value drops the
+            // record with a warning naming it. Never fall through to ApprovalRecord
+            // (that would treat a decline-meaning record as an allow).
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if v.get("decision").and_then(|d| d.as_str()) == Some("deny") {
-                    match serde_json::from_str::<DeclineRecord>(line) {
-                        Ok(d) => { poll.declines.push(d); continue; }
-                        Err(_) => {
-                            poll.warnings.push(ApprovalDropWarning::new(
-                                &mut self.drop_counter,
-                                source,
-                                "parse_error",
-                                line.as_bytes(),
-                            ));
-                            continue;
+                match v.get("decision") {
+                    None | Some(serde_json::Value::Null) => {}
+                    Some(serde_json::Value::String(s)) if s == "allow" => {}
+                    Some(serde_json::Value::String(s)) if s == "deny" => {
+                        match serde_json::from_str::<DeclineRecord>(line) {
+                            Ok(d) => poll.declines.push(d),
+                            Err(_) => {
+                                poll.warnings.push(ApprovalDropWarning::new(
+                                    &mut self.drop_counter,
+                                    source,
+                                    "parse_error",
+                                    line.as_bytes(),
+                                ));
+                            }
                         }
+                        continue;
+                    }
+                    Some(other) => {
+                        let shown = match other {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        poll.warnings.push(ApprovalDropWarning::new(
+                            &mut self.drop_counter,
+                            source,
+                            unknown_decision_reason(&shown),
+                            line.as_bytes(),
+                        ));
+                        continue;
                     }
                 }
             }
@@ -204,7 +231,8 @@ struct SignedPayload {
 /// where payload parses to an ApprovalRecord (or DeclineRecord) with a
 /// MANDATORY nonce and issuedAt. The signature is verified over the exact
 /// payload bytes against the trusted verifying key.
-/// Decision field: absent or "allow" => approval record; "deny" => decline.
+/// Decision field: absent or "allow" => approval record; "deny" => decline;
+/// any other value => record dropped with an `unknown_decision:<value>` warning.
 /// NOTE: `echo >> ndjson` (control-file) and unsigned tokens are DEV-ONLY
 /// and UNAUTHENTICATED — the ed25519 channel is the signed origin path.
 pub struct Ed25519TokenProvider {
@@ -319,18 +347,35 @@ impl ApprovalProvider for Ed25519TokenProvider {
                 ));
                 continue;
             }
-            if sp.decision.as_deref() == Some("deny") {
-                poll.declines.push(DeclineRecord {
+            // ALLOWLIST on decision: absent or "allow" => approval; exactly "deny"
+            // => decline; ANY other value => drop with a warning naming it. A signed
+            // record meaning "do not run this" must never mint an approval because
+            // its decision spelling is unrecognised.
+            match sp.decision.as_deref() {
+                None | Some("allow") => poll.records.push(ApprovalRecord {
                     target: sp.target,
                     issued_at: sp.issued_at,
                     nonce: sp.nonce,
-                });
-            } else {
-                poll.records.push(ApprovalRecord {
+                }),
+                Some("deny") => poll.declines.push(DeclineRecord {
                     target: sp.target,
                     issued_at: sp.issued_at,
                     nonce: sp.nonce,
-                });
+                }),
+                Some(other) => {
+                    let reason = unknown_decision_reason(other);
+                    let red = record_redaction_material(&ApprovalRecord {
+                        target: sp.target.clone(),
+                        issued_at: sp.issued_at,
+                        nonce: sp.nonce.clone(),
+                    });
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        reason,
+                        red,
+                    ));
+                }
             }
         }
         poll
@@ -453,6 +498,129 @@ mod tests {
         assert_eq!(poll.declines.len(), 1);
         assert_eq!(poll.declines[0].target, target);
         assert_eq!(poll.declines[0].nonce.as_deref(), Some(nonce));
+    }
+
+    /// RED: a signed record whose `decision` is not exactly "deny"/"allow"/absent
+    /// must NEVER become an approval — it is dropped with a warning naming the value.
+    #[test]
+    fn ed25519_provider_drops_unknown_decision_never_approves() {
+        let sk = SigningKey::from_bytes(&[13u8; 32]);
+        let vk_hex = hex::encode(sk.verifying_key().to_bytes());
+        let target = "00000000000000000000000000000000000000000000000000000000000000cd";
+        let mut lines = String::new();
+        for (i, decision) in ["DENY", "revoke"].iter().enumerate() {
+            let p = format!(
+                r#"{{"target":"{target}","issuedAt":300{i},"nonce":"n-{i}","decision":"{decision}"}}"#
+            );
+            let sig = hex::encode(sk.sign(p.as_bytes()).to_bytes());
+            lines.push_str(&format!(
+                "{}\n",
+                format_args!(
+                    r#"{{"payload":{},"signature":"{}"}}"#,
+                    serde_json::to_string(&p).unwrap(),
+                    sig
+                )
+            ));
+        }
+
+        let path = std::env::temp_dir().join(format!("seal-unk-{}", std::process::id()));
+        std::fs::write(&path, lines).unwrap();
+        let mut p = Ed25519TokenProvider::new(&path, &vk_hex).unwrap();
+        let poll = p.poll();
+        std::fs::remove_file(&path).ok();
+        assert!(
+            poll.records.is_empty(),
+            "unknown decision values must not mint approvals"
+        );
+        assert!(
+            poll.declines.is_empty(),
+            "unknown decision values are dropped, not reinterpreted as declines"
+        );
+        assert_eq!(poll.warnings.len(), 2);
+        assert_eq!(poll.warnings[0].reason, "unknown_decision:DENY");
+        assert_eq!(poll.warnings[1].reason, "unknown_decision:revoke");
+    }
+
+    /// BLUE: the allowlisted spellings still work on the signed channel —
+    /// absent decision and explicit "allow" both mint approvals.
+    #[test]
+    fn ed25519_provider_still_approves_absent_and_allow() {
+        let sk = SigningKey::from_bytes(&[17u8; 32]);
+        let vk_hex = hex::encode(sk.verifying_key().to_bytes());
+        let target = "00000000000000000000000000000000000000000000000000000000000000ef";
+        let absent_p = format!(r#"{{"target":"{target}","issuedAt":4000,"nonce":"n-abs"}}"#);
+        let allow_p =
+            format!(r#"{{"target":"{target}","issuedAt":4001,"nonce":"n-alw","decision":"allow"}}"#);
+        let mut lines = String::new();
+        for p in [&absent_p, &allow_p] {
+            let sig = hex::encode(sk.sign(p.as_bytes()).to_bytes());
+            lines.push_str(&format!(
+                "{}\n",
+                format_args!(
+                    r#"{{"payload":{},"signature":"{}"}}"#,
+                    serde_json::to_string(p).unwrap(),
+                    sig
+                )
+            ));
+        }
+
+        let path = std::env::temp_dir().join(format!("seal-alw-{}", std::process::id()));
+        std::fs::write(&path, lines).unwrap();
+        let mut p = Ed25519TokenProvider::new(&path, &vk_hex).unwrap();
+        let poll = p.poll();
+        std::fs::remove_file(&path).ok();
+        assert!(poll.warnings.is_empty());
+        assert!(poll.declines.is_empty());
+        assert_eq!(poll.records.len(), 2);
+        assert_eq!(poll.records[0].nonce.as_deref(), Some("n-abs"));
+        assert_eq!(poll.records[1].nonce.as_deref(), Some("n-alw"));
+    }
+
+    /// RED: same allowlist on the control-file channel — "DENY"/"revoke" never approve.
+    #[test]
+    fn control_file_drops_unknown_decision_never_approves() {
+        let target = "0000000000000000000000000000000000000000000000000000000000000011";
+        let path = std::env::temp_dir().join(format!("seal-cf-unk-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"target\":\"{target}\",\"decision\":\"DENY\"}}\n{{\"target\":\"{target}\",\"decision\":\"revoke\"}}\n"
+            ),
+        )
+        .unwrap();
+        let mut p = ControlFileProvider::new(&path);
+        let poll = p.poll();
+        std::fs::remove_file(&path).ok();
+        assert!(
+            poll.records.is_empty(),
+            "unknown decision values must not mint approvals"
+        );
+        assert!(poll.declines.is_empty());
+        assert_eq!(poll.warnings.len(), 2);
+        assert_eq!(poll.warnings[0].reason, "unknown_decision:DENY");
+        assert_eq!(poll.warnings[1].reason, "unknown_decision:revoke");
+    }
+
+    /// BLUE: control-file channel still approves absent decision and "allow",
+    /// and still parses exact "deny" as a decline.
+    #[test]
+    fn control_file_still_approves_absent_and_allow_and_declines_deny() {
+        let target = "0000000000000000000000000000000000000000000000000000000000000022";
+        let path = std::env::temp_dir().join(format!("seal-cf-alw-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"target\":\"{target}\"}}\n{{\"target\":\"{target}\",\"decision\":\"allow\"}}\n{{\"target\":\"{target}\",\"decision\":\"deny\"}}\n"
+            ),
+        )
+        .unwrap();
+        let mut p = ControlFileProvider::new(&path);
+        let poll = p.poll();
+        std::fs::remove_file(&path).ok();
+        assert!(poll.warnings.is_empty());
+        assert_eq!(poll.records.len(), 2);
+        assert_eq!(poll.declines.len(), 1);
+        assert_eq!(poll.declines[0].target, target);
     }
 
     #[test]

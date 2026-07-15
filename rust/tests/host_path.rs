@@ -33,10 +33,52 @@ struct Oracle {
     lines: Receiver<String>,
     stderr_lines: Receiver<String>,
     dir: PathBuf,
+    args: Vec<String>,
+}
+
+/// Deterministic approval signing key for the ed25519 channel tests. MUST
+/// differ from the config key ([7u8;32]) — the host refuses a shared key.
+fn approval_signing_key() -> SigningKey {
+    SigningKey::from_bytes(&[9u8; 32])
+}
+
+/// One signed NDJSON token line, exactly the shape sign_approval.py emits:
+/// the signature covers the exact payload bytes.
+fn signed_token(target: &str, issued_at: u64, nonce: &str, decision: Option<&str>) -> String {
+    let sk = approval_signing_key();
+    let payload = match decision {
+        Some(d) => format!(
+            r#"{{"target":"{target}","issuedAt":{issued_at},"nonce":"{nonce}","decision":"{d}"}}"#
+        ),
+        None => format!(r#"{{"target":"{target}","issuedAt":{issued_at},"nonce":"{nonce}"}}"#),
+    };
+    let sig = hex::encode(sk.sign(payload.as_bytes()).to_bytes());
+    format!(
+        r#"{{"payload":{},"signature":"{}"}}"#,
+        serde_json::to_string(&payload).unwrap(),
+        sig
+    )
+}
+
+fn wall_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 impl Oracle {
     fn spawn(tag: &str) -> Oracle {
+        Oracle::spawn_channel(tag, false)
+    }
+
+    /// Spawn on the PRODUCTION approval channel: ed25519 signed tokens with
+    /// a sqlite replay store (required by the host for this channel).
+    fn spawn_signed(tag: &str) -> Oracle {
+        Oracle::spawn_channel(tag, true)
+    }
+
+    fn spawn_channel(tag: &str, signed: bool) -> Oracle {
         let dir =
             std::env::temp_dir().join(format!("seal-host-oracle-{}-{}", std::process::id(), tag));
         std::fs::create_dir_all(&dir).unwrap();
@@ -45,13 +87,19 @@ impl Oracle {
 
         let config_sk = SigningKey::from_bytes(&[7u8; 32]);
         let pk = hex::encode(config_sk.verifying_key().to_bytes());
+        let mut approval = serde_json::json!({
+            "control_file": approvals.to_str().unwrap(),
+            "ttl_seconds": 120
+        });
+        if signed {
+            approval["replay_store"] = serde_json::json!({
+                "sqlite_path": dir.join("replay.sqlite").to_str().unwrap()
+            });
+        }
         let payload = serde_json::json!({
             "epoch": 1,
             "safety": {
-                "approval": {
-                    "control_file": approvals.to_str().unwrap(),
-                    "ttl_seconds": 120
-                },
+                "approval": approval,
                 "tools": [
                     {
                         "name": "db.execute",
@@ -76,15 +124,43 @@ impl Oracle {
         let config = dir.join("trusted.json");
         std::fs::write(&config, envelope).unwrap();
 
+        let mut args = vec![
+            "--config".to_string(),
+            config.to_str().unwrap().to_string(),
+            "--pubkey".to_string(),
+            pk,
+        ];
+        if signed {
+            let token_file = dir.join("tokens.ndjson");
+            std::fs::write(&token_file, b"").unwrap();
+            let approval_pk = hex::encode(approval_signing_key().verifying_key().to_bytes());
+            args.extend([
+                "--channel".to_string(),
+                "ed25519".to_string(),
+                "--token-file".to_string(),
+                token_file.to_str().unwrap().to_string(),
+                "--approval-pubkey".to_string(),
+                approval_pk,
+            ]);
+        }
+        args.extend(["--".to_string(), "/bin/cat".to_string()]);
+
+        let (child, stdin, lines, stderr_lines) = Oracle::spawn_process(&args);
+        Oracle {
+            child,
+            stdin,
+            lines,
+            stderr_lines,
+            dir,
+            args,
+        }
+    }
+
+    fn spawn_process(
+        args: &[String],
+    ) -> (Child, ChildStdin, Receiver<String>, Receiver<String>) {
         let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
-            .args([
-                "--config",
-                config.to_str().unwrap(),
-                "--pubkey",
-                &pk,
-                "--",
-                "/bin/cat",
-            ])
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -115,13 +191,28 @@ impl Oracle {
             }
         });
 
-        Oracle {
-            child,
-            stdin,
-            lines,
-            stderr_lines,
-            dir,
-        }
+        (child, stdin, lines, stderr_lines)
+    }
+
+    /// Kill the host and start a fresh process on the SAME state directory
+    /// (same config, token file, and sqlite replay store) — a host restart.
+    fn restart(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let (child, stdin, lines, stderr_lines) = Oracle::spawn_process(&self.args);
+        self.child = child;
+        self.stdin = stdin;
+        self.lines = lines;
+        self.stderr_lines = stderr_lines;
+    }
+
+    fn append_token_line(&mut self, line: &str) {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.dir.join("tokens.ndjson"))
+            .unwrap();
+        writeln!(f, "{line}").unwrap();
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) {
@@ -381,6 +472,136 @@ fn mediation_obfuscation_and_one_shot_approval() {
     assert!(
         is_block(&resp),
         "approval must be one-shot; replay blocked: {resp}"
+    );
+}
+
+/// BLUE: the PRODUCTION channel end to end — a signed ed25519 approval
+/// unlocks exactly its target through the full host path (signature verify,
+/// A3 nonce/replay via sqlite, Lean consume), and the approval is one-shot.
+#[test]
+fn ed25519_signed_approval_forwards_end_to_end() {
+    let mut o = Oracle::spawn_signed("ed25519-blue");
+
+    // Passthrough sanity on the signed channel.
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+    o.send(init);
+    assert_eq!(o.expect_line(), init, "passthrough must echo verbatim");
+
+    // Unapproved guarded call blocks and names its target.
+    let call = guarded_call(2, "drop table accounts");
+    o.send(&call);
+    let blocked = o.expect_line();
+    assert!(is_block(&blocked), "unapproved call must block: {blocked}");
+    let target = block_target(&blocked).expect("block names its approval target");
+
+    // Signed approval for the target: the call now forwards.
+    o.append_token_line(&signed_token(&target, wall_now_ms(), "n-blue-1", None));
+    let approved = guarded_call(3, "drop table accounts");
+    o.send(&approved);
+    assert_eq!(
+        o.expect_line(),
+        approved,
+        "signed approval must forward the call"
+    );
+
+    // The ALLOW receipt names the production channel and the approval key.
+    let allow = o
+        .receipts()
+        .into_iter()
+        .rev()
+        .find(|receipt| receipt["verdict"] == "ALLOW")
+        .expect("forwarded decision persisted an ALLOW receipt");
+    assert_eq!(allow["approval"]["approval_identity"]["channel"], "ed25519");
+    assert!(allow["approval"]["approval_identity"]["key_id"].is_string());
+
+    // One-shot: the same call blocks again.
+    let replay = guarded_call(4, "drop table accounts");
+    o.send(&replay);
+    assert!(
+        is_block(&o.expect_line()),
+        "approval must be one-shot on the signed channel"
+    );
+
+    // Replaying the very same signed token is dead: the nonce is burned.
+    o.append_token_line(&signed_token(&target, wall_now_ms(), "n-blue-1", None));
+    let replay2 = guarded_call(5, "drop table accounts");
+    o.send(&replay2);
+    assert!(
+        is_block(&o.expect_line()),
+        "replayed token must not re-approve"
+    );
+    let stderr = o.drain_stderr(Duration::from_millis(100));
+    assert!(
+        stderr.iter().any(|l| l.contains("replayed_nonce")),
+        "operator must see the replay drop: {stderr:?}"
+    );
+}
+
+/// KNOWN DEFECT PIN — this test documents CURRENT WRONG BEHAVIOR, not a
+/// desired property. Do not read it as the specification.
+///
+/// A valid signed approval whose ingesting step is denied by Lean for an
+/// unrelated reason (here: a different call's missing approval) is retired
+/// before the verdict exists: the nonce is committed inside `a3.filter` at
+/// main.rs:634 (via a3.rs:167 → persist_nonce), eighteen lines before the
+/// Lean verdict at main.rs:652, and `ReplayStore` has no un-consume. The
+/// burn is DURABLE (sqlite) while the approval's ingestion into the Lean
+/// registry is in-memory only — so across a host restart the approval is
+/// gone, and resubmitting the very same signed token dies as
+/// `replayed_nonce`. The approval is permanently retired without ever
+/// having authorized anything. (Within one process the Lean registry
+/// retains the ingested approval across the deny, which masks the defect
+/// until a restart.)
+///
+/// Redesign options (NOT applied here): split validate from commit-nonce
+/// and commit only on `route == Forward`, or give the replay store a
+/// rollback path. Cross-reference: checkpoint ckpt-19caa937cca56524,
+/// roadmap item P10.
+#[test]
+fn pinned_defect_denied_call_retires_valid_approval() {
+    let mut o = Oracle::spawn_signed("ed25519-pin");
+
+    // Learn target T of call C (the call the approval is FOR).
+    let call_c = guarded_call(10, "drop table accounts");
+    o.send(&call_c);
+    let blocked = o.expect_line();
+    assert!(is_block(&blocked));
+    let target_t = block_target(&blocked).expect("block names target T");
+
+    // A valid signed approval for T arrives, but the next mediated line is
+    // an UNRELATED unapproved call D: the poll ingests the token during D's
+    // step (nonce committed pre-verdict) and Lean denies D for its own
+    // missing approval — a reason unrelated to T's approval.
+    o.append_token_line(&signed_token(&target_t, wall_now_ms(), "n-pin-1", None));
+    let call_d = guarded_call(11, "delete from users");
+    o.send(&call_d);
+    let resp_d = o.expect_line();
+    assert!(is_block(&resp_d), "unrelated call D stays blocked: {resp_d}");
+    assert_ne!(
+        block_target(&resp_d).expect("D names its own target"),
+        target_t,
+        "D's deny must be unrelated to T's approval"
+    );
+
+    // Host restarts (the sqlite replay store is the state that survives).
+    o.restart();
+
+    // Resubmit the SAME valid token. PINNED DEFECT: it is dead — the nonce
+    // was durably burned by the denied step, so call C can never forward on
+    // this approval even though it never authorized anything.
+    o.append_token_line(&signed_token(&target_t, wall_now_ms(), "n-pin-1", None));
+    let call_c2 = guarded_call(12, "drop table accounts");
+    o.send(&call_c2);
+    let resp = o.expect_line();
+    assert!(
+        is_block(&resp),
+        "PINNED DEFECT: the retired approval cannot be resubmitted; \
+         if this forwards, the defect was fixed — update this pin: {resp}"
+    );
+    let stderr = o.drain_stderr(Duration::from_millis(200));
+    assert!(
+        stderr.iter().any(|l| l.contains("replayed_nonce")),
+        "the resubmitted token dies as a nonce replay: {stderr:?}"
     );
 }
 

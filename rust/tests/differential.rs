@@ -293,6 +293,19 @@ mod props {
     // ---- Block-on-error: the binary's own routing functions are total and
     // ---- fail closed. These are the SAME functions main.rs runs.
 
+    /// RED: a step output claiming route "passthrough" must NOT forward.
+    /// The deployed flow cannot produce it (step runs only on lines classify
+    /// gated to mediate, and the kernel re-runs the same pure classifyLine),
+    /// so if it ever appears the seam is broken — and a broken seam refuses.
+    #[test]
+    fn step_route_passthrough_is_a_seam_failure() {
+        let out = route_of_step_output(Ok(r#"{"route":"passthrough"}"#.to_string()));
+        assert!(
+            matches!(out, Route::SeamFailure { .. }),
+            "step-level passthrough must refuse, got: {out:?}"
+        );
+    }
+
     fn seam_errors() -> impl Strategy<Value = SeamError> {
         prop_oneof![
             Just(SeamError::Panic),
@@ -314,8 +327,7 @@ mod props {
                 let v: serde_json::Value = serde_json::from_str(&s)
                     .expect("Forward from unparseable output");
                 let route = v["route"].as_str().expect("Forward without route string");
-                prop_assert!(route == "forward" || route == "passthrough",
-                    "Forward from route={route:?}");
+                prop_assert!(route == "forward", "Forward from route={route:?}");
             }
         }
 
@@ -331,7 +343,7 @@ mod props {
             let out = route_of_step_output(Ok(obj.to_string()));
             match out {
                 Route::Forward { .. } =>
-                    prop_assert!(route == "forward" || route == "passthrough"),
+                    prop_assert!(route == "forward"),
                 Route::Block { .. } =>
                     prop_assert!(route == "block" && resp.is_some()),
                 Route::SeamFailure { .. } => {}
