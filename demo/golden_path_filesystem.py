@@ -333,6 +333,23 @@ class HostSession:
             if any(text in line for line in self.proc.stderr_lines): return
             time.sleep(.02)
         raise gp.DemoFailure(f"{self.label}: missing stderr marker {text}")
+    def wait_marker_count(self,text: str,count: int,timeout: float=5)->None:
+        """Wait for EXACTLY `count` occurrences of a stderr marker.
+
+        Markers travel on stderr; responses travel on stdout. They are separate
+        pipes with independent buffering and NO ordering guarantee between them,
+        so having read a response tells you nothing about whether that call's
+        marker has been drained yet. `wait_stderr` returns on the FIRST match,
+        which is instant once any earlier call emitted one -- so waiting for the
+        marker and then asserting a count of N is a race, not a check. Wait for
+        the COUNT. Overshoot is reported as itself, never rounded down to pass."""
+        deadline=time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            seen=self.marker_count(text)
+            if seen>=count: break
+            time.sleep(.02)
+        seen=self.marker_count(text)
+        if seen!=count: raise gp.DemoFailure(f"{self.label}: expected {count}x {text}, saw {seen}")
     def call(self,tool: str,args: dict)->tuple[dict,Path]:
         before=set(self.receipts.glob("receipt-*.json")) if self.receipts.exists() else set()
         self.proc.send(gp.request(1,"tools/call",{"name":tool,"arguments":args})); response=json.loads(self.proc.line())
@@ -450,8 +467,15 @@ def path_escape_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_p
         for index,path in enumerate(paths):
             response,_=approved_retry(session,key,"write_file",{"path":path,"content":"escape"},f"escape-{index}")
             if response.get("result",{}).get("isError") is not True or "PATH_REJECTED" not in gp.compact(response): raise gp.DemoFailure(f"approved escape was not rejected: {response}")
-        session.wait_stderr("SEAL_FILESYSTEM_PATH_REJECTED")
-        if session.marker_count("SEAL_FILESYSTEM_PATH_REJECTED")!=2: raise gp.DemoFailure("path rejection count != 2")
+        # Both escapes were already asserted PATH_REJECTED on their responses
+        # above, so the adapter HAS rejected both. The markers are a different
+        # channel: `rejectPath` console.error()s before throwing, but stderr and
+        # stdout are separate pipes, so the marker for escape 1 may not be drained
+        # when its response arrives. wait_stderr returns instantly here (escape 0
+        # emitted a marker long ago), so the old count-of-2 assertion on the next
+        # line was pure timing -- it passes on a warm dev box and loses on a
+        # loaded CI runner. Wait for the count.
+        session.wait_marker_count("SEAL_FILESYSTEM_PATH_REJECTED",2)
         if session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=0: raise gp.DemoFailure("escape reached write marker")
         if exec_node(name,'process.exit(require("fs").existsSync("/etc/seal_demo_escape")?1:0)').returncode!=0: raise gp.DemoFailure("absolute escape exists")
         if file_exists(name,"/workspace/seal_demo_escape"): raise gp.DemoFailure("workspace escape artifact exists")
