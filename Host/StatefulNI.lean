@@ -160,7 +160,7 @@ def observeStep (epoch : Nat) (tool : String) (verdicts : List Verdict)
     (raw : RawBytes) (st : ApprovalState) (store : List ConsumedNonce) :
     (Decision × String) × List ConsumedNonce :=
   let step := decideConsume raw st store
-  ((step.1, auditLine epoch tool (combinedOf step.1) verdicts), step.2)
+  ((step.1, auditLine epoch tool (combinedOf step.1) verdicts raw), step.2)
 
 /-- The observation trace: per-step (decision, record) pairs, threading the
 durable store. -/
@@ -189,7 +189,7 @@ def leakyObserveStep (epoch : Nat) (tool : String) (verdicts : List Verdict)
     (raw : RawBytes) (st : ApprovalState) (store : List ConsumedNonce) :
     (Decision × String × Nat) × List ConsumedNonce :=
   let step := decideConsume raw st store
-  ((step.1, auditLine epoch tool (combinedOf step.1) verdicts,
+  ((step.1, auditLine epoch tool (combinedOf step.1) verdicts raw,
     st.consumedNonces.length), step.2)
 
 /-- **The probe fires.** Two states agreeing on `replayView`, on

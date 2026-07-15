@@ -146,7 +146,10 @@ private def stepImpl (inputText : String) : IO String := do
       | .act act => do
           let registry := registryFor session now approvals votes grants forecasts
           let (combined, verdicts) ← dispatch registry act
-          let audit := auditLine session.config.epoch act.tool combined verdicts
+          -- `line` is the SAME binding `classifyLine` judged above — one
+          -- binding, no rewrites (mirrors rust/src/main.rs). The kernel's
+          -- request commitment is therefore over the exact bytes it judged.
+          let audit := auditLine session.config.epoch act.tool combined verdicts line
           -- Route through the PURE `Host.stepRoute` — the function
           -- `step_forward_non_bypass` (Host.Composition) is proven over.
           -- `stepRoute (.act act) verdicts = .forward ↔ combineVerdicts verdicts

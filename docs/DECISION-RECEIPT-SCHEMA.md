@@ -219,8 +219,10 @@ item.)
 
 ## 8. The host audit line is NOT a decision receipt
 
-`seal-host/Host/Audit.lean` emits `{epoch, tool, verdict, certs}` (verdict
-lowercase `allow`/`deny`) per decision; `seal-host/scripts/seal_log.mjs`
+`seal-host/Host/Audit.lean` emits `{epoch, tool, verdict, request_sha256,
+certs}` (verdict lowercase `allow`/`deny`; `request_sha256` the kernel's own
+SHA-256 commitment to the exact line it judged, keys serialized in
+lexicographic order) per decision; `seal-host/scripts/seal_log.mjs`
 chains those lines with `SHA256(prevHead ‖ 0x1f ‖ payload)` (the in-Lean
 demonstration instance uses FNV — documented in
 `docs/VERIFIABLE-RECORD.md`). Different fields, different purpose (tamper

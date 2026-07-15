@@ -410,6 +410,30 @@ mod tests {
         assert_eq!(sha256_hex(VERIFIED_WASM), VERIFIED_WASM_SHA256);
     }
 
+    /// Golden vectors twinned with Host/Audit.lean's `#guard_msgs` block:
+    /// the kernel-attested `request_sha256` (SHA-256 of `String.toUTF8`)
+    /// and the host's `sha256_hex(input.line.as_bytes())` must agree
+    /// byte-for-byte, including on the pinned serde-unparseable line
+    /// (1e309) and on multibyte UTF-8. If these can disagree, the kernel
+    /// request commitment is theatre.
+    #[test]
+    fn request_hash_golden_vectors_match_lean() {
+        let unparseable = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+        assert_eq!(
+            sha256_hex(unparseable.as_bytes()),
+            "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30"
+        );
+        let multibyte = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"héllo","arguments":{"memo":"naïve 日本語 ✓"}}}"#;
+        assert_eq!(
+            sha256_hex(multibyte.as_bytes()),
+            "e7c75841cb1440437b83851d8ccfbbee7fe47a510cf48ef7de6fab6aaedc8d96"
+        );
+        assert_eq!(
+            sha256_hex(b"x"),
+            "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        );
+    }
+
     fn allow_step_output() -> String {
         let audit = serde_json::json!({
             "certs": [{"kernel": "safety", "verdict": "allow",

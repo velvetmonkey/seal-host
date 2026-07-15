@@ -112,7 +112,10 @@ def processHostLine
       childIn.flush
   | .act act => do
       let (combined, verdicts) ← dispatch registry act
-      IO.eprintln (auditLine epoch act.tool combined verdicts)
+      -- This pure-Lean demo host commits to `hostLine` exactly as classified;
+      -- its line framing differs from the deployed Rust host's `lean_view`
+      -- (the deployed contract is the Rust path).
+      IO.eprintln (auditLine epoch act.tool combined verdicts hostLine)
       match combined with
       | .allow =>
           childIn.putStr hostLine

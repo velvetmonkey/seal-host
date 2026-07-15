@@ -90,7 +90,7 @@ verdict of `SealV2.decide`. `verdicts` is a host-supplied LOW input — see
 the module docstring's residual note. -/
 def recordView (epoch : Nat) (tool : String) (verdicts : List Verdict)
     (raw : RawBytes) (state : ApprovalState) : String :=
-  auditLine epoch tool (combinedOf (decide raw state)) verdicts
+  auditLine epoch tool (combinedOf (decide raw state)) verdicts raw
 
 /-- Everything an observer of the gate sees: the decision and its record. -/
 def observe (epoch : Nat) (tool : String) (verdicts : List Verdict)
