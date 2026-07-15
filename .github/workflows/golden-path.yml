@@ -24,11 +24,17 @@ jobs:
             exit 1
           }
 
+      # This ref MUST move with the kernel. The kit checked out here IS the
+      # verifier the acceptance run checks receipts with, so a stale ref
+      # verifies today's receipts against yesterday's kernel and fails
+      # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
+      # re-pin sweep cannot see it — when the kernel sha changes, bump it here
+      # by hand. 6d0d6eb carries kernel d3067bc0 (0db03ef carried df42).
       - name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: 0db03efd27fc3775988d5e4bd527d8e6206b6c47
+          ref: 6d0d6eb1512983ed9a1d09146476f806dd89d828
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
