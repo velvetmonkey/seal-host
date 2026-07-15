@@ -216,25 +216,9 @@ fn default_receipt_dir(config_path: &str) -> std::path::PathBuf {
 
 fn persist_decision(
     writer: &mut ReceiptWriter,
-    line: &str,
-    now: u64,
-    emitted_bytes: &str,
-    kernel_config: &Value,
-    signed_config: &SignedConfig,
-    records: &[providers::ApprovalRecord],
-    identity: &ApprovalIdentity,
-    ttl_ms: u64,
+    input: DecisionInput<'_>,
 ) -> Result<Option<String>, ()> {
-    match writer.persist(DecisionInput {
-        line,
-        now,
-        emitted_bytes,
-        kernel_config,
-        signed_config,
-        approvals: records,
-        approval_identity: identity,
-        approval_ttl_ms: ttl_ms,
-    }) {
+    match writer.persist(input) {
         Ok(receipt) => {
             eprintln!("{}", json!({"decision_receipt": receipt.path}));
             Ok(receipt.consumed_target)
@@ -664,14 +648,16 @@ fn run() -> i32 {
                 }
                 let consumed = match persist_decision(
                     &mut decision_receipts,
-                    line,
-                    now,
-                    &step_output,
-                    &kernel_config,
-                    &signed_config,
-                    &pending_approvals,
-                    &approval_identity,
-                    ttl_ms,
+                    DecisionInput {
+                        line,
+                        now,
+                        emitted_bytes: &step_output,
+                        kernel_config: &kernel_config,
+                        signed_config: &signed_config,
+                        approvals: &pending_approvals,
+                        approval_identity: &approval_identity,
+                        approval_ttl_ms: ttl_ms,
+                    },
                 ) {
                     Ok(consumed) => consumed,
                     Err(()) => {
@@ -692,14 +678,16 @@ fn run() -> i32 {
                 }
                 if persist_decision(
                     &mut decision_receipts,
-                    line,
-                    now,
-                    &step_output,
-                    &kernel_config,
-                    &signed_config,
-                    &pending_approvals,
-                    &approval_identity,
-                    ttl_ms,
+                    DecisionInput {
+                        line,
+                        now,
+                        emitted_bytes: &step_output,
+                        kernel_config: &kernel_config,
+                        signed_config: &signed_config,
+                        approvals: &pending_approvals,
+                        approval_identity: &approval_identity,
+                        approval_ttl_ms: ttl_ms,
+                    },
                 )
                 .is_err()
                 {
@@ -783,14 +771,16 @@ fn run() -> i32 {
                                     }
                                     let consumed = match persist_decision(
                                         &mut decision_receipts,
-                                        line,
-                                        retry_now,
-                                        &retry_output,
-                                        &kernel_config,
-                                        &signed_config,
-                                        &pending_approvals,
-                                        &approval_identity,
-                                        ttl_ms,
+                                        DecisionInput {
+                                            line,
+                                            now: retry_now,
+                                            emitted_bytes: &retry_output,
+                                            kernel_config: &kernel_config,
+                                            signed_config: &signed_config,
+                                            approvals: &pending_approvals,
+                                            approval_identity: &approval_identity,
+                                            approval_ttl_ms: ttl_ms,
+                                        },
                                     ) {
                                         Ok(consumed) => consumed,
                                         Err(()) => {
@@ -812,14 +802,16 @@ fn run() -> i32 {
                                     }
                                     if persist_decision(
                                         &mut decision_receipts,
-                                        line,
-                                        retry_now,
-                                        &retry_output,
-                                        &kernel_config,
-                                        &signed_config,
-                                        &pending_approvals,
-                                        &approval_identity,
-                                        ttl_ms,
+                                        DecisionInput {
+                                            line,
+                                            now: retry_now,
+                                            emitted_bytes: &retry_output,
+                                            kernel_config: &kernel_config,
+                                            signed_config: &signed_config,
+                                            approvals: &pending_approvals,
+                                            approval_identity: &approval_identity,
+                                            approval_ttl_ms: ttl_ms,
+                                        },
                                     )
                                     .is_err()
                                     {
