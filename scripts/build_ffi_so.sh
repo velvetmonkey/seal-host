@@ -90,7 +90,15 @@ ARCHIVES=()
 # a hard error — a silently skipped package is precisely how CI shipped a
 # libsealffi.so with unresolved dependency initializers while this script
 # printed "built" and exited 0.
-CLOSURE_EXEMPT=(Cli)
+# calibration-lean is PROOF-ONLY and verified so, not assumed: no module under
+# Ffi.lean / Host / Kernels imports Calibration.* (Kernels/Calibration.lean pulls
+# only Seal.Hash and Host.Kernel), the sole importer in the repo is
+# Test/Axioms.lean, and Calibration/CondHoeffding.lean is 2 theorems and 0 defs.
+# It is a declared dependency that mathlib does not pull transitively either, so
+# nothing ever materializes its C objects and it contributes none by design. The
+# calibration kernel's RUNTIME needs nothing from it; the package supplies the
+# mathematics the kernel's bound cites, which the axiom gate elaborates.
+CLOSURE_EXEMPT=(Cli calibration-lean)
 
 archive_package_ir() {
   local pkgdir="$1" force="${2:-0}"
