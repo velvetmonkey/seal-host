@@ -149,11 +149,11 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Source tree: R6 config-signature working tree based on `e3a61c65ddd0`
-- `seal.wasm` sha256: `a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35`
+- Source tree: kernel-request-commitment working tree based on `46a9e93`
+- `seal.wasm` sha256: `d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes the previous verified pin sha256 `ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0`
-  (built before real Ed25519 config-signature verification).
+- Supersedes the fleet pin sha256 `df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8`
+  (the kernel whose audit committed to its decision but not to the judged line).
 
 The verified artifact + full provenance + reproduce recipe are staged at
 `wasm-spike/verified/{seal.wasm,seal.js,PROVENANCE.txt}`; the rebuild step that
@@ -162,6 +162,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `a6a73fa5…`). That repin is a separate, audited step gated to the
+build (sha256 `d3067bc0…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

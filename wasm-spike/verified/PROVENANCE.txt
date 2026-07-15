@@ -1,26 +1,31 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the seal-host R6 config-signature working tree, differential-verified
-against the real Lean model over corpus C (see docs/CONFORMANCE-BRIDGE.md, WASM
-section).
+Built from the kernel-request-commitment working tree (the kernel commits to
+sha256 of the exact line it judged inside its audit output), differential-
+verified against the real Lean model over corpus C (see
+docs/CONFORMANCE-BRIDGE.md, WASM section).
 
-Base commit      : e3a61c65ddd0
-Build date       : 2026-07-05
+Base commit      : 46a9e93 (feat/kernel-request-commitment)
+Build date       : 2026-07-15
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35  (3578786 bytes)
-  seal.js    c17688e7f849ab936fa45187a3a74e6a2c11048c91fe09da4d36833ba23f02d5
+  seal.wasm  d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66  (3666978 bytes)
+  seal.js    5a017fa4a71db7c214323c1dd1db415a96ec0afececf84f74ac1f4fc95dd972e
 
-Supersedes the previous verified pin sha256
-  ebd17c14668176612c49f6e2940b23df82a2c1a7cdef6759f0d6276ae997e9d0
-(built 2026-07-05 before real Ed25519 config-signature verification).
+Supersedes the fleet pin sha256
+  df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
+(the kernel whose audit committed to its decision but not to the judged
+line). Note: this directory previously held a6a73fa5… — a build that was
+never the fleet pin; the CI wasm differential was running a non-fleet
+artifact until this refresh (found 2026-07-15, fixed by pinning verified/
+to the fleet artifact from here on).
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
-  ./build_core.sh               # ir -> build-core/*.o (19 project modules, incl Host_Step)
+  ./build_core.sh               # ir -> build-core/*.o (20 project modules, incl Host_Sha256)
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
 
