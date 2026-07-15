@@ -14,6 +14,7 @@ import Host.CompositionBytes
 import Host.ChannelModel
 import Host.SealAdapter
 import Host.NonInterference
+import Host.RecordReflection
 import Host.ReplayIsolation
 import Host.StatefulNI
 import Host.AuthorityFrontierBridge
@@ -725,6 +726,36 @@ info: 'Host.Provenance.boot_principal_constant' depends on axioms: [propext, Cla
 info: 'Host.Provenance.replayNamespace_trusted_plane' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.Provenance.replayNamespace_trusted_plane
+
+-- The kernel request commitment (Host/Audit.lean) and the modules stated
+-- over auditLine. `Host.auditLine` itself is gated: the emitting definition
+-- must carry no reduceBool/native evaluation axioms. RecordReflection is
+-- imported HERE because nothing else in any default target builds it —
+-- before this import, `log_reflects_l0_decisions` was a theorem no build
+-- elaborated (found 2026-07-15; the orphan Test/AxiomCheckRecord.lean and
+-- Test/AxiomCheckComposition.lean are dead build-wise, the `Test` lib glob
+-- is not a default target).
+
+/-- info: 'Host.auditLine' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.auditLine
+
+/--
+info: 'Host.Record.log_reflects_l0_decisions' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Record.log_reflects_l0_decisions
+
+-- Routing-untouched evidence for the request-commitment change: the deployed
+-- routing core and the non-bypass theorem re-elaborate and stay on the
+-- baseline-3 footprint. (Previously gated only in the never-built
+-- Test/AxiomCheckComposition.lean.)
+
+/-- info: 'Host.stepRoute' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.stepRoute
+
+/--
+info: 'Host.step_forward_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.step_forward_non_bypass
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"

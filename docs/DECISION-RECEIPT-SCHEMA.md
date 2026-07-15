@@ -172,7 +172,7 @@ invalid (`validateReceipt` rejects it). Their only v1 home is the separate
 Legacy `v0-live` receipts with the merged block are grandfathered: verifiers
 accept them as v0-live and base nothing on those fields either way.
 
-The current private verified wasm pin (`a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35`)
+The current private verified wasm pin (`d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66`)
 is not changed by this receipt schema; the pending audited public repin
 (`docs/CONFORMANCE-BRIDGE.md`) is a separate step.
 
@@ -214,13 +214,20 @@ item.)
    the policy; count opaque entries); re-run the kernel with
    `kernel_config` and the receipt's `now`; require verdict equality and
    (when present) byte-identical `emitted_bytes`.
+3a. Check the kernel-attested request commitment: the `request_sha256`
+   inside `emitted_bytes`' audit must equal the receipt's top-level
+   `request_sha256`. For unparseable-request receipts this is the ONLY
+   binding of kernel material to the request, and it is kernel-backed,
+   not host-asserted.
 4. Handle `bypass` per §6: report NOT MEDIATED, never "verified".
 5. Reject `seal_check_receipt` objects as legacy Schema K.
 
 ## 8. The host audit line is NOT a decision receipt
 
-`seal-host/Host/Audit.lean` emits `{epoch, tool, verdict, certs}` (verdict
-lowercase `allow`/`deny`) per decision; `seal-host/scripts/seal_log.mjs`
+`seal-host/Host/Audit.lean` emits `{epoch, tool, verdict, request_sha256,
+certs}` (verdict lowercase `allow`/`deny`; `request_sha256` the kernel's own
+SHA-256 commitment to the exact line it judged, keys serialized in
+lexicographic order) per decision; `seal-host/scripts/seal_log.mjs`
 chains those lines with `SHA256(prevHead ‖ 0x1f ‖ payload)` (the in-Lean
 demonstration instance uses FNV — documented in
 `docs/VERIFIABLE-RECORD.md`). Different fields, different purpose (tamper
@@ -323,7 +330,7 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | `approval.expiry` | integer (epoch ms) | yes iff derivable (`issued_at` + TTL) or carried | absolute expiry deadline |
 | `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the canonical `kernel_config` serialization — see 11.3 |
 | `args_hash` | 64-hex string | yes when mediated and the request parsed (see the unparseable-request rule below) | SHA-256 of the canonical `arguments` serialization — see 11.3 |
-| `request_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the exact wire line the kernel judged (raw bytes, pre-canonicalisation) — present on every receipt, and the ONLY request identity when the line is unparseable |
+| `request_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the exact wire line the kernel judged (raw bytes, pre-canonicalisation) — present on every receipt, and the ONLY request identity when the line is unparseable. KERNEL-ATTESTED: the kernel emits the same hash inside its audit (`emitted_bytes`), and the producer cross-checks the two before persisting — a mismatch is a SEAM failure that fails closed (host and kernel caught disagreeing about which line was judged) |
 | `request_parse_error` | string | yes iff the producer could not parse the wire line | names why the structured request material is absent |
 | `action` | string | optional | the SealV2 `params.action` binding when the producer parsed one; absent under the `compatible` profile, which does not parse it |
 | `host_identity` | object | optional; required for the native Rust host | `{native_executable_sha256, lean_ffi_sha256, equivalence:"not_proven"}`. Identifies the native artifacts that executed the decision. It does **not** prove them equivalent to `kernel_identity.wasm_sha256`; that remains the Lane C gap. |

@@ -1,28 +1,28 @@
 ===============================================================
- spec->binary conformance bridge  (differential evidence over C)
+ spec→binary conformance bridge  (differential evidence over C)
 ===============================================================
 artifact under test: native .so + wasm (emscripten, in-browser seal-check shape)
-  provenance: built at HEAD e3a61c65ddd054e4ddf12981858a71299e0f64bb
-  seal.wasm sha256: a6a73fa5d3abc21bcca261b56aa6355705670fd55cdfb194a4bb344e69ba9e35
+  provenance: built at HEAD 46a9e93bc180bc8ca64ba6a5384b16ab9ba38162
+  seal.wasm sha256: d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
 corpus C: 11 destructive disguises + 3 passthrough + 1 approved forward
-  target derivation: MODEL/NATIVE/WASM emit 2e6d0cf644aad8daf884625c07fa542ad60763a44c8f495db307db3c8c1e230d
+  ✓ target derivation: MODEL/NATIVE/WASM emit 2e6d0cf644aad8daf884625c07fa542ad60763a44c8f495db307db3c8c1e230d
 
-[1] DECISION + audit byte agreement - native .so + wasm (emscripten, in-browser seal-check shape) vs interpreted Lean
-  harness liveness: all routes exercised; chain is order-sensitive (non-vacuous)
-  15/15 inputs: model == native == wasm, byte-for-byte, route as expected
+[1] DECISION + audit byte agreement — native .so + wasm (emscripten, in-browser seal-check shape) vs interpreted Lean
+  ✓ harness liveness: all routes exercised; chain is order-sensitive (non-vacuous)
+  ✓ 15/15 inputs: model == native == wasm, byte-for-byte, route as expected
 
-[2] RECORD chain agreement - SHA-256 head over artifact vs model audits
-  chain heads equal (model == native == wasm): db8b477380a8620ce59067bb769a8488129542db97365d2fb09fa07711447c7a
+[2] RECORD chain agreement — SHA-256 head over artifact vs model audits
+  ✓ chain heads equal (model == native == wasm): 61871fc83eb29fffd88cde65019c95d8a25f9396e4be1ec9b4f74477fd029894
 
-[3] DEPLOYED binary - seal-host-rs record chain vs model
-  deployed seal-host-rs emitted SHA-256 record head == model head: 57cbf7477b1ab949510809bc14c857f1a4ba44d48bb4f6e160ef0e1309cdd229
+[3] DEPLOYED binary — seal-host-rs record chain vs model
+  ✓ deployed seal-host-rs emitted SHA-256 record head == model head: 40ca4ff74c1f9fd0925072df46f4ccadebce860459d3f65df0ec8322b1c4c32e
 
 ===============================================================
  CONFORMANCE BRIDGE: PASS
-   - native .so and rebuilt-at-HEAD emscripten wasm
+   • native .so and rebuilt-at-HEAD emscripten wasm
      both conform to the interpreted Lean model on corpus C
      (decision + audit bytes, all routes)
-   - the SHA-256 record chain agrees across model / native / wasm
-   - the deployed seal-host-rs record chain agrees with the model
-   - evidence over C only - NOT a universal binary==model claim
+   • the SHA-256 record chain agrees across model / native / wasm
+   • the deployed seal-host-rs record chain agrees with the model
+   • evidence over C only — NOT a universal binary==model claim
 ===============================================================

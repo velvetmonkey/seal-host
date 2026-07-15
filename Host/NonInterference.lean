@@ -28,6 +28,10 @@ an observer of the gate sees, except through that one declassified bit.
 * `combinedOf : Decision → VerdictKind` and
   `recordView epoch tool verdicts raw state` — the audit record of the gate
   decision (`Host.auditLine` over the combined verdict of `SealV2.decide`).
+  The record also carries `request_sha256 = sha256(raw)` — a function of
+  `raw` ALONE, i.e. of a LOW input, so by construction it lands on the
+  already-permitted side of the declassification boundary and cannot carry
+  `ApprovalState` information.
 * `observe` — the pair (decision, record): everything downstream sees.
 
 ## Theorems (statements frozen with the model)
@@ -42,8 +46,10 @@ an observer of the gate sees, except through that one declassified bit.
   differing in HIGH (the clock) with equal `authView` and equal decision.
 * `record_authView_noninterference` (T2): the audit record is
   `authView`-determined. The structural fields (`epoch`, `tool`, combined
-  verdict) are functions of `(raw, decision)`, hence of the declassified
-  bit via T1.
+  verdict, `request_sha256`) are functions of `(raw, decision)`, hence of
+  the declassified bit via T1. When the kernel request commitment was
+  added (2026-07-15), T2's STATEMENT and PROOF both survived verbatim:
+  the new field is the same term on both sides of the equality.
 * `observe_noninterference` (capstone): the full observation pair is
   `authView`-determined — T1 and T2 together.
 
@@ -86,11 +92,13 @@ def combinedOf : Decision → VerdictKind
   | .Block => .deny
 
 /-- The audit record of the gate decision: `auditLine` over the combined
-verdict of `SealV2.decide`. `verdicts` is a host-supplied LOW input — see
-the module docstring's residual note. -/
+verdict of `SealV2.decide`, committing to the judged bytes via
+`request_sha256 = sha256(raw)` — a function of the LOW input `raw` alone.
+`verdicts` is a host-supplied LOW input — see the module docstring's
+residual note. -/
 def recordView (epoch : Nat) (tool : String) (verdicts : List Verdict)
     (raw : RawBytes) (state : ApprovalState) : String :=
-  auditLine epoch tool (combinedOf (decide raw state)) verdicts
+  auditLine epoch tool (combinedOf (decide raw state)) verdicts raw
 
 /-- Everything an observer of the gate sees: the decision and its record. -/
 def observe (epoch : Nat) (tool : String) (verdicts : List Verdict)
@@ -146,11 +154,12 @@ theorem authView_noninterference_nonvacuous :
   exact absurd (congrArg SealV2.ApprovalState.now h) (by decide)
 
 /-- **T2: record non-interference modulo `authView`.** The audit record's
-structural fields (`epoch`, `tool`, combined verdict) are determined by
-`(raw, decision)`, hence by the declassified bit via T1. Per-kernel
-`reason`/`certHash` enter only through the host-supplied `verdicts` input,
-held on both sides — the named controlled-declassification boundary (module
-docstring). -/
+structural fields (`epoch`, `tool`, combined verdict, and the
+`request_sha256` commitment to `raw`) are determined by `(raw, decision)`,
+hence by the declassified bit via T1 — `raw` is the same term on both
+sides, so its hash is too. Per-kernel `reason`/`certHash` enter only
+through the host-supplied `verdicts` input, held on both sides — the named
+controlled-declassification boundary (module docstring). -/
 theorem record_authView_noninterference (epoch : Nat) (tool : String)
     (verdicts : List Verdict) (raw : RawBytes) (s1 s2 : ApprovalState)
     (h : authView raw s1 = authView raw s2) :

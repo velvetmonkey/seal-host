@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 const VERIFIED_WASM: &[u8] = include_bytes!("../../receipt-verifier/wasm/seal.wasm");
 pub const VERIFIED_WASM_SHA256: &str =
-    "df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8";
+    "d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66";
 
 #[derive(Debug, Clone)]
 pub struct ApprovalIdentity {
@@ -125,6 +125,24 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         .ok_or("authoritative Lean step output lacks audit")?;
     let audit: Value = serde_json::from_str(audit_text)
         .map_err(|e| format!("cannot parse authoritative Lean audit: {e}"))?;
+    // The kernel's own commitment to the bytes it judged (Host/Audit.lean).
+    // The host recomputes the hash of the line IT holds; disagreement means
+    // host and kernel are not talking about the same request. That is a
+    // SEAM failure and fails closed: the Err surfaces as SEAM_ERROR_RESPONSE
+    // in main.rs and nothing forwards. Absence is equally fatal — the kernel
+    // this host ships with always emits the field, and an audit without it
+    // is by definition not from that kernel.
+    let kernel_request_sha256 = audit
+        .get("request_sha256")
+        .and_then(Value::as_str)
+        .ok_or("authoritative Lean audit lacks the kernel request commitment (request_sha256)")?;
+    let host_request_sha256 = sha256_hex(input.line.as_bytes());
+    if kernel_request_sha256 != host_request_sha256 {
+        return Err(format!(
+            "kernel-attested request_sha256 {kernel_request_sha256} disagrees with \
+             the host's line hash {host_request_sha256}; refusing to assert the pairing"
+        ));
+    }
     let certs = audit
         .get("certs")
         .and_then(Value::as_array)
@@ -208,9 +226,11 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
     }
     // Hash of the exact wire line as judged by the kernel — present on every
     // receipt, and the only request identity when the line is unparseable.
+    // Cross-checked above against the kernel-attested hash in the audit, so
+    // this value is kernel-backed, not merely host-asserted.
     receipt.insert(
         "request_sha256".into(),
-        Value::String(sha256_hex(input.line.as_bytes())),
+        Value::String(host_request_sha256),
     );
     if let Err(parse_error) = &request_material {
         receipt.insert(
@@ -410,11 +430,38 @@ mod tests {
         assert_eq!(sha256_hex(VERIFIED_WASM), VERIFIED_WASM_SHA256);
     }
 
-    fn allow_step_output() -> String {
+    /// Golden vectors twinned with Host/Audit.lean's `#guard_msgs` block:
+    /// the kernel-attested `request_sha256` (SHA-256 of `String.toUTF8`)
+    /// and the host's `sha256_hex(input.line.as_bytes())` must agree
+    /// byte-for-byte, including on the pinned serde-unparseable line
+    /// (1e309) and on multibyte UTF-8. If these can disagree, the kernel
+    /// request commitment is theatre.
+    #[test]
+    fn request_hash_golden_vectors_match_lean() {
+        let unparseable = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+        assert_eq!(
+            sha256_hex(unparseable.as_bytes()),
+            "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30"
+        );
+        let multibyte = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"héllo","arguments":{"memo":"naïve 日本語 ✓"}}}"#;
+        assert_eq!(
+            sha256_hex(multibyte.as_bytes()),
+            "e7c75841cb1440437b83851d8ccfbbee7fe47a510cf48ef7de6fab6aaedc8d96"
+        );
+        assert_eq!(
+            sha256_hex(b"x"),
+            "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        );
+    }
+
+    /// Synthetic kernel output for `line`: the audit carries the kernel
+    /// request commitment the real kernel (Host/Audit.lean) always emits.
+    fn allow_step_output(line: &str) -> String {
         let audit = serde_json::json!({
             "certs": [{"kernel": "safety", "verdict": "allow",
                        "reason": "explicit policy allow", "certHash": "1"}],
-            "verdict": "allow"
+            "verdict": "allow",
+            "request_sha256": sha256_hex(line.as_bytes())
         })
         .to_string();
         serde_json::json!({"route": "forward", "audit": audit}).to_string()
@@ -450,7 +497,7 @@ mod tests {
     #[test]
     fn unparseable_line_yields_receipt_with_raw_hash_not_an_error() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1e309}}}"#;
-        let receipt = build(line, &allow_step_output()).expect("de-parsed receipt must persist");
+        let receipt = build(line, &allow_step_output(line)).expect("de-parsed receipt must persist");
         assert_eq!(
             receipt["request_sha256"],
             Value::String(sha256_hex(line.as_bytes()))
@@ -476,7 +523,7 @@ mod tests {
     #[test]
     fn parseable_line_keeps_structured_fields_and_gains_raw_hash() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1}}}"#;
-        let receipt = build(line, &allow_step_output()).expect("receipt");
+        let receipt = build(line, &allow_step_output(line)).expect("receipt");
         assert_eq!(receipt["tool"], "t");
         assert!(receipt["arguments"].is_object());
         assert!(receipt["args_hash"].is_string());
@@ -486,6 +533,38 @@ mod tests {
             Value::String(sha256_hex(line.as_bytes()))
         );
         assert!(receipt.get("request_parse_error").is_none());
+    }
+
+    /// RED (the security property of the kernel request commitment):
+    /// a forged pairing — kernel material minted for line A presented with
+    /// line B as the request — is refused. Before this cross-check the
+    /// receipt layer would happily pair any kernel output with any line;
+    /// the host asserted the pairing and nothing could catch it lying.
+    #[test]
+    fn forged_line_pairing_is_refused() {
+        let line_a = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1}}}"#;
+        let line_b = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":2}}}"#;
+        let err = build(line_b, &allow_step_output(line_a))
+            .expect_err("a forged line pairing must fail closed");
+        assert!(err.contains("disagrees"), "{err}");
+    }
+
+    /// RED: an audit with no kernel request commitment at all is refused —
+    /// the shipped kernel always emits it, so its absence means this is not
+    /// that kernel's output. Fail closed, never assume.
+    #[test]
+    fn audit_without_request_commitment_is_refused() {
+        let audit = serde_json::json!({
+            "certs": [{"kernel": "safety", "verdict": "allow",
+                       "reason": "explicit policy allow", "certHash": "1"}],
+            "verdict": "allow"
+        })
+        .to_string();
+        let step = serde_json::json!({"route": "forward", "audit": audit}).to_string();
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1}}}"#;
+        let err = build(line, &step)
+            .expect_err("an audit without the kernel request commitment must fail closed");
+        assert!(err.contains("lacks the kernel request commitment"), "{err}");
     }
 
     #[test]

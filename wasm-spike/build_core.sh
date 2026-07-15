@@ -27,7 +27,7 @@ CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 # with '/' -> '_'. Host/Step is present because Ffi routes through Host.stepRoute.
 MODULES=(
   Ffi
-  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Step
+  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
   Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/Safety Kernels/Temporal

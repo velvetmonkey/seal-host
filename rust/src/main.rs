@@ -855,6 +855,21 @@ fn run() -> i32 {
 mod tests {
     use super::*;
 
+    /// The request commitment on BOTH sides is over the post-strip
+    /// `lean_view` bytes: the strip happens HERE, before the line reaches
+    /// the kernel, and `request_sha256` hashes the same stripped string.
+    /// Lean twin: Host/Audit.lean golden vector v1 (sha256("x")).
+    #[test]
+    fn request_commitment_is_over_the_terminator_stripped_lean_view() {
+        for wire in [&b"x\r\n"[..], b"x\n", b"x"] {
+            assert_eq!(lean_view(wire), b"x");
+        }
+        assert_eq!(
+            hex::encode(Sha256::digest(lean_view(b"x\r\n"))),
+            "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        );
+    }
+
     fn envelope(payload: Value) -> String {
         let payload = payload.to_string();
         json!({"payload": payload, "signature": "00"}).to_string()

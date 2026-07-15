@@ -30,22 +30,26 @@ open Host
     forwarded decisions (`hforward`), most-recent-first (`hbuilt` — the log is
     exactly the per-decision audits in reverse order, so order is preserved by
     construction), every entry corresponds to a decision whose verdict list
-    passed L0: non-empty and every gate allowed. -/
+    passed L0: non-empty and every gate allowed. Each decision carries the
+    request line it was made about (`p.2.2`), and each entry is the audit of
+    exactly that line — `auditLine` now commits to it via `request_sha256`,
+    so the reflected witness names the judged bytes, not only the verdict. -/
 theorem log_reflects_l0_decisions
-    (decisions : List (CanonicalAction × List Verdict)) (epoch : Nat)
-    (hforward : ∀ p ∈ decisions, stepRoute (.act p.1) p.2 = .forward)
+    (decisions : List (CanonicalAction × List Verdict × String)) (epoch : Nat)
+    (hforward : ∀ p ∈ decisions, stepRoute (.act p.1) p.2.1 = .forward)
     (log : Log)
     (hbuilt : log =
-      (decisions.map fun p => auditLine epoch p.1.tool (combineVerdicts p.2) p.2).reverse) :
-    ∀ entry ∈ log, ∃ (act : CanonicalAction) (verdicts : List Verdict),
-      entry = auditLine epoch act.tool (combineVerdicts verdicts) verdicts ∧
+      (decisions.map fun p =>
+        auditLine epoch p.1.tool (combineVerdicts p.2.1) p.2.1 p.2.2).reverse) :
+    ∀ entry ∈ log, ∃ (act : CanonicalAction) (verdicts : List Verdict) (reqLine : String),
+      entry = auditLine epoch act.tool (combineVerdicts verdicts) verdicts reqLine ∧
       verdicts ≠ [] ∧ (∀ v ∈ verdicts, v.kind = .allow) := by
   intro entry hentry
   rw [hbuilt, List.mem_reverse, List.mem_map] at hentry
   obtain ⟨p, hp_mem, hp_eq⟩ := hentry
-  refine ⟨p.1, p.2, hp_eq.symm, ?_⟩
+  refine ⟨p.1, p.2.1, p.2.2, hp_eq.symm, ?_⟩
   -- forwarded ⇒ combined allow ⇒ (combine_allow_iff) non-empty ∧ every gate allows
-  exact (combine_allow_iff p.2).mp
-    ((stepRoute_act_forward_iff p.1 p.2).mp (hforward p hp_mem))
+  exact (combine_allow_iff p.2.1).mp
+    ((stepRoute_act_forward_iff p.1 p.2.1).mp (hforward p hp_mem))
 
 end Host.Record

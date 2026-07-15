@@ -4,7 +4,7 @@
 `kernel_identity.wasm_sha256` in native-host decision receipts. Its SHA-256 is:
 
 ```text
-df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
+d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
 ```
 
 It replays the receipt-carried policy to check decision bytes. The native

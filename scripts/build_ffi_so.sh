@@ -48,7 +48,7 @@ MCP_MODULES=(
 )
 PROJECT_MODULES=(
   Ffi
-  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Step
+  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
   Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/Safety Kernels/Temporal
@@ -61,7 +61,18 @@ PROJECT_TARGETS=()
 for module in "${PROJECT_MODULES[@]}"; do
   PROJECT_TARGETS+=("+${module//\//.}:o")
 done
-(cd "$ROOT" && lake "${LAKE_FLAGS[@]}" build "${PROJECT_TARGETS[@]}" "${MCP_TARGETS[@]}")
+# The seal-host exe link materializes the dependency packages' .c.o.export
+# objects (its import closure reaches Kernels and through them every dep
+# package's runtime modules). The per-module lists above cannot: they cover
+# only project and pinned policy-core modules, and a fresh runner has NO
+# dependency IR at all — exactly the state in which this script used to
+# link a silently broken .so (dependency initializers unresolved,
+# cc -shared tolerates it). If the Ffi surface ever imports a dep module
+# outside the seal-host closure, the load-time resolution gate below names
+# the missing symbol — extend this build line then. (`ffi_shared` cannot be
+# the vehicle: its exe-shaped -shared link pulls the static libleanrt.a,
+# which can never enter a shared object, and the target has never built.)
+(cd "$ROOT" && lake "${LAKE_FLAGS[@]}" build "${PROJECT_TARGETS[@]}" "${MCP_TARGETS[@]}" seal-host)
 
 # Project objects: the exact Ffi runtime closure, excluding theorem/off-path
 # modules even if stale objects for them exist in the build directory.
@@ -73,13 +84,34 @@ for module in "${PROJECT_MODULES[@]}"; do
 done
 
 ARCHIVES=()
+# Packages legitimately outside FfiMain's runtime import closure: no module
+# of theirs is transitively imported, so no initializer is needed and the
+# ffi_shared build leaves them with no objects. Anything else with no IR is
+# a hard error — a silently skipped package is precisely how CI shipped a
+# libsealffi.so with unresolved dependency initializers while this script
+# printed "built" and exited 0.
+CLOSURE_EXEMPT=(Cli)
+
 archive_package_ir() {
   local pkgdir="$1" force="${2:-0}"
   pkg="$(basename "$pkgdir")"
   irdir="$pkgdir/.lake/build/ir"
-  [ -d "$irdir" ] || return 0
-  objs="$(find "$irdir" -name '*.c.o.export' | sort)"
-  [ -n "$objs" ] || return 0
+  objs=""
+  if [ -d "$irdir" ]; then
+    objs="$(find "$irdir" -name '*.c.o.export' | sort)"
+  fi
+  if [ -z "$objs" ]; then
+    for exempt in "${CLOSURE_EXEMPT[@]}"; do
+      [ "$pkg" = "$exempt" ] && return 0
+    done
+    echo "FATAL: dependency package '$pkg' contributed no compiled module objects" >&2
+    echo "  expected: $irdir/**/*.c.o.export" >&2
+    echo "  The seal-host exe build materializes the runtime closure. If this" >&2
+    echo "  package is genuinely outside the Ffi import closure, add it to" >&2
+    echo "  CLOSURE_EXEMPT above. Otherwise the link would silently drop its" >&2
+    echo "  module initializers and produce a broken libsealffi.so." >&2
+    exit 1
+  fi
   archive="$TMP/lib_${pkg}.a"
   if [ "$force" = "1" ] || [ ! -f "$archive" ] || [ "$(find "$irdir" -name '*.c.o.export' -newer "$archive" | head -1)" ]; then
     rm -f "$archive"
@@ -122,6 +154,21 @@ cc -shared -o "$OUT" \
   -L "$LEAN_PREFIX/lib/lean" -lleanshared -lLake_shared \
   -Wl,-rpath,"$LEAN_PREFIX/lib/lean"
 
-echo "built $OUT"
 nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
   echo "FATAL: exports missing" >&2; exit 1; }
+
+# Load-time resolution proof. `ldd -r` performs full relocation processing
+# against the DT_NEEDED set (libleanshared / libLake_shared / libc): the
+# Lean runtime symbols that are LEGITIMATELY undefined at static link
+# (PIC + dynamic TLS, resolved at load) resolve here, so this does not
+# false-fail correct artifacts the way a blanket "no undefined symbols"
+# nm check would. Anything still unresolved means a module object was
+# dropped from the link — refuse to call that "built".
+UNRESOLVED="$(ldd -r "$OUT" 2>&1 | grep -F 'undefined symbol' || true)"
+if [ -n "$UNRESOLVED" ]; then
+  echo "FATAL: $OUT has unresolved symbols after load-time resolution:" >&2
+  echo "$UNRESOLVED" | head -20 >&2
+  echo "  ($(printf '%s\n' "$UNRESOLVED" | wc -l) unresolved total)" >&2
+  exit 1
+fi
+echo "built $OUT"
