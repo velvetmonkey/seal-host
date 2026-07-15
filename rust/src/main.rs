@@ -745,7 +745,11 @@ fn run() -> i32 {
                         provider.queue_interactive(target);
                         let poll = provider.poll();
                         let mut warnings = poll.warnings;
-                        let (records, a3_warnings) = a3.filter(poll.records, now);
+                        // Fresh clock: the interactive poll blocks on the TTY, so the
+                        // approval's issued_at is answer-time. Filtering with the `now`
+                        // captured at line arrival dropped any approval minted >5s
+                        // (MAX_FUTURE_SKEW_MS) after the line arrived as future_issued_at.
+                        let (records, a3_warnings) = a3.filter(poll.records, now_ms());
                         pending_approvals.extend(records.iter().cloned());
                         warnings.extend(a3_warnings);
                         emit_approval_drop_warnings(&warnings);
