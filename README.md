@@ -21,7 +21,7 @@ bash scripts/build_all.sh && bash scripts/showcase.sh
 
 ## What the showcase proves
 
-**Luxury 30-second showcase (one command, zero external setup)**
+**30-second showcase (one command, zero external setup)**
 
 What you see:
 - `BLOCK: ... "approval required: <64-hex>"`
