@@ -37,7 +37,7 @@ rev = "88168e130c894c23aa7ecdd1e0d36be1c31bda82"
 # or the per-lib shared facets cycle.
 [[lean_lib]]
 name = "Ffi"
-globs = ["Host", "Host.+", "Kernels", "Kernels.+", "Ffi"]
+globs = ["Host", "Host.+", "Kernels", "Kernels.+", "Ffi", "FfiSpec"]
 
 [[lean_lib]]
 name = "Test"
