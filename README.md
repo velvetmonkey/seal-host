@@ -1,5 +1,8 @@
 # seal-host
 
+[![CI](https://github.com/velvetmonkey/seal-host/actions/workflows/ci.yml/badge.svg)](https://github.com/velvetmonkey/seal-host/actions/workflows/ci.yml)
+[![Golden Path](https://github.com/velvetmonkey/seal-host/actions/workflows/golden-path.yml/badge.svg)](https://github.com/velvetmonkey/seal-host/actions/workflows/golden-path.yml)
+
 **Stops the unapproved prod action before it ever reaches your real MCP server.**
 
 An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching human approval for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident receipt.
