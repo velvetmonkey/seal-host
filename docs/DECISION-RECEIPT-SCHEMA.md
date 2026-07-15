@@ -353,11 +353,19 @@ with no canonical-request re-derivation possible.
 
 | Context | `approval` | `nonce` | `issued_at` | `expiry` | `policy_hash` | `args_hash` | `amount`/`merchant`/`currency` |
 |---|---|---|---|---|---|---|---|
-| ALLOW via ed25519 channel | required | required | required | required | required | required | iff payment-class |
-| ALLOW via file channel | required | if carried | if carried | if derivable | required | required | iff payment-class |
-| ALLOW via interactive channel | required | if carried | if carried | if derivable | required | required | iff payment-class |
-| BLOCK (mediated) | optional | — | — | — | in `approval` if present | required | iff payment-class |
+| ALLOW via ed25519 channel | required | required | required | required | required | iff parsed | iff payment-class |
+| ALLOW via file channel | required | if carried | if carried | if derivable | required | iff parsed | iff payment-class |
+| ALLOW via interactive channel | required | if carried | if carried | if derivable | required | iff parsed | iff payment-class |
+| BLOCK (mediated) | optional | — | — | — | in `approval` if present | iff parsed | iff payment-class |
 | bypass | absent | — | — | — | — | absent | absent |
+
+`iff parsed` means required whenever the producer parsed the wire line, and
+ABSENT otherwise — see the unparseable-request rule in 11.1. Verifiers MUST
+NOT treat `args_hash` (or `tool`, `arguments`, `canonical_request`,
+`canonical_request_sha256`) as unconditionally required on a mediated
+receipt: a receipt carrying `request_parse_error` is well-formed, and
+rejecting it would restore to the verifier the veto the producer was
+deliberately stripped of.
 
 ### 11.3 Derived hashes (computable on every surface)
 
