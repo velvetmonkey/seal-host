@@ -1,0 +1,70 @@
+{
+  "schema": "seal-honesty-assertions/v1",
+  "comment": "The HUMAN-OWNED cells of docs/HONESTY-MATRIX.md — the 'reachable via shipped policy DX?' column ONLY. Every other column is derived by lake exe honesty_matrix + scripts/honesty-matrix.mjs, and the renderer rejects an entry that tries to assert a derivable column. Each entry must carry who asserted it and when; the renderer refuses to render without both. Re-assert (update the date) whenever the shipped DX changes.",
+  "entries": [
+    {
+      "kernel": "safety",
+      "column": "reachable",
+      "value": "yes — required section of every signed config",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md documents the `safety` section as a required field of the signed TrustedConfig envelope (verified with --pubkey). The shipped DX is hand-authored JSON: no `seal init` scaffolding exists in this repo (workstream A never happened)."
+    },
+    {
+      "kernel": "temporal",
+      "column": "reachable",
+      "value": "yes — optional section; kernel active even when absent",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md: absent `temporal` section = no temporal constraints, but the kernel itself is unconditional. Hand-authored signed JSON; no scaffolding CLI."
+    },
+    {
+      "kernel": "consensus",
+      "column": "reachable",
+      "value": "yes — optional `consensus` section, hand-authored",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md documents the section schema (roster, votes_file, high_stakes). Reachable means writing that JSON by hand and signing it; no `seal init`."
+    },
+    {
+      "kernel": "convergence",
+      "column": "reachable",
+      "value": "yes — optional `convergence` section, hand-authored",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md documents the section schema (replicated tools). Hand-authored signed JSON; no scaffolding CLI."
+    },
+    {
+      "kernel": "calibration",
+      "column": "reachable",
+      "value": "yes — optional `calibration` section with `enabled` flag, hand-authored",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md documents the section including the double gate: a present section with enabled:false is explicitly inactive (CONFIG.md's PRESENT-BUT-INACTIVE label). Hand-authored signed JSON; no scaffolding CLI."
+    },
+    {
+      "kernel": "linear",
+      "column": "reachable",
+      "value": "yes — optional `linear` section, hand-authored",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md documents the section schema (grants_file, tools). Hand-authored signed JSON; no scaffolding CLI."
+    },
+    {
+      "kernel": "budget",
+      "column": "reachable",
+      "value": "yes — optional `budget` section, hand-authored",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "CONFIG.md documents the section schema (named caps over tool sets). Hand-authored signed JSON; no scaffolding CLI."
+    },
+    {
+      "kernel": "consensus-bytes",
+      "column": "reachable",
+      "value": "no — no config section exists",
+      "assertedBy": "Monkey",
+      "date": "2026-07-15",
+      "rationale": "Nothing in CONFIG.md or the config parser (Host/Config.lean) names this kernel; there is no JSON key a user could write that selects it. Consistent with the proof (Ffi.byteConsensus_never_registered) but asserted separately: absence from the DOCUMENTED DX surface is a human reading of CONFIG.md, not a theorem."
+    }
+  ]
+}
