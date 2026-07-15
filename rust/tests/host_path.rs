@@ -763,6 +763,20 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
     }
     assert_eq!(allow["authorization"], "approval");
 
+    // The kernel-attested request commitment inside emitted_bytes agrees
+    // with the receipt's request_sha256 — for exactly this unparseable
+    // class of line, the binding is now kernel-backed, not host-asserted.
+    let emitted: serde_json::Value =
+        serde_json::from_str(allow["emitted_bytes"].as_str().expect("emitted_bytes string"))
+            .expect("emitted bytes parse");
+    let audit: serde_json::Value =
+        serde_json::from_str(emitted["audit"].as_str().expect("audit string"))
+            .expect("audit parses");
+    assert_eq!(
+        audit["request_sha256"], allow["request_sha256"],
+        "kernel-attested hash must equal the receipt's request_sha256"
+    );
+
     // Parseable receipts are unchanged AND now also carry request_sha256.
     let parseable = guarded_call(91, "drop table accounts");
     o.send(&parseable);
@@ -791,4 +805,39 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
             "kernel-blocked divergent shape must get the kernel's response: {resp}"
         );
     }
+}
+
+/// BLUE for the kernel request commitment: a mediated call with multibyte
+/// UTF-8 arguments crosses the serde-encode → Lean-JSON-decode seam and
+/// comes back with the kernel's hash of the SAME bytes the host hashed.
+/// Any divergence in the transport of the line (escaping, UTF-8 handling)
+/// now trips the host's cross-check and fails closed as a SEAM error —
+/// so this call completing as an ordinary kernel block, with matching
+/// hashes in the persisted receipt, is an end-to-end proof of byte
+/// identity across the FFI boundary.
+#[test]
+fn multibyte_request_commitment_survives_the_ffi_seam() {
+    let mut o = Oracle::spawn("multibyte-commitment");
+    let line = guarded_call(94, "drop table 日本語 ✓ naïve");
+    o.send(&line);
+    let resp = o.expect_line();
+    assert!(
+        is_block(&resp),
+        "multibyte call must get the kernel's own block, never a seam error: {resp}"
+    );
+    assert_ne!(resp.trim_end(), SEAM_ERROR_RESPONSE.trim_end());
+    let receipts = o.receipts();
+    let receipt = receipts.last().expect("block receipt persisted");
+    let expected = hex::encode(sha2::Sha256::digest(line.as_bytes()));
+    assert_eq!(receipt["request_sha256"], expected);
+    let emitted: serde_json::Value =
+        serde_json::from_str(receipt["emitted_bytes"].as_str().expect("emitted_bytes string"))
+            .expect("emitted bytes parse");
+    let audit: serde_json::Value =
+        serde_json::from_str(emitted["audit"].as_str().expect("audit string"))
+            .expect("audit parses");
+    assert_eq!(
+        audit["request_sha256"], expected,
+        "kernel and host must hash the multibyte line identically"
+    );
 }
