@@ -307,19 +307,27 @@ fn emit_audit(receipts: &mut ReceiptChain, audit: &str) {
     eprintln!("{}", receipts.observe(audit).to_json_line());
 }
 
+/// Render one dropped-approval warning as a single audit line. The reason holds
+/// up to 64 ATTACKER-CHOSEN chars from an unauthenticated control-file channel;
+/// `json!()` string-escaping is the ONLY control that stops those bytes forging a
+/// second audit line (quote-breaking, newline injection, ANSI smuggling). Kept as
+/// a named fn so a regression test can pin the escaping — swapping this for a
+/// `format!()` would silently kill it, and T4's whole point is that it must not.
+fn approval_drop_line(w: &providers::ApprovalDropWarning) -> String {
+    json!({
+        "approval_drop": {
+            "source": w.source,
+            "reason": w.reason,
+            "record_id": w.record_id,
+            "counter": w.counter
+        }
+    })
+    .to_string()
+}
+
 fn emit_approval_drop_warnings(warnings: &[providers::ApprovalDropWarning]) {
     for w in warnings {
-        eprintln!(
-            "{}",
-            json!({
-                "approval_drop": {
-                    "source": w.source,
-                    "reason": w.reason,
-                    "record_id": w.record_id,
-                    "counter": w.counter
-                }
-            })
-        );
+        eprintln!("{}", approval_drop_line(w));
     }
 }
 
@@ -846,6 +854,54 @@ fn run() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T4 (audit-stream injection): a dropped-approval warning carries up to 64
+    /// attacker-chosen chars from an unauthenticated channel. `json!()` escaping
+    /// at the emission site is the ONLY control that stops those bytes forging a
+    /// second audit line. This pins that control: a reason packed with the exact
+    /// smuggling payloads (quote-break, CR/LF newline forge, ANSI escape, NUL)
+    /// must render as a SINGLE line that round-trips as JSON with the reason
+    /// intact. Swap `json!()` for `format!()` in `approval_drop_line` and this
+    /// goes RED — which is the whole point (the escaping cannot die silently).
+    #[test]
+    fn approval_drop_line_escapes_hostile_reason_no_second_audit_line() {
+        // Everything an attacker would use to break out of the reason field.
+        let hostile =
+            "\"}\n{\"approval_drop\":{\"reason\":\"FORGED\"}}\r\n\u{1b}[31mred\u{1b}[0m\u{0000}end";
+        let w = providers::ApprovalDropWarning {
+            source: "control_file",
+            reason: format!("unknown_decision:{hostile}"),
+            record_id: "sha256:deadbeef".into(),
+            counter: 1,
+        };
+        let line = approval_drop_line(&w);
+
+        // 1. Exactly one physical line — no raw newline forged a second record.
+        assert_eq!(
+            line.lines().count(),
+            1,
+            "hostile reason forged a newline: {line:?}"
+        );
+        assert!(
+            !line.contains('\n') && !line.contains('\r'),
+            "raw CR/LF survived escaping: {line:?}"
+        );
+
+        // 2. It is valid JSON and the reason round-trips byte-for-byte (escaping
+        //    is lossless, not truncating/stripping).
+        let parsed: serde_json::Value =
+            serde_json::from_str(&line).expect("escaped line must parse as JSON");
+        assert_eq!(
+            parsed["approval_drop"]["reason"].as_str().unwrap(),
+            w.reason,
+            "reason did not round-trip through escaping"
+        );
+
+        // 3. The injected inner object is inert text inside the reason string, not
+        //    a structural sibling — there is exactly one approval_drop object.
+        assert!(parsed["approval_drop"]["source"] == "control_file");
+        assert!(parsed.get("approval_drop").is_some() && parsed.as_object().unwrap().len() == 1);
+    }
 
     /// The request commitment on BOTH sides is over the post-strip
     /// `lean_view` bytes: the strip happens HERE, before the line reaches

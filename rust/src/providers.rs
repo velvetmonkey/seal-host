@@ -554,6 +554,39 @@ mod tests {
         assert_eq!(poll.warnings[1].reason, "unknown_decision:revoke");
     }
 
+    /// T4 (audit-stream injection): the reason bounds attacker input to 64 chars
+    /// BEFORE it becomes a warning. Existing tests use short values; this pins the
+    /// clamp itself against a long, multibyte, hostile value — the reason is
+    /// exactly `unknown_decision:` + the first 64 *characters* (never bytes: the
+    /// `.chars().take(64)` must not split a multibyte codepoint), and never grows
+    /// with attacker length. The clamp caps volume; `json!()` at emission caps
+    /// shape.
+    #[test]
+    fn unknown_decision_reason_clamps_long_hostile_value_to_64_chars() {
+        // 200 chars of newline/quote/ANSI/multibyte smuggling attempts.
+        let hostile: String = "\"}\n\u{1b}[31m日本語✓".chars().cycle().take(200).collect();
+        let reason = unknown_decision_reason(&hostile);
+        let shown = reason
+            .strip_prefix("unknown_decision:")
+            .expect("prefix present");
+        assert_eq!(
+            shown.chars().count(),
+            64,
+            "value must be clamped to 64 chars"
+        );
+        // Clamp is by character, not byte: re-encoding the shown chars is lossless
+        // (no codepoint was split), and it is a genuine prefix of the input.
+        assert!(
+            hostile.starts_with(shown),
+            "clamp must be a prefix of the input"
+        );
+        // Length does not grow with attacker input beyond the fixed bound.
+        assert_eq!(
+            unknown_decision_reason(&"x".repeat(10_000)),
+            format!("unknown_decision:{}", "x".repeat(64))
+        );
+    }
+
     /// BLUE: the allowlisted spellings still work on the signed channel —
     /// absent decision and explicit "allow" both mint approvals.
     #[test]
