@@ -11,7 +11,7 @@
 //! | # | Source                    | Sink                                   | Mediated? |
 //! |---|---------------------------|----------------------------------------|-----------|
 //! | P1| stdin line (hostile)      | `child_in.write_all` (classify path)   | YES — `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); Lean panic exits the process (never a routable default) |
-//! | P2| stdin line                | `child_in.write_all` (step path)       | YES — `seal_host_step` route `forward`/`passthrough`, exact parse (`route_of_step_output`) |
+//! | P2| stdin line                | `child_in.write_all` (step path)       | YES — `seal_host_step` route `forward`, exact parse (`route_of_step_output`) |
 //! | P3| stdin line                | `child_in.write_all` (interactive retry)| YES — second `seal_host_step == forward` after a human-minted approval |
 //! | P4| operator argv             | `Command::new(...).spawn()`            | N/A — operator-trusted setup; the child IS the guarded resource |
 //! | P5| kernel block response     | client stdout                          | YES — kernel-authored bytes |
@@ -21,7 +21,7 @@
 //! | P9| votes/grants/forecasts    | (raw text to Lean)                     | Lean parses; grants cursor line-split is drop-only |
 //!
 //! Enforced invariant: bytes reach the child ⇔ the Lean kernel returned
-//! classify == 0 or step route ∈ {forward, passthrough} for the
+//! classify == 0 or step route == forward for the
 //! byte-identical line. Every seam error, panic, or ambiguity refuses the
 //! line and answers the client with `SEAM_ERROR_RESPONSE` — the only
 //! host-authored egress bytes.
@@ -753,8 +753,6 @@ fn run() -> i32 {
                         pending_approvals.extend(records.iter().cloned());
                         warnings.extend(a3_warnings);
                         emit_approval_drop_warnings(&warnings);
-                        // Also check fresh declines from retry poll (e.g. signed decline arrived).
-                        let inner_declines = poll.declines;
                         if !records.is_empty() {
                             let approvals: Vec<Value> = records
                                 .iter()
@@ -834,24 +832,6 @@ fn run() -> i32 {
                                     eprintln!("{}", json!({"error": reason}));
                                     response = SEAM_ERROR_RESPONSE.to_string();
                                 }
-                            }
-                        }
-                        // Post-retry interactive block: if decline now visible, refuse.
-                        if let Some(t2) = response
-                            .split("approval required: ")
-                            .nth(1)
-                            .and_then(extract_target_hex)
-                        {
-                            if inner_declines.iter().any(|d| d.target == t2) {
-                                let refused_audit =
-                                    format!("approval refused: {} (explicit signed decline)", t2);
-                                emit_audit(&mut receipts, &refused_audit);
-                                let refused = format!(
-                                    "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",
-                                    t2
-                                );
-                                write_locked(&stdout_lock, &refused);
-                                continue;
                             }
                         }
                     }

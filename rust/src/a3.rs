@@ -343,10 +343,6 @@ mod tests {
     struct FailingStore;
 
     impl ReplayStore for FailingStore {
-        fn contains(&mut self, _nonce: &str) -> Result<bool, ReplayStoreError> {
-            Ok(false)
-        }
-
         fn insert_returning_is_new(
             &mut self,
             _nonce: &str,
@@ -387,10 +383,6 @@ mod tests {
     }
 
     impl ReplayStore for SharedStore {
-        fn contains(&mut self, nonce: &str) -> Result<bool, ReplayStoreError> {
-            Ok(self.inner.borrow().entries.contains_key(nonce))
-        }
-
         fn insert_returning_is_new(
             &mut self,
             nonce: &str,
