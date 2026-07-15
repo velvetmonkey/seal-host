@@ -21,6 +21,7 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
+use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -703,4 +704,91 @@ fn non_utf8_line_refused_and_session_survives() {
         is_block(&o.expect_line()),
         "mediation must survive a refused line"
     );
+}
+
+
+/// The kernel is deliberately the more tolerant parser (the differential
+/// corpus pins lines Lean mediates that serde rejects). The receipt layer
+/// must therefore never veto a kernel verdict it cannot re-parse: an
+/// allowed call forwards, a blocked call gets the KERNEL's response — and
+/// the receipt records the raw line hash + parse error instead of the
+/// structured request material it does not hold.
+#[test]
+fn receipt_layer_never_vetoes_kernel_verdicts() {
+    let mut o = Oracle::spawn("receipt-deparse");
+
+    // A guarded call whose arguments serde cannot parse (1e309 overflows
+    // f64, the whole serde parse fails) but the kernel mediates fine.
+    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    o.send(divergent);
+    let blocked = o.expect_line();
+    assert!(
+        is_block(&blocked),
+        "unapproved divergent call must get the KERNEL's block, not a seam error: {blocked}"
+    );
+    let target = block_target(&blocked).expect("kernel block names its approval target");
+
+    // Approve and resend: the kernel allows — the receipt writer must not
+    // stand in the way of the proven verdict.
+    o.approve(&target);
+    o.send(divergent);
+    assert_eq!(
+        o.expect_line(),
+        divergent,
+        "kernel-allowed call must forward even though serde cannot re-parse it"
+    );
+
+    // The ALLOW receipt carries the raw line identity in place of the
+    // structured request material the producer does not hold.
+    let receipts = o.receipts();
+    let allow = receipts
+        .iter()
+        .rev()
+        .find(|receipt| receipt["verdict"] == "ALLOW")
+        .expect("forwarded decision persisted an ALLOW receipt");
+    assert_eq!(
+        allow["request_sha256"],
+        hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
+        "receipt must hash the exact wire line"
+    );
+    assert!(
+        allow["request_parse_error"].is_string(),
+        "receipt must name the parse failure"
+    );
+    for absent in ["tool", "arguments", "args_hash", "canonical_request", "canonical_request_sha256"] {
+        assert!(
+            allow.get(absent).is_none(),
+            "field {absent} must be ABSENT (honesty rule), not fabricated"
+        );
+    }
+    assert_eq!(allow["authorization"], "approval");
+
+    // Parseable receipts are unchanged AND now also carry request_sha256.
+    let parseable = guarded_call(91, "drop table accounts");
+    o.send(&parseable);
+    let resp = o.expect_line();
+    assert!(is_block(&resp));
+    let receipts = o.receipts();
+    let last = receipts.last().expect("block receipt persisted");
+    assert_eq!(last["tool"], "db.execute");
+    assert!(last["canonical_request_sha256"].is_string());
+    assert_eq!(
+        last["request_sha256"],
+        hex::encode(sha2::Sha256::digest(parseable.as_bytes()))
+    );
+    assert!(last.get("request_parse_error").is_none());
+
+    // The rest of the divergent corpus: shapes Lean's act parse admits but
+    // request_parts rejects. Each must get the kernel's own block response
+    // (here: no matching policy rule), never the seam error.
+    let argless = r#"{"jsonrpc":"2.0","id":92,"method":"tools/call","params":{"name":"db.execute"}}"#;
+    let non_object_args = r#"{"jsonrpc":"2.0","id":93,"method":"tools/call","params":{"name":"db.execute","arguments":"drop"}}"#;
+    for line in [argless, non_object_args] {
+        o.send(line);
+        let resp = o.expect_line();
+        assert!(
+            is_block(&resp),
+            "kernel-blocked divergent shape must get the kernel's response: {resp}"
+        );
+    }
 }

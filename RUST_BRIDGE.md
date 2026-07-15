@@ -33,7 +33,7 @@ fs/socket writes.
 | # | Source | Sink | Mediated? |
 |---|--------|------|-----------|
 | P1 | stdin line (hostile) | `child_in.write_all` (classify fast path) | YES — `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); a Lean panic exits the process, never returns a routable default |
-| P2 | stdin line | `child_in.write_all` (step path) | YES — `seal_host_step` route `forward`/`passthrough`, exact parse (`route_of_step_output`) |
+| P2 | stdin line | `child_in.write_all` (step path) | YES — `seal_host_step` route `forward`, exact parse (`route_of_step_output`) |
 | P3 | stdin line | `child_in.write_all` (interactive retry) | YES — second `seal_host_step == forward` after a human-minted approval |
 | P4 | operator argv | `Command::new(...).spawn()` | N/A — operator-trusted setup; the spawned child IS the guarded resource |
 | P5 | kernel block response | client stdout | YES — kernel-authored bytes (`Seal.blockResponseLine`) |
@@ -43,9 +43,11 @@ fs/socket writes.
 | P9 | votes/grants/forecasts files | (raw text to Lean) | Lean parses; the grants cursor's line-split is drop-only |
 
 Enforced invariant: **bytes reach the child ⇔ the Lean kernel returned
-classify == 0 or step route ∈ {forward, passthrough} for the byte-identical
-line.** Every seam error, panic, or ambiguity refuses the line and answers
-the client with the static `SEAM_ERROR_RESPONSE`.
+classify == 0 or step route == forward for the byte-identical line.** Every
+seam error, panic, or ambiguity refuses the line and answers the client with
+the static `SEAM_ERROR_RESPONSE`. (Step-level `"passthrough"` is impossible
+in the deployed flow — step runs only on classify-mediated lines — so
+`route_of_step_output` maps it to `SeamFailure`, not `Forward`.)
 
 ## Enforced by construction
 
@@ -53,7 +55,7 @@ the client with the static `SEAM_ERROR_RESPONSE`.
    `src/route.rs` holds the ONLY translation from kernel output to transport
    action: total functions where `Route::Forward` requires an exact
    `serde_json` parse of the kernel's output with route literally
-   `"forward"`/`"passthrough"`, and `ClassifyRoute::Passthrough` requires the
+   `"forward"`, and `ClassifyRoute::Passthrough` requires the
    literal `Ok(0)`. `main.rs` and the tests run the SAME functions — there is
    no test-mirror differential. Pinned by 4 proptests (≈10k cases/run):
    garbage strings, mutated route fields, every `SeamError`, all `u32`s.

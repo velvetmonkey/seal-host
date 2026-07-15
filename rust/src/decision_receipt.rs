@@ -85,6 +85,12 @@ fn canonical_request(tool: &str, arguments: &Value) -> Value {
     Value::Object(request)
 }
 
+/// Best-effort structured view of the wire line for the receipt's derived
+/// fields. This is DESCRIPTIVE material only: the kernel is deliberately the
+/// more tolerant parser (the differential corpus pins lines Lean mediates
+/// that serde rejects, e.g. `1e309`), so a failure here must never influence
+/// whether the kernel's verdict is enacted — the receipt records the raw
+/// line hash instead and the decision stands.
 fn request_parts(line: &str) -> Result<(String, Value), String> {
     let request: Value = serde_json::from_str(line.trim())
         .map_err(|e| format!("cannot parse mediated request for receipt: {e}"))?;
@@ -154,10 +160,10 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         )
     };
 
-    let (tool, arguments) = request_parts(input.line)?;
-    let canonical = canonical_request(&tool, &arguments);
-    let canonical_text = serde_json::to_string(&canonical)
-        .map_err(|e| format!("cannot serialize canonical request: {e}"))?;
+    // The receipt derives structured request material only when the line
+    // parses; otherwise it records the raw line hash and the parse error.
+    // Never an Err: the receipt layer holds no veto over the kernel.
+    let request_material = request_parts(input.line);
 
     let safety_target = certs
         .iter()
@@ -178,21 +184,40 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
 
     let mut receipt = Map::new();
     receipt.insert("seal_receipt".into(), Value::String("v2".into()));
-    receipt.insert("tool".into(), Value::String(tool));
-    receipt.insert("arguments".into(), arguments.clone());
-    receipt.insert(
-        "args_hash".into(),
-        Value::String(canonical_json_sha256(&arguments)?),
-    );
+    if let Ok((tool, arguments)) = &request_material {
+        receipt.insert("tool".into(), Value::String(tool.clone()));
+        receipt.insert("arguments".into(), arguments.clone());
+        receipt.insert(
+            "args_hash".into(),
+            Value::String(canonical_json_sha256(arguments)?),
+        );
+    }
     receipt.insert("now".into(), Value::from(input.now));
+    if let Ok((tool, arguments)) = &request_material {
+        let canonical = canonical_request(tool, arguments);
+        let canonical_text = serde_json::to_string(&canonical)
+            .map_err(|e| format!("cannot serialize canonical request: {e}"))?;
+        receipt.insert(
+            "canonical_request".into(),
+            Value::String(canonical_text.clone()),
+        );
+        receipt.insert(
+            "canonical_request_sha256".into(),
+            Value::String(sha256_hex(canonical_text.as_bytes())),
+        );
+    }
+    // Hash of the exact wire line as judged by the kernel — present on every
+    // receipt, and the only request identity when the line is unparseable.
     receipt.insert(
-        "canonical_request".into(),
-        Value::String(canonical_text.clone()),
+        "request_sha256".into(),
+        Value::String(sha256_hex(input.line.as_bytes())),
     );
-    receipt.insert(
-        "canonical_request_sha256".into(),
-        Value::String(sha256_hex(canonical_text.as_bytes())),
-    );
+    if let Err(parse_error) = &request_material {
+        receipt.insert(
+            "request_parse_error".into(),
+            Value::String(parse_error.clone()),
+        );
+    }
     receipt.insert("bypass".into(), Value::Bool(false));
     receipt.insert("verdict".into(), Value::String(verdict.into()));
     if verdict == "ALLOW" {
@@ -314,10 +339,14 @@ impl ReceiptWriter {
                 "equivalence": "not_proven"
             }),
         );
+        // Filename identity: canonical request hash when the line parsed
+        // (unchanged for every previously-possible receipt), raw line hash
+        // otherwise — always present, so naming can never veto persistence.
         let request_hash = receipt
             .get("canonical_request_sha256")
+            .or_else(|| receipt.get("request_sha256"))
             .and_then(Value::as_str)
-            .ok_or("receipt lacks canonical request hash")?;
+            .ok_or("receipt lacks a request hash")?;
         let consumed_target = receipt
             .get("approval")
             .and_then(|a| a.get("approval_identity"))
@@ -379,6 +408,84 @@ mod tests {
     #[test]
     fn embedded_wasm_matches_the_pinned_rederivation_identity() {
         assert_eq!(sha256_hex(VERIFIED_WASM), VERIFIED_WASM_SHA256);
+    }
+
+    fn allow_step_output() -> String {
+        let audit = serde_json::json!({
+            "certs": [{"kernel": "safety", "verdict": "allow",
+                       "reason": "explicit policy allow", "certHash": "1"}],
+            "verdict": "allow"
+        })
+        .to_string();
+        serde_json::json!({"route": "forward", "audit": audit}).to_string()
+    }
+
+    fn build(line: &str, step: &str) -> Result<Value, String> {
+        let kernel_config = serde_json::json!({"epoch": 1});
+        let signed_config = SignedConfig {
+            payload: "p".into(),
+            signature: "s".into(),
+            pubkey: "k".into(),
+        };
+        let identity = ApprovalIdentity {
+            channel: "file".into(),
+            key_id: None,
+        };
+        receipt_from_step(&DecisionInput {
+            line,
+            now: 1000,
+            emitted_bytes: step,
+            kernel_config: &kernel_config,
+            signed_config: &signed_config,
+            approvals: &[],
+            approval_identity: &identity,
+            approval_ttl_ms: 1000,
+        })
+    }
+
+    /// RED: a kernel-allowed line serde cannot parse still yields a receipt
+    /// — raw line hash + named parse error, structured fields ABSENT. The
+    /// receipt layer never vetoes the kernel (this call returned Err before
+    /// the de-parse, refusing a Lean-allowed call).
+    #[test]
+    fn unparseable_line_yields_receipt_with_raw_hash_not_an_error() {
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1e309}}}"#;
+        let receipt = build(line, &allow_step_output()).expect("de-parsed receipt must persist");
+        assert_eq!(
+            receipt["request_sha256"],
+            Value::String(sha256_hex(line.as_bytes()))
+        );
+        assert!(receipt["request_parse_error"]
+            .as_str()
+            .expect("parse error named")
+            .contains("cannot parse mediated request"));
+        for absent in [
+            "tool",
+            "arguments",
+            "args_hash",
+            "canonical_request",
+            "canonical_request_sha256",
+        ] {
+            assert!(receipt.get(absent).is_none(), "{absent} must be absent");
+        }
+        assert_eq!(receipt["verdict"], "ALLOW");
+    }
+
+    /// BLUE: parseable lines keep every existing field and gain the raw
+    /// line hash.
+    #[test]
+    fn parseable_line_keeps_structured_fields_and_gains_raw_hash() {
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1}}}"#;
+        let receipt = build(line, &allow_step_output()).expect("receipt");
+        assert_eq!(receipt["tool"], "t");
+        assert!(receipt["arguments"].is_object());
+        assert!(receipt["args_hash"].is_string());
+        assert!(receipt["canonical_request_sha256"].is_string());
+        assert_eq!(
+            receipt["request_sha256"],
+            Value::String(sha256_hex(line.as_bytes()))
+        );
+        assert!(receipt.get("request_parse_error").is_none());
     }
 
     #[test]

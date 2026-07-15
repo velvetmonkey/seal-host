@@ -322,7 +322,9 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | `approval.issued_at` | integer (epoch ms) | yes iff the channel carried it | mint time as presented; producers MUST NOT invent it |
 | `approval.expiry` | integer (epoch ms) | yes iff derivable (`issued_at` + TTL) or carried | absolute expiry deadline |
 | `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the canonical `kernel_config` serialization — see 11.3 |
-| `args_hash` | 64-hex string | yes when mediated | SHA-256 of the canonical `arguments` serialization — see 11.3 |
+| `args_hash` | 64-hex string | yes when mediated and the request parsed (see the unparseable-request rule below) | SHA-256 of the canonical `arguments` serialization — see 11.3 |
+| `request_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the exact wire line the kernel judged (raw bytes, pre-canonicalisation) — present on every receipt, and the ONLY request identity when the line is unparseable |
+| `request_parse_error` | string | yes iff the producer could not parse the wire line | names why the structured request material is absent |
 | `action` | string | optional | the SealV2 `params.action` binding when the producer parsed one; absent under the `compatible` profile, which does not parse it |
 | `host_identity` | object | optional; required for the native Rust host | `{native_executable_sha256, lean_ffi_sha256, equivalence:"not_proven"}`. Identifies the native artifacts that executed the decision. It does **not** prove them equivalent to `kernel_identity.wasm_sha256`; that remains the Lane C gap. |
 | `amount` | number or string | yes iff payment-class (11.4) | copied **verbatim** from the argument field the policy's payment binding names |
@@ -334,15 +336,36 @@ is ABSENT — never null-filled, never fabricated. `approval_identity` states
 the channel that actually supplied the approval; `nonce`/`issued_at`/`expiry`
 appear only when that channel actually carried or derived them.
 
+**Unparseable-request rule (normative, native host):** the kernel is
+deliberately the more tolerant parser — lines exist that Lean mediates and
+serde cannot re-parse (the differential corpus pins `1e309`). The receipt
+layer is DESCRIPTIVE and holds no veto over the kernel's verdict: on such a
+line the producer emits the receipt with `request_sha256` +
+`request_parse_error` and OMITS `tool`, `arguments`, `args_hash`,
+`canonical_request`, `canonical_request_sha256` (and any payment fields,
+which are bound to arguments it does not hold) — the honesty rule applied to
+the request itself. Verifiers re-derive what the receipt carries: on an
+unparseable-request receipt that is the kernel material
+(`certs`/`emitted_bytes`/`kernel_config`) against the raw line identity,
+with no canonical-request re-derivation possible.
+
 ### 11.2 Requiredness matrix
 
 | Context | `approval` | `nonce` | `issued_at` | `expiry` | `policy_hash` | `args_hash` | `amount`/`merchant`/`currency` |
 |---|---|---|---|---|---|---|---|
-| ALLOW via ed25519 channel | required | required | required | required | required | required | iff payment-class |
-| ALLOW via file channel | required | if carried | if carried | if derivable | required | required | iff payment-class |
-| ALLOW via interactive channel | required | if carried | if carried | if derivable | required | required | iff payment-class |
-| BLOCK (mediated) | optional | — | — | — | in `approval` if present | required | iff payment-class |
+| ALLOW via ed25519 channel | required | required | required | required | required | iff parsed | iff payment-class |
+| ALLOW via file channel | required | if carried | if carried | if derivable | required | iff parsed | iff payment-class |
+| ALLOW via interactive channel | required | if carried | if carried | if derivable | required | iff parsed | iff payment-class |
+| BLOCK (mediated) | optional | — | — | — | in `approval` if present | iff parsed | iff payment-class |
 | bypass | absent | — | — | — | — | absent | absent |
+
+`iff parsed` means required whenever the producer parsed the wire line, and
+ABSENT otherwise — see the unparseable-request rule in 11.1. Verifiers MUST
+NOT treat `args_hash` (or `tool`, `arguments`, `canonical_request`,
+`canonical_request_sha256`) as unconditionally required on a mediated
+receipt: a receipt carrying `request_parse_error` is well-formed, and
+rejecting it would restore to the verifier the veto the producer was
+deliberately stripped of.
 
 ### 11.3 Derived hashes (computable on every surface)
 
@@ -398,7 +421,8 @@ this top-level order):
 
 ```
 seal_receipt, tool, action, arguments, args_hash, now,
-canonical_request, canonical_request_sha256, bypass, verdict, authorization, reason,
+canonical_request, canonical_request_sha256, request_sha256, request_parse_error,
+bypass, verdict, authorization, reason,
 deny_kernel, amount, merchant, currency, approval, certs, emitted_bytes,
 kernel_identity, host_identity, asserted_provenance, kernel_config, granted_capabilities,
 policy_id, signature
