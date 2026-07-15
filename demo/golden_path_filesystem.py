@@ -24,7 +24,13 @@ import golden_path as gp
 ROOT = gp.ROOT
 KIT = gp.KIT
 HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
-PHASE_B_KIT_REV = "0db03efd27fc3775988d5e4bd527d8e6206b6c47"
+# MUST move with the kernel: this pins the assurance kit whose wasm verifies
+# the receipts this demo produces. Stale pin = verifying today's receipts with
+# yesterday's kernel. Keep it in step with the checkout ref in
+# .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
+# either, because both name the staleness as a COMMIT sha.
+# 6d0d6eb carries kernel d3067bc0 (0db03ef carried df42).
+PHASE_B_KIT_REV = "6d0d6eb1512983ed9a1d09146476f806dd89d828"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
 
