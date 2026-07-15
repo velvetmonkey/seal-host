@@ -45,8 +45,8 @@ namespace Host.Record
 open SealCore  -- `Hash := UInt64`, as in `Host.Record`
 
 /-- One timed record entry: the audit payload (what `Host.auditLine` emits for
-    one mediated decision), the producing step's logical-clock reading, and a
-    nonce. -/
+    one mediated decision, including its `request_sha256` commitment to the
+    judged line), the producing step's logical-clock reading, and a nonce. -/
 structure TimedEntry where
   payload : String
   clock   : Nat

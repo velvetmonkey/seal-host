@@ -38,7 +38,8 @@ open SealCore  -- `Hash := UInt64`
 open Host.Sha256 (sha256Hex)
 
 /-- The decision log: a list of audit payloads, MOST-RECENT-FIRST. Each payload
-    is exactly what `Host.auditLine` emits for one mediated decision. -/
+    is exactly what `Host.auditLine` emits for one mediated decision —
+    including its `request_sha256` commitment to the judged line. -/
 abbrev Log := List String
 
 /-- Rolling chain head, over an arbitrary commitment type `α`. The newest
