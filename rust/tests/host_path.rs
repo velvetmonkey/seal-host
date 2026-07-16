@@ -32,6 +32,10 @@ struct Oracle {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
+    /// Same stdout stream as `lines`, but each frame is the RAW bytes up to
+    /// and including the `\n` — the terminator is NOT stripped. Used by the
+    /// T3 terminator test to observe the exact bytes the child echoed.
+    raw: Receiver<Vec<u8>>,
     stderr_lines: Receiver<String>,
     dir: PathBuf,
     args: Vec<String>,
@@ -146,18 +150,28 @@ impl Oracle {
         }
         args.extend(["--".to_string(), "/bin/cat".to_string()]);
 
-        let (child, stdin, lines, stderr_lines) = Oracle::spawn_process(&args);
+        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&args);
         Oracle {
             child,
             stdin,
             lines,
+            raw,
             stderr_lines,
             dir,
             args,
         }
     }
 
-    fn spawn_process(args: &[String]) -> (Child, ChildStdin, Receiver<String>, Receiver<String>) {
+    #[allow(clippy::type_complexity)]
+    fn spawn_process(
+        args: &[String],
+    ) -> (
+        Child,
+        ChildStdin,
+        Receiver<String>,
+        Receiver<Vec<u8>>,
+        Receiver<String>,
+    ) {
         let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
             .args(args)
             .stdin(Stdio::piped())
@@ -180,17 +194,35 @@ impl Oracle {
             }
         });
 
+        // One reader, teed to two channels: raw bytes (terminator preserved,
+        // via read_until) and the stripped String the existing tests compare.
         let (tx, lines) = channel::<String>();
+        let (raw_tx, raw) = channel::<Vec<u8>>();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if tx.send(line).is_err() {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut buf: Vec<u8> = Vec::new();
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                let mut s = String::from_utf8_lossy(&buf).into_owned();
+                // Match BufRead::lines(): strip a trailing \n then \r.
+                if s.ends_with('\n') {
+                    s.pop();
+                    if s.ends_with('\r') {
+                        s.pop();
+                    }
+                }
+                let raw_ok = raw_tx.send(buf).is_ok();
+                let line_ok = tx.send(s).is_ok();
+                if !raw_ok && !line_ok {
                     break;
                 }
             }
         });
 
-        (child, stdin, lines, stderr_lines)
+        (child, stdin, lines, raw, stderr_lines)
     }
 
     /// Kill the host and start a fresh process on the SAME state directory
@@ -198,10 +230,11 @@ impl Oracle {
     fn restart(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let (child, stdin, lines, stderr_lines) = Oracle::spawn_process(&self.args);
+        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&self.args);
         self.child = child;
         self.stdin = stdin;
         self.lines = lines;
+        self.raw = raw;
         self.stderr_lines = stderr_lines;
     }
 
@@ -252,6 +285,15 @@ impl Oracle {
                     "host produced no output line in time: {e}; status={status:?}; stderr={stderr:?}"
                 );
             }
+        }
+    }
+
+    /// The exact bytes the child echoed for the next output frame, terminator
+    /// included. Pairs with `expect_line` (the same frame, stripped).
+    fn expect_raw(&mut self) -> Vec<u8> {
+        match self.raw.recv_timeout(Duration::from_secs(20)) {
+            Ok(bytes) => bytes,
+            Err(e) => panic!("host produced no raw output frame in time: {e}"),
         }
     }
 
@@ -472,6 +514,99 @@ fn mediation_obfuscation_and_one_shot_approval() {
         is_block(&resp),
         "approval must be one-shot; replay blocked: {resp}"
     );
+}
+
+/// T3 TERMINATOR: the same request under `\n` and `\r\n` shares ONE kernel
+/// commitment (`request_sha256` over the terminator-stripped `lean_view`)
+/// while the child receives the ORIGINAL wire, terminator included — so the
+/// two children see byte-different lines under one receipt. This is the T3
+/// question in the RED corpus. The verdict pinned here is CHARACTERIZED, not
+/// a defect: `lean_view` strips exactly the trailing terminator (≤1 `\n`,
+/// then ≤1 `\r`; main.rs:334-341) and nothing interior, the stripped bytes
+/// are semantically-inert JSON line framing, and the receipt names its
+/// commitment as that stripped view (`request_sha256`). The test fails closed
+/// if a future change either (a) forwards something OTHER than the client's
+/// original wire, or (b) lets the two terminators produce DIFFERENT
+/// commitments — i.e. it pins BOTH halves the corpus entry must claim, which
+/// the pre-existing `main.rs` unit test (lean_view equality + one golden
+/// hash) does not: that test never touches the child and so pins only the
+/// benign half.
+#[test]
+fn terminator_shares_commitment_but_child_sees_original_bytes() {
+    let mut o = Oracle::spawn("t3-terminator");
+
+    // Read every frame RAW so the terminator is visible; parse the string
+    // view from the same bytes (keeps the raw/lines channels aligned — this
+    // test never calls expect_line).
+    fn raw_str(bytes: &[u8]) -> String {
+        let mut s = String::from_utf8_lossy(bytes).into_owned();
+        if s.ends_with('\n') {
+            s.pop();
+            if s.ends_with('\r') {
+                s.pop();
+            }
+        }
+        s
+    }
+
+    // Learn the canonical approval target: an unapproved guarded call blocks
+    // and names it. Terminator is irrelevant to the target (lean_view strips
+    // it before the kernel derives the target).
+    let call = guarded_call(1, "drop table accounts");
+    o.send(&call);
+    let blocked = raw_str(&o.expect_raw());
+    let target = block_target(&blocked).expect("unapproved guarded call names its target");
+
+    // (A) LF-terminated, approved → forwards. The child echoes the wire.
+    o.approve(&target);
+    o.send_bytes(format!("{call}\n").as_bytes());
+    let lf_child = o.expect_raw();
+
+    // (B) SAME call, CRLF-terminated. Approve again (one-shot consumed the
+    // first grant), forward, capture the child echo.
+    o.approve(&target);
+    o.send_bytes(format!("{call}\r\n").as_bytes());
+    let crlf_child = o.expect_raw();
+
+    // -- HALF 1: the child received byte-DIFFERENT lines --
+    assert_ne!(
+        lf_child, crlf_child,
+        "the child must receive the original wire, so the terminators differ"
+    );
+    assert!(
+        lf_child.ends_with(b"}\n") && !lf_child.ends_with(b"}\r\n"),
+        "LF call reaches the child terminated by a bare \\n: {lf_child:?}"
+    );
+    assert!(
+        crlf_child.ends_with(b"}\r\n"),
+        "CRLF call reaches the child terminated by \\r\\n: {crlf_child:?}"
+    );
+    // The delta is EXACTLY the carriage return, nothing interior.
+    let mut crlf_stripped = crlf_child.clone();
+    let n = crlf_stripped.len();
+    crlf_stripped.remove(n - 2); // drop the \r before the trailing \n
+    assert_eq!(
+        crlf_stripped, lf_child,
+        "the only difference the child sees is the terminator's \\r"
+    );
+
+    // -- HALF 2: both decisions share ONE kernel commitment --
+    let allows: Vec<serde_json::Value> = o
+        .receipts()
+        .into_iter()
+        .filter(|r| r["verdict"] == "ALLOW")
+        .collect();
+    assert_eq!(allows.len(), 2, "both forwards persisted an ALLOW receipt");
+    let sha_a = allows[0]["request_sha256"].as_str().unwrap();
+    let sha_b = allows[1]["request_sha256"].as_str().unwrap();
+    assert_eq!(
+        sha_a, sha_b,
+        "terminator-stripped lean_view collapses \\n and \\r\\n to one commitment"
+    );
+    // And that single commitment is the hash of the terminator-free line —
+    // the same value the pure lean_view/main.rs unit test pins.
+    let expected = hex::encode(sha2::Sha256::digest(call.as_bytes()));
+    assert_eq!(sha_a, expected, "commitment is sha256 of the stripped line");
 }
 
 /// BLUE: the PRODUCTION channel end to end — a signed ed25519 approval
