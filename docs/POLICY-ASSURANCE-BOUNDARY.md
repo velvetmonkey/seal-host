@@ -2,12 +2,24 @@
 
 # Policy assurance boundary
 
-This document separates two states that must not be conflated. The deployed
-host pin (`mcp-seal-dev` revision `872ac50`) is the audited v1 baseline below.
-Policy-v2 is implemented and proved in the sibling core source, but is not a
-deployed feature until the immutable promotion gate passes.
+This document separates two states that must not be conflated. The audited v1
+baseline below was pinned at `mcp-seal-dev` revision `872ac50`. Policy-v2 is
+implemented and proved in the sibling core source, but is not a deployed feature
+until the immutable promotion gate passes.
 
-**Audit date:** 2026-07-12  
+**Kernel pin (authoritative, one commit).** As of the pathological-number
+fail-closed fix, `seal-host` builds against a single authoritative
+`mcp-seal-dev` commit — `6bbadbc7b770f307561751fe1e5d328376fab45b` — and every
+pin names it: `lakefile.toml`, `lake-manifest.json`, and this document. It is a
+descendant of and supersedes the earlier references that had drifted apart:
+`872ac50` (the doc's v1-baseline text above), `88168e1` (the previous
+`lakefile`/manifest pin), and `fe51d91` (the P0-2 target-stability lemma commit
+whose manifest re-pin was deferred). The one commit carries all three plus the
+`Seal.JsonUtil.wireNumbersSafe` fail-closed number guard. Moving the *deployed*
+production pin to `6bbadbc7` is a separate step gated to Monkey's frisk + merge;
+this reconciles the source-of-truth wording, not the production deploy.
+
+**Audit date:** 2026-07-12 (baseline); pin reconciled 2026-07-16.  
 **Scope:** the policy-evaluation path deployed by `seal-host-rs`, before policy-v2.
 
 ## Bottom line
@@ -86,12 +98,15 @@ operations or bound every effect-relevant parameter.
   large seeded corpus (25,000 CI cases, soak on demand), byte-identical
   native ≡ wasm ≡ model. This is the open Lane C gap: strong, continuously
   re-checked evidence ("no known divergence under N cases per run"), not a
-  proof. The differential HAS surfaced a real divergence — an adversarial JSON
-  number with a ~10-digit decimal exponent aborts the native `.so` and the
-  Lean interpreter (`Nat.pow` limit) but not the emscripten wasm; characterized
-  and pinned (`three_way.rs::kernel_number_pow_divergence_is_characterized`,
-  and the Lane C report). True closure needs a verified compiler / source
-  equivalence proof, out of scope by magnitude.
+  proof. The differential surfaced one real divergence and it is now CLOSED:
+  an adversarial JSON number with a ~10-digit decimal exponent used to abort
+  the native `.so` and the Lean interpreter (`Nat.pow` limit) while the
+  emscripten wasm passed through, but the fail-closed number guard
+  (`Seal.JsonUtil.wireNumbersSafe`, `Host.pathological_never_forwards`) now
+  makes every lane `block` it byte-identically, regression-pinned by
+  `three_way.rs::pathological_number_fails_closed_all_lanes`. True closure of
+  the residual (unfound) gap needs a verified compiler / source equivalence
+  proof, out of scope by magnitude.
 - An end-to-end proof through Rust routing, provider authenticity, filesystem
   persistence, compiler/codegen, dynamic loading, or OS behavior.
 

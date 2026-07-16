@@ -125,6 +125,20 @@ def registryFor (s : Session) (now : Nat)
 private def getStrD (j : Json) (key : String) (d : String) : String :=
   ((j.getObjVal? key).toOption.bind (·.getStr?.toOption)).getD d
 
+/-- The client-facing response for a line refused before parsing (a pathological
+    numeric literal). A JSON-RPC "Invalid Request" — `id` is null because
+    recovering the request id would mean parsing the line the guard refused to
+    parse. Fixed bytes, so every lane emits the same block response. -/
+private def refuseResponseLine : String :=
+  (Json.mkObj [
+    ("jsonrpc", Json.str "2.0"),
+    ("id", Json.null),
+    ("error", Json.mkObj [
+      ("code", Json.num (-32600)),
+      ("message", Json.str "seal-host: request refused — unsafe numeric literal")
+    ])
+  ]).compress ++ "\n"
+
 /-- One mediation step. Input JSON:
     `{line, now, approvals: [{target, issuedAt?}], votes, grants, forecasts}`
     (votes/grants/forecasts as raw file text; approvals already A3-filtered
@@ -133,6 +147,15 @@ private def getStrD (j : Json) (key : String) (d : String) : String :=
 private def stepImpl (inputText : String) : IO String := do
   let some session ← sessionRef.get
     | pure (errJson "session not initialised")
+  -- Fail closed before parsing the step envelope: a pathological numeric
+  -- literal in the STRUCTURE (e.g. `now` or an approval `issuedAt` with a
+  -- monster exponent) would abort `Json.parse` here. The attacker-controlled
+  -- wire line is a string field (inert to this parse; its own pathological
+  -- numbers are caught by `classifyLine`'s guard), so this covers the
+  -- host-supplied numeric fields. (Seal.JsonUtil.wireNumbersSafe.)
+  if !Seal.JsonUtil.wireNumbersSafe inputText then
+    pure (errJson "bad step input: unsafe numeric literal")
+  else
   match Json.parse inputText with
   | .error err => pure (errJson s!"bad step input: {err}")
   | .ok input => do
@@ -148,6 +171,15 @@ private def stepImpl (inputText : String) : IO String := do
       match lc with
       | .passthrough =>
           pure (Json.mkObj [("route", Json.str "passthrough")]).compress
+      | .refuse =>
+          -- Pathological numeric literal (monster exponent): fail closed. Block
+          -- the line WITHOUT parsing (no `Nat.pow` abort) and WITHOUT forwarding
+          -- (no bypass). No act, no verdicts ⇒ no audit certificate. Every lane
+          -- runs this same branch, so the bytes are identical.
+          pure (Json.mkObj [
+            ("route", Json.str "block"),
+            ("response", Json.str refuseResponseLine)
+          ]).compress
       | .act act => do
           let registry := registryFor session now approvals votes grants forecasts
           let (combined, verdicts) ← dispatch registry act
@@ -212,12 +244,16 @@ unsafe def sealHostStep (inputText : String) : String :=
   unsafeBaseIO <| (stepImpl inputText).catchExceptions
     (fun e => pure (errJson (toString e)))
 
-/-- Routing classification for the differential harness:
-    0 = passthrough, 1 = mediated tools/call. -/
+/-- Routing classification for the differential harness / the native fast path:
+    0 = passthrough, 1 = mediated tools/call, 2 = refused (pathological number,
+    fail-closed). The Rust `route_of_classify` maps any value outside {0,1} to
+    `Refuse`, so 2 fails closed on the classify fast path exactly as `.refuse`
+    fails closed on the step path. -/
 @[export seal_host_classify]
 def sealHostClassify (line : String) : UInt32 :=
   match classifyLine line with
   | .passthrough => 0
   | .act _ => 1
+  | .refuse => 2
 
 end Ffi

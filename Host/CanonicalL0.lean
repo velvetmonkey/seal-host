@@ -51,6 +51,7 @@ inductive MediationProfile where
 def stepRouteP : MediationProfile → LineClass → List Verdict → StepRoute
   | .compatible, lc, verdicts => stepRoute lc verdicts
   | .canonicalL0, .passthrough, _ => .passthrough
+  | .canonicalL0, .refuse, _ => .block
   | .canonicalL0, .act a, verdicts =>
       match a.ast? with
       | none => .block
@@ -68,11 +69,13 @@ theorem classifyLine_act_ast (line : String) (a : CanonicalAction)
     a.ast? = SealV2.parse line.trimAscii.toString := by
   simp only [classifyLine] at hclass
   split at hclass
-  · exact absurd hclass (by simp)
+  · exact absurd hclass (by simp)      -- pathological ⇒ .refuse ≠ .act a
   · split at hclass
-    · exact absurd hclass (by simp)
-    · cases hclass
-      rfl
+    · exact absurd hclass (by simp)    -- parse error ⇒ .passthrough
+    · split at hclass
+      · exact absurd hclass (by simp)  -- not a tools/call ⇒ .passthrough
+      · cases hclass
+        rfl
 
 /-- **Reject-on-parse-failure (soundness).** A wire line the V1 view
     recognises as a `tools/call` whose canonical parse fails routes to
@@ -97,6 +100,9 @@ theorem canonicalL0_witness_on_forward (line : String) (verdicts : List Verdict)
       combineVerdicts verdicts = .allow := by
   cases hclass : classifyLine line with
   | passthrough =>
+      rw [hclass] at hfwd
+      exact absurd hfwd (by simp [stepRouteP])
+  | refuse =>
       rw [hclass] at hfwd
       exact absurd hfwd (by simp [stepRouteP])
   | act a =>

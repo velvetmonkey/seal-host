@@ -856,3 +856,22 @@ info: 'Host.ReceiptIdentity.caller_authenticator_satisfiable' depends on axioms:
 
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
+
+-- Pathological-number fail-closed guard (Lane C number-abort fix): a wire line
+-- carrying a monster-exponent number classifies as .refuse (never passthrough,
+-- never act) and routes to .block (never forward) — both failure directions
+-- (native/interpreter abort, wasm passthrough) closed, identically every lane.
+/--
+info: 'Host.classifyLine_refuse_of_unsafe' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe
+
+/--
+info: 'Host.stepRoute_refuse_ne_forward' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.stepRoute_refuse_ne_forward
+
+/--
+info: 'Host.pathological_never_forwards' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pathological_never_forwards

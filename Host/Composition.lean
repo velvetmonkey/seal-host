@@ -455,6 +455,8 @@ theorem classify_act_witness (line : String) (act : CanonicalAction)
     ∃ json, Lean.Json.parse line.trimAscii.toString = .ok json ∧
       Seal.toolsCall? json = some (act.tool, act.argsJson) := by
   simp only [classifyLine] at h
+  split at h
+  · exact absurd h (by simp)   -- pathological ⇒ .refuse ≠ .act act
   cases hp : Lean.Json.parse line.trimAscii.toString with
   | error e => simp [hp] at h
   | ok json =>
