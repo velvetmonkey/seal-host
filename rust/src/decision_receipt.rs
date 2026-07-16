@@ -57,7 +57,13 @@ pub struct PersistedReceipt {
     pub consumed_target: Option<String>,
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+/// The host's request-commitment primitive: SHA-256 of the given bytes, lower
+/// hex. This is the exact fn the host commits a mediated line with (the
+/// `host_request_sha256` cross-check below). Exposed `pub` so the T3 terminator
+/// pin in the `main.rs` binary commits the golden vector with the PRODUCTION
+/// hash, not a coincidental re-implementation that could not catch host-side
+/// drift.
+pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 

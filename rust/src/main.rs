@@ -903,17 +903,29 @@ mod tests {
         assert!(parsed.get("approval_drop").is_some() && parsed.as_object().unwrap().len() == 1);
     }
 
-    /// The request commitment on BOTH sides is over the post-strip
-    /// `lean_view` bytes: the strip happens HERE, before the line reaches
-    /// the kernel, and `request_sha256` hashes the same stripped string.
-    /// Lean twin: Host/Audit.lean golden vector v1 (sha256("x")).
+    /// PURE, HOST-SIDE half of T3: `lean_view` collapses the three terminator
+    /// forms (`\r\n`, `\n`, none) to one committed string, and the host's OWN
+    /// commitment fn (`decision_receipt::sha256_hex`, the same call the host
+    /// makes at `decision_receipt.rs`) over that string yields the golden
+    /// vector. A change to either the strip or the host hash RED-fires here.
+    ///
+    /// This pin does NOT exercise the kernel seam or the child — it must not
+    /// claim to. The full property (both sides commit to the SAME stripped
+    /// bytes AND the child receives the original wire, terminator included, so
+    /// two terminators share one commitment while the child sees byte-different
+    /// lines) is pinned by the integration test
+    /// `terminator_shares_commitment_but_child_sees_original_bytes` in
+    /// `tests/host_path.rs`, which drives the real binary and observes the
+    /// child. Lean twin: Host/Audit.lean golden vector v1 (sha256("x")).
     #[test]
     fn request_commitment_is_over_the_terminator_stripped_lean_view() {
         for wire in [&b"x\r\n"[..], b"x\n", b"x"] {
             assert_eq!(lean_view(wire), b"x");
         }
+        // Commit the golden with the PRODUCTION host fn, not a raw digest, so a
+        // change to the host's commitment hashing cannot pass this pin silently.
         assert_eq!(
-            hex::encode(Sha256::digest(lean_view(b"x\r\n"))),
+            seal_host_rs::decision_receipt::sha256_hex(lean_view(b"x\r\n")),
             "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
         );
     }
