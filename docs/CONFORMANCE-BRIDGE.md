@@ -16,6 +16,12 @@ binary. This harness is that binding, **as far as it honestly goes**.
   model." We do not verify the Lean compiler or its C codegen (or emscripten
   for the WASM shape); that compile is trusted (T3 in the TCB ledger). The
   bridge converts that bare trust into *tested on the security-relevant corpus*.
+- The corpus is no longer only the 15 named cases below: the **three-way
+  property differential** (`rust/tests/three_way.rs`, see its own section)
+  re-runs native ≡ wasm ≡ model byte-agreement every CI cycle over a seeded,
+  generated adversarial corpus (25,000 fuzz cases + curated families in CI;
+  soak counts on demand). The evidence is bigger; its KIND is unchanged —
+  finite cases, not a universal claim.
 
 The corpus-only line is load-bearing. Do not restate the result as "the deployed
 binary is proven correct."
@@ -123,9 +129,11 @@ the **same** SHA-256 record head as the Lean model over corpus C.
 - The FFI marshalling (`lean.rs`) and the wasm C glue (`wasm-spike/seal_wrapper.c`,
   `scripts/ffi_shim.c`); the FFI seam is already TCB in `RUST_BRIDGE.md`.
 - `node:crypto` SHA-256 and the harness itself.
-- **Corpus finiteness** — evidence covers C only. The bridge narrows the T3
-  trusted-compile assumption to the security-relevant corpus; it does not
-  discharge it universally.
+- **Corpus finiteness** — evidence covers the cases tried only: corpus C here,
+  plus the generated corpus of the three-way property differential (large and
+  re-drawn from a printed seed every run, but still finite). The bridge and
+  the three-way harness narrow the T3 trusted-compile assumption to the
+  security-relevant corpus; they do not discharge it universally.
 
 ## Scope
 

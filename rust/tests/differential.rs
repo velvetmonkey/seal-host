@@ -315,6 +315,50 @@ mod props {
         ]
     }
 
+    /// Every `SeamError` variant, witnessed by a match WITHOUT a wildcard
+    /// arm: adding a variant to `SeamError` fails to compile here, forcing
+    /// the new variant into the exhaustive fail-closed pin below (the
+    /// `seam_errors()` strategy above samples; this list proves coverage).
+    fn exhaustive_seam_errors() -> [SeamError; 4] {
+        let witness = |e: &SeamError| match e {
+            SeamError::Panic => (),
+            SeamError::PoisonedLock => (),
+            SeamError::NotAString => (),
+            SeamError::InvalidUtf8 => (),
+        };
+        let all = [
+            SeamError::Panic,
+            SeamError::PoisonedLock,
+            SeamError::NotAString,
+            SeamError::InvalidUtf8,
+        ];
+        all.iter().for_each(witness);
+        all
+    }
+
+    /// D2 seam pin (deterministic, exhaustive — not sampled): EVERY seam
+    /// error variant maps to SeamFailure on the step path and Refuse on the
+    /// classify path. This is the fail-closed half of the routing-
+    /// preservation property the FFI seam must satisfy (see the `lean.rs`
+    /// and `route.rs` module docs): no error value can route bytes to the
+    /// child.
+    #[test]
+    fn every_seam_error_variant_fails_closed() {
+        for e in exhaustive_seam_errors() {
+            assert!(
+                matches!(
+                    route_of_step_output(Err(e.clone())),
+                    Route::SeamFailure { .. }
+                ),
+                "step path must fail closed on {e:?}"
+            );
+            assert!(
+                matches!(route_of_classify(Err(e.clone())), ClassifyRoute::Refuse),
+                "classify path must refuse on {e:?}"
+            );
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(4000))]
 

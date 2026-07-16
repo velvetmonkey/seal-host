@@ -10,6 +10,16 @@
 //! `main.rs` and the conformance tests call these SAME functions, so there
 //! is no test-mirror differential: the property the tests pin is the code
 //! that runs.
+//!
+//! This module is the PINNED half of the Lane C seam split (see the
+//! `lean.rs` module docs): pure and total, so the routing-preservation
+//! property is testable directly — exhaustively over the `SeamError`
+//! variants (`differential.rs::every_seam_error_variant_fails_closed`,
+//! compile-breaking on a new variant) and property-based over arbitrary
+//! kernel output strings (`step_output_route_literal_only`,
+//! `step_output_never_forwards_garbage`, `classify_literal_only`). The
+//! marshalling that PRODUCES the `Result` these functions consume stays
+//! trusted glue in `lean.rs`.
 
 use crate::lean::SeamError;
 use serde_json::Value;

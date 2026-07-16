@@ -45,7 +45,7 @@ policy meaning out of the current core and enlarge the TCB.
 | Approval decision | Lean `SealCore.step` | Default deny, exact-target separation, expiry and one-shot consumption are proved in `SealCore.Safety`. |
 | Multi-kernel composition | Lean `Host.dispatch`, `combineVerdicts`, `stepRoute` | `combine_allow_iff`, `combine_deny_of_member`, `composed_non_bypass`, and `step_forward_non_bypass` prove fail-closed AND composition over the pure decision. |
 | Evidence gathering and state | Rust providers/A3 plus Lean `IO.Ref` session state | Trusted IO boundary. Theorems do not establish that files, clocks, votes or grants supplied by Rust are authentic or complete. A3 has executable tests and separate replay-store models, not an end-to-end proof of the Rust provider. |
-| Native FFI and byte routing | `Ffi.lean`, `rust/src/lean.rs`, `rust/src/route.rs`, `rust/src/main.rs` | Trusted compilation, ABI, marshalling and OS IO. Differential tests bind a finite corpus to model/native/wasm behavior; this is evidence, not universal equivalence. |
+| Native FFI and byte routing | `Ffi.lean`, `rust/src/lean.rs`, `rust/src/route.rs`, `rust/src/main.rs` | Trusted compilation, ABI, marshalling and OS IO. The three-way property differential (`rust/tests/three_way.rs`) binds a large seeded corpus to model/native/wasm behavior byte-for-byte every CI run; this is evidence over the cases tried, not universal equivalence. The routing-preservation seam split is stated in the `lean.rs` / `route.rs` module docs: the pure result→route mapping (`route_of_step_output`, `route_of_classify`) is pinned exhaustively (`differential.rs::every_seam_error_variant_fails_closed`); the raw-pointer marshalling in `lean.rs` stays trusted glue. |
 | Receipt assembly and persistence | Rust decision-receipt producer | Trusted additive producer. Receipt verification independently re-derives decision bytes; `host_identity` identifies native artifacts but does not close Lane C equivalence. Sink failure is fail-closed. |
 
 ## What the present theorems establish
@@ -81,8 +81,17 @@ operations or bound every effect-relevant parameter.
 - Target adequacy: changing every effect-relevant argument changes the target.
   Existing target-separation theorems assume distinct target hashes; they do
   not prove the policy constructed distinct hashes for distinct effects.
-- Universal native-versus-wasm equivalence. On-disk conformance covers a
-  finite corpus only; this is the open Lane C gap.
+- Universal native-versus-wasm equivalence. Conformance covers a finite
+  corpus only — the 15-case bridge plus the three-way property differential's
+  large seeded corpus (25,000 CI cases, soak on demand), byte-identical
+  native ≡ wasm ≡ model. This is the open Lane C gap: strong, continuously
+  re-checked evidence ("no known divergence under N cases per run"), not a
+  proof. The differential HAS surfaced a real divergence — an adversarial JSON
+  number with a ~10-digit decimal exponent aborts the native `.so` and the
+  Lean interpreter (`Nat.pow` limit) but not the emscripten wasm; characterized
+  and pinned (`three_way.rs::kernel_number_pow_divergence_is_characterized`,
+  and the Lane C report). True closure needs a verified compiler / source
+  equivalence proof, out of scope by magnitude.
 - An end-to-end proof through Rust routing, provider authenticity, filesystem
   persistence, compiler/codegen, dynamic loading, or OS behavior.
 

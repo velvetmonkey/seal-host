@@ -7,6 +7,25 @@
 //! forwarding a line Lean said to block) would. Keep this file tiny and
 //! boring.
 //!
+//! ROUTING PRESERVATION (the Lane C seam property, pinned by tests): the
+//! route the Rust caller ACTS ON equals the verdict `seal_host_step` /
+//! `seal_host_classify` RETURNED, with every `SeamError` mapped to
+//! Block/Refuse and Forward constructible only from the exact
+//! `"route":"forward"` literal. The proven-vs-trusted split:
+//! * PINNED (pure Rust, property-tested — the binary and the tests run the
+//!   SAME functions): the result→route mapping in `route.rs`
+//!   (`route_of_step_output`, `route_of_classify`); tests
+//!   `differential.rs::every_seam_error_variant_fails_closed` (exhaustive,
+//!   compile-breaking on a new variant), `step_output_route_literal_only`,
+//!   `classify_literal_only`, and the three-way harness's per-case invariant
+//!   (`tests/three_way.rs`).
+//! * TRUSTED GLUE (this file — not liftable to a tested pure function):
+//!   `to_lean_string`/`from_lean_string`, the call mutex, `catch_unwind` and
+//!   the process-wide panic policy. They cross a raw-pointer C ABI with no
+//!   Lean-side counterpart to prove against, so they stay trusted, tiny and
+//!   boring, and are enumerated in the Lane C boundary statement
+//!   (docs/POLICY-ASSURANCE-BOUNDARY.md).
+//!
 //! Fail-closed seam contract:
 //! * every call returns `Result`; the caller maps ANY `SeamError` to Block —
 //!   there is no error value that can route bytes to the child;

@@ -109,6 +109,15 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: node scripts/conformance_bridge.mjs --wasm
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # Three-way differential at CI volume: native .so ≡ pinned seal.wasm ≡
+      # interpreted Lean model, byte-for-byte per step input (the default-256
+      # smoke already ran inside `cargo test` above). 25000 fuzz cases + the
+      # curated families ≈ 30 s wall measured locally. This is differential
+      # EVIDENCE over the cases tried — never a universal binary≡model claim
+      # (Lane C stays a trusted compile). Soak knobs: rust/tests/three_way.rs.
+      - run: SEAL_THREE_WAY_CASES=25000 cargo test --test three_way three_way_agreement -- --nocapture
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        working-directory: rust
       - run: bash scripts/receipt_demo.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
 
