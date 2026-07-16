@@ -57,6 +57,15 @@ private def goodLine : String :=
 private def escapedLine : String :=
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"db.execute\",\"arguments\":{\"sql\":\"a\\tb\"}}}"
 
+-- Kernel-section config parsing goes through the policy-v2 bundle now:
+-- payload JSON → Seal.parsePolicyBundle → Host.ofBundle → TrustedConfig.
+private def cfgSafetyPart : String :=
+  "\"safety\":{\"approval\":{\"control_file\":\"/tmp/a\"},\"tools\":[]}"
+
+private def cfgOf (sections : String) : Except String Host.TrustedConfig :=
+  (Lean.Json.parse ("{\"epoch\":1," ++ cfgSafetyPart ++ sections ++ "}")
+    >>= Seal.parsePolicyBundle) >>= Host.ofBundle
+
 def main : IO Unit := do
   -- combineVerdicts: fail-closed truth table
   check "empty -> deny" (combineVerdicts [] == .deny)
@@ -201,18 +210,28 @@ def main : IO Unit := do
   check "T: no trigger executed -> destructive still allowed" (tv5.kind == .allow)
   check "T: empty policy list allows" ((Kernels.temporalKernel.decide (mkAct "db.execute" Lean.Json.null) [] () t2).1.kind == .allow)
 
-  -- temporal config section parsing
-  let temporalJson := "{\"epoch\":1,\"temporal\":{\"policies\":[{\"name\":\"p1\",\"type\":\"no_after\",\"trigger\":[\"a\"],\"forbidden\":[\"b\",\"c\"]}]}}"
+  -- temporal config section parsing (bundle path)
   check "temporal section parses"
-    (match Lean.Json.parse temporalJson >>= parseTemporalSection with
-     | .ok [p] => p.name == "p1" && p.trigger == ["a"] && p.forbidden == ["b", "c"]
-     | _ => false)
+    (match cfgOf ",\"temporal\":{\"policies\":[{\"name\":\"p1\",\"type\":\"no_after\",\"trigger\":[\"a\"],\"forbidden\":[\"b\",\"c\"]}]}" with
+     | .ok cfg =>
+        match cfg.temporal with
+        | [p] => p.name == "p1" && p.trigger == ["a"] && p.forbidden == ["b", "c"]
+        | _ => false
+     | .error _ => false)
   check "missing temporal section -> no policies"
-    (match Lean.Json.parse "{\"epoch\":1}" >>= parseTemporalSection with
-     | .ok [] => true | _ => false)
+    (match cfgOf "" with
+     | .ok cfg => cfg.temporal.isEmpty
+     | .error _ => false)
   check "unknown temporal policy type rejected"
-    (match Lean.Json.parse "{\"temporal\":{\"policies\":[{\"name\":\"p\",\"type\":\"weird\",\"trigger\":[],\"forbidden\":[]}]}}" >>= parseTemporalSection with
+    (match cfgOf ",\"temporal\":{\"policies\":[{\"name\":\"p\",\"type\":\"weird\",\"trigger\":[],\"forbidden\":[]}]}" with
      | .error _ => true | .ok _ => false)
+  check "disabled temporal section -> no policies (registered but vacuous)"
+    (match cfgOf ",\"temporal\":{\"enabled\":false,\"policies\":[{\"name\":\"p1\",\"type\":\"no_after\",\"trigger\":[\"a\"],\"forbidden\":[\"b\"]}]}" with
+     | .ok cfg => cfg.temporal.isEmpty
+     | .error _ => false)
+  check "unknown top-level config key rejected (typo cannot drop a kernel)"
+    (match cfgOf ",\"temporral\":{\"policies\":[]}" with
+     | .error e => (e.splitOn "temporral").length > 1 | .ok _ => false)
 
   -- kernel C: quorum-certificate gate over Consensus.Checker.validB
   let cCfg : Kernels.ConsensusConfig :=
@@ -236,15 +255,22 @@ def main : IO Unit := do
   check "C: 3-of-3 -> allow"
     ((decideC [(1, "payments.send"), (2, "payments.send"), (3, "payments.send")]).kind == .allow)
 
-  -- consensus config section parsing
-  let consensusJson := "{\"consensus\":{\"roster\":[1,2,3],\"votes_file\":\"/tmp/v.ndjson\",\"high_stakes\":[\"payments.send\"]}}"
+  -- consensus config section parsing (bundle path)
   check "consensus section parses"
-    (match Lean.Json.parse consensusJson >>= parseConsensusSection with
-     | .ok (some c) => c.roster == [1, 2, 3] && c.highStakes == ["payments.send"]
-     | _ => false)
+    (match cfgOf ",\"consensus\":{\"roster\":[1,2,3],\"votes_file\":\"/tmp/v.ndjson\",\"high_stakes\":[\"payments.send\"]}" with
+     | .ok cfg =>
+        match cfg.consensus with
+        | some c => c.roster == [1, 2, 3] && c.highStakes == ["payments.send"]
+        | none => false
+     | .error _ => false)
   check "missing consensus section -> none"
-    (match Lean.Json.parse "{\"epoch\":1}" >>= parseConsensusSection with
-     | .ok none => true | _ => false)
+    (match cfgOf "" with
+     | .ok cfg => cfg.consensus.isNone
+     | .error _ => false)
+  check "disabled consensus section -> none (enabled:false is deletion)"
+    (match cfgOf ",\"consensus\":{\"enabled\":false,\"roster\":[1,2,3],\"votes_file\":\"/tmp/v.ndjson\",\"high_stakes\":[\"payments.send\"]}" with
+     | .ok cfg => cfg.consensus.isNone
+     | .error _ => false)
 
   -- kernel V: only proven-convergent ops admitted
   let vCfg : Kernels.ConvergenceConfig := [{ tool := "store.update", opArg := ["op"] }]
@@ -287,22 +313,35 @@ def main : IO Unit := do
     ((decideK (calibrated.take 5)).kind == .deny)
   check "K: empty window -> deny" ((decideK []).kind == .deny)
 
-  -- convergence + calibration config parsing
+  -- convergence + calibration config parsing (bundle path)
   check "convergence section parses"
-    (match Lean.Json.parse "{\"convergence\":{\"tools\":[{\"tool\":\"store.update\",\"op_arg\":\"op\"}]}}" >>= parseConvergenceSection with
-     | .ok [r] => r.tool == "store.update" && r.opArg == ["op"]
-     | _ => false)
+    (match cfgOf ",\"convergence\":{\"tools\":[{\"tool\":\"store.update\",\"op_arg\":\"op\"}]}" with
+     | .ok cfg =>
+        match cfg.convergence with
+        | [r] => r.tool == "store.update" && r.opArg == ["op"]
+        | _ => false
+     | .error _ => false)
   check "missing convergence section -> empty"
-    (match Lean.Json.parse "{}" >>= parseConvergenceSection with
-     | .ok [] => true | _ => false)
-  let kJson := "{\"calibration\":{\"enabled\":true,\"delta_num\":1,\"delta_den\":20,\"min_samples\":10,\"records_file\":\"/tmp/f.ndjson\",\"gated_tools\":[\"model.act\"]}}"
+    (match cfgOf "" with
+     | .ok cfg => cfg.convergence.isEmpty
+     | .error _ => false)
   check "calibration section parses"
-    (match Lean.Json.parse kJson >>= parseCalibrationSection with
-     | .ok (some c) => c.enabled && c.deltaNum == 1 && c.minSamples == 10
-     | _ => false)
+    (match cfgOf ",\"calibration\":{\"enabled\":true,\"delta_num\":1,\"delta_den\":20,\"min_samples\":10,\"records_file\":\"/tmp/f.ndjson\",\"gated_tools\":[\"model.act\"]}" with
+     | .ok cfg =>
+        match cfg.calibration with
+        | some c => c.enabled && c.deltaNum == 1 && c.minSamples == 10
+        | none => false
+     | .error _ => false)
   check "calibration delta >= 1 rejected"
-    (match Lean.Json.parse "{\"calibration\":{\"enabled\":true,\"delta_num\":2,\"delta_den\":2,\"min_samples\":1,\"records_file\":\"/tmp/f\",\"gated_tools\":[]}}" >>= parseCalibrationSection with
+    (match cfgOf ",\"calibration\":{\"enabled\":true,\"delta_num\":2,\"delta_den\":2,\"min_samples\":1,\"records_file\":\"/tmp/f\",\"gated_tools\":[]}" with
      | .error _ => true | .ok _ => false)
+  check "calibration enabled:false stays present-but-disabled (double gate)"
+    (match cfgOf ",\"calibration\":{\"enabled\":false,\"delta_num\":1,\"delta_den\":20,\"min_samples\":10,\"records_file\":\"/tmp/f.ndjson\",\"gated_tools\":[\"model.act\"]}" with
+     | .ok cfg =>
+        match cfg.calibration with
+        | some c => c.enabled == false
+        | none => false
+     | .error _ => false)
 
   -- kernel L: linear capability accounting (no double-spend)
   let lCfg : Kernels.LinearConfig :=
@@ -350,38 +389,35 @@ def main : IO Unit := do
   check "B: missing cost field -> deny"
     ((decideB (mkAct "payments.send" Lean.Json.null) Kernels.budgetKernel.init).1.kind == .deny)
 
-  -- linear + budget config parsing
-  let linearParse : Except String (Option Kernels.LinearConfig) := do
-    let json ← Lean.Json.parse "{\"linear\":{\"grants_file\":\"/tmp/g.ndjson\",\"tools\":[{\"tool\":\"key.use\",\"cap_arg\":\"key\"}]}}"
-    parseLinearSection json
+  -- linear + budget config parsing (bundle path)
   check "linear section parses"
-    (match linearParse with
-     | .ok (some { tools := [_], .. }) => true
-     | _ => false)
-  let budgetParse : Except String Kernels.BudgetConfig := do
-    let json ← Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]}]}}"
-    parseBudgetSection json
+    (match cfgOf ",\"linear\":{\"grants_file\":\"/tmp/g.ndjson\",\"tools\":[{\"tool\":\"key.use\",\"cap_arg\":\"key\"}]}" with
+     | .ok cfg =>
+        match cfg.linear with
+        | some { tools := [_], .. } => true
+        | _ => false
+     | .error _ => false)
   check "budget section parses"
-    (match budgetParse with
-     | .ok [b] => b.cap == 2 && b.costArg.isNone
-     | _ => false)
+    (match cfgOf ",\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]}]}" with
+     | .ok cfg =>
+        match cfg.budget with
+        | [b] => b.cap == 2 && b.costArg.isNone
+        | _ => false
+     | .error _ => false)
 
   -- budget config lint: same-name budgets share one counter, so conflicting
   -- caps are a silent misconfiguration — the loader rejects them fail-closed
-  let budgetDupConflict : Except String Kernels.BudgetConfig := do
-    let json ← Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]},{\"name\":\"b\",\"cap\":5,\"tools\":[\"y\"]}]}}"
-    parseBudgetSection json
   check "duplicate budget name with conflicting caps rejected with exact message"
-    (match budgetDupConflict with
+    (match cfgOf ",\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]},{\"name\":\"b\",\"cap\":5,\"tools\":[\"y\"]}]}" with
      | .error msg => msg == "duplicate budget name with conflicting caps"
      | .ok _ => false)
-  let budgetDupEqual : Except String Kernels.BudgetConfig := do
-    let json ← Lean.Json.parse "{\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]},{\"name\":\"b\",\"cap\":2,\"tools\":[\"y\"]}]}}"
-    parseBudgetSection json
   check "same-name equal-cap budgets accepted (one shared counter)"
-    (match budgetDupEqual with
-     | .ok [a, b] => a.name == "b" && b.name == "b" && a.cap == 2 && b.cap == 2
-     | _ => false)
+    (match cfgOf ",\"budget\":{\"budgets\":[{\"name\":\"b\",\"cap\":2,\"tools\":[\"x\"]},{\"name\":\"b\",\"cap\":2,\"tools\":[\"y\"]}]}" with
+     | .ok cfg =>
+        match cfg.budget with
+        | [a, b] => a.name == "b" && b.name == "b" && a.cap == 2 && b.cap == 2
+        | _ => false
+     | .error _ => false)
   check "budgetCapsConsistent: empty config consistent"
     (Kernels.budgetCapsConsistent [])
   check "budgetCapsConsistent: distinct names always consistent"

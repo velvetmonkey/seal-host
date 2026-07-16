@@ -4,6 +4,7 @@ import Lean.Data.Json
 import SealV2.Parser
 import SealV2.Crypto
 import Seal.Policy
+import Seal.PolicyBundle
 import Seal.JsonUtil
 import Kernels.Temporal
 import Kernels.Consensus
@@ -30,94 +31,129 @@ structure TrustedConfig where
   linear : Option Kernels.LinearConfig
   budget : Kernels.BudgetConfig
 
-private def parseStringList (json : Json) : Except String (List String) := do
-  let arr ← json.getArr?
-  arr.toList.mapM (fun j => j.getStr?)
+/-- Map the parsed policy-v2 bundle (`Seal.parsePolicyBundle` — the verified
+    7-kernel config vocabulary) onto the kernel config types. Field-by-field
+    and total up to the budget lint: the `Kernels.*` types and `TrustedConfig`
+    are unchanged, so `registryFor` / `activeKernels` / the A0 tripwires
+    attach exactly as before; the `ofBundle_*` lemmas below pin that this
+    mapping preserves each section's activation.
 
-private def parseTemporalPolicy (json : Json) : Except String Kernels.TemporalPolicy := do
-  let name ← getObjString json "name"
-  let kind ← getObjString json "type"
-  if kind != "no_after" then
-    throw s!"unsupported temporal policy type: {kind}"
-  let trigger ← parseStringList (← json.getObjVal? "trigger")
-  let forbidden ← parseStringList (← json.getObjVal? "forbidden")
-  pure { name, trigger, forbidden }
+    `enabled := false` sections were already collapsed by the bundle's
+    `effective*` views — except calibration, which deliberately maps
+    present-but-disabled to `some { enabled := false, .. }` (the distinct
+    double-gate state pinned by `calibration_registered_iff`). -/
+def ofBundle (b : Seal.PolicyBundle) : Except String TrustedConfig :=
+  -- Fail closed: same-name budgets share one counter, so conflicting caps
+  -- would leave the smaller cap silently unenforceable (see
+  -- `Kernels.budgetCapsConsistent`). Equal-cap duplicates stay legal.
+  if Kernels.budgetCapsConsistent (b.effectiveBudget.map fun r =>
+      { name := r.name, cap := r.cap, tools := r.tools, costArg := r.costArg }) then
+    .ok { epoch := b.epoch
+          safety := b.safety
+          temporal := b.effectiveTemporal.map fun r =>
+            { name := r.name, trigger := r.trigger, forbidden := r.forbidden }
+          consensus := b.effectiveConsensus.map fun s =>
+            { roster := s.roster, votesFile := System.FilePath.mk s.votesFile
+              highStakes := s.highStakes }
+          convergence := b.effectiveConvergence.map fun t =>
+            { tool := t.tool, opArg := t.opArg }
+          calibration := b.calibration.map fun s =>
+            { enabled := s.enabled, deltaNum := s.deltaNum, deltaDen := s.deltaDen
+              minSamples := s.minSamples, gatedTools := s.gatedTools
+              recordsFile := System.FilePath.mk s.recordsFile }
+          linear := b.effectiveLinear.map fun s =>
+            { grantsFile := System.FilePath.mk s.grantsFile
+              tools := s.tools.map fun t => { tool := t.tool, capArg := t.capArg } }
+          budget := b.effectiveBudget.map fun r =>
+            { name := r.name, cap := r.cap, tools := r.tools, costArg := r.costArg } }
+  else
+    .error "duplicate budget name with conflicting caps"
 
-def parseTemporalSection (json : Json) : Except String (List Kernels.TemporalPolicy) := do
-  match ← getObjValOpt json "temporal" with
-  | none => pure []
-  | some section_ =>
-      let policiesJson ← (← section_.getObjVal? "policies").getArr?
-      policiesJson.toList.mapM parseTemporalPolicy
+/-! ### Mapping-preservation lemmas
 
-def parseConsensusSection (json : Json) : Except String (Option Kernels.ConsensusConfig) := do
-  match ← getObjValOpt json "consensus" with
-  | none => pure none
-  | some section_ =>
-      let rosterJson ← (← section_.getObjVal? "roster").getArr?
-      let roster ← rosterJson.toList.mapM (fun j => j.getNat?)
-      let votesFile := System.FilePath.mk (← getObjString section_ "votes_file")
-      let highStakes ← parseStringList (← section_.getObjVal? "high_stakes")
-      pure (some { roster, votesFile, highStakes })
+The activation-relevant shape of every section survives `ofBundle`: these are
+the seams the `bundle_*_registered_iff` tripwires (`FfiSpec.lean`) compose
+with `registryFor_kernels` through. -/
 
-def parseConvergenceSection (json : Json) : Except String Kernels.ConvergenceConfig := do
-  match ← getObjValOpt json "convergence" with
-  | none => pure []
-  | some section_ =>
-      let toolsJson ← (← section_.getObjVal? "tools").getArr?
-      toolsJson.toList.mapM fun j => do
-        let tool ← getObjString j "tool"
-        let opArg ← getObjString j "op_arg"
-        pure { tool, opArg := splitPath opArg : Kernels.ReplicatedTool }
+theorem ofBundle_epoch {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) : cfg.epoch = b.epoch := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    rfl
+  · simp at h
 
-def parseCalibrationSection (json : Json) :
-    Except String (Option Kernels.CalibrationConfig) := do
-  match ← getObjValOpt json "calibration" with
-  | none => pure none
-  | some section_ =>
-      let enabled ← match ← getObjValOpt section_ "enabled" with
-        | some v => v.getBool?
-        | none => pure false
-      let deltaNum ← (← section_.getObjVal? "delta_num").getNat?
-      let deltaDen ← (← section_.getObjVal? "delta_den").getNat?
-      if deltaNum == 0 || deltaDen ≤ deltaNum then
-        throw "calibration delta must satisfy 0 < delta < 1"
-      let minSamples ← (← section_.getObjVal? "min_samples").getNat?
-      let recordsFile ← getObjString section_ "records_file"
-      let gatedTools ← parseStringList (← section_.getObjVal? "gated_tools")
-      pure (some { enabled, deltaNum, deltaDen, minSamples, gatedTools,
-                   recordsFile := System.FilePath.mk recordsFile })
+theorem ofBundle_safety {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) : cfg.safety = b.safety := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    rfl
+  · simp at h
 
-def parseLinearSection (json : Json) : Except String (Option Kernels.LinearConfig) := do
-  match ← getObjValOpt json "linear" with
-  | none => pure none
-  | some section_ =>
-      let grantsFile := System.FilePath.mk (← getObjString section_ "grants_file")
-      let toolsJson ← (← section_.getObjVal? "tools").getArr?
-      let tools ← toolsJson.toList.mapM fun j => do
-        let tool ← getObjString j "tool"
-        let capArg ← getObjString j "cap_arg"
-        pure { tool, capArg := splitPath capArg : Kernels.LinearTool }
-      pure (some { grantsFile, tools })
+theorem ofBundle_consensus {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    cfg.consensus.isSome = b.effectiveConsensus.isSome := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    cases b.effectiveConsensus <;> rfl
+  · simp at h
 
-def parseBudgetSection (json : Json) : Except String Kernels.BudgetConfig := do
-  match ← getObjValOpt json "budget" with
-  | none => pure []
-  | some section_ =>
-      let budgetsJson ← (← section_.getObjVal? "budgets").getArr?
-      let cfg ← budgetsJson.toList.mapM fun j => do
-        let name ← getObjString j "name"
-        let cap ← (← j.getObjVal? "cap").getNat?
-        let tools ← parseStringList (← j.getObjVal? "tools")
-        let costArg ← match ← getObjValOpt j "cost_arg" with
-          | some v => pure (some (splitPath (← v.getStr?)))
-          | none => pure none
-        pure { name, cap, tools, costArg : Kernels.BudgetSpec }
-      -- Fail closed: same-name budgets share one counter, so conflicting caps
-      -- would leave the smaller cap silently unenforceable (see
-      -- `Kernels.budgetCapsConsistent`). Equal-cap duplicates stay legal.
-      if Kernels.budgetCapsConsistent cfg then pure cfg
-      else throw "duplicate budget name with conflicting caps"
+theorem ofBundle_convergence {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    cfg.convergence.isEmpty = b.effectiveConvergence.isEmpty := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    cases b.effectiveConvergence <;> rfl
+  · simp at h
+
+theorem ofBundle_calibration {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    (∃ c, cfg.calibration = some c ∧ c.enabled = true)
+      ↔ (∃ s, b.calibration = some s ∧ s.enabled = true) := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    cases b.calibration <;> simp
+  · simp at h
+
+theorem ofBundle_linear {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    cfg.linear.isSome = b.effectiveLinear.isSome := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    cases b.effectiveLinear <;> rfl
+  · simp at h
+
+theorem ofBundle_budget {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    cfg.budget.isEmpty = b.effectiveBudget.isEmpty := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    cases b.effectiveBudget <;> rfl
+  · simp at h
+
+theorem ofBundle_temporal {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    cfg.temporal = b.effectiveTemporal.map fun r =>
+      { name := r.name, trigger := r.trigger, forbidden := r.forbidden } := by
+  unfold ofBundle at h
+  split at h
+  · injection h with h
+    subst h
+    rfl
+  · simp at h
 
 /-- Real Ed25519 verification for the trusted config envelope. The config
     signing key is a startup trust root, separate from approval-token keys.
@@ -132,39 +168,17 @@ def verifyConfigSignature (publicKey payload signature : String) : Bool :=
     signatures and is therefore not a trust boundary by itself; real loaders
     must call `checkTrustedConfig` / `checkEnvelope` first. It is factored out
     so the conformance model oracle can initialise from a harness-trusted
-    payload without executing the `@[extern]` Ed25519 leaf in the interpreter. -/
+    payload without executing the `@[extern]` Ed25519 leaf in the interpreter.
+
+    The vocabulary is `Seal.parsePolicyBundle` — the policy-v2 7-kernel
+    bundle, one parser across the native, wasm, and model lanes, with hard
+    errors on unknown keys at the payload, section, and entry levels. -/
 def parseCanonicalConfigPayload (payload : String) :
     Except String TrustedConfig := do
   if (SealV2.parse payload).isNone then
     throw "config payload is not canonical (SealV2 parse rejected it)"
   let json ← Json.parse payload
-  let epoch ← (← json.getObjVal? "epoch").getNat?
-  if epoch == 0 then
-    throw "config epoch must be ≥ 1"
-  let safetyJson ← json.getObjVal? "safety"
-  let outerServer ← match ← getObjValOpt json "server" with
-    | some value => pure (some (← value.getStr?))
-    | none => pure none
-  let innerServer ← match ← getObjValOpt safetyJson "server" with
-    | some value => pure (some (← value.getStr?))
-    | none => pure none
-  if outerServer.isSome && innerServer.isSome && outerServer != innerServer then
-    throw "server identity conflicts between trusted config and safety policy"
-  -- Enrich the exact JSON handed to the policy core. Policy-v1 ignores this
-  -- unknown field; policy-v2 parses it and commits server + tool + arguments.
-  -- This keeps the host compatible with the immutable v1 pin while making the
-  -- v2 evaluator authoritative once that pin is promoted.
-  let safetyJson := match outerServer, innerServer with
-    | some server, none => safetyJson.setObjVal! "server" (.str server)
-    | _, _ => safetyJson
-  let safety ← Seal.parsePolicyJson safetyJson
-  let temporal ← parseTemporalSection json
-  let consensus ← parseConsensusSection json
-  let convergence ← parseConvergenceSection json
-  let calibration ← parseCalibrationSection json
-  let linear ← parseLinearSection json
-  let budget ← parseBudgetSection json
-  pure { epoch, safety, temporal, consensus, convergence, calibration, linear, budget }
+  ofBundle (← Seal.parsePolicyBundle json)
 
 /-- Pure, fail-closed config check. The payload must
     1. carry a real Ed25519 signature binding it to the trusted public key,

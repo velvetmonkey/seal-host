@@ -1,38 +1,40 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the pathological-number fail-closed fix: the kernel refuses (fails
-closed) a wire line carrying a monster-exponent JSON number BEFORE Json.parse
-evaluates 10^exponent and aborts. This rebuild is REQUIRED and correct — the fix
-changes the kernel, so the wasm pin changes with it (the previous d3067bc0 build
-returned passthrough on the pathological line, the Lane C native-vs-wasm
-divergence this fix closes). Differential-verified against the real Lean model
-over corpus C and the three-way property differential (see
-docs/CONFORMANCE-BRIDGE.md, WASM section).
+Built from the 7-kernel DX surface: the policy-v2 config vocabulary
+(`Seal.parsePolicyBundle`, mcp-seal-dev) now parses all seven kernel sections
+— per-section `enabled` flags, hard errors on unknown keys at the payload,
+section, and entry levels — and `Host.ofBundle` maps the parsed bundle onto
+the unchanged kernel config types. This rebuild is REQUIRED and correct — the
+config parser is kernel source, so the wasm pin changes with it. Decision
+semantics on already-valid configs are unchanged (`activeKernels` identical;
+honesty matrix byte-identical); rejected-config behaviour is strictly
+stricter. Differential-verified against the real Lean model over corpus C and
+the three-way property differential (see docs/CONFORMANCE-BRIDGE.md, WASM
+section).
 
-Kernel source    : mcp-seal-dev 6bbadbc7b770f307561751fe1e5d328376fab45b
-                   (fix/pathological-number-fail-closed — Seal.JsonUtil.wireNumbersSafe)
-Host source      : seal-host fix/pathological-number-fail-closed
-                   (Host.classifyLine guard + LineClass.refuse fail-closed route)
-Build date       : 2026-07-16
+Kernel source    : mcp-seal-dev cc79c86691ca25b728c9cc1968d07cacb09cd39e
+                   (feat/dx-surface-7-kernels — Seal.PolicyBundle)
+Host source      : seal-host feat/dx-surface-7-kernels
+                   (Host.ofBundle + bundle_* registration tripwires)
+Build date       : 2026-07-17
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546  (3687467 bytes)
-  seal.js    4197af01de976c18399570be33cc53e6e704f3fc2129da4f0d16cb27313f3df2
+  seal.wasm  a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af  (3798520 bytes)
+  seal.js    1b565eef3373b56b56ed295ddf5511c76f2ba3a24856640165cb2eb84309ffc5
 
 Supersedes the previous conformance pin sha256
-  d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
-(built at 46a9e93; correct on corpus C, but diverged from the native .so on the
-pathological-number input — it returned passthrough where native/interpreter
-aborted; both directions are closed by the fail-closed guard in this build).
-That build in turn superseded the fleet pin
-  df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8.
+  ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
+(the pathological-number fail-closed build at mcp-seal 6bbadbc7; its
+fail-closed guard and all decision semantics are carried forward unchanged).
+That build superseded d3067bc0 (Lane C native-vs-wasm divergence, closed),
+which superseded the fleet pin df42cbad.
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
-  ./build_core.sh               # ir -> build-core/*.o (incl Seal/JsonUtil guard)
+  ./build_core.sh               # ir -> build-core/*.o (incl Seal/PolicyBundle)
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
   # then: cp build-core/seal.{wasm,js} verified/

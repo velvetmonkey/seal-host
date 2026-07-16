@@ -20,21 +20,37 @@ The host authenticates one whole `Host.TrustedConfig` payload with Ed25519.
 The signature covers the exact payload string bytes in the envelope; the
 startup `--pubkey` is the trust root and is not read from that envelope. The
 top-level keys understood by the host are `epoch`, optional `server`, and the
-seven kernel sections below. `seal policy sign` and `seal scan` reject any
-other top-level key: a typo such as `temporral` must not silently leave a
-kernel off.
+seven kernel sections below. The host's parser itself — not just the
+authoring tools — rejects any other key, at the payload, section, and entry
+levels: a typo such as `temporral` must not silently leave a kernel off.
+(`seal policy sign` and `seal scan` apply the same top-level discipline when
+authoring.)
 
 `epoch` is a required natural number greater than zero. `server`, when
 present, is a string. `safety` is required; the other six sections are
 optional and absence means that no configured, non-vacuous guarantee from
-that kernel participates. A present section can still be ineffective: an
-empty tool/policy set enforces nothing, and Calibration with `enabled:false`
-is explicitly inactive. The authoring tools report these separately as
-`ACTIVE`, `PRESENT-BUT-INACTIVE`, and `ABSENT/OFF`.
+that kernel participates. Every optional section also accepts an `enabled`
+boolean: it defaults to `true`, and `enabled:false` is equivalent to deleting
+the section — except Calibration, whose `enabled` defaults to `false` and
+whose present-but-disabled state is deliberately distinct (EXPERIMENTAL,
+opt-in twice; the `calibration_registered_iff` theorem pins the double gate).
+Safety accepts no `enabled` key and Temporal can only be emptied, never
+de-registered: S and T are registered unconditionally
+(`safety_always_registered` / `temporal_always_registered`). A present
+section can still be ineffective: an empty tool/policy set enforces nothing.
+The authoring tools report these separately as `ACTIVE`,
+`PRESENT-BUT-INACTIVE`, and `ABSENT/OFF`.
 
-The schemas below follow the `parse*` functions in `Host/Config.lean`. A
-“natural” is a non-negative JSON integer. Dotted argument paths are split on
-`.` and empty path components are discarded.
+The vocabulary and parser are the policy-v2 bundle,
+`Seal.parsePolicyBundle` (`mcp-seal-dev/Seal/PolicyBundle.lean`) — one
+verified config parser across the native `.so`, wasm, and Lean-model lanes;
+`Host.ofBundle` maps the parsed bundle onto the kernel config types, and the
+`bundle_*_registered_iff` tripwires (`FfiSpec.lean`) pin that a bundle
+activates exactly the kernels it configures. The schemas below follow those
+parsers. A “natural” is a non-negative JSON integer. Dotted argument paths
+are split on `.` and empty path components are discarded. Inside `safety`,
+`approval` additionally accepts `replay_store` — the replay-store pointer
+consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
 
 ### Safety (S) — required
 
@@ -216,6 +232,22 @@ section is present but vacuous when no budget covers any tool.
 
 **Guarantee:** a composed allow for a B-gated call implies every covering
 budget resolved its cost and admitted it without exceeding its cap.
+
+### Budget × Linear: pinned known gap
+
+Proven, in the pure two-phase commit model (`Host/Commit.lean`): a call the
+composed verdict denies commits no decide-phase state — a Safety-denied call
+spends no budget and consumes no linear grant
+(`pureCommit_deny_no_decide_commit`, `budget_commitStep_deny`), committed
+traces stay within caps (`budget_committed_trace_within_cap_of_consistent`)
+and never double-spend (`linear_committed_trace_no_double_spend`), and the
+deployed loop body is bound to the model by the `phase1Held_*` lemmas.
+NOT proven: the IO realization of that commit discipline through the FFI
+boundary (mirrored, not proven), and any caller dimension — budget counters
+and linear grants are global, so one caller can exhaust another's allowance
+(characterized end-to-end in `Test/DxSurface.lean`). The budget×linear
+composition proof is a queued follow-up goal; until it lands, read B and L
+guarantees as per-config-global, never per-caller.
 
 ### Composed guarantee and boundary
 
