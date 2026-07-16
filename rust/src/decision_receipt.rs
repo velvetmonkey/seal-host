@@ -18,6 +18,17 @@ const VERIFIED_WASM: &[u8] = include_bytes!("../../receipt-verifier/wasm/seal.wa
 pub const VERIFIED_WASM_SHA256: &str =
     "ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546";
 
+/// Declared verification profile of seal-host's receipt-verifier surface
+/// (seal-assurance-kit docs/VERIFY-PROFILES.md): P-ENFORCE — the production
+/// receipt gate. The embedded re-derivation body above is the verifier body
+/// receipts name via `kernel_identity.wasm_sha256`; the gating surface
+/// (`scripts/v2_receipt_conformance.py`, the Golden Path demos) always
+/// supplies the config-signer trust-anchor pin (`--expected-config-pubkey`)
+/// and consumes the pinned external verifiers' 0/4/3/1-class exit codes.
+/// The fleet differentials key expected agreement/divergence off this
+/// declaration; changing it is a design decision, not a refactor.
+pub const VERIFY_PROFILE: &str = "P-ENFORCE";
+
 #[derive(Debug, Clone)]
 pub struct ApprovalIdentity {
     pub channel: String,
@@ -434,6 +445,31 @@ mod tests {
     #[test]
     fn embedded_wasm_matches_the_pinned_rederivation_identity() {
         assert_eq!(sha256_hex(VERIFIED_WASM), VERIFIED_WASM_SHA256);
+    }
+
+    /// Profile self-check (docs/VERIFY-PROFILES.md): the declaration is
+    /// P-ENFORCE and satisfies the spec's extraction grammar — the token
+    /// name, then a quoted profile id, on one non-comment line of this
+    /// file — so the fleet tools can read it without compiling this
+    /// crate. A red here means the copy re-declared itself — a design
+    /// decision, not a refactor; report it.
+    #[test]
+    fn verify_profile_declared_and_grammar_extractable() {
+        assert_eq!(VERIFY_PROFILE, "P-ENFORCE");
+        let src = include_str!("decision_receipt.rs");
+        let extracted = src.lines().find_map(|l| {
+            let code = l.trim_start();
+            if code.starts_with("//") || code.starts_with("///") {
+                return None;
+            }
+            let idx = code.find("VERIFY_PROFILE")?;
+            let rest = &code[idx..];
+            let start = rest.find('"')? + 1;
+            let end = start + rest[start..].find('"')?;
+            let v = &rest[start..end];
+            if v.starts_with("P-") { Some(v.to_string()) } else { None }
+        });
+        assert_eq!(extracted.as_deref(), Some("P-ENFORCE"));
     }
 
     /// Golden vectors twinned with Host/Audit.lean's `#guard_msgs` block:
