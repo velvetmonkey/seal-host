@@ -467,7 +467,11 @@ mod tests {
             let start = rest.find('"')? + 1;
             let end = start + rest[start..].find('"')?;
             let v = &rest[start..end];
-            if v.starts_with("P-") { Some(v.to_string()) } else { None }
+            if v.starts_with("P-") {
+                Some(v.to_string())
+            } else {
+                None
+            }
         });
         assert_eq!(extracted.as_deref(), Some("P-ENFORCE"));
     }
