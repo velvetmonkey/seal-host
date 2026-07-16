@@ -34,6 +34,7 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = join(REPO, "docs", "HONESTY-MATRIX.md");
 const ASSERTIONS = join(REPO, "docs", "honesty-assertions.json");
 const RUST_TEST = join(REPO, "rust", "tests", "topology_matrix.rs");
+const IDENTITY_TEST = join(REPO, "rust", "tests", "receipt_identity.rs");
 const CI_YML = join(REPO, ".github", "workflows", "ci.yml");
 
 // Evidence RECORDS: facts about specific past runs, quoted with their date.
@@ -64,10 +65,19 @@ function loadLeanJson(argPath) {
     });
   }
   const data = JSON.parse(raw);
-  if (data.schema !== "seal-honesty-matrix/v1")
+  if (data.schema !== "seal-honesty-matrix/v2")
     die(`unexpected Lean JSON schema: ${data.schema}`);
-  for (const key of ["kernels", "arithmetic", "boundTheorems", "mandatory"])
+  for (const key of ["kernels", "arithmetic", "boundTheorems", "mandatory", "identity"])
     if (!(key in data)) die(`Lean JSON missing key: ${key}`);
+  for (const key of [
+    "signedChannel",
+    "unauthenticatedChannels",
+    "approverTheorems",
+    "callerNogoTheorems",
+  ])
+    if (!(key in data.identity)) die(`Lean JSON identity block missing key: ${key}`);
+  if (data.identity.approverTheorems.length === 0 || data.identity.callerNogoTheorems.length === 0)
+    die("Lean JSON identity block has an empty theorem list — nothing is bound");
   if (data.kernels.length !== data.arithmetic.provenKernels)
     die("kernel row count disagrees with arithmetic.provenKernels");
   return data;
@@ -117,6 +127,19 @@ function parseTestedEvidence(lean) {
   requireAll(ci, ".github/workflows/ci.yml", [
     "cargo test",
     "working-directory: rust",
+  ]);
+
+  // The D3 identity differential: the receipt's approval_identity is the
+  // configured trust root, request-independent, checked against the REAL
+  // binary — including the planted self-asserted caller. Absence of any of
+  // these is a hard error, never a silently confident identity section.
+  const identityRust = readFileSync(IDENTITY_TEST, "utf8");
+  requireAll(identityRust, "rust/tests/receipt_identity.rs", [
+    "fn approval_identity_ignores_self_asserted_caller",
+    "fn approval_identity_tracks_trust_root_not_request",
+    "PINNED_KEY_ID",
+    "CARGO_BIN_EXE_seal-host-rs",
+    '"caller_id":"root"',
   ]);
 
   return { probeKernels };
@@ -237,6 +260,33 @@ function render(lean, assertions) {
   push("");
   push(
     "`consensus-bytes` (`Kernels/ConsensusBytes.lean`) is **proven, NOT wired, not reachable, untested in deployment**. `Ffi.byteConsensus_never_registered` proves no config, clock or evidence reaches it; no `CONFIG.md` section names it; it has no deployable topology to test at. It appears here because omitting it would make this table marketing.",
+  );
+  push("");
+  push("## Who does a receipt authenticate?");
+  push("");
+  const ident = lean.identity;
+  const approverThms = ident.approverTheorems.map((t) => `\`${t}\``).join(", ");
+  const nogoThms = ident.callerNogoTheorems.map((t) => `\`${t}\``).join(", ");
+  const devChannels = ident.unauthenticatedChannels.map((c) => `\`${c}\``).join("/");
+  push(
+    "The per-kernel table above is about enforcement. This section is about IDENTITY — the other question an evaluator asks — and it has an impossible cell that a lesser matrix would have filled in.",
+  );
+  push("");
+  push("| Identity | In the receipt? | Authenticated? | Basis |");
+  push("|---|---|---|---|");
+  push(
+    `| **The approver** (whose key authorized this action) | ✅ \`approval.approval_identity\` — \`{channel, key_id}\` | ✅ on \`--channel ${ident.signedChannel}\` ONLY — \`key_id\` is the SHA-256 fingerprint of the operator-configured approval verifying key, a boot-scoped constant of the trust root; the ${devChannels} channels are DEV-ONLY and UNAUTHENTICATED and their receipts name a channel kind, no key | ✅ derived — ${approverThms}; differential against the real binary in \`rust/tests/receipt_identity.rs\` (a planted \`caller_id\` in the arguments must not move the identity) |`,
+  );
+  push(
+    `| **The caller** (which agent made this call) | ❌ deliberately ABSENT | ❌ IMPOSSIBLE at this topology — stdio mediation carries no transport credential, so every request byte is authored by the gated agent itself; any \`caller_id\` field would be an adversary echo wearing an identity's clothes | ✅ derived — ${nogoThms} |`,
+  );
+  push("");
+  push(
+    "The no-go is a theorem, not a scoping choice: with a total send relation (any caller can emit any bytes — the stdio fact), NO function of everything the host holds at dispatch time soundly names the sender. The identity value the receipt DOES carry is provably request-independent: the signed approval token gates whether the `approval` block appears, never what it says.",
+  );
+  push("");
+  push(
+    "**What would change the answer (V2.1, the G1 caller/principal axis):** a topology that constrains who can send what — per-caller transport credentials (peer creds on a per-caller socket, an authenticated gateway in front, per-caller approval keys). `Host.ReceiptIdentity.credentialed_topology_authenticates` proves that seam suffices once it exists: on a credential-constrained send relation an authenticator is exhibited. Until then, an honest receipt binds the approver and refuses to name the caller.",
   );
   push("");
   push("## Calibration's double gate");

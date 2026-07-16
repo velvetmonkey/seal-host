@@ -324,7 +324,7 @@ Every v1 field carries forward with unchanged semantics. New fields:
 |---|---|---|---|
 | `approval` | object | yes when mediated and `verdict = "ALLOW"`; optional on BLOCK (present iff an approval was consulted) | the approval that authorized the effect — see 11.2 |
 | `authorization` | `"approval"` \| `"explicit_policy_allow"` | required on new mediated ALLOW producers; absent on BLOCK | distinguishes a human-approved guarded ALLOW from policy-v2's explicit safe ALLOW. Legacy v2 ALLOW receipts without it are interpreted as `approval`. |
-| `approval.approval_identity` | object | yes within `approval` | `{channel, key_id?}`; `channel` ∈ `"file" \| "interactive" \| "ed25519"`; `key_id` = signer public-key fingerprint, present **iff** `channel = "ed25519"`. Never asserts a session id the producer did not parse. |
+| `approval.approval_identity` | object | yes within `approval` | `{channel, key_id?}`; `channel` ∈ `"file" \| "interactive" \| "ed25519"`; `key_id` = SHA-256 fingerprint of the OPERATOR-CONFIGURED approval verifying key (`--approval-pubkey`), present **iff** `channel = "ed25519"`. A boot-scoped constant of the trust root — never derived from the request, never from the token (the token gates whether `approval` appears, not what this says). Names the APPROVER's key, never the caller — see the authority frontier below. Never asserts a session id the producer did not parse. |
 | `approval.nonce` | string | yes iff `channel = "ed25519"`; absent otherwise unless the channel truly carried one | approval nonce (64 lowercase hex on the signed channel) |
 | `approval.issued_at` | integer (epoch ms) | yes iff the channel carried it | mint time as presented; producers MUST NOT invent it |
 | `approval.expiry` | integer (epoch ms) | yes iff derivable (`issued_at` + TTL) or carried | absolute expiry deadline |
@@ -355,6 +355,43 @@ the request itself. Verifiers re-derive what the receipt carries: on an
 unparseable-request receipt that is the kernel material
 (`certs`/`emitted_bytes`/`kernel_config`) against the raw line identity,
 with no canonical-request re-derivation possible.
+
+**The authority frontier (normative — who a receipt authenticates):**
+`approval_identity` answers *"whose key authorized this action"* and NEVER
+*"which agent made this call"*. Its value is a boot-scoped constant of the
+approval trust root: the `channel` flag the operator started the host with,
+and (`ed25519` only) the SHA-256 fingerprint of the configured approval
+verifying key. The signed approval token gates whether the `approval` block
+appears; it never chooses the identity value. The authentication claim is
+CHANNEL-SCOPED: only `ed25519` verifies signatures; `file` and `interactive`
+are DEV-ONLY and unauthenticated — their receipts name a channel kind and no
+key, and a verifier must read them as carrying no identity authentication at
+all.
+
+There is no caller identity in the receipt, and that absence is proven
+rather than pending: on a stdio mediation topology every request byte is
+authored by the very agent being gated, so NO function of the mediated
+bytes — or of anything else the host holds at dispatch time — can
+authenticate the caller (`Host/ReceiptIdentity.lean`,
+`stdio_no_caller_authentication`; the request-independence of the identity
+that IS present is `receipt_identity_separated`, exercised against the real
+binary by `rust/tests/receipt_identity.rs`). Producers MUST NOT mint a
+`caller_id` / `program_origin` / agent-identity field from request material;
+whatever value one caller can plant there, every other caller can plant
+byte-identically (`forgeable_echo`) — such a field is an unauthenticated
+echo wearing an identity's clothes, and verifiers MUST treat any occurrence
+of one as descriptive request material, never as provenance.
+
+**What would bind a caller (V2.1 — the G1 caller/principal axis):** a
+topology change, not a receipt field: per-caller transport credentials
+(peer-credentialed per-caller sockets, an authenticated gateway in front of
+the host, or per-caller approval keys). Once the transport constrains who
+can send what, an authenticator exists —
+`credentialed_topology_authenticates` proves the seam suffices — and a
+`caller` binding can then ride the same trusted plane the isolation
+theorems already filter on (`Host/Provenance.lean`,
+`replayNamespace_trusted_plane`). Until then the honest receipt binds the
+approver and refuses to name the caller.
 
 ### 11.2 Requiredness matrix
 
