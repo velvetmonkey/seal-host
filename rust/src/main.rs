@@ -31,7 +31,7 @@
 
 use seal_host_rs::a3;
 use seal_host_rs::decision_receipt::{
-    ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
+    request_parts, sha256_hex, ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
 };
 use seal_host_rs::lean;
 use seal_host_rs::providers::{self, ApprovalProvider};
@@ -331,6 +331,49 @@ fn emit_approval_drop_warnings(warnings: &[providers::ApprovalDropWarning]) {
     }
 }
 
+/// The P2-c observability signal for a FORCED reduced-scope forward: an ALLOW
+/// whose wire line `request_parts` cannot recover (whole-line serde failure — the
+/// `1e309` / argless / non-object-args class). Returns `None` for a normal
+/// parseable ALLOW, so the signal fires ONLY on the reduced-scope condition; the
+/// reduced-scope test hook is `request_parts` itself, the SAME function the
+/// receipt writer uses, so the signal's condition is identical to the receipt's
+/// by construction. `count` is the running total of forced downgrades this
+/// session (burst visibility).
+///
+/// `parse_error` and `tool_hint` can carry ATTACKER-CHOSEN bytes from the wire;
+/// `json!()` string-escaping is the ONLY control that stops them forging a second
+/// stderr line (quote-breaking, newline injection, ANSI smuggling). Kept as a
+/// named fn so a regression test pins the escaping — swapping this for `format!()`
+/// would silently kill it. Passive tap: reads only `line`, never `wire`, the
+/// receipt, or the verdict.
+fn reduced_scope_forward_line(line: &str, count: u64) -> Option<String> {
+    let parse_error = match request_parts(line) {
+        Ok(_) => return None,
+        Err(error) => error,
+    };
+    // Best-effort tool hint: present only when the line is valid JSON carrying a
+    // string `params.name` (the argless / non-object-args class); `null` when the
+    // whole line is unparseable (the `1e309` class). Never fails the signal.
+    let tool_hint = serde_json::from_str::<Value>(line.trim())
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/params/name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    Some(
+        json!({
+            "event": "reduced_scope_forward",
+            "request_sha256": sha256_hex(line.as_bytes()),
+            "parse_error": parse_error,
+            "tool_hint": tool_hint,
+            "count": count,
+        })
+        .to_string(),
+    )
+}
+
 /// The Lean routing view of one wire line: the line terminator (`\n` or
 /// `\r\n`) stripped. This framing strip is the ONLY transformation between
 /// the client's bytes and what Lean judges; the bytes forwarded to the child
@@ -575,6 +618,10 @@ fn run() -> i32 {
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
     let mut wire: Vec<u8> = Vec::new();
+    // P2-c observability: monotonic count of forced reduced-scope forwards, so a
+    // BURST (the griefing pattern) is distinguishable from an occasional
+    // legitimate unparseable call. Passive — never gates the forward.
+    let mut reduced_scope_forwards: u64 = 0;
     loop {
         wire.clear();
         match reader.read_until(b'\n', &mut wire) {
@@ -674,6 +721,16 @@ fn run() -> i32 {
                     }
                 };
                 consume_pending_approval(&mut pending_approvals, consumed);
+                // P2-c passive observability tap: an ALLOW forwarded with an
+                // UNRECOVERABLE request (reduced-scope receipt) is a forced
+                // downgrade an operator must be able to see and count. Emitted
+                // BEFORE the forward but reads only `line` — it never touches
+                // `wire`, the receipt, or the verdict, so the forward stays
+                // byte-identical with or without it.
+                if let Some(signal) = reduced_scope_forward_line(line, reduced_scope_forwards + 1) {
+                    reduced_scope_forwards += 1;
+                    eprintln!("{signal}");
+                }
                 let _ = child_in.write_all(&wire);
                 let _ = child_in.flush();
             }
@@ -901,6 +958,64 @@ mod tests {
         //    a structural sibling — there is exactly one approval_drop object.
         assert!(parsed["approval_drop"]["source"] == "control_file");
         assert!(parsed.get("approval_drop").is_some() && parsed.as_object().unwrap().len() == 1);
+    }
+
+    /// P2-c signal, unit half: `reduced_scope_forward_line` fires EXACTLY on the
+    /// unrecoverable-request condition and is silent on a normal parseable ALLOW.
+    #[test]
+    fn reduced_scope_forward_line_fires_only_on_unrecoverable_request() {
+        // Parseable guarded call → no signal (a normal ALLOW must stay silent).
+        let parseable = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table t"}}}"#;
+        assert!(
+            reduced_scope_forward_line(parseable, 1).is_none(),
+            "a parseable ALLOW must not emit the reduced-scope signal"
+        );
+
+        // Whole-line serde failure (the 1e309 class) → signal fires, tool_hint
+        // is null (the line is not parseable JSON), request_sha256 matches.
+        let overflow = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table t","x":1e309}}}"#;
+        let signal = reduced_scope_forward_line(overflow, 7).expect("unrecoverable line must signal");
+        let parsed: serde_json::Value = serde_json::from_str(&signal).unwrap();
+        assert_eq!(parsed["event"], "reduced_scope_forward");
+        assert_eq!(parsed["request_sha256"], sha256_hex(overflow.as_bytes()));
+        assert!(parsed["parse_error"].is_string());
+        assert!(parsed["tool_hint"].is_null(), "unparseable line has no tool hint");
+        assert_eq!(parsed["count"], 7);
+    }
+
+    /// P2-c signal, escaping half (the T4 discipline for this stream): the
+    /// `tool_hint` can carry an ATTACKER-CHOSEN `params.name` (the non-object-
+    /// arguments reduced-scope class is valid JSON, so the name flows into the
+    /// signal). `json!()` escaping is the ONLY control that stops those bytes
+    /// forging a second stderr line. Swap it for `format!()` and this goes RED.
+    #[test]
+    fn reduced_scope_forward_line_escapes_hostile_tool_hint_no_second_line() {
+        // Quote-break, CR/LF newline forge, ANSI escape, NUL — the smuggling kit.
+        let hostile =
+            "\"}\n{\"event\":\"reduced_scope_forward\",\"tool_hint\":\"FORGED\"}\r\n\u{1b}[31mx\u{1b}[0m\u{0000}end";
+        // Valid JSON with a string params.name but a NON-OBJECT arguments →
+        // request_parts fails on "lacks object params.arguments", so the signal
+        // fires AND carries the hostile name as tool_hint.
+        let wire = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": hostile, "arguments": "drop"}
+        })
+        .to_string();
+        let signal =
+            reduced_scope_forward_line(&wire, 1).expect("non-object-args line must signal");
+
+        // Exactly one physical line — no raw newline forged a second record.
+        assert_eq!(signal.lines().count(), 1, "hostile tool_hint forged a newline: {signal:?}");
+        assert!(
+            !signal.contains('\n') && !signal.contains('\r'),
+            "raw CR/LF survived escaping: {signal:?}"
+        );
+        // Valid JSON; the hostile name round-trips intact inside tool_hint, inert.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&signal).expect("escaped signal must parse as JSON");
+        assert_eq!(parsed["tool_hint"].as_str().unwrap(), hostile);
+        assert_eq!(parsed["event"], "reduced_scope_forward");
+        assert_eq!(parsed.as_object().unwrap().len(), 5, "exactly one signal object");
     }
 
     /// PURE, HOST-SIDE half of T3: `lean_view` collapses the three terminator
