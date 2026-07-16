@@ -59,11 +59,13 @@ theorem sealV2_accepts_canonical :
 -- full-size canonical parses).
 #guard (match classifyLine nonCanonicalLine with
         | .act a => a.ast?.isNone
-        | .passthrough => false)
+        | .passthrough => false
+        | .refuse => false)
 #guard stepRouteP .canonicalL0 (classifyLine nonCanonicalLine) [allowVerdict] == .block
 #guard (match classifyLine canonicalLine with
         | .act a => a.ast?.isSome
-        | .passthrough => false)
+        | .passthrough => false
+        | .refuse => false)
 #guard stepRouteP .canonicalL0 (classifyLine canonicalLine) [allowVerdict] == .forward
 -- COMPATIBLE contrast: the same non-canonical line FORWARDS under the deployed
 -- profile — exactly the gap `canonicalL0` closes.

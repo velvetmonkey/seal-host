@@ -1,33 +1,41 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the kernel-request-commitment working tree (the kernel commits to
-sha256 of the exact line it judged inside its audit output), differential-
-verified against the real Lean model over corpus C (see
+Built from the pathological-number fail-closed fix: the kernel refuses (fails
+closed) a wire line carrying a monster-exponent JSON number BEFORE Json.parse
+evaluates 10^exponent and aborts. This rebuild is REQUIRED and correct — the fix
+changes the kernel, so the wasm pin changes with it (the previous d3067bc0 build
+returned passthrough on the pathological line, the Lane C native-vs-wasm
+divergence this fix closes). Differential-verified against the real Lean model
+over corpus C and the three-way property differential (see
 docs/CONFORMANCE-BRIDGE.md, WASM section).
 
-Base commit      : 46a9e93 (feat/kernel-request-commitment)
-Build date       : 2026-07-15
+Kernel source    : mcp-seal-dev 6bbadbc7b770f307561751fe1e5d328376fab45b
+                   (fix/pathological-number-fail-closed — Seal.JsonUtil.wireNumbersSafe)
+Host source      : seal-host fix/pathological-number-fail-closed
+                   (Host.classifyLine guard + LineClass.refuse fail-closed route)
+Build date       : 2026-07-16
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66  (3666978 bytes)
-  seal.js    5a017fa4a71db7c214323c1dd1db415a96ec0afececf84f74ac1f4fc95dd972e
+  seal.wasm  ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546  (3687467 bytes)
+  seal.js    4197af01de976c18399570be33cc53e6e704f3fc2129da4f0d16cb27313f3df2
 
-Supersedes the fleet pin sha256
-  df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
-(the kernel whose audit committed to its decision but not to the judged
-line). Note: this directory previously held a6a73fa5… — a build that was
-never the fleet pin; the CI wasm differential was running a non-fleet
-artifact until this refresh (found 2026-07-15, fixed by pinning verified/
-to the fleet artifact from here on).
+Supersedes the previous conformance pin sha256
+  d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
+(built at 46a9e93; correct on corpus C, but diverged from the native .so on the
+pathological-number input — it returned passthrough where native/interpreter
+aborted; both directions are closed by the fail-closed guard in this build).
+That build in turn superseded the fleet pin
+  df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8.
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
-  ./build_core.sh               # ir -> build-core/*.o (20 project modules, incl Host_Sha256)
+  ./build_core.sh               # ir -> build-core/*.o (incl Seal/JsonUtil guard)
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
+  # then: cp build-core/seal.{wasm,js} verified/
 
 Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
   seal_init(envelope, pubkey) -> {ok,...}

@@ -3,6 +3,7 @@
 import Lean.Data.Json
 import SealV2.Parser
 import Seal.Classify
+import Seal.JsonUtil
 import Host.Action
 
 namespace Host
@@ -25,6 +26,12 @@ open Lean
 inductive LineClass where
   | passthrough
   | act (a : CanonicalAction)
+  /-- Fail-closed refusal: a wire line the host will not parse because it
+      carries a pathological numeric literal (a monster decimal exponent that
+      would make `Lean.Json.parse` evaluate `10^exponent` and abort — the Lane C
+      native-vs-wasm divergence). It is neither forwarded (never a bypass) nor
+      passed through (never fail-open); `stepRoute` routes it to `.block`. -/
+  | refuse
 
 private def jsonId (json : Json) : Json :=
   (json.getObjVal? "id").toOption.getD Json.null
@@ -36,6 +43,15 @@ private def jsonId (json : Json) : Json :=
     Non-`tools/call` lines pass through untouched. -/
 def classifyLine (line : String) : LineClass :=
   let trimmed := line.trimAscii.toString
+  -- Fail closed BEFORE `Json.parse` on a pathological numeric literal: a wire
+  -- number with a monster decimal exponent makes `Json.parse` evaluate
+  -- `10^exponent` and abort (native `.so` + Lean interpreter) while the
+  -- emscripten wasm degrades to passthrough — the Lane C divergence. Refusing
+  -- here fails closed IDENTICALLY in every lane (all run this guard): the line
+  -- is neither aborted on nor passed through. (Seal.JsonUtil.wireNumbersSafe.)
+  if !Seal.JsonUtil.wireNumbersSafe trimmed then
+    .refuse
+  else
   match Json.parse trimmed with
   | .error _ => .passthrough
   | .ok json =>
@@ -49,5 +65,17 @@ def classifyLine (line : String) : LineClass :=
             raw := line
             requestId := jsonId json
           }
+
+/-- **Fail-closed classification.** A wire line the pre-parse number guard
+    rejects (a pathological numeric literal) classifies as `.refuse` — NEVER
+    `.passthrough` (so it is never passed through unmediated, the fail-OPEN the
+    emscripten wasm exhibited) and never `.act` (it is not parsed, so
+    `Json.parse` never evaluates `10^exponent` and never aborts, the native/
+    interpreter fail-CLOSED crash). Both failure directions closed, identically
+    in every lane. -/
+theorem classifyLine_refuse_of_unsafe (line : String)
+    (h : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine, h, Bool.not_false, if_true]
 
 end Host

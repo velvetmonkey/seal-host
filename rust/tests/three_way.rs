@@ -73,9 +73,10 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// Pinned wasm artifact under test. Authority: wasm-spike/verified/PROVENANCE.txt
-/// (built at base commit 46a9e93, Lean v4.28.0, emscripten 6.0.0). This harness
-/// NEVER rebuilds the wasm; a hash mismatch is a preflight failure.
-const PINNED_WASM_SHA256: &str = "d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66";
+/// (rebuilt for the pathological-number fail-closed fix from mcp-seal-dev
+/// 6bbadbc7, Lean v4.28.0, emscripten 6.0.0). This harness NEVER rebuilds the
+/// wasm; a hash mismatch is a preflight failure.
+const PINNED_WASM_SHA256: &str = "ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546";
 
 const DEFAULT_SEED: u64 = 0x5EA1_C0DE_2026_0716;
 /// Fresh session every SEGMENT cases — bounds failure repro to one segment.
@@ -199,7 +200,7 @@ fn json_escape_u(c: u32) -> String {
 }
 
 fn fragment(rng: &mut Rng) -> String {
-    match rng.below(7) {
+    match rng.below(8) {
         // arbitrary f64 from raw bits, rendered as JSON if finite
         0 => {
             let x = f64::from_bits(rng.next());
@@ -213,6 +214,16 @@ fn fragment(rng: &mut Rng) -> String {
         1 => "9".repeat(1 + rng.below(500) as usize),
         // decimal exponent literals, some out of f64 range
         2 => format!("{}e{}", rng.next() as i32, (rng.below(800) as i64) - 400),
+        // PATHOLOGICAL decimal exponents — 7..20 digits, straddling the kernel's
+        // Nat.pow abort threshold. Pre-fix these ABORTED the native .so and the
+        // interpreter while the wasm passed through (the Lane C divergence);
+        // post-fix every lane fails closed to `block` identically. The corpus is
+        // no longer clamped away from this region — it exercises it on purpose.
+        6 => {
+            let digits = (7 + rng.below(14)) as usize;
+            let sign = if rng.below(2) == 0 { "" } else { "-" };
+            format!("1e{sign}{}", "9".repeat(digits))
+        }
         // "\uXXXX\uXXXX" escapes incl. lone/paired surrogates
         3 => format!(
             "\"{}{}\"",
@@ -546,71 +557,21 @@ fn build_corpus(
 
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut corpus: Vec<CorpusLine> = Vec::with_capacity(cases.len() + cases.len() / SEGMENT + 1);
-    for (i, mut c) in cases.into_iter().enumerate() {
+    for (i, c) in cases.into_iter().enumerate() {
         if i % SEGMENT == 0 && i > 0 {
             corpus.push(CorpusLine::Reinit);
         }
-        // Keep every generated case BELOW the kernel's JSON-number abort
-        // threshold (see `clamp_number_exponents`). Applied to both the step
-        // bytes (fed to every lane) and the inner line (fed to the in-process
-        // native classify), so they stay consistent and no case can abort the
-        // in-process lane mid-run.
-        c.step = clamp_number_exponents(&c.step);
-        c.inner = c.inner.map(|l| clamp_number_exponents(&l));
+        // NO exponent clamp: the fail-closed number guard (Seal.JsonUtil.
+        // wireNumbersSafe, in Host.classifyLine) now REFUSES a pathological
+        // numeric literal in EVERY lane, so the previously-aborting region
+        // (7+ digit exponents, generated on purpose by `fragment`) yields
+        // byte-identical `block` across native/wasm/model instead of the old
+        // native-abort/wasm-passthrough divergence. The corpus exercises that
+        // region directly — that is the point of un-clamping.
         *counts.entry(c.category).or_insert(0) += 1;
         corpus.push(CorpusLine::Case(c));
     }
     (corpus, counts)
-}
-
-/// Cap any decimal-exponent digit run at 6 digits.
-///
-/// LANE C FINDING (soak-discovered, characterized, reported — NOT papered
-/// over): a JSON number with a ~10-digit decimal exponent (e.g.
-/// `1e9999999999` in an argument value) makes the Lean decision core evaluate
-/// `Nat.pow 10 exponent` and abort with "Nat.pow exponent is too big". That
-/// abort fires IDENTICALLY in the native `.so` and the Lean interpreter (a
-/// GIVEN kernel robustness limit — the kernel is out of scope for this work),
-/// so within the aborting region it is not a codegen question. But the
-/// emscripten wasm does NOT abort there — it returns `passthrough` — so ABOVE
-/// the threshold the two trusted compiles genuinely DIVERGE. That divergence
-/// is pinned as an explicit finding by
-/// `kernel_number_pow_divergence_is_characterized` and written up in
-/// ~/src/seal-lane-c-report-2026-07-16.md.
-///
-/// The EQUIVALENCE differential's job is codegen agreement over the input
-/// space where the kernel is well-defined; clamping keeps the generated
-/// corpus in that region so its byte-identical PASS is meaningful (a completed
-/// run, not a crash). The curated overflow cases (`1e309`, `1e999999`,
-/// 400-digit integers — all ≤ 6 exponent digits) are untouched by this cap and
-/// all three lanes agree on them, so real overflow handling is still
-/// differentiated. Deterministic and byte-identical for every lane (drops only
-/// ASCII exponent digits past the sixth).
-fn clamp_number_exponents(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        out.push(b[i]);
-        if b[i] == b'e' || b[i] == b'E' {
-            let mut j = i + 1;
-            if j < b.len() && (b[j] == b'+' || b[j] == b'-') {
-                out.push(b[j]);
-                j += 1;
-            }
-            let start = j;
-            while j < b.len() && b[j].is_ascii_digit() {
-                if j - start < 6 {
-                    out.push(b[j]);
-                }
-                j += 1;
-            }
-            i = j;
-        } else {
-            i += 1;
-        }
-    }
-    String::from_utf8(out).expect("clamp drops only ASCII digits")
 }
 
 // ---- envelope -------------------------------------------------------------------
@@ -1275,37 +1236,30 @@ fn three_way_soak() {
     run_three_way(n);
 }
 
-/// LANE C FINDING, regression-pinned (soak-discovered at 250k cases; see the
-/// `clamp_number_exponents` note and ~/src/seal-lane-c-report-2026-07-16.md).
+/// LANE C FIX, regression-pinned. The pathological-number divergence the soak
+/// found is CLOSED: a `tools/call` whose argument value is a JSON number with a
+/// ~10-digit decimal exponent (which pre-fix aborted the native `.so` and the
+/// Lean interpreter via `Nat.pow`, while the emscripten wasm passed through)
+/// now fails closed to `block` in ALL THREE lanes, byte-identically. The
+/// pre-parse guard `Seal.JsonUtil.wireNumbersSafe` refuses the line before
+/// `Json.parse` evaluates `10^exponent`.
 ///
-/// On a `tools/call` whose argument value is a JSON number with a ~10-digit
-/// decimal exponent, the two trusted compiles DIVERGE:
-///   * native `libsealffi.so` (via `kernel_oracle`, out-of-process so the
-///     abort is OBSERVED not fatal) and the Lean interpreter model lane both
-///     ABORT — `Nat.pow exponent is too big` (the kernel evaluates
-///     `10^exponent`);
-///   * the emscripten `seal.wasm` does NOT abort — it returns a normal route.
-///
-/// This is a real codegen/runtime divergence layered on a kernel robustness
-/// limit (the kernel is a GIVEN here). The test asserts the CHARACTERIZED
-/// state so a change is noticed: if some day all three lanes agree again
-/// (e.g. the kernel gains a uniform canonical exponent bound), this test
-/// fails and the finding's status must be revisited in the report. Run
-/// out-of-process for every lane, so no lane's abort can take the test
-/// harness down with it.
+/// This test asserts the FIXED state, run out-of-process for every lane so a
+/// regression that reintroduces the native/interpreter abort is observed (a
+/// non-zero exit) rather than taking the test binary down with it. If any lane
+/// aborts again, or the three stop agreeing on `block`, the fix regressed —
+/// see ~/src/seal-kernel-pathological-number-report-2026-07-16.md.
 #[test]
-fn kernel_number_pow_divergence_is_characterized() {
+fn pathological_number_fails_closed_all_lanes() {
     if std::env::var("SEAL_SKIP_THREE_WAY").as_deref() == Ok("1") {
-        eprintln!("kernel_number_pow_divergence: SKIPPED via SEAL_SKIP_THREE_WAY=1");
+        eprintln!("pathological_number_fails_closed: SKIPPED via SEAL_SKIP_THREE_WAY=1");
         return;
     }
     let root = repo_root();
-    // needs node + lake; skip LOUDLY if absent (this test characterizes a known
-    // finding rather than gating the build)
     for tool in ["node", "lake"] {
         if Command::new(tool).arg("--version").output().is_err() {
             eprintln!(
-                "kernel_number_pow_divergence: SKIPPED — {tool} unavailable (finding is documented in the Lane C report)"
+                "pathological_number_fails_closed: SKIPPED — {tool} unavailable (fix documented in the report)"
             );
             return;
         }
@@ -1321,18 +1275,16 @@ fn kernel_number_pow_divergence_is_characterized() {
     fs::write(&envelope_file, &envelope).unwrap();
     fs::write(&payload_file, &payload).unwrap();
 
-    // the minimal repro: a well-formed tools/call, argument value = 1E<10 nines>
+    // the pre-fix aborting input: a well-formed tools/call, arg value 1E<10 nines>
     let line = format!(
         r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"t","arguments":{{"v":1E{}}}}}}}"#,
         "9".repeat(10)
     );
-    // NOTE: build the step input WITHOUT the clamp (this test is the ONE place
-    // that must reach the aborting region on purpose).
     let step = step_input(&line);
     fs::write(&corpus_file, format!("{step}\n")).unwrap();
 
-    // native, OUT OF PROCESS via kernel_oracle (linking the same .so) so its
-    // abort is an observable exit status, not a SIGABRT of this test binary.
+    // native, OUT OF PROCESS via kernel_oracle (same .so) — a regression abort
+    // is an observable exit status, not a SIGABRT of this test binary.
     let native = Command::new(env!("CARGO_BIN_EXE_kernel_oracle"))
         .arg(&envelope_file)
         .arg(&pk)
@@ -1350,41 +1302,68 @@ fn kernel_number_pow_divergence_is_characterized() {
             child.wait_with_output()
         })
         .expect("spawn kernel_oracle");
-    let native_aborted = !native.status.success();
+    let native_out = String::from_utf8_lossy(&native.stdout).trim().to_string();
 
     // model lane (Lean interpreter), out of process
-    let model_out = workdir.join("model.out");
+    let model_out_file = workdir.join("model.out");
     let model_status = Command::new("lake")
         .args(["env", "lean", "scripts/three_way_model_lane.lean"])
         .env("SEAL_CONF_PAYLOAD", &payload_file)
         .env("SEAL_CONF_CORPUS", &corpus_file)
-        .env("SEAL_CONF_OUT", &model_out)
+        .env("SEAL_CONF_OUT", &model_out_file)
         .current_dir(&root)
         .status()
         .expect("spawn lake");
-    let model_aborted = !model_status.success();
+    let model_out = fs::read_to_string(&model_out_file)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
     // wasm lane, out of process
-    let wasm_out = workdir.join("wasm.out");
-    let wasm_ok = run_wasm(&root, &envelope_file, &pk, &corpus_file, &wasm_out).is_ok();
-    let wasm_route = fs::read_to_string(&wasm_out).unwrap_or_default();
+    let wasm_out_file = workdir.join("wasm.out");
+    let wasm_ok = run_wasm(&root, &envelope_file, &pk, &corpus_file, &wasm_out_file).is_ok();
+    let wasm_out = fs::read_to_string(&wasm_out_file)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
-    println!("kernel_number_pow_divergence: native_aborted={native_aborted} model_aborted={model_aborted} wasm_ok={wasm_ok} wasm_out={wasm_route:?}");
+    println!(
+        "pathological_number_fails_closed:\n  native_exit_ok={} model_exit_ok={} wasm_ok={wasm_ok}\n  native={native_out}\n  model ={model_out}\n  wasm  ={wasm_out}",
+        native.status.success(),
+        model_status.success()
+    );
 
     let _ = fs::remove_dir_all(&workdir);
 
+    // no lane aborts any more
     assert!(
-        native_aborted,
-        "native .so expected to abort (Nat.pow) on a ~10-digit exponent; \
-         if it no longer aborts the kernel behavior changed — revisit the Lane C finding"
+        native.status.success(),
+        "native .so aborted on the pathological number — the fail-closed guard regressed"
     );
     assert!(
-        model_aborted,
-        "model lane expected to abort (Nat.pow) — revisit the Lane C finding if not"
+        model_status.success(),
+        "model lane aborted on the pathological number — the fail-closed guard regressed"
     );
-    assert!(
-        wasm_ok && !wasm_route.trim().is_empty(),
-        "wasm expected NOT to abort and to emit a route (the divergence); \
-         if wasm now also aborts the divergence closed — revisit the Lane C finding"
+    assert!(wasm_ok, "wasm lane failed on the pathological number");
+
+    // all three fail CLOSED, byte-identically, to a block (never passthrough)
+    let route = |s: &str| -> String {
+        serde_json::from_str::<serde_json::Value>(s)
+            .ok()
+            .and_then(|v| v.get("route").and_then(|r| r.as_str()).map(str::to_string))
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        route(&native_out),
+        "block",
+        "native did not fail closed to block: {native_out}"
+    );
+    assert_eq!(
+        native_out, model_out,
+        "native vs model diverge on the pathological number (fix must be byte-identical)"
+    );
+    assert_eq!(
+        native_out, wasm_out,
+        "native vs wasm diverge on the pathological number (fix must be byte-identical)"
     );
 }

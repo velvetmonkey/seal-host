@@ -44,6 +44,29 @@ def stepRoute (lc : LineClass) (verdicts : List Verdict) : StepRoute :=
       match combineVerdicts verdicts with
       | .allow => .forward
       | .deny => .block
+  -- A refused line (pathological number) is blocked unconditionally — no
+  -- verdicts, no policy dependence: fail-closed, and it never forwards.
+  | .refuse => .block
+
+@[simp] theorem stepRoute_refuse (verdicts : List Verdict) :
+    stepRoute .refuse verdicts = .block := rfl
+
+/-- A refused line NEVER forwards, whatever the verdicts — the fail-closed
+    guarantee for a pathological numeric literal, independent of any policy. -/
+theorem stepRoute_refuse_ne_forward (verdicts : List Verdict) :
+    stepRoute .refuse verdicts ≠ .forward := by
+  simp [stepRoute_refuse]
+
+/-- **Pathological numeric literal never forwards.** A wire line the pre-parse
+    number guard rejects routes to `.block` and NEVER `.forward`, whatever the
+    kernel verdicts and whatever the policy — the fail-closed guarantee over the
+    exact routing core `Ffi.stepImpl` runs. Combined with
+    `stepRoute_passthrough`, the refused line is also never passed through: no
+    input in this class yields a forward or a passthrough. -/
+theorem pathological_never_forwards (line : String) (verdicts : List Verdict)
+    (h : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString = false) :
+    stepRoute (classifyLine line) verdicts = .block := by
+  rw [classifyLine_refuse_of_unsafe line h, stepRoute_refuse]
 
 @[simp] theorem stepRoute_passthrough (verdicts : List Verdict) :
     stepRoute .passthrough verdicts = .passthrough := rfl
@@ -52,6 +75,6 @@ def stepRoute (lc : LineClass) (verdicts : List Verdict) : StepRoute :=
 theorem stepRoute_act_forward_iff (a : CanonicalAction) (verdicts : List Verdict) :
     stepRoute (.act a) verdicts = .forward ↔ combineVerdicts verdicts = .allow := by
   unfold stepRoute
-  cases h : combineVerdicts verdicts <;> simp [h]
+  cases h : combineVerdicts verdicts <;> simp
 
 end Host

@@ -110,6 +110,10 @@ def processHostLine
   | .passthrough =>
       childIn.putStr hostLine
       childIn.flush
+  | .refuse =>
+      -- Pathological numeric literal: fail closed. Block, do not forward.
+      writeLocked stdoutLock hostOut
+        (Seal.blockResponseLine Lean.Json.null "unsafe numeric literal")
   | .act act => do
       let (combined, verdicts) ← dispatch registry act
       -- This pure-Lean demo host commits to `hostLine` exactly as classified;
