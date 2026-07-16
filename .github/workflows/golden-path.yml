@@ -29,12 +29,13 @@ jobs:
       # verifies today's receipts against yesterday's kernel and fails
       # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
-      # by hand. 6d0d6eb carries kernel d3067bc0 (0db03ef carried df42).
+      # by hand. 0aeb35a carries kernel ff1bfd68 (6d0d6eb carried d3067bc0,
+      # 0db03ef carried df42).
       - name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: 6d0d6eb1512983ed9a1d09146476f806dd89d828
+          ref: 0aeb35a60adfa4c50b6bfcf761967b1c6280fde7
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
