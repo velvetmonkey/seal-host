@@ -1003,3 +1003,68 @@ fn multibyte_request_commitment_survives_the_ffi_seam() {
         "kernel and host must hash the multibyte line identically"
     );
 }
+
+/// The kernel approval target is a pure function of the tool name and the
+/// argument paths the policy names (`target: [db, arg:database, write, arg:sql]`);
+/// it IGNORES any argument key the policy does not name. So an attacker cannot
+/// change, dodge, or redirect an approval target by adding sibling keys — and,
+/// dually, a human approval granted for the clean call also covers any variant
+/// that only adds unnamed keys. This is the on-disk defence against the P0-2
+/// on-path downgrade; the Track-1 form is proved in mcp-seal
+/// `Seal.p0_2_policy_target_ignores_unnamed` (that lemma proves the invariance
+/// modulo `atPath` agreement — this test supplies the last mile that `atPath`'s
+/// `partial def` blocks in Lean, against the real kernel binary).
+///
+/// Exercised beyond one token: a scalar sibling (`x:1e309`, serde-hostile) AND a
+/// structurally different nested object/array sibling must both leave the target
+/// byte-identical to the clean call's.
+#[test]
+fn approval_target_ignores_keys_not_in_policy_target() {
+    let mut o = Oracle::spawn("target-ignores-siblings");
+
+    // Clean guarded call: {database:"prod", sql:"drop table accounts"}.
+    let clean = guarded_call(90, "drop table accounts");
+    o.send(&clean);
+    let t_clean = block_target(&o.expect_line()).expect("clean call names its approval target");
+
+    // Variant A — scalar serde-hostile sibling x:1e309 (raw string so the
+    // overflow token survives; serde rejects it, the kernel mediates it).
+    let scalar_sibling = r#"{"jsonrpc":"2.0","id":91,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    o.send(scalar_sibling);
+    let t_scalar =
+        block_target(&o.expect_line()).expect("scalar-sibling call names its approval target");
+
+    // Variant B — a structurally different sibling: a nested object holding an
+    // array and further nesting. Exercises the property past a single token.
+    let nested_sibling = r#"{"jsonrpc":"2.0","id":92,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","meta":{"tags":["a","b"],"nested":{"deep":true,"n":7}}}}}"#;
+    o.send(nested_sibling);
+    let t_nested =
+        block_target(&o.expect_line()).expect("nested-sibling call names its approval target");
+
+    assert_eq!(
+        t_clean, t_scalar,
+        "a scalar sibling key (x:1e309) must not change the approval target"
+    );
+    assert_eq!(
+        t_clean, t_nested,
+        "a nested object/array sibling key must not change the approval target"
+    );
+
+    // Non-vacuous end-to-end: the approval a human grants for the CLEAN target
+    // also authorises both unnamed-key variants — each forwards verbatim once
+    // approved (one-shot, so re-grant per send).
+    o.approve(&t_clean);
+    o.send(scalar_sibling);
+    assert_eq!(
+        o.expect_line(),
+        scalar_sibling,
+        "clean-target approval must authorise the scalar-sibling variant"
+    );
+    o.approve(&t_clean);
+    o.send(nested_sibling);
+    assert_eq!(
+        o.expect_line(),
+        nested_sibling,
+        "clean-target approval must authorise the nested-sibling variant"
+    );
+}
