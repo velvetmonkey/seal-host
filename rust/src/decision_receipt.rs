@@ -91,7 +91,10 @@ fn canonical_request(tool: &str, arguments: &Value) -> Value {
 /// that serde rejects, e.g. `1e309`), so a failure here must never influence
 /// whether the kernel's verdict is enacted — the receipt records the raw
 /// line hash instead and the decision stands.
-fn request_parts(line: &str) -> Result<(String, Value), String> {
+/// Public so the parser-boundary conformance test (`tests/parser_boundary.rs`)
+/// exercises the SAME structured-view parser the receipt layer runs — the
+/// lib.rs no-test-mirror rule.
+pub fn request_parts(line: &str) -> Result<(String, Value), String> {
     let request: Value = serde_json::from_str(line.trim())
         .map_err(|e| format!("cannot parse mediated request for receipt: {e}"))?;
     let tool = request
