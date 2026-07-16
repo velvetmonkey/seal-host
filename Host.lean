@@ -8,4 +8,5 @@ import Host.Registry
 import Host.Composition
 import Host.Commit
 import Host.Provenance
+import Host.ReceiptIdentity
 import Host.Audit

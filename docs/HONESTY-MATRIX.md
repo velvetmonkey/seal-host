@@ -34,6 +34,19 @@ Scope of the derivation, stated honestly: the theorem binding catches **rename a
 
 `consensus-bytes` (`Kernels/ConsensusBytes.lean`) is **proven, NOT wired, not reachable, untested in deployment**. `Ffi.byteConsensus_never_registered` proves no config, clock or evidence reaches it; no `CONFIG.md` section names it; it has no deployable topology to test at. It appears here because omitting it would make this table marketing.
 
+## Who does a receipt authenticate?
+
+The per-kernel table above is about enforcement. This section is about IDENTITY — the other question an evaluator asks — and it has an impossible cell that a lesser matrix would have filled in.
+
+| Identity | In the receipt? | Authenticated? | Basis |
+|---|---|---|---|
+| **The approver** (whose key authorized this action) | ✅ `approval.approval_identity` — `{channel, key_id}` | ✅ on `--channel ed25519` ONLY — `key_id` is the SHA-256 fingerprint of the operator-configured approval verifying key, a boot-scoped constant of the trust root; the `file`/`interactive` channels are DEV-ONLY and UNAUTHENTICATED and their receipts name a channel kind, no key | ✅ derived — `Host.ReceiptIdentity.receipt_identity_names_trust_root`, `Host.ReceiptIdentity.token_gates_presence_not_value`, `Host.ReceiptIdentity.receipt_identity_separated`, `Host.ReceiptIdentity.keyId_only_on_signed_channel`; differential against the real binary in `rust/tests/receipt_identity.rs` (a planted `caller_id` in the arguments must not move the identity) |
+| **The caller** (which agent made this call) | ❌ deliberately ABSENT | ❌ IMPOSSIBLE at this topology — stdio mediation carries no transport credential, so every request byte is authored by the gated agent itself; any `caller_id` field would be an adversary echo wearing an identity's clothes | ✅ derived — `Host.ReceiptIdentity.stdio_no_caller_authentication`, `Host.ReceiptIdentity.forgeable_echo`, `Host.ReceiptIdentity.credentialed_topology_authenticates` |
+
+The no-go is a theorem, not a scoping choice: with a total send relation (any caller can emit any bytes — the stdio fact), NO function of everything the host holds at dispatch time soundly names the sender. The identity value the receipt DOES carry is provably request-independent: the signed approval token gates whether the `approval` block appears, never what it says.
+
+**What would change the answer (V2.1, the G1 caller/principal axis):** a topology that constrains who can send what — per-caller transport credentials (peer creds on a per-caller socket, an authenticated gateway in front, per-caller approval keys). `Host.ReceiptIdentity.credentialed_topology_authenticates` proves that seam suffices once it exists: on a credential-constrained send relation an authenticator is exhibited. Until then, an honest receipt binds the approver and refuses to name the caller.
+
 ## Calibration's double gate
 
 `some cfg` with `enabled := false` is a distinct config state from `none`. Both leave calibration inactive — proven (`Ffi.calibration_registered_iff`), evaluated by the exe at all 16 calibration-clear masks (disabled ≡ absent, selection-identical), and exercised behaviourally by the A1 suite (`topology_matrix_calibration_absent_vs_disabled`: the two runs must be call-for-call identical).

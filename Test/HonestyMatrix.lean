@@ -2,6 +2,7 @@
 
 import Lean.Data.Json
 import FfiSpec
+import Host.ReceiptIdentity
 
 /-!
 # A2 — the honesty matrix, derived
@@ -55,6 +56,30 @@ private def boundTheorems : List String :=
    (let _ := @Ffi.linear_registered_iff; "Ffi.linear_registered_iff"),
    (let _ := @Ffi.budget_registered_iff; "Ffi.budget_registered_iff"),
    (let _ := @Ffi.byteConsensus_never_registered; "Ffi.byteConsensus_never_registered")]
+
+/-- Compile-time binding to the D3 receipt-identity theorems
+    (`Host/ReceiptIdentity.lean`): what the receipt's `approval_identity`
+    binds (the approval trust root, boot-scoped, request-independent) and
+    the caller no-go (no function of the mediated bytes authenticates the
+    caller at the stdio topology). Same discipline as `boundTheorems`:
+    rename or delete one and the matrix cannot regenerate. -/
+private def identityTheorems : List String :=
+  [(let _ := @Host.ReceiptIdentity.receipt_identity_names_trust_root;
+    "Host.ReceiptIdentity.receipt_identity_names_trust_root"),
+   (let _ := @Host.ReceiptIdentity.token_gates_presence_not_value;
+    "Host.ReceiptIdentity.token_gates_presence_not_value"),
+   (let _ := @Host.ReceiptIdentity.receipt_identity_separated;
+    "Host.ReceiptIdentity.receipt_identity_separated"),
+   (let _ := @Host.ReceiptIdentity.keyId_only_on_signed_channel;
+    "Host.ReceiptIdentity.keyId_only_on_signed_channel")]
+
+private def callerNogoTheorems : List String :=
+  [(let _ := @Host.ReceiptIdentity.stdio_no_caller_authentication;
+    "Host.ReceiptIdentity.stdio_no_caller_authentication"),
+   (let _ := @Host.ReceiptIdentity.forgeable_echo;
+    "Host.ReceiptIdentity.forgeable_echo"),
+   (let _ := @Host.ReceiptIdentity.credentialed_topology_authenticates;
+    "Host.ReceiptIdentity.credentialed_topology_authenticates")]
 
 /-! ## Sample config sections
 
@@ -256,10 +281,23 @@ private def kernelRow (kernel : String) : Json :=
      ("theorems",
       Json.arr (((kernelTheorems.lookup kernel).getD []).map toJson).toArray)]
 
+/-- The D3 identity block: who a receipt authenticates. The channel names
+    are read off `Host.ReceiptIdentity.Channel.name`, never retyped; the
+    theorem names are the compile-time-bound lists above. -/
+private def identityJson : Json :=
+  Json.mkObj
+    [("signedChannel", toJson Host.ReceiptIdentity.Channel.ed25519.name),
+     ("unauthenticatedChannels",
+      Json.arr #[toJson Host.ReceiptIdentity.Channel.file.name,
+                 toJson Host.ReceiptIdentity.Channel.interactive.name]),
+     ("approverTheorems", Json.arr (identityTheorems.map toJson).toArray),
+     ("callerNogoTheorems", Json.arr (callerNogoTheorems.map toJson).toArray)]
+
 private def matrixJson : Json :=
   Json.mkObj
-    [("schema", toJson "seal-honesty-matrix/v1"),
+    [("schema", toJson "seal-honesty-matrix/v2"),
      ("boundTheorems", Json.arr (boundTheorems.map toJson).toArray),
+     ("identity", identityJson),
      ("kernels", Json.arr (provenKernelNames.map kernelRow).toArray),
      ("arithmetic",
       Json.mkObj

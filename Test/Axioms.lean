@@ -800,5 +800,59 @@ info: 'Ffi.byteConsensus_never_registered' depends on axioms: [propext, Classica
 -/
 #guard_msgs in #print axioms Ffi.byteConsensus_never_registered
 
+-- D3 authority frontier: the receipt binds the approval trust root and is
+-- request-independent; NO function of the mediated bytes can authenticate
+-- the caller at the stdio topology (Host/ReceiptIdentity.lean)
+
+/--
+info: 'Host.ReceiptIdentity.receipt_identity_separated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.receipt_identity_separated
+
+/--
+info: 'Host.ReceiptIdentity.receipt_identity_boot_constant' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.receipt_identity_boot_constant
+
+/--
+info: 'Host.ReceiptIdentity.token_gates_presence_not_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.token_gates_presence_not_value
+
+/--
+info: 'Host.ReceiptIdentity.receipt_identity_names_trust_root' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.receipt_identity_names_trust_root
+
+/--
+info: 'Host.ReceiptIdentity.keyId_only_on_signed_channel' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.keyId_only_on_signed_channel
+
+/--
+info: 'Host.ReceiptIdentity.stdio_no_caller_authentication' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.stdio_no_caller_authentication
+
+/--
+info: 'Host.ReceiptIdentity.forgeable_echo' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.forgeable_echo
+
+/--
+info: 'Host.ReceiptIdentity.credential_excludes_totality' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.credential_excludes_totality
+
+/--
+info: 'Host.ReceiptIdentity.credentialed_topology_authenticates' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.credentialed_topology_authenticates
+
+/--
+info: 'Host.ReceiptIdentity.caller_authenticator_satisfiable' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.ReceiptIdentity.caller_authenticator_satisfiable
+
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"

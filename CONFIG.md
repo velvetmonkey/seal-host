@@ -527,6 +527,19 @@ The CLI key is device-local but not hardware-backed. The host, CLI, key file,
 and same-user machine are in this channel’s TCB. A future device-held/passkey
 signer should make channels relay-only.
 
+**Who the receipt authenticates (scope, normative):** the receipt's
+`approval_identity` names the APPROVER's trust root — the channel kind plus,
+on `--channel ed25519` only, the SHA-256 fingerprint of `--approval-pubkey`.
+It is a boot-scoped constant of the configuration, provably independent of
+the request bytes. It never names the CALLER: stdio mediation carries no
+transport credential, so no receipt field can authenticate which agent made
+a call — proven, not pending (`Host/ReceiptIdentity.lean`, and the "Who does
+a receipt authenticate?" section of `docs/HONESTY-MATRIX.md`). The `file`
+and `interactive` channels are DEV-ONLY and unauthenticated: their receipts
+name a channel kind and make no identity claim at all. Binding a caller is a
+V2.1 topology change (per-caller transport credentials), not a receipt
+field.
+
 ## 5. Receipt lifecycle
 
 Every mediated BLOCK or ALLOW writes one v2 receipt before an ALLOW can reach
