@@ -89,7 +89,13 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - run: cargo test
+      # --no-fail-fast: a test binary that dies on a signal instead of
+      # reporting otherwise takes every binary queued behind it down with it,
+      # and cargo exits non-zero having silently run a fraction of the suite
+      # (observed: 44 of 60 reported). The libunwind/libgcc DT_NEEDED tie that
+      # caused it is fixed in build.rs; this is the belt to its braces, so a
+      # partial run can never again be mistaken for a whole one.
+      - run: cargo test --no-fail-fast
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
       - run: cargo build --release --bins

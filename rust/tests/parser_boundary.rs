@@ -117,7 +117,9 @@ fn as_name(frag: &str) -> String {
 
 /// Raw fragment in the `method` position (well-formed params).
 fn as_method(frag: &str) -> String {
-    format!(r#"{{"jsonrpc":"2.0","id":1,"method":{frag},"params":{{"name":"t","arguments":{{}}}}}}"#)
+    format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":{frag},"params":{{"name":"t","arguments":{{}}}}}}"#
+    )
 }
 
 /// Arrays nested `depth` deep in argument-value position. The envelope adds
@@ -151,7 +153,11 @@ fn boundary_corpus() -> Vec<Case> {
         case("num-overflow-1e309", in_value("1e309"), RSU),
         case("num-overflow-neg-1e309", in_value("-1e309"), RSU),
         case("num-overflow-1e999999", in_value("1e999999"), RSU),
-                case("num-overflow-int-400-digits", in_value(&"9".repeat(400)), RSU),
+        case(
+            "num-overflow-int-400-digits",
+            in_value(&"9".repeat(400)),
+            RSU,
+        ),
         case("num-u64-max", in_value("18446744073709551615"), AR),
         case("num-2pow64", in_value("18446744073709551616"), AR),
         case("num-neg-zero", in_value("-0"), AR),
@@ -177,19 +183,27 @@ fn boundary_corpus() -> Vec<Case> {
         ),
         case("num-overflow-as-method", as_method("1e309"), AU),
         // -- strings: escapes, surrogates, NUL, size
-        case(
-            "str-escaped-nul",
-            in_value(r#""a\u0000b""#),
-            AR,
-        ),
-                case("str-lone-high-surrogate", in_value(r#""\ud800""#), RSU),
-                case("str-lone-low-surrogate", in_value(r#""\udc00""#), RSU),
+        case("str-escaped-nul", in_value(r#""a\u0000b""#), AR),
+        case("str-lone-high-surrogate", in_value(r#""\ud800""#), RSU),
+        case("str-lone-low-surrogate", in_value(r#""\udc00""#), RSU),
         case("str-surrogate-pair", in_value(r#""\ud83d\ude00""#), AR),
-                case("str-reversed-surrogates", in_value(r#""\udc00\ud800""#), RSU),
-                case("str-lone-surrogate-in-key", in_value(r#"{"\ud800":1}"#), RSU),
+        case(
+            "str-reversed-surrogates",
+            in_value(r#""\udc00\ud800""#),
+            RSU,
+        ),
+        case(
+            "str-lone-surrogate-in-key",
+            in_value(r#"{"\ud800":1}"#),
+            RSU,
+        ),
         case("str-raw-nul", in_value("\"a\u{0}b\""), AU),
         case("str-raw-ctrl-0x01", in_value("\"a\u{1}b\""), AU),
-        case("str-long-64k", in_value(&format!("\"{}\"", "x".repeat(65536))), AR),
+        case(
+            "str-long-64k",
+            in_value(&format!("\"{}\"", "x".repeat(65536))),
+            AR,
+        ),
         case(
             "key-long-64k",
             in_value(&format!("{{\"{}\":1}}", "k".repeat(65536))),
@@ -222,7 +236,11 @@ fn boundary_corpus() -> Vec<Case> {
         case("nesting-300", nested(300), RSU),
         case("bom-prefix", format!("\u{FEFF}{}", in_value("1")), AU),
         case("trailing-garbage", format!("{} x", in_value("1")), AU),
-        case("two-docs-one-line", format!("{}{}", in_value("1"), "{}"), AU),
+        case(
+            "two-docs-one-line",
+            format!("{}{}", in_value("1"), "{}"),
+            AU,
+        ),
         case("leading-ws", format!("   {}", in_value("1")), AR),
         // -- the reduced-scope STRUCTURAL family (both parse; request_parts refuses)
         case(
@@ -289,15 +307,18 @@ mod props {
     fn fragment() -> impl Strategy<Value = String> {
         prop_oneof![
             // arbitrary finite/edge floats rendered as JSON
-            any::<f64>().prop_map(|x| if x.is_finite() { format!("{x:?}") } else { "0".into() }),
+            any::<f64>().prop_map(|x| if x.is_finite() {
+                format!("{x:?}")
+            } else {
+                "0".into()
+            }),
             // oversized integer literals (serde rejects > f64 range as a whole)
             (1usize..500).prop_map(|n| "9".repeat(n)),
             // decimal exponent literals, some out of f64 range
             (any::<i32>(), -400i32..400).prop_map(|(m, e)| format!("{m}e{e}")),
             // strings with arbitrary escapes incl. lone/paired surrogates
-            (0u32..0x11000, 0u32..0x11000).prop_map(|(a, b)| {
-                format!(r#""\u{a:04x}\u{b:04x}""#)
-            }),
+            (0u32..0x11000, 0u32..0x11000)
+                .prop_map(|(a, b)| { format!(r#""\u{a:04x}\u{b:04x}""#) }),
             // arbitrary unicode string values (serde escapes them safely)
             any::<String>().prop_map(|s| serde_json::to_string(&s).unwrap()),
             // arrays nested to a randomized depth straddling serde's limit 128
@@ -338,7 +359,7 @@ mod props {
         /// named reduced-scope classes the map already documents.
         #[test]
         fn no_bypass_no_new_divergence(line in probe_line()) {
-            let obs = observe(&line).map_err(|e| TestCaseError::fail(e))?;
+            let obs = observe(&line).map_err(TestCaseError::fail)?;
             let class = classify_obs(&obs);
             prop_assert!(
                 class == "agree-routed"
