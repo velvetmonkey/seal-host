@@ -157,15 +157,18 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Source: `mcp-seal-dev` `6bbadbc7` + seal-host `fix/pathological-number-fail-closed`
-  (the pathological-number fail-closed fix)
-- `seal.wasm` sha256: `ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546`
+- Source: `mcp-seal-dev` `cc79c86` + seal-host `feat/dx-surface-7-kernels`
+  (the 7-kernel policy-v2 DX surface: `Seal.parsePolicyBundle` +
+  `Host.ofBundle`)
+- `seal.wasm` sha256: `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66`
+- Supersedes `ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546`
+  (the pathological-number fail-closed build, whose guard and decision
+  semantics are carried forward unchanged), which superseded
+  `d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66`
   (correct on corpus C, but diverged from the native `.so` on a pathological
-  numeric literal — it returned passthrough where native/interpreter aborted;
-  the fail-closed number guard in this build closes both directions), which in
-  turn superseded the fleet pin `df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8`.
+  numeric literal), which in turn superseded the fleet pin
+  `df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8`.
 
 The verified artifact + full provenance + reproduce recipe are staged at
 `wasm-spike/verified/{seal.wasm,seal.js,PROVENANCE.txt}`; the rebuild step that
@@ -174,6 +177,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `ff1bfd68…`). That repin is a separate, audited step gated to the
+build (sha256 `a3790181…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

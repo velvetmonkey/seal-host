@@ -84,8 +84,11 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 /-- info: 'Kernels.temporalKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Kernels.temporalKernel
 
-/-- info: 'Host.parseTemporalSection' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms Host.parseTemporalSection
+/-- info: 'Host.ofBundle' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.ofBundle
+
+/-- info: 'Host.ofBundle_temporal' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.ofBundle_temporal
 
 /-- info: 'Temporal.monitor_sound' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Temporal.monitor_sound
@@ -96,8 +99,11 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 /-- info: 'Consensus.Checker.validB' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Consensus.Checker.validB
 
-/-- info: 'Host.parseConsensusSection' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms Host.parseConsensusSection
+/-- info: 'Host.ofBundle_consensus' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.ofBundle_consensus
+
+/-- info: 'Seal.parsePolicyBundle' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Seal.parsePolicyBundle
 
 -- G3 composition theorem — the AND-combinator preserves kernel invariants
 

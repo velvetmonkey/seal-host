@@ -7,17 +7,17 @@ baseline below was pinned at `mcp-seal-dev` revision `872ac50`. Policy-v2 is
 implemented and proved in the sibling core source, but is not a deployed feature
 until the immutable promotion gate passes.
 
-**Kernel pin (authoritative, one commit).** As of the pathological-number
-fail-closed fix, `seal-host` builds against a single authoritative
-`mcp-seal-dev` commit — `6bbadbc7b770f307561751fe1e5d328376fab45b` — and every
-pin names it: `lakefile.toml`, `lake-manifest.json`, and this document. It is a
-descendant of and supersedes the earlier references that had drifted apart:
-`872ac50` (the doc's v1-baseline text above), `88168e1` (the previous
-`lakefile`/manifest pin), and `fe51d91` (the P0-2 target-stability lemma commit
-whose manifest re-pin was deferred). The one commit carries all three plus the
-`Seal.JsonUtil.wireNumbersSafe` fail-closed number guard. Moving the *deployed*
-production pin to `6bbadbc7` is a separate step gated to Monkey's frisk + merge;
-this reconciles the source-of-truth wording, not the production deploy.
+**Kernel pin (authoritative, one commit).** As of the 7-kernel DX surface,
+`seal-host` builds against a single authoritative `mcp-seal-dev` commit —
+`cc79c86691ca25b728c9cc1968d07cacb09cd39e` — and every pin names it:
+`lakefile.toml`, `lake-manifest.json`, and this document. It is a descendant
+of and supersedes `6bbadbc7` (the pathological-number fail-closed fix, which
+itself superseded the drifted `872ac50`/`88168e1`/`fe51d91` references) and
+additionally carries `Seal.parsePolicyBundle` — the policy-v2 7-kernel config
+vocabulary the host's `Host.ofBundle` now consumes. Moving the *deployed*
+production pin to `cc79c86` is a separate step gated to Monkey's frisk +
+merge; this reconciles the source-of-truth wording, not the production
+deploy.
 
 **Audit date:** 2026-07-12 (baseline); pin reconciled 2026-07-16.  
 **Scope:** the policy-evaluation path deployed by `seal-host-rs`, before policy-v2.

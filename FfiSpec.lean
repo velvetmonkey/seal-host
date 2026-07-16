@@ -280,6 +280,128 @@ theorem byteConsensus_never_registered (s : Session) (now : Nat)
   cases hl : s.config.linear <;>
   simp_all [Kernels.byteConsensusKernel]
 
+/-! ### Bundle tripwires — the DX claim, end to end
+
+A session whose trusted config was mapped from a parsed policy-v2 bundle
+(`Seal.parsePolicyBundle` → `Host.ofBundle`) registers exactly the kernels
+the bundle configures. These compose `registryFor_kernels` (the A0 spec) with
+the `Host.ofBundle_*` mapping-preservation lemmas; nothing above is modified.
+Safety and Temporal remain unconditional: no bundle can disable them —
+"enable" for S and T honestly means non-empty config, never de-registration. -/
+
+theorem bundle_consensus_registered_iff (s : Session) (b : Seal.PolicyBundle)
+    (hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.consensusKernel
+        ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel)
+      ↔ b.effectiveConsensus.isSome := by
+  rw [← Host.ofBundle_consensus hb]
+  exact consensus_registered_iff s now approvalEvents votes grants forecasts
+
+theorem bundle_convergence_registered_iff (s : Session) (b : Seal.PolicyBundle)
+    (hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.convergenceKernel
+        ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel)
+      ↔ b.effectiveConvergence.isEmpty = false := by
+  rw [← Host.ofBundle_convergence hb]
+  exact convergence_registered_iff s now approvalEvents votes grants forecasts
+
+theorem bundle_calibration_registered_iff (s : Session) (b : Seal.PolicyBundle)
+    (hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.calibrationKernel
+        ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel)
+      ↔ ∃ sec, b.calibration = some sec ∧ sec.enabled = true :=
+  (calibration_registered_iff s now approvalEvents votes grants forecasts).trans
+    (Host.ofBundle_calibration hb)
+
+theorem bundle_linear_registered_iff (s : Session) (b : Seal.PolicyBundle)
+    (hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.linearKernel
+        ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel)
+      ↔ b.effectiveLinear.isSome := by
+  rw [← Host.ofBundle_linear hb]
+  exact linear_registered_iff s now approvalEvents votes grants forecasts
+
+theorem bundle_budget_registered_iff (s : Session) (b : Seal.PolicyBundle)
+    (hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.budgetKernel
+        ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel)
+      ↔ b.effectiveBudget.isEmpty = false := by
+  rw [← Host.ofBundle_budget hb]
+  exact budget_registered_iff s now approvalEvents votes grants forecasts
+
+/-- No bundle can disable Safety: there is no `enabled` vocabulary for S and
+    the registry registers it unconditionally. -/
+theorem bundle_safety_always_registered (s : Session) (b : Seal.PolicyBundle)
+    (_hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.safetyKernel
+      ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel) :=
+  safety_always_registered s now approvalEvents votes grants forecasts
+
+/-- No bundle can de-register Temporal: `enabled := false` (or an absent
+    section) only empties its policy list — T stays registered, vacuous. -/
+theorem bundle_temporal_always_registered (s : Session) (b : Seal.PolicyBundle)
+    (_hb : Host.ofBundle b = .ok s.config) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.temporalKernel
+      ∈ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel) :=
+  temporal_always_registered s now approvalEvents votes grants forecasts
+
+/-- `enabled := false` is deletion: a disabled consensus section leaves the
+    consensus kernel unregistered. -/
+theorem bundle_disabled_consensus_not_registered (s : Session)
+    (b : Seal.PolicyBundle) (sec : Seal.ConsensusSection)
+    (hb : Host.ofBundle b = .ok s.config)
+    (hs : b.consensus = some sec) (hd : sec.enabled = false) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.consensusKernel
+      ∉ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel) := by
+  rw [bundle_consensus_registered_iff s b hb now approvalEvents votes grants forecasts]
+  simp [Seal.PolicyBundle.effectiveConsensus, hs, hd]
+
+/-- `enabled := false` is deletion for budget as well. -/
+theorem bundle_disabled_budget_not_registered (s : Session)
+    (b : Seal.PolicyBundle) (sec : Seal.BudgetSection)
+    (hb : Host.ofBundle b = .ok s.config)
+    (hs : b.budget = some sec) (hd : sec.enabled = false) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    Kernels.budgetKernel
+      ∉ (registryFor s now approvalEvents votes grants forecasts).map (·.kernel) := by
+  rw [bundle_budget_registered_iff s b hb now approvalEvents votes grants forecasts]
+  simp [Seal.PolicyBundle.effectiveBudget, hs, hd]
+
 /-! Axiom pins: every theorem above sits on the classical baseline only — no
     `sorryAx`, no `Lean.ofReduceBool`. Drift fails the build here and again in
     `Test/Axioms.lean`. -/
@@ -316,5 +438,50 @@ info: 'Ffi.calibration_registered_iff' depends on axioms: [propext, Classical.ch
 info: 'Ffi.byteConsensus_never_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms byteConsensus_never_registered
+
+/--
+info: 'Ffi.bundle_consensus_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_consensus_registered_iff
+
+/--
+info: 'Ffi.bundle_convergence_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_convergence_registered_iff
+
+/--
+info: 'Ffi.bundle_calibration_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_calibration_registered_iff
+
+/--
+info: 'Ffi.bundle_linear_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_linear_registered_iff
+
+/--
+info: 'Ffi.bundle_budget_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_budget_registered_iff
+
+/--
+info: 'Ffi.bundle_safety_always_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_safety_always_registered
+
+/--
+info: 'Ffi.bundle_temporal_always_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_temporal_always_registered
+
+/--
+info: 'Ffi.bundle_disabled_consensus_not_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_disabled_consensus_not_registered
+
+/--
+info: 'Ffi.bundle_disabled_budget_not_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms bundle_disabled_budget_not_registered
 
 end Ffi
