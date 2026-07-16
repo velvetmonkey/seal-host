@@ -29,8 +29,8 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# 0aeb35a carries kernel ff1bfd68 (6d0d6eb carried d3067bc0, 0db03ef carried df42).
-PHASE_B_KIT_REV = "0aeb35a60adfa4c50b6bfcf761967b1c6280fde7"
+# f95ac81 carries kernel a3790181 (0aeb35a carried ff1bfd68, 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+PHASE_B_KIT_REV = "f95ac81265982b443e04fba2692f412721d68769"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
 
@@ -294,10 +294,18 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     approvals=work/"unused-control-approvals.ndjson"; approvals.write_text("",encoding="utf-8")
     value["safety"]["approval"]["control_file"]=str(approvals)
     value["safety"]["approval"]["replay_store"]={"sqlite_path":str(work/"approval-replay.sqlite")}
+    # The a3790181 parser hard-errors on unknown keys inside kernel sections and
+    # entries; display metadata (_comment, _seal_demo_tier) may only ride inside
+    # a safety RULE interior (rule-level strictness is a named kit follow-up).
+    budget_note="reviewed demo cap: two executed destructive file operations per host session"
+    budget_tools={"write_file","edit_file","create_directory","move_file"}
     for rule in value["safety"]["tools"]:
         if rule["mode"] == "allow": rule["_comment"]="unverified suggestion -- server self-described readOnly"
-    value["budget"]={"budgets":[{"name":"destructive-file-ops","cap":2,"tools":["write_file","edit_file","create_directory","move_file"],"_comment":"reviewed demo cap: two executed destructive file operations per host session"}]}
-    value["safety"]["_seal_demo_tier"]=FILESYSTEM_TIER
+        # review resolves the add-kernel scaffold's EDIT-ME notes on guarded rules
+        elif rule["name"] in budget_tools: rule["_comment"]=budget_note
+        elif "EDIT-ME" in rule.get("_comment",""): rule["_comment"]="reviewed demo mapping: guarded write path retained"
+    value["budget"]={"budgets":[{"name":"destructive-file-ops","cap":2,"tools":["write_file","edit_file","create_directory","move_file"]}]}
+    value["safety"]["tools"][0]["_seal_demo_tier"]=FILESYSTEM_TIER
     after=json.dumps(value,indent=2)+"\n"
     if "EDIT-ME" in after: raise gp.DemoFailure("reviewed filesystem policy still contains EDIT-ME")
     print("\n=== VISIBLE INIT + ADD-KERNEL B REVIEW ===")
@@ -415,7 +423,8 @@ def export_gate0a_receipts(work: Path,output: Path,trusted: Path,config_pub: str
 
 def verify_receipt(seal: Path,path: Path,verdict: str)->None:
     record=receipt(path)
-    if record.get("kernel_config",{}).get("safety",{}).get("_seal_demo_tier")!=FILESYSTEM_TIER: raise gp.DemoFailure("receipt tier mismatch")
+    tier_rules=record.get("kernel_config",{}).get("safety",{}).get("tools",[])
+    if not tier_rules or tier_rules[0].get("_seal_demo_tier")!=FILESYSTEM_TIER: raise gp.DemoFailure("receipt tier mismatch")
     result=gp.run([str(seal),"verify",str(path)])
     if "PASS  VERIFIED" not in result.stdout or record.get("verdict")!=verdict: raise gp.DemoFailure(f"receipt verification failed: {path}")
 

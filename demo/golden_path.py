@@ -327,10 +327,12 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool) 
             # SealV2 canonical bytes require non-ASCII to use explicit escapes,
             # while JSON.stringify re-emits this display-only em dash literally.
             rule["_comment"] = "unverified suggestion -- server self-described readOnly"
-    # Signed demo metadata lives inside the known safety section. Phase A
-    # deliberately rejects unknown top-level keys so a typo cannot silently
-    # disable a kernel; nested display metadata remains ignored by Lean.
-    value["safety"]["_seal_demo_tier"] = TIER
+    # Signed demo metadata lives inside a safety RULE interior. The a3790181
+    # parser (Seal.parsePolicyBundle) hard-errors on unknown keys at payload,
+    # section, and entry level so a typo cannot silently disable a kernel; a
+    # rule's interior is the one place nested display metadata is still
+    # tolerated (rule-level strictness is a named kit follow-up).
+    value["safety"]["tools"][0]["_seal_demo_tier"] = TIER
     after = json.dumps(value, indent=2) + "\n"
     print("\n=== VISIBLE POLICY REVIEW / RUNTIME-PATH EDIT ===")
     print("".join(unified_diff(before.splitlines(True), after.splitlines(True), fromfile="scaffolded", tofile="reviewed")))
@@ -542,7 +544,8 @@ def live_claude(trusted: Path, config_pub: str, approval_pub: str,
 
 def verify_receipt_and_scan(seal: Path, receipt: Path, manifest: Path, policy: Path) -> str | None:
     record = json.loads(receipt.read_text(encoding="utf-8"))
-    if record.get("kernel_config", {}).get("safety", {}).get("_seal_demo_tier") != TIER:
+    tier_rules = record.get("kernel_config", {}).get("safety", {}).get("tools", [])
+    if not tier_rules or tier_rules[0].get("_seal_demo_tier") != TIER:
         raise DemoFailure("receipt did not carry the signed local-tested/pending-CI tier metadata")
     verify_command = [str(seal), "verify", str(receipt)]
     print("$ " + " ".join(verify_command), flush=True)
