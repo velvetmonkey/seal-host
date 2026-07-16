@@ -1068,3 +1068,75 @@ fn approval_target_ignores_keys_not_in_policy_target() {
         "clean-target approval must authorise the nested-sibling variant"
     );
 }
+
+/// P2-c observability tap: a FORCED reduced-scope forward (an ALLOW whose wire
+/// line serde cannot recover) must emit a distinct, structured stderr signal so
+/// an operator can see and count forced downgrades — while the forward itself
+/// stays byte-identical and the receipt is unchanged (passive tap). A normal
+/// parseable ALLOW must stay silent. Drives the real binary end-to-end.
+#[test]
+fn reduced_scope_forward_emits_observability_signal() {
+    let mut o = Oracle::spawn("reduced-scope-signal");
+
+    // FORCED downgrade: the 1e309 serde-hostile sibling — kernel-mediated,
+    // serde-unrecoverable (same class as receipt_layer_never_vetoes_kernel_verdicts).
+    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    o.send(divergent);
+    let target = block_target(&o.expect_line()).expect("kernel block names its approval target");
+    o.approve(&target);
+    o.send(divergent);
+
+    // Passive-tap property #1: the child receives the wire VERBATIM — the forward
+    // is byte-identical, the signal changed nothing about what was forwarded.
+    assert_eq!(
+        o.expect_line(),
+        divergent,
+        "forward must be byte-identical to the wire (signal is a passive tap)"
+    );
+
+    // The signal is on stderr, structured, and reports THIS forced downgrade.
+    let signal = o
+        .drain_stderr(Duration::from_millis(400))
+        .into_iter()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
+        .find(|v| v["event"] == "reduced_scope_forward")
+        .expect("a forced reduced-scope forward must emit the observability signal");
+    assert_eq!(
+        signal["request_sha256"],
+        hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
+        "signal must carry the exact wire-line hash"
+    );
+    assert!(signal["parse_error"].is_string(), "signal must name the parse failure");
+    assert_eq!(signal["count"], 1, "first forced downgrade is count 1");
+
+    // Passive-tap property #2: the receipt is unchanged — still the reduced-scope
+    // shape (raw hash + parse error, structured fields absent), not touched by the signal.
+    let receipts = o.receipts();
+    let allow = receipts
+        .iter()
+        .rev()
+        .find(|r| r["verdict"] == "ALLOW")
+        .expect("forwarded decision persisted an ALLOW receipt");
+    assert_eq!(
+        allow["request_sha256"],
+        hex::encode(sha2::Sha256::digest(divergent.as_bytes()))
+    );
+    assert!(allow["request_parse_error"].is_string());
+    for absent in ["tool", "arguments", "args_hash", "canonical_request", "canonical_request_sha256"] {
+        assert!(allow.get(absent).is_none(), "receipt field {absent} must stay absent");
+    }
+
+    // A normal PARSEABLE ALLOW must NOT emit the signal (fires only on downgrade).
+    let parseable = guarded_call(91, "drop table accounts");
+    o.send(&parseable);
+    let t2 = block_target(&o.expect_line()).expect("parseable guarded call blocks");
+    o.approve(&t2);
+    o.send(&parseable);
+    assert_eq!(o.expect_line(), parseable, "parseable ALLOW forwards verbatim");
+    let no_signal = o
+        .drain_stderr(Duration::from_millis(400))
+        .into_iter()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
+        .any(|v| v["event"] == "reduced_scope_forward");
+    assert!(!no_signal, "a parseable ALLOW must not emit the reduced-scope signal");
+}
