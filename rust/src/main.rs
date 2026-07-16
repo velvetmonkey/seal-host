@@ -974,12 +974,16 @@ mod tests {
         // Whole-line serde failure (the 1e309 class) → signal fires, tool_hint
         // is null (the line is not parseable JSON), request_sha256 matches.
         let overflow = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table t","x":1e309}}}"#;
-        let signal = reduced_scope_forward_line(overflow, 7).expect("unrecoverable line must signal");
+        let signal =
+            reduced_scope_forward_line(overflow, 7).expect("unrecoverable line must signal");
         let parsed: serde_json::Value = serde_json::from_str(&signal).unwrap();
         assert_eq!(parsed["event"], "reduced_scope_forward");
         assert_eq!(parsed["request_sha256"], sha256_hex(overflow.as_bytes()));
         assert!(parsed["parse_error"].is_string());
-        assert!(parsed["tool_hint"].is_null(), "unparseable line has no tool hint");
+        assert!(
+            parsed["tool_hint"].is_null(),
+            "unparseable line has no tool hint"
+        );
         assert_eq!(parsed["count"], 7);
     }
 
@@ -1005,7 +1009,11 @@ mod tests {
             reduced_scope_forward_line(&wire, 1).expect("non-object-args line must signal");
 
         // Exactly one physical line — no raw newline forged a second record.
-        assert_eq!(signal.lines().count(), 1, "hostile tool_hint forged a newline: {signal:?}");
+        assert_eq!(
+            signal.lines().count(),
+            1,
+            "hostile tool_hint forged a newline: {signal:?}"
+        );
         assert!(
             !signal.contains('\n') && !signal.contains('\r'),
             "raw CR/LF survived escaping: {signal:?}"
@@ -1015,7 +1023,11 @@ mod tests {
             serde_json::from_str(&signal).expect("escaped signal must parse as JSON");
         assert_eq!(parsed["tool_hint"].as_str().unwrap(), hostile);
         assert_eq!(parsed["event"], "reduced_scope_forward");
-        assert_eq!(parsed.as_object().unwrap().len(), 5, "exactly one signal object");
+        assert_eq!(
+            parsed.as_object().unwrap().len(),
+            5,
+            "exactly one signal object"
+        );
     }
 
     /// PURE, HOST-SIDE half of T3: `lean_view` collapses the three terminator

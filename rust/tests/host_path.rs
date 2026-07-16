@@ -1106,7 +1106,10 @@ fn reduced_scope_forward_emits_observability_signal() {
         hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
         "signal must carry the exact wire-line hash"
     );
-    assert!(signal["parse_error"].is_string(), "signal must name the parse failure");
+    assert!(
+        signal["parse_error"].is_string(),
+        "signal must name the parse failure"
+    );
     assert_eq!(signal["count"], 1, "first forced downgrade is count 1");
 
     // Passive-tap property #2: the receipt is unchanged — still the reduced-scope
@@ -1122,8 +1125,17 @@ fn reduced_scope_forward_emits_observability_signal() {
         hex::encode(sha2::Sha256::digest(divergent.as_bytes()))
     );
     assert!(allow["request_parse_error"].is_string());
-    for absent in ["tool", "arguments", "args_hash", "canonical_request", "canonical_request_sha256"] {
-        assert!(allow.get(absent).is_none(), "receipt field {absent} must stay absent");
+    for absent in [
+        "tool",
+        "arguments",
+        "args_hash",
+        "canonical_request",
+        "canonical_request_sha256",
+    ] {
+        assert!(
+            allow.get(absent).is_none(),
+            "receipt field {absent} must stay absent"
+        );
     }
 
     // A normal PARSEABLE ALLOW must NOT emit the signal (fires only on downgrade).
@@ -1132,11 +1144,18 @@ fn reduced_scope_forward_emits_observability_signal() {
     let t2 = block_target(&o.expect_line()).expect("parseable guarded call blocks");
     o.approve(&t2);
     o.send(&parseable);
-    assert_eq!(o.expect_line(), parseable, "parseable ALLOW forwards verbatim");
+    assert_eq!(
+        o.expect_line(),
+        parseable,
+        "parseable ALLOW forwards verbatim"
+    );
     let no_signal = o
         .drain_stderr(Duration::from_millis(400))
         .into_iter()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
         .any(|v| v["event"] == "reduced_scope_forward");
-    assert!(!no_signal, "a parseable ALLOW must not emit the reduced-scope signal");
+    assert!(
+        !no_signal,
+        "a parseable ALLOW must not emit the reduced-scope signal"
+    );
 }
