@@ -76,6 +76,18 @@ policy meaning out of the current core and enlarge the TCB.
   and composition allowed, the safety state held a live approval for `t`.
 - `Host.step_forward_non_bypass`: a forward has a recognized `tools/call`
   witness and all gating verdicts are ALLOW.
+- `Host.registry_deny_ingest_only` (with `Host.pureCommit_deny_of_member` and
+  the per-kernel corollaries): on ANY kernel's deny, the full 7-kernel
+  registry — bound to the deployed selection by `commitInstsFor_kernels` ≡
+  `Ffi.activeKernels` — commits only the spec-allowed ingests: no budget
+  spend, no linear capability consumed (holds can only grow —
+  `registry_deny_no_capability_consumed`, `parseGrantsText_grant_only`), no
+  temporal trace event; only Safety's approval fold and Linear's grant fold
+  move, and the theorem says so.
+- `Host.dispatch_plan`: the dispatch loop's three per-call accumulations —
+  the `phase1Held` verdicts it combines, its unconditional ingest writes, and
+  its allow-only held replay — equal `pureCommit`'s components, stated in the
+  loop's own vocabulary.
 
 The load-bearing qualifier is **after classification produced a guarded
 target**. These theorems do not prove that a policy author selected the right
@@ -107,6 +119,15 @@ operations or bound every effect-relevant parameter.
   `three_way.rs::pathological_number_fails_closed_all_lanes`. True closure of
   the residual (unfound) gap needs a verified compiler / source equivalence
   proof, out of scope by magnitude.
+- The dispatch IO shell around `dispatch_plan`: snapshot faithfulness (that
+  each instance's evidence/state is what `gather`/`stateRef.get` returned —
+  `IO.Ref` get/set sequencing and ref distinctness; C, V and K share one
+  `Unit` ref), the `for`-loop/`do`-monad desugaring and `mut` accumulators,
+  the allow branch actually executing the queued held writes, `stepImpl`'s
+  JSON marshalling of the step input into evidence, and the config/evidence
+  wiring of `commitInstsFor` against `registryFor` (kernel-list equality is
+  pinned by `commitInstsFor_kernels`; the per-instance wiring of the mirror
+  is trusted-by-inspection).
 - An end-to-end proof through Rust routing, provider authenticity, filesystem
   persistence, compiler/codegen, dynamic loading, or OS behavior.
 

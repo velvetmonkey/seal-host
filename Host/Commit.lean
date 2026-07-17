@@ -898,6 +898,226 @@ theorem phase1Held_held (K : Kernel) (cfg : K.Config) (act : CanonicalAction)
 
 end Host
 
+namespace Host
+
+/-! ## The budget × linear × safety composition — deny side, per kernel and
+     over the dispatch loop (target 6)
+
+Two pieces close the pinned-known gap:
+
+1. **Per-kernel deny corollaries**: `pureCommit_deny_of_member` makes "ANY
+   gating kernel's deny forces the combined deny" literal, and the
+   `pureCommit_deny_*_frozen` / `pureCommit_deny_*_ingest_only` corollaries
+   state per kernel exactly which state a deny commits: byte-identical for
+   the identity-ingest kernels (B budget counters, T temporal trace — and
+   C/V/K are stateless, `State = Unit`, nothing to move), and ONLY the
+   spec-allowed ingest for S (approval fold) and L (grant fold).
+2. **The dispatch loop, purely** (`dispatch_plan`): the three accumulations
+   `Host.dispatch` (Host/Registry.lean) computes — the `phase1Held` verdicts
+   it combines, the ingest states it writes immediately, the held decide
+   states it replays only on allow — are proven equal to `pureCommit`'s
+   components, stated in the loop's own vocabulary (the `gates` check and
+   the `phase1Held` triple the loop literally calls).
+
+HONEST BOUNDARY (the named IO shell, unchanged by these theorems): that the
+run-time snapshot fed to this pure computation is faithful — the `IO.Ref`
+get/set sequencing and ref distinctness (C, V, K share one `Unit` ref in
+`Ffi.registryFor`), the `for`-loop/`do`-monad desugaring and `mut`
+accumulators, the allow-branch actually executing the queued held writes,
+`stepImpl`'s JSON parse of the step input into evidence, and the
+`unsafeBaseIO`/FFI/Rust/OS boundary — remains TCB. -/
+
+/-- Kernel T's ingest is the identity: the temporal trace records only
+    EXECUTED calls, never evidence. -/
+@[simp] theorem temporal_ingest_id (ev : Unit) (st : Kernels.TemporalState) :
+    Kernels.temporalKernel.ingest ev st = st := rfl
+
+/-- Kernel C is stateless (`State = Unit`); its ingest is the identity. -/
+@[simp] theorem consensus_ingest_id (ev : Consensus.Checker.Votes) (st : Unit) :
+    Kernels.consensusKernel.ingest ev st = st := rfl
+
+/-- Kernel V is stateless (`State = Unit`); its ingest is the identity. -/
+@[simp] theorem convergence_ingest_id (ev : Unit) (st : Unit) :
+    Kernels.convergenceKernel.ingest ev st = st := rfl
+
+/-- Kernel K is stateless (`State = Unit`); its ingest is the identity. -/
+@[simp] theorem calibration_ingest_id (ev : List Kernels.ForecastRecord) (st : Unit) :
+    Kernels.calibrationKernel.ingest ev st = st := rfl
+
+/-- **ANY gating kernel's deny forces the combined deny** — the fail-closed
+    veto (`combine_deny_of_member`) at the stateful commit model: if the
+    instance at position k gates this call and its `decide` at the post-ingest
+    state denies, `pureCommit`'s combined verdict is deny. Together with the
+    deny-side corollaries below this is "one kernel says no ⇒ no kernel's
+    execution state moves". -/
+theorem pureCommit_deny_of_member (insts : List CommitInst) (act : CanonicalAction)
+    (k : Nat) (hk : k < insts.length)
+    (hg : insts[k].kernel.gates insts[k].config act = true)
+    (hd : (insts[k].kernel.decide act insts[k].config insts[k].evidence
+            ((insts[k].ingestPhase act).state)).1.kind = .deny) :
+    (pureCommit insts act).1 = .deny := by
+  rw [pureCommit_verdict]
+  exact combine_deny_of_member _ _ (pureCommit_mem insts act k hk hg) hd
+
+/-- **A denied call consumes NO budget, at the composed registry.** On a
+    combined deny, kernel B's committed instance is byte-identical to its
+    pre-call instance: B's ingest is the identity and the `decide` transition
+    (the spend) is withheld. -/
+theorem pureCommit_deny_budget_frozen (insts : List CommitInst) (act : CanonicalAction)
+    (cfg : Kernels.BudgetConfig) (st0 : Kernels.BudgetState)
+    (k : Nat) (hk : k < insts.length)
+    (hinst : insts[k] = ⟨Kernels.budgetKernel, cfg, (), st0⟩)
+    (hdeny : (pureCommit insts act).1 = .deny) :
+    (pureCommit insts act).2[k]'(by simpa using hk)
+      = ⟨Kernels.budgetKernel, cfg, (), st0⟩ := by
+  rw [pureCommit_deny_committed insts act hdeny k hk, hinst]
+  simp [CommitInst.ingestPhase]
+
+/-- **A denied call appends NOTHING to the temporal trace.** On a combined
+    deny, kernel T's committed instance is byte-identical: T's ingest is the
+    identity and the trace-extending `decide` transition is withheld — a
+    denied call never executed, so it never enters the executed trace. -/
+theorem pureCommit_deny_temporal_frozen (insts : List CommitInst) (act : CanonicalAction)
+    (policies : List Kernels.TemporalPolicy) (st0 : Kernels.TemporalState)
+    (k : Nat) (hk : k < insts.length)
+    (hinst : insts[k] = ⟨Kernels.temporalKernel, policies, (), st0⟩)
+    (hdeny : (pureCommit insts act).1 = .deny) :
+    (pureCommit insts act).2[k]'(by simpa using hk)
+      = ⟨Kernels.temporalKernel, policies, (), st0⟩ := by
+  rw [pureCommit_deny_committed insts act hdeny k hk, hinst]
+  simp [CommitInst.ingestPhase]
+
+/-- **A denied call commits ONLY kernel S's approval fold** — the spec-allowed
+    ingest (approvals read from the control file must survive a deny: the seen
+    counter has advanced). The `decide` transition (approval consumption +
+    prune) is withheld: the approval is not consumed by a call that never
+    executed. S gates every call, so the committed state is exactly
+    `ingest ev st0`, never `st0`. -/
+theorem pureCommit_deny_safety_ingest_only (insts : List CommitInst) (act : CanonicalAction)
+    (pol : Seal.Policy) (ev : Kernels.SafetyEvidence) (st0 : SealCore.State)
+    (k : Nat) (hk : k < insts.length)
+    (hinst : insts[k] = ⟨Kernels.safetyKernel, pol, ev, st0⟩)
+    (hdeny : (pureCommit insts act).1 = .deny) :
+    (pureCommit insts act).2[k]'(by simpa using hk)
+      = ⟨Kernels.safetyKernel, pol, ev, Kernels.safetyKernel.ingest ev st0⟩ := by
+  rw [pureCommit_deny_committed insts act hdeny k hk, hinst]
+  rfl
+
+/-- **A denied call consumes NO capability — it commits ONLY kernel L's grant
+    fold**, the spec-allowed ingest (grants read from the grants file must
+    survive a deny). The `decide` transition (the spend) is withheld. The
+    committed state is the grant fold when L gates this call and the untouched
+    `st0` when it does not; `linear_ingest_grant_only_holds`
+    (Host/CommitRegistry.lean) shows the deployed grant fold can only GROW a
+    capability's multiplicity. -/
+theorem pureCommit_deny_linear_ingest_only (insts : List CommitInst) (act : CanonicalAction)
+    (cfg : Kernels.LinearConfig) (ev : List LinearCore.LEvent) (st0 : LinearCore.LState)
+    (k : Nat) (hk : k < insts.length)
+    (hinst : insts[k] = ⟨Kernels.linearKernel, cfg, ev, st0⟩)
+    (hdeny : (pureCommit insts act).1 = .deny) :
+    (pureCommit insts act).2[k]'(by simpa using hk)
+      = ⟨Kernels.linearKernel, cfg, ev,
+         if Kernels.linearKernel.gates cfg act
+         then Kernels.linearKernel.ingest ev st0 else st0⟩ := by
+  rw [pureCommit_deny_committed insts act hdeny k hk, hinst]
+  rfl
+
+/-! ### The dispatch loop, purely — binding `dispatch`'s accumulations to
+     `pureCommit`'s components -/
+
+/-- The verdict list the dispatch loop accumulates — one `phase1Held` verdict
+    per gating instance, registry order, nothing for non-gating instances —
+    IS the model's verdict list. Gating is stable across `ingestPhase`
+    (`gates` never reads state). -/
+theorem dispatch_verdicts_plan (insts : List CommitInst) (act : CanonicalAction) :
+    (insts.filterMap fun i =>
+        if i.kernel.gates i.config act
+        then some (phase1Held i.kernel i.config act i.evidence i.state).1
+        else none)
+      = pureVerdicts ((ingestAll insts act).map (·.asPure)) act := by
+  unfold pureVerdicts ingestAll
+  rw [List.filterMap_map, List.filterMap_map]
+  congr 1
+  funext i
+  by_cases hg : i.kernel.gates i.config act
+  · simp [Function.comp, CommitInst.asPure, CommitInst.ingestPhase, phase1Held, hg]
+  · simp [Function.comp, CommitInst.asPure, CommitInst.ingestPhase, hg]
+
+/-- The unconditional write set — `r.stateRef.set st1` with `phase1Held`'s
+    `st1` for gating instances, the untouched instance otherwise — IS
+    `ingestAll`, the state that survives a deny. -/
+theorem dispatch_ingest_plan (insts : List CommitInst) (act : CanonicalAction) :
+    (insts.map fun i =>
+        if i.kernel.gates i.config act
+        then { i with state := (phase1Held i.kernel i.config act i.evidence i.state).2.1 }
+        else i)
+      = ingestAll insts act := by
+  unfold ingestAll
+  refine List.map_congr_left fun i _ => ?_
+  by_cases hg : i.kernel.gates i.config act
+  · simp [phase1Held, CommitInst.ingestPhase, hg]
+  · simp [CommitInst.ingestPhase, hg]
+
+/-- The held replay set — the queued `r.stateRef.set st2` with `phase1Held`'s
+    `st2` for gating instances, executed only on a combined allow — IS the
+    model's decide phase over the ingested registry. -/
+theorem dispatch_held_plan (insts : List CommitInst) (act : CanonicalAction) :
+    (insts.map fun i =>
+        if i.kernel.gates i.config act
+        then { i with state := (phase1Held i.kernel i.config act i.evidence i.state).2.2 }
+        else i)
+      = (ingestAll insts act).map (·.decidePhase act) := by
+  unfold ingestAll
+  rw [List.map_map]
+  refine List.map_congr_left fun i _ => ?_
+  by_cases hg : i.kernel.gates i.config act
+  · simp [phase1Held, CommitInst.ingestPhase, CommitInst.decidePhase, hg]
+  · simp [CommitInst.ingestPhase, CommitInst.decidePhase, hg]
+
+/-- **THE DISPATCH LOOP, PURELY.** Given the per-call snapshot — the evidence
+    each `gather` returned and the state each `stateRef.get` read, as the
+    instance list — the three accumulations `Host.dispatch` computes are
+    exactly `pureCommit`'s components:
+
+    * the combined verdict is `combineVerdicts` over the loop's `phase1Held`
+      verdicts (one per gating instance, registry order);
+    * on deny, the committed states are exactly the loop's UNCONDITIONAL
+      writes (`phase1Held`'s ingest states) — the held writes are never
+      applied;
+    * on allow, the committed states are exactly the loop's held replay
+      (`phase1Held`'s decide states).
+
+    HONEST BOUNDARY: this covers everything the loop computes per call given
+    its snapshot. NOT covered (the named IO shell): snapshot faithfulness
+    (`IO.Ref` get/set sequencing, ref distinctness — C/V/K share one `Unit`
+    ref), the `for`-loop/`do`-monad desugaring, the allow branch actually
+    executing the queued writes, `stepImpl`'s JSON marshalling into evidence,
+    and the `unsafeBaseIO`/FFI/Rust/OS boundary. -/
+theorem dispatch_plan (insts : List CommitInst) (act : CanonicalAction) :
+    ((pureCommit insts act).1
+        = combineVerdicts (insts.filterMap fun i =>
+            if i.kernel.gates i.config act
+            then some (phase1Held i.kernel i.config act i.evidence i.state).1
+            else none)) ∧
+    ((pureCommit insts act).1 = .deny →
+        (pureCommit insts act).2 = insts.map fun i =>
+          if i.kernel.gates i.config act
+          then { i with state := (phase1Held i.kernel i.config act i.evidence i.state).2.1 }
+          else i) ∧
+    ((pureCommit insts act).1 = .allow →
+        (pureCommit insts act).2 = insts.map fun i =>
+          if i.kernel.gates i.config act
+          then { i with state := (phase1Held i.kernel i.config act i.evidence i.state).2.2 }
+          else i) := by
+  refine ⟨?_, ?_, ?_⟩
+  · rw [pureCommit_verdict, dispatch_verdicts_plan]
+  · intro hdeny
+    rw [pureCommit_deny_no_decide_commit insts act hdeny, dispatch_ingest_plan]
+  · intro hallow
+    rw [pureCommit_allow_commits_decide insts act hallow, dispatch_held_plan]
+
+end Host
+
 /-! ## Axiom pins — enforced at module build
 
 Every definition and theorem of the commit-discipline model sits on Lean's
@@ -981,3 +1201,25 @@ info: 'Host.linear_committed_trace_spends_le_grants' depends on axioms: [propext
 info: 'Host.linear_committed_trace_no_double_spend' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.linear_committed_trace_no_double_spend
+/-- info: 'Host.pureCommit_deny_of_member' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.pureCommit_deny_of_member
+/-- info: 'Host.pureCommit_deny_budget_frozen' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.pureCommit_deny_budget_frozen
+/-- info: 'Host.pureCommit_deny_temporal_frozen' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.pureCommit_deny_temporal_frozen
+/--
+info: 'Host.pureCommit_deny_safety_ingest_only' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_safety_ingest_only
+/--
+info: 'Host.pureCommit_deny_linear_ingest_only' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_linear_ingest_only
+/-- info: 'Host.dispatch_verdicts_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_verdicts_plan
+/-- info: 'Host.dispatch_ingest_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_ingest_plan
+/-- info: 'Host.dispatch_held_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_held_plan
+/-- info: 'Host.dispatch_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_plan

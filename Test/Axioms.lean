@@ -8,6 +8,7 @@
 import SealCore.Safety
 import SealV2.DecideTheorems
 import Host
+import Host.CommitRegistry
 import Host.RecordTemporal
 import Host.RecordTemporalCanonical
 import Host.CompositionBytes
@@ -710,6 +711,84 @@ info: 'Host.linear_committed_trace_conservation' depends on axioms: [propext, Cl
 info: 'Host.linear_committed_trace_no_double_spend' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.linear_committed_trace_no_double_spend
+
+-- The budget × linear × safety composition: deny-side per-kernel corollaries,
+-- the dispatch loop's plan bound to the pure model (Host/Commit.lean), and
+-- the 7-kernel registry-level deny composition (Host/CommitRegistry.lean)
+
+/-- info: 'Host.pureCommit_deny_of_member' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.pureCommit_deny_of_member
+
+/--
+info: 'Host.pureCommit_deny_budget_frozen' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_budget_frozen
+
+/--
+info: 'Host.pureCommit_deny_temporal_frozen' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_temporal_frozen
+
+/--
+info: 'Host.pureCommit_deny_safety_ingest_only' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_safety_ingest_only
+
+/--
+info: 'Host.pureCommit_deny_linear_ingest_only' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.pureCommit_deny_linear_ingest_only
+
+/-- info: 'Host.dispatch_verdicts_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_verdicts_plan
+
+/-- info: 'Host.dispatch_ingest_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_ingest_plan
+
+/-- info: 'Host.dispatch_held_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_held_plan
+
+/-- info: 'Host.dispatch_plan' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_plan
+
+/-- info: 'Host.commitInstsFor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.commitInstsFor
+
+/-- info: 'Host.commitInstsFor_kernels' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.commitInstsFor_kernels
+
+/-- info: 'Host.linearIngested' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.linearIngested
+
+/--
+info: 'Host.registry_deny_ingest_only' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.registry_deny_ingest_only
+
+/--
+info: 'Host.registry_deny_no_budget_spend' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.registry_deny_no_budget_spend
+
+/--
+info: 'Host.registry_deny_temporal_frozen' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.registry_deny_temporal_frozen
+
+/--
+info: 'Host.parseGrantsText_grant_only' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.parseGrantsText_grant_only
+
+/--
+info: 'Host.linear_ingest_grant_only_holds' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.linear_ingest_grant_only_holds
+
+/--
+info: 'Host.registry_deny_no_capability_consumed' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.registry_deny_no_capability_consumed
 
 -- Provenance separation: the principal is never populated from the request
 -- (Host/Provenance.lean)

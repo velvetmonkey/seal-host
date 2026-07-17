@@ -15,9 +15,13 @@ lesson): every positive assertion demands the audit's certs array contain a
 certificate NAMING the kernel under test — a scenario where the kernel never
 gated anything cannot pass.
 
-Also here: the budget × linear honesty characterization — the pinned-known
-behaviour surfaced by the DX docs (denied calls spend nothing at the pure
-commit layer; counters are global, no caller dimension). -/
+Also here: the budget × linear characterization — runtime evidence for the
+PROVEN deny-side composition (`Host.registry_deny_ingest_only`,
+`Host.dispatch_plan`: denied calls commit no decide-phase state anywhere in
+the 7-kernel registry) and for the remaining caller-dimension feature gap
+(counters are global by design; a feature gap, not a proof gap). Proofs and
+tests are different tripwires — these run the compiled dispatch path the
+theorems' IO shell does not cover. -/
 
 open Lean
 
@@ -265,10 +269,12 @@ def main : IO Unit := do
   check "unknown section key names the stray" ((e2.splitOn "'cap'").length > 1)
 
   -- ===== budget × linear honesty characterization =========================
-  -- (a) A Safety-denied call spends NO budget: the pure-model theorems
-  -- (`pureCommit_deny_no_decide_commit`, `budget_commitStep_deny`) exhibited
-  -- through the real dispatch path. Budget cap 1 covers BOTH tools; the
-  -- safety-denied db.execute must leave the whole cap for notes.add.
+  -- (a) A Safety-denied call spends NO budget: the PROVEN deny composition
+  -- (`registry_deny_ingest_only`, `registry_deny_no_budget_spend`, built on
+  -- `pureCommit_deny_no_decide_commit`, `budget_commitStep_deny`) exhibited
+  -- through the real dispatch path — runtime evidence across the IO shell the
+  -- theorems name as TCB. Budget cap 1 covers BOTH tools; the safety-denied
+  -- db.execute must leave the whole cap for notes.add.
   initCfg "BxL deny spends nothing" (payload [
     "\"safety\":{\"approval\":{\"control_file\":\"/tmp/dx-approvals.ndjson\"},\"tools\":[{\"name\":\"db.execute\",\"mode\":\"guard\",\"match\":{\"type\":\"contains_any_ci\",\"arg\":\"sql\",\"needles\":[\"drop\"]},\"target\":[{\"full_arguments\":true}]},{\"name\":\"notes.add\",\"mode\":\"allow\"}]}",
     "\"budget\":{\"budgets\":[{\"name\":\"ops\",\"cap\":1,\"tools\":[\"db.execute\",\"notes.add\"]}]}"])
@@ -283,9 +289,9 @@ def main : IO Unit := do
   assertRoute "BxL then cap enforced" x3 "block"
   assertCert "BxL then cap enforced" x3 "budget" "deny"
 
-  -- (b) NO CALLER DIMENSION (the pinned-known gap): budget counters are
-  -- global. Two calls differing only in a caller-ish argument drain ONE
-  -- counter — the first caller exhausts the second's allowance.
+  -- (b) NO CALLER DIMENSION (a feature gap, not a proof gap — counters are
+  -- global by design). Two calls differing only in a caller-ish argument
+  -- drain ONE counter — the first caller exhausts the second's allowance.
   initCfg "BxL no caller dimension" (payload [
     safetyAllowing ["notes.add"],
     "\"budget\":{\"budgets\":[{\"name\":\"notes\",\"cap\":1,\"tools\":[\"notes.add\"]}]}"])

@@ -233,21 +233,44 @@ section is present but vacuous when no budget covers any tool.
 **Guarantee:** a composed allow for a B-gated call implies every covering
 budget resolved its cost and admitted it without exceeding its cap.
 
-### Budget × Linear: pinned known gap
+### Budget × Linear: composition proven; IO shell and caller dimension pinned
 
-Proven, in the pure two-phase commit model (`Host/Commit.lean`): a call the
-composed verdict denies commits no decide-phase state — a Safety-denied call
-spends no budget and consumes no linear grant
-(`pureCommit_deny_no_decide_commit`, `budget_commitStep_deny`), committed
-traces stay within caps (`budget_committed_trace_within_cap_of_consistent`)
-and never double-spend (`linear_committed_trace_no_double_spend`), and the
-deployed loop body is bound to the model by the `phase1Held_*` lemmas.
-NOT proven: the IO realization of that commit discipline through the FFI
-boundary (mirrored, not proven), and any caller dimension — budget counters
-and linear grants are global, so one caller can exhaust another's allowance
-(characterized end-to-end in `Test/DxSurface.lean`). The budget×linear
-composition proof is a queued follow-up goal; until it lands, read B and L
-guarantees as per-config-global, never per-caller.
+PROVEN (`Host/Commit.lean`, `Host/CommitRegistry.lean`), over the full
+7-kernel registry — `commitInstsFor_kernels` binds the pure commit instances
+to exactly `Ffi.activeKernels`, the same selection spec `registryFor_kernels`
+proves the deployed step dispatches:
+
+- A call denied by ANY kernel — one gating kernel's deny forces the combined
+  deny (`pureCommit_deny_of_member`) — commits no decide-phase state anywhere
+  (`registry_deny_ingest_only`). Budget counters are byte-identical
+  (`registry_deny_no_budget_spend`), the temporal trace gains no event
+  (`registry_deny_temporal_frozen`), and no linear capability is consumed —
+  committed holds can only grow, by exactly this call's ingested grants
+  (`registry_deny_no_capability_consumed`; the deployed grants parse emits
+  grant events only, `parseGrantsText_grant_only`). The only states that move
+  on a deny are the spec-allowed ingests, and the theorem says which: Safety's
+  approval fold and Linear's grant fold (evidence must survive a deny).
+- Committed traces stay within caps
+  (`budget_committed_trace_within_cap_of_consistent`) and never double-spend
+  (`linear_committed_trace_no_double_spend`).
+- The dispatch loop's per-call computation — the verdicts it combines, the
+  states it writes immediately, the states it holds and replays only on
+  allow — is proven equal to the model's `pureCommit` in the loop's own
+  vocabulary (`dispatch_plan`, over the `phase1Held` triple the loop calls).
+
+NOT proven (the named IO shell): that the run-time snapshot fed to that pure
+computation is faithful — the `IO.Ref` get/set sequencing and ref
+distinctness (C, V and K share one `Unit` ref), the `for`-loop/`do`-monad
+desugaring, the allow branch actually executing the queued held writes,
+`stepImpl`'s JSON parse of the step input into evidence, the
+config/evidence wiring of `commitInstsFor` against `registryFor`
+(kernel-list equality is pinned via `commitInstsFor_kernels`; the
+per-instance wiring of the mirror is trusted-by-inspection), and the
+`unsafeBaseIO`/FFI/Rust/OS boundary. And no caller dimension — budget
+counters and linear grants are global, so one caller can exhaust another's
+allowance (characterized end-to-end in `Test/DxSurface.lean`); that is a
+feature gap, not a proof gap. Read B and L guarantees as per-config-global,
+never per-caller.
 
 ### Composed guarantee and boundary
 
