@@ -30,8 +30,8 @@ HOST = gp.HOST
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# 0aeb35a carries kernel ff1bfd68 (6d0d6eb carried d3067bc0, 0db03ef carried df42).
-PHASE_B_KIT_REV = "0aeb35a60adfa4c50b6bfcf761967b1c6280fde7"
+# f95ac81 carries kernel a3790181 (0aeb35a carried ff1bfd68, 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+PHASE_B_KIT_REV = "f95ac81265982b443e04fba2692f412721d68769"
 PINNED_POSTGRES_IMAGE = "postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb"
 POSTGRES_IMAGE = os.environ.get("SEAL_POSTGRES_IMAGE", PINNED_POSTGRES_IMAGE)
 
@@ -310,23 +310,26 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     replay = work / "approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
     value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    # The a3790181 parser hard-errors on unknown keys inside kernel sections and
+    # entries; display metadata (_comment, _seal_demo_tier) may only ride inside
+    # a safety RULE interior (rule-level strictness is a named kit follow-up).
     for rule in value["safety"]["tools"]:
         if rule["name"] == "list_tables":
             rule["_comment"] = "unverified suggestion -- server self-described readOnly"
         elif rule["name"] == "execute_sql":
             rule["match"] = {"type":"contains_any_ci", "arg":"sql", "needles":["drop", "delete", "truncate"]}
-            rule["_comment"] = "reviewed demo mapping: destructive SQL is guarded and full arguments are approval-bound"
+            rule["_comment"] = ("reviewed demo mapping: destructive SQL is guarded and full arguments are "
+                                "approval-bound; reviewed demo cap: two executed destructive SQL calls per host session")
         elif rule["name"] == "freeze_db":
-            rule["_comment"] = "reviewed demo mapping: guarded control event activates the Temporal freeze"
+            rule["_comment"] = ("reviewed demo mapping: guarded control event activates the Temporal freeze; "
+                                "freeze_db locks subsequent execute_sql calls")
     value["temporal"] = {
-        "_comment": "reviewed demo mapping: freeze_db locks subsequent execute_sql calls",
         "policies": [{"name":"freeze-destructive-sql", "type":"no_after", "trigger":["freeze_db"], "forbidden":["execute_sql"]}],
     }
     value["budget"] = {"budgets": [{
         "name":"destructive-sql-calls", "cap":2, "tools":["execute_sql"],
-        "_comment":"reviewed demo cap: two executed destructive SQL calls per host session",
     }]}
-    value["safety"]["_seal_demo_tier"] = POSTGRES_TIER
+    value["safety"]["tools"][0]["_seal_demo_tier"] = POSTGRES_TIER
     after = json.dumps(value, indent=2) + "\n"
     if "EDIT-ME" in after: raise gp.DemoFailure("reviewed policy still contains EDIT-ME")
     print("\n=== VISIBLE PROD-DB RECIPE REVIEW / RUNTIME EDIT ===")
@@ -426,7 +429,8 @@ def receipt_json(path: Path) -> dict:
 
 def verify_receipt(seal: Path, receipt: Path, verdict: str) -> None:
     record = receipt_json(receipt)
-    if record.get("kernel_config", {}).get("safety", {}).get("_seal_demo_tier") != POSTGRES_TIER:
+    tier_rules = record.get("kernel_config", {}).get("safety", {}).get("tools", [])
+    if not tier_rules or tier_rules[0].get("_seal_demo_tier") != POSTGRES_TIER:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
     if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
