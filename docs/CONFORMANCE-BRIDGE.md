@@ -160,7 +160,7 @@ before the differential, and driving the fresh artifact:
 - Source: `mcp-seal-dev` `cc79c86` + seal-host `feat/dx-surface-7-kernels`
   (the 7-kernel policy-v2 DX surface: `Seal.parsePolicyBundle` +
   `Host.ofBundle`)
-- `seal.wasm` sha256: `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
+- `seal.wasm` sha256: `2d9ef8e0b0b977bde9b9a95832493aee24771c727fb954bae693faa9bf730ba0`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
 - Supersedes `ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546`
   (the pathological-number fail-closed build, whose guard and decision

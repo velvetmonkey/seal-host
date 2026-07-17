@@ -1,44 +1,45 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the 7-kernel DX surface: the policy-v2 config vocabulary
-(`Seal.parsePolicyBundle`, mcp-seal-dev) now parses all seven kernel sections
-— per-section `enabled` flags, hard errors on unknown keys at the payload,
-section, and entry levels — and `Host.ofBundle` maps the parsed bundle onto
-the unchanged kernel config types. This rebuild is REQUIRED and correct — the
-config parser is kernel source, so the wasm pin changes with it. Decision
-semantics on already-valid configs are unchanged (`activeKernels` identical;
-honesty matrix byte-identical); rejected-config behaviour is strictly
-stricter. Differential-verified against the real Lean model over corpus C and
-the three-way property differential (see docs/CONFORMANCE-BRIDGE.md, WASM
-section).
+Built from the V2.1 Route 2 surface: the policy-v2 config vocabulary
+(`Seal.parsePolicyBundle`, mcp-seal-dev) gains the `principals` section (the
+signed-envelope principal registry + per-principal budgets), and the kernel
+gains `Host.verifyEnvelope` (Ed25519 request-envelope verification in the
+parse path), the 8th wired kernel `Kernels.principalBudgetKernel`
+(per-(principal, budget) counters over the unchanged BudgetCore automaton,
+mixed-mode fail-closed), and the step-output `principal` member. This rebuild
+is REQUIRED and correct — the config parser and the decision core are kernel
+source, so the wasm pin changes with them. Decision semantics on
+already-valid, envelope-less traffic are unchanged (`activeKernels`
+identical on configs without a `principals` section; step outputs
+byte-identical when no envelope is presented); rejected-config behaviour is
+strictly stricter. BRANCH-ONLY pin: this artifact lives on
+`feat/v2.1-principal` and supersedes a3790181 THERE ONLY — the fleet
+(kit/downstream) stays on a3790181 until the branch is adopted; the fleet
+repin is a named parked follow-up, not part of this build.
 
-Kernel source    : mcp-seal-dev cc79c86691ca25b728c9cc1968d07cacb09cd39e
-                   (feat/dx-surface-7-kernels — Seal.PolicyBundle)
-Host source      : seal-host feat/dx-surface-7-kernels
-                   (Host.ofBundle + bundle_* registration tripwires)
+Kernel source    : mcp-seal-dev 8761fae23467549f3c1f4c62145168b40a94e0f1
+                   (feat/v2.1-principal — Seal.PolicyBundle `principals`)
+Host source      : seal-host feat/v2.1-principal
+                   (Host.Principal + Kernels.PrincipalBudget + Ffi parse path)
 Build date       : 2026-07-17
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af  (3798520 bytes)
-  seal.js    1b565eef3373b56b56ed295ddf5511c76f2ba3a24856640165cb2eb84309ffc5
+  seal.wasm  2d9ef8e0b0b977bde9b9a95832493aee24771c727fb954bae693faa9bf730ba0  (3935299 bytes)
+  seal.js    7080507499a5df43224e1553cb99dc338450b57ddb5fd58e01c06a76db8f891d
 
-Supersedes the previous conformance pin sha256
-  ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
-(the pathological-number fail-closed build at mcp-seal 6bbadbc7; its
-fail-closed guard and all decision semantics are carried forward unchanged).
-That build superseded d3067bc0 (Lane C native-vs-wasm divergence, closed),
-which superseded the fleet pin df42cbad.
+Supersedes (branch-locally) the fleet conformance pin sha256
+  a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+(the 7-kernel DX-surface build at mcp-seal cc79c86; its parser discipline
+and all decision semantics are carried forward unchanged). That build
+superseded ff1bfd68 (pathological-number fail-closed), which superseded
+d3067bc0 (Lane C), which superseded the fleet pin df42cbad.
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
-  ./build_core.sh               # ir -> build-core/*.o (incl Seal/PolicyBundle)
+  ./build_core.sh               # ir -> build-core/*.o (incl Seal/PolicyBundle, Host/Principal, Kernels/PrincipalBudget)
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
   # then: cp build-core/seal.{wasm,js} verified/
-
-Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
-  seal_init(envelope, pubkey) -> {ok,...}
-  seal_decide(stepInput)      -> {route, audit, response?}

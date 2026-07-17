@@ -26,10 +26,12 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 
 [[require]]
 name = "mcp-seal"
-# V2.1 iteration pin: path require at the local canonical repo
-# (feat/v2.1-principal). Converted back to a git-rev pin in the commit that
-# mints the new wasm PROVENANCE — a provenance block must name a commit.
-path = "../mcp-seal-dev"
+git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
+# Local canonical base (feat/v2.1-principal: the `principals` bundle
+# section). Fresh machines cannot resolve this object until the
+# human-approved upstream push; developer builds must seed it locally first:
+#   cd .lake/packages/mcp-seal && git fetch /home/monkey/src/mcp-seal-dev feat/v2.1-principal && git checkout 8761fae2
+rev = "8761fae23467549f3c1f4c62145168b40a94e0f1"
 
 # One library for the host + kernels + FFI surface. Host and Kernels modules
 # import each other across the prefix boundary (Kernels implement Host.Kernel;

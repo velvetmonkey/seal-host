@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 const VERIFIED_WASM: &[u8] = include_bytes!("../../receipt-verifier/wasm/seal.wasm");
 pub const VERIFIED_WASM_SHA256: &str =
-    "a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af";
+    "2d9ef8e0b0b977bde9b9a95832493aee24771c727fb954bae693faa9bf730ba0";
 
 /// Declared verification profile of seal-host's receipt-verifier surface
 /// (seal-assurance-kit docs/VERIFY-PROFILES.md): P-ENFORCE — the production
@@ -249,6 +249,14 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
     // Cross-checked above against the kernel-attested hash in the audit, so
     // this value is kernel-backed, not merely host-asserted.
     receipt.insert("request_sha256".into(), Value::String(host_request_sha256));
+    // V2.1 authenticated principal — copied ONLY from the authoritative Lean
+    // step output (the parse-path `Host.verifyEnvelope` value; this is the
+    // whole Rust half of the R-PRINC seam: one producer, zero derivation).
+    // Absent when the kernel returned none — never null-filled, never read
+    // from the request line, arguments, or any approval record.
+    if let Some(principal) = step.get("principal").and_then(Value::as_str) {
+        receipt.insert("principal".into(), Value::String(principal.to_owned()));
+    }
     if let Err(parse_error) = &request_material {
         receipt.insert(
             "request_parse_error".into(),

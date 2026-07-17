@@ -50,9 +50,11 @@ MCP_MODULES=(
 PROJECT_MODULES=(
   Ffi
   Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step
+  Host/Principal Host/Provenance
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
-  Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/Safety Kernels/Temporal
+  Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/PrincipalBudget
+  Kernels/Safety Kernels/Temporal
 )
 MCP_TARGETS=()
 for module in "${MCP_MODULES[@]}"; do
