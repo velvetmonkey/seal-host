@@ -919,13 +919,16 @@ Two pieces close the pinned-known gap:
    components, stated in the loop's own vocabulary (the `gates` check and
    the `phase1Held` triple the loop literally calls).
 
-HONEST BOUNDARY (the named IO shell, unchanged by these theorems): that the
-run-time snapshot fed to this pure computation is faithful — the `IO.Ref`
-get/set sequencing and ref distinctness (C, V, K share one `Unit` ref in
-`Ffi.registryFor`), the `for`-loop/`do`-monad desugaring and `mut`
-accumulators, the allow-branch actually executing the queued held writes,
-`stepImpl`'s JSON parse of the step input into evidence, and the
-`unsafeBaseIO`/FFI/Rust/OS boundary — remains TCB. -/
+HONEST BOUNDARY (the named IO shell, now REDUCED to its opaque core): the
+`for`-loop/`do`-monad desugaring and `mut` accumulators, the allow-branch
+executing the queued held writes, gather execution at the deployed registry,
+and `stepImpl`'s marshalling of the step input into evidence are now theorems
+(`Host.dispatch_spelled`, `Ffi.stepImpl_spelled` and companions). What REMAINS
+TCB is only the opaque core: `IO.Ref` get/set value semantics (`ST.Prim.Ref`
+externs have nothing to unfold) and the `unsafeBaseIO`/FFI/Rust/OS boundary.
+Ref distinctness is typed-runtime trust — the five session refs carry distinct
+state types, so aliasing is a type error (the one shared `unitRef`, C/V/K, has
+`State = Unit`). See docs/POLICY-ASSURANCE-BOUNDARY.md. -/
 
 /-- Kernel T's ingest is the identity: the temporal trace records only
     EXECUTED calls, never evidence. -/
@@ -1088,11 +1091,13 @@ theorem dispatch_held_plan (insts : List CommitInst) (act : CanonicalAction) :
       (`phase1Held`'s decide states).
 
     HONEST BOUNDARY: this covers everything the loop computes per call given
-    its snapshot. NOT covered (the named IO shell): snapshot faithfulness
-    (`IO.Ref` get/set sequencing, ref distinctness — C/V/K share one `Unit`
-    ref), the `for`-loop/`do`-monad desugaring, the allow branch actually
-    executing the queued writes, `stepImpl`'s JSON marshalling into evidence,
-    and the `unsafeBaseIO`/FFI/Rust/OS boundary. -/
+    its snapshot. The former IO-shell residuals — the `for`-loop/`do`-monad
+    desugaring, the allow branch executing the queued writes, and `stepImpl`'s
+    marshalling into evidence — are now theorems (`Host.dispatch_spelled`,
+    `Ffi.stepImpl_spelled`). What REMAINS TCB is the opaque core: `IO.Ref`
+    get/set value semantics and the `unsafeBaseIO`/FFI/Rust/OS boundary; ref
+    distinctness is typed-runtime trust (distinct state types per session ref).
+    See docs/POLICY-ASSURANCE-BOUNDARY.md. -/
 theorem dispatch_plan (insts : List CommitInst) (act : CanonicalAction) :
     ((pureCommit insts act).1
         = combineVerdicts (insts.filterMap fun i =>
