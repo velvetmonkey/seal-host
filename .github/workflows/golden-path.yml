@@ -16,6 +16,16 @@ jobs:
       SEAL_ASSURANCE_KIT_ROOT: ${{ github.workspace }}/seal-assurance-kit
     steps:
       - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Proven Lean surface is read-only in this push
+        run: |
+          PUSH_BASE="${{ github.event.before }}"
+          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
+            PUSH_BASE="$(git merge-base origin/main HEAD)"
+          fi
+          git diff --exit-code "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'
 
       - name: Require private dependency access
         run: |
@@ -29,13 +39,13 @@ jobs:
       # verifies today's receipts against yesterday's kernel and fails
       # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
-      # by hand. f95ac81 carries kernel a3790181 (0aeb35a carried ff1bfd68,
-      # 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+      # by hand. 62f5fe5 carries kernel a3790181 plus the current 7-kernel
+      # policy bundle (f95ac81 carried the same kernel before that merge).
       - name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: f95ac81265982b443e04fba2692f412721d68769
+          ref: 62f5fe5d2f3f9d1d700b524aa1d415db449799fc
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
@@ -65,35 +75,34 @@ jobs:
       - name: Stage pinned Postgres image
         run: docker pull "$SEAL_POSTGRES_IMAGE"
 
+      - name: Doctrine spine unit checks
+        run: python3 -m unittest discover -s demo/tests -v
+
       - name: Deterministic shell acceptance (no model, no operator auth)
         run: |
-          python3 demo/golden_path.py shell --deterministic | tee /tmp/golden-path.txt
-          grep -F "policy tamper fail-closed" /tmp/golden-path.txt
-          grep -F "approval tamper fail-closed" /tmp/golden-path.txt
-          grep -F "downstream non-receipt" /tmp/golden-path.txt
-          grep -F "receipt verify + tier" /tmp/golden-path.txt
-          grep -F "local deterministic-tested, ci_tested=false, operator_verified=false" /tmp/golden-path.txt
-          grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path.txt
-          grep -F "operator-untested until run by Ben" /tmp/golden-path.txt
+          C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
+          ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
+          python3 demo/doctrine_check.py "$C1_ARTIFACT"
+          python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C1_ARTIFACT/receipt-strip.md" "$C1_ARTIFACT/receipt-strip.regenerated.md"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c1.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
 
       - name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
         run: |
-          python3 demo/golden_path.py postgres --deterministic | tee /tmp/golden-path-postgres.txt
-          grep -F "containment preflight" /tmp/golden-path-postgres.txt
-          grep -F "prod-db review + signed policy" /tmp/golden-path-postgres.txt
-          grep -F "policy tamper fail-closed" /tmp/golden-path-postgres.txt
-          grep -F "approval tamper fail-closed" /tmp/golden-path-postgres.txt
-          grep -F "approved one-shot real DROP" /tmp/golden-path-postgres.txt
-          grep -F "accumulated Budget cap" /tmp/golden-path-postgres.txt
-          grep -F "Budget stateful evidence" /tmp/golden-path-postgres.txt
-          grep -F "Temporal freeze" /tmp/golden-path-postgres.txt
-          grep -F "Temporal stateful evidence" /tmp/golden-path-postgres.txt
-          grep -F "fresh receipt verification" /tmp/golden-path-postgres.txt
-          grep -F "seal scan composition" /tmp/golden-path-postgres.txt
-          grep -F "Budget/Temporal enforcement is machine-checked" /tmp/golden-path-postgres.txt
-          grep -F "receipt not called independently verified" /tmp/golden-path-postgres.txt
-          grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-postgres.txt
-          grep -F "operator-untested until run by Ben" /tmp/golden-path-postgres.txt
+          C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"
+          ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
+          python3 demo/doctrine_check.py "$C2_ARTIFACT"
+          python3 demo/render_trace.py "$C2_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C2_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C2_ARTIFACT/receipt-strip.md" "$C2_ARTIFACT/receipt-strip.regenerated.md"
+          grep -F "real costArg Budget control" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "costArg type fail-closed" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c2.txt"
 
       - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
@@ -117,3 +126,12 @@ jobs:
           grep -F "receipt not called independently verified" /tmp/golden-path-filesystem.txt
           grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-filesystem.txt
           grep -F "operator-untested until run by Ben" /tmp/golden-path-filesystem.txt
+
+      - name: Preserve doctrine traces, manifests, receipts, and renderings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctrine-c1-c2-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/seal-doctrine-c1
+            ${{ runner.temp }}/seal-doctrine-c2
