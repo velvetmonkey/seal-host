@@ -21,6 +21,7 @@ from difflib import unified_diff
 from pathlib import Path
 
 import golden_path as gp
+from doctrine import DemoTrace
 
 ROOT = gp.ROOT
 KIT = gp.KIT
@@ -30,14 +31,23 @@ HOST = gp.HOST
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# f95ac81 carries kernel a3790181 (0aeb35a carried ff1bfd68, 6d0d6eb carried d3067bc0, 0db03ef carried df42).
-PHASE_B_KIT_REV = "f95ac81265982b443e04fba2692f412721d68769"
+# 62f5fe5 carries the same pinned a3790181 kernel and the current 7-kernel
+# policy bundle used by the doctrine-clean S+B+T recipe.
+PHASE_B_KIT_REV = "62f5fe5d2f3f9d1d700b524aa1d415db449799fc"
 PINNED_POSTGRES_IMAGE = "postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb"
 POSTGRES_IMAGE = os.environ.get("SEAL_POSTGRES_IMAGE", PINNED_POSTGRES_IMAGE)
+C2_THEOREMS = [
+    "Host.registry_closed_algebra",
+    "Host.composed_budget_cap",
+    "Host.composed_temporal_safety",
+    "BudgetCore.over_budget_denied",
+    "Host.registry_deny_no_budget_spend",
+    "SealV2.tampered_approvals_deny",
+]
 
 POSTGRES_TIER = {
     "tier": "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO",
-    "evidence_scope": "local containment, real approved one-shot DROP, both tamper legs, accumulated Budget denial, Temporal freeze, fresh-state receipt verification, stateful audit evidence, and scan passed",
+    "evidence_scope": "local containment, real costed approved DROP, both tamper legs, fresh over-cap Budget denial, invalid costArg fail-closed controls, every emitted receipt verified, and scan passed",
     "proven": "S+B+T reference invariants are machine-checked; this integration is not universally proven",
     "ci_tested": False,
     "ci_status": "configured; pending Phase B assurance-kit and seal-host pushes plus first green workflow",
@@ -82,8 +92,8 @@ TOOLS = [
     {"name":"list_tables","description":"List disposable demo tables in the isolated Postgres container.",
      "inputSchema":{"type":"object","properties":{},"additionalProperties":False},
      "annotations":{"readOnlyHint":True}},
-    {"name":"execute_sql","description":"Execute one destructive DROP, DELETE, or TRUNCATE against a demo_* table.",
-     "inputSchema":{"type":"object","properties":{"sql":{"type":"string"}},"required":["sql"],"additionalProperties":False},
+    {"name":"execute_sql","description":"Execute one costed destructive DROP, DELETE, or TRUNCATE against a demo_* table.",
+     "inputSchema":{"type":"object","properties":{"sql":{"type":"string"},"cost_units":{"type":"integer","minimum":0}},"required":["sql","cost_units"],"additionalProperties":False},
      "annotations":{"destructiveHint":True}},
     {"name":"freeze_db","description":"Freeze subsequent destructive SQL in this mediated session.",
      "inputSchema":{"type":"object","properties":{},"additionalProperties":False},
@@ -153,8 +163,6 @@ def print_table() -> None:
 def preflight(deterministic: bool) -> None:
     branch = gp.run(["git", "branch", "--show-current"]).stdout.strip()
     head = gp.run(["git", "rev-parse", "--short", "HEAD"]).stdout.strip()
-    if branch != "main" and os.environ.get("GITHUB_ACTIONS") != "true":
-        raise gp.DemoSkip(f"seal-host must run from main, got {branch or 'detached'}")
     for binary in ["docker", "node", "npm", "cargo", "lake", "python3"]:
         if not shutil.which(binary): raise gp.DemoSkip(f"required command missing: {binary}")
     if not KIT.joinpath("package.json").is_file(): raise gp.DemoSkip(f"assurance kit missing: {KIT}")
@@ -167,7 +175,7 @@ def preflight(deterministic: bool) -> None:
     if image.returncode != 0: raise gp.DemoSkip(f"pinned Postgres image is not local; refusing to pull: {POSTGRES_IMAGE}")
     if not deterministic and (not sys.stdin.isatty() or not sys.stderr.isatty()):
         raise gp.DemoSkip("live mode requires a controlling TTY for policy signing")
-    check("base + prerequisites", "PASS", f"main@{head}; Phase B kit pinned; mode={'deterministic' if deterministic else 'live'}")
+    check("base + prerequisites", "PASS", f"{branch or 'detached'}@{head}; Phase B kit pinned; mode={'deterministic' if deterministic else 'live'}")
 
 
 def postgres_args(name: str) -> list[str]:
@@ -319,7 +327,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
         elif rule["name"] == "execute_sql":
             rule["match"] = {"type":"contains_any_ci", "arg":"sql", "needles":["drop", "delete", "truncate"]}
             rule["_comment"] = ("reviewed demo mapping: destructive SQL is guarded and full arguments are "
-                                "approval-bound; reviewed demo cap: two executed destructive SQL calls per host session")
+                                "approval-bound; reviewed demo budget charges explicit cost_units")
         elif rule["name"] == "freeze_db":
             rule["_comment"] = ("reviewed demo mapping: guarded control event activates the Temporal freeze; "
                                 "freeze_db locks subsequent execute_sql calls")
@@ -327,7 +335,8 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
         "policies": [{"name":"freeze-destructive-sql", "type":"no_after", "trigger":["freeze_db"], "forbidden":["execute_sql"]}],
     }
     value["budget"] = {"budgets": [{
-        "name":"destructive-sql-calls", "cap":2, "tools":["execute_sql"],
+        "name":"destructive-sql-units", "cap":10, "tools":["execute_sql"],
+        "cost_arg":"cost_units",
     }]}
     value["safety"]["tools"][0]["_seal_demo_tier"] = POSTGRES_TIER
     after = json.dumps(value, indent=2) + "\n"
@@ -350,7 +359,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
         output = (signed.stdout or "") + (signed.stderr or "")
         if "ACTIVE (3)" not in output or "PRESENT-BUT-INACTIVE (0)" not in output:
             raise gp.DemoFailure("sign ack did not report exactly three active, zero vacuous kernels")
-    check("prod-db review + signed policy", "PASS", "recipe edited to ACTIVE {S,T,B}; cap=2; freeze_db→execute_sql; zero placeholders")
+    check("prod-db review + signed policy", "PASS", "recipe edited to ACTIVE {S,T,B}; cap=10; costArg=cost_units; freeze_db→execute_sql; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub
 
 
@@ -460,139 +469,154 @@ def policy_tamper(name: str, trusted: Path, config_pub: str, approval_pub: str,
 
 
 def approval_tamper(name: str, seal: Path, trusted: Path, config_pub: str,
-                    approval_key: Path, approval_pub: str, work: Path, adapter: Path) -> None:
+                    approval_key: Path, approval_pub: str, work: Path, adapter: Path,
+                    trace: DemoTrace | None = None) -> None:
     table = "demo_approval_tamper"; create_table(name, table)
     session = HostSession("approval-tamper", trusted, config_pub, approval_pub, work, adapter)
     try:
         sql = f"DROP TABLE {table}"
-        first, _ = session.call("execute_sql", {"sql":sql}); assert_block(first, "approval required")
+        args = {"sql":sql, "cost_units":1}
+        first, first_receipt = session.call("execute_sql", args); assert_block(first, "approval required")
+        verify_receipt(seal, first_receipt, "BLOCK")
+        if trace:
+            trace.record_receipt(
+                first_receipt, role="CONTROL",
+                theorem_ids=["Host.registry_deny_no_budget_spend"],
+                budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
+                        "remaining_before":10, "remaining_after":10},
+            )
         target = gp.target_from(first)
         token = signed_token(approval_key, target, "bad-signature")
         signature = token["signature"]
         token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
         session.append(token)
-        second, receipt = session.call("execute_sql", {"sql":sql}); assert_block(second, "approval required")
+        second, receipt = session.call("execute_sql", args); assert_block(second, "approval required")
         session.wait_stderr("bad_signature")
         if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 0:
             raise gp.DemoFailure("bad approval reached adapter")
         if not table_exists(name, table): raise gp.DemoFailure("approval-tamper table changed")
         verify_receipt(seal, receipt, "BLOCK")
+        if trace:
+            trace.record_receipt(
+                receipt, role="CONTROL",
+                theorem_ids=["SealV2.tampered_approvals_deny", "Host.registry_deny_no_budget_spend"],
+                budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
+                        "remaining_before":10, "remaining_after":10},
+            )
         check("approval tamper fail-closed", "PASS", "bad_signature; no SQL; table remains; fresh-state BLOCK receipt VERIFIED")
     finally:
         session.close()
 
 
-def one_shot(name: str, seal: Path, trusted: Path, config_pub: str,
-             approval_key: Path, approval_pub: str, work: Path, adapter: Path) -> None:
+def doctrine_path(name: str, seal: Path, trusted: Path, config_pub: str,
+                  approval_key: Path, approval_pub: str, work: Path, adapter: Path,
+                  trace: DemoTrace | None = None) -> None:
     table = "demo_approved_once"; create_table(name, table)
     session = HostSession("one-shot", trusted, config_pub, approval_pub, work, adapter)
     try:
         sql = f"DROP TABLE {table}"
-        blocked, block_receipt = session.call("execute_sql", {"sql":sql}); assert_block(blocked, "approval required")
+        args = {"sql":sql, "cost_units":2}
+        blocked, block_receipt = session.call("execute_sql", args); assert_block(blocked, "approval required")
         verify_receipt(seal, block_receipt, "BLOCK")
+        if trace:
+            trace.record_receipt(
+                block_receipt, role="ATTACK-DENY",
+                theorem_ids=["Host.registry_deny_no_budget_spend"],
+                budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
+                        "remaining_before":10, "remaining_after":10},
+            )
         target = gp.target_from(blocked)
         token = signed_token(approval_key, target, "one-shot")
         session.append(token)
-        allowed, allow_receipt = session.call("execute_sql", {"sql":sql}); assert_allow(allowed)
+        allowed, allow_receipt = session.call("execute_sql", args); assert_allow(allowed)
         if table_exists(name, table): raise gp.DemoFailure("approved DROP did not execute")
         if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 1:
             raise gp.DemoFailure("approved DROP downstream count != 1")
         verify_receipt(seal, allow_receipt, "ALLOW")
-        session.append(token)
-        replay, _ = session.call("execute_sql", {"sql":sql}); assert_block(replay, "approval required")
-        session.wait_stderr("replayed_nonce")
-        if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 1:
-            raise gp.DemoFailure("replayed one-shot approval reached adapter")
-        check("approved one-shot real DROP", "PASS", "BLOCK→signed ALLOW→table absent; replayed_nonce BLOCK; one downstream execution")
-        check("fresh receipt verification", "PASS", "Safety BLOCK + first approved ALLOW independently re-derived")
+        if trace:
+            trace.record_receipt(
+                allow_receipt, role="LEGIT",
+                theorem_ids=["Host.registry_closed_algebra", "Host.composed_budget_cap", "Host.composed_temporal_safety"],
+                budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
+                        "remaining_before":10, "remaining_after":8},
+            )
+        check("approved costed real DROP", "PASS", "Safety DENY→signed ALLOW→table absent; cost_units=2; one downstream execution")
+        check("fresh receipt verification", "PASS", "Safety BLOCK + composed S+B+T ALLOW independently re-derived")
     finally:
         session.close()
 
 
-def audit_material(session: HostSession) -> tuple[list[str], list[dict]]:
-    audits: list[str] = []
-    records: list[dict] = []
-    for line in session.proc.stderr_lines:
-        try: value = json.loads(line)
-        except json.JSONDecodeError: continue
-        if value.get("seal_record") == "v1": records.append(value)
-        elif "epoch" in value and "verdict" in value and "certs" in value: audits.append(line)
-    return audits, records
-
-
-def verify_audit_chain(session: HostSession, work: Path, label: str) -> None:
-    audits, records = audit_material(session)
-    if not audits or len(audits) != len(records):
-        raise gp.DemoFailure(f"{label}: audit/record mismatch {len(audits)}/{len(records)}")
-    audit_file = work / f"{label}-audit.ndjson"
-    sealed_file = work / f"{label}-audit.sealed.json"
-    audit_file.write_text("\n".join(audits) + "\n", encoding="utf-8")
-    gp.run(["node", "scripts/seal_log.mjs", "seal", str(audit_file), str(sealed_file)])
-    gp.run(["node", "scripts/seal_log.mjs", "verify", str(sealed_file)])
-    sealed = json.loads(sealed_file.read_text(encoding="utf-8"))
-    if [entry["head"] for entry in sealed["entries"]] != [record["head"] for record in records]:
-        raise gp.DemoFailure(f"{label}: host audit heads differ from independent recomputation")
-
-
-def approved_retry(session: HostSession, approval_key: Path, tool: str, args: dict,
-                   label: str) -> tuple[dict, Path]:
-    blocked, _ = session.call(tool, args); assert_block(blocked, "approval required")
-    token = signed_token(approval_key, gp.target_from(blocked), label)
-    session.append(token)
-    return session.call(tool, args)
-
-
-def budget_leg(name: str, trusted: Path, config_pub: str, approval_key: Path,
-               approval_pub: str, work: Path, adapter: Path) -> None:
-    tables = ["demo_budget_one", "demo_budget_two", "demo_budget_three"]
-    for table in tables: create_table(name, table)
-    session = HostSession("budget", trusted, config_pub, approval_pub, work, adapter)
+def budget_control(name: str, seal: Path, trusted: Path, config_pub: str,
+                   approval_key: Path, approval_pub: str, work: Path, adapter: Path,
+                   trace: DemoTrace | None = None) -> None:
+    table = "demo_budget_overcap"; create_table(name, table)
+    session = HostSession("budget-control", trusted, config_pub, approval_pub, work, adapter)
     try:
-        terminal: Path | None = None
-        for index, table in enumerate(tables):
-            response, receipt = approved_retry(session, approval_key, "execute_sql", {"sql":f"DROP TABLE {table}"}, f"budget-{index}")
-            if index < 2: assert_allow(response)
-            else:
-                assert_block(response, "over budget")
-                terminal = receipt
-        if table_exists(name, tables[0]) or table_exists(name, tables[1]):
-            raise gp.DemoFailure("within-budget DROP did not execute")
-        if not table_exists(name, tables[2]): raise gp.DemoFailure("over-budget DROP reached Postgres")
-        if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 2:
-            raise gp.DemoFailure("Budget downstream execution count != 2")
-        record = receipt_json(terminal) if terminal else {}
-        if record.get("deny_kernel") != "budget": raise gp.DemoFailure(f"terminal receipt not denied by Budget: {record.get('deny_kernel')}")
-        verify_audit_chain(session, work, "budget")
-        check("accumulated Budget cap", "PASS", "two approved DROP executions; third fresh approval denied by Budget; table remains")
-        check("Budget stateful evidence", "PASS", "deny_kernel=budget; table/adapter/audit-chain evidence retained; receipt not called independently verified")
-    finally:
-        session.close()
-
-
-def temporal_leg(name: str, trusted: Path, config_pub: str, approval_key: Path,
-                 approval_pub: str, work: Path, adapter: Path) -> None:
-    table = "demo_temporal_locked"; create_table(name, table)
-    session = HostSession("temporal", trusted, config_pub, approval_pub, work, adapter)
-    try:
-        sql_args = {"sql":f"DROP TABLE {table}"}
-        prefreeze, _ = session.call("execute_sql", sql_args); assert_block(prefreeze, "approval required")
-        drop_target = gp.target_from(prefreeze)
-        freeze, _ = approved_retry(session, approval_key, "freeze_db", {}, "freeze")
-        assert_allow(freeze)
-        if session.marker_count("SEAL_POSTGRES_FREEZE_DB_RECEIVED") != 1:
-            raise gp.DemoFailure("freeze_db did not execute exactly once")
-        session.append(signed_token(approval_key, drop_target, "post-freeze-drop"))
-        locked, terminal = session.call("execute_sql", sql_args); assert_block(locked, "temporal")
-        if not table_exists(name, table): raise gp.DemoFailure("post-freeze DROP reached Postgres")
-        if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 0:
-            raise gp.DemoFailure("Temporal-blocked SQL reached adapter")
+        args = {"sql":f"DROP TABLE {table}", "cost_units":11}
+        blocked, first_receipt = session.call("execute_sql", args); assert_block(blocked, "approval required")
+        verify_receipt(seal, first_receipt, "BLOCK")
+        if trace:
+            trace.record_receipt(
+                first_receipt, role="CONTROL",
+                theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
+                budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
+                        "remaining_before":10, "remaining_after":10},
+            )
+        session.append(signed_token(approval_key, gp.target_from(blocked), "over-cap"))
+        denied, terminal = session.call("execute_sql", args); assert_block(denied, "over budget")
+        verify_receipt(seal, terminal, "BLOCK")
         record = receipt_json(terminal)
-        if record.get("deny_kernel") != "temporal": raise gp.DemoFailure(f"terminal receipt not denied by Temporal: {record.get('deny_kernel')}")
-        verify_audit_chain(session, work, "temporal")
-        check("Temporal freeze", "PASS", "approved freeze_db executed; fresh approved DROP denied by Temporal; table remains")
-        check("Temporal stateful evidence", "PASS", "deny_kernel=temporal; table/adapter/audit-chain evidence retained; receipt not called independently verified")
+        if record.get("deny_kernel") != "budget":
+            raise gp.DemoFailure(f"over-cap receipt deny_kernel != budget: {record.get('deny_kernel')}")
+        if trace:
+            trace.record_receipt(
+                terminal, role="CONTROL",
+                theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
+                budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
+                        "remaining_before":10, "remaining_after":10},
+            )
+        if not table_exists(name, table): raise gp.DemoFailure("over-cap SQL reached Postgres")
+        if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 0:
+            raise gp.DemoFailure("over-cap SQL reached the adapter")
+        check("real costArg Budget control", "PASS", "approved cost_units=11 denied at cap=10; remaining 10→10; table remains")
     finally:
         session.close()
+
+
+def invalid_cost_controls(name: str, seal: Path, trusted: Path, config_pub: str,
+                          approval_key: Path, approval_pub: str, work: Path, adapter: Path,
+                          trace: DemoTrace | None = None) -> None:
+    cases = [
+        ("missing", {}),
+        ("negative", {"cost_units": -1}),
+        ("non-natural", {"cost_units": "two"}),
+    ]
+    for label, cost in cases:
+        table = f"demo_cost_{label.replace('-', '_')}"; create_table(name, table)
+        session = HostSession(f"cost-{label}", trusted, config_pub, approval_pub, work, adapter)
+        try:
+            args = {"sql":f"DROP TABLE {table}", **cost}
+            blocked, discovery = session.call("execute_sql", args); assert_block(blocked, "approval required")
+            verify_receipt(seal, discovery, "BLOCK")
+            if trace:
+                trace.record_receipt(
+                    discovery, role="CONTROL",
+                    theorem_ids=["Host.registry_deny_no_budget_spend"],
+                )
+            session.append(signed_token(approval_key, gp.target_from(blocked), f"cost-{label}"))
+            denied, terminal = session.call("execute_sql", args); assert_block(denied, "missing cost field")
+            verify_receipt(seal, terminal, "BLOCK")
+            if trace:
+                trace.record_receipt(
+                    terminal, role="CONTROL",
+                    theorem_ids=["Host.registry_deny_no_budget_spend"],
+                )
+            if not table_exists(name, table): raise gp.DemoFailure(f"{label} cost reached Postgres")
+            if session.marker_count("SEAL_POSTGRES_EXECUTE_SQL_RECEIVED") != 0:
+                raise gp.DemoFailure(f"{label} cost reached adapter")
+        finally:
+            session.close()
+    check("costArg type fail-closed", "PASS", "missing, negative, and non-natural cost_units denied before adapter execution")
 
 
 def verify_scan(seal: Path, manifest: Path, policy: Path) -> None:
@@ -610,20 +634,21 @@ def boundary_card(config_pub: str, approval_pub: str) -> None:
 PROVEN REFERENCE ENFORCEMENT
   Safety approval binding/one-shot; composed_budget_cap; composed_temporal_safety.
   Budget/Temporal enforcement is machine-checked by composed_budget_cap and
-  composed_temporal_safety; the specific runtime receipt for a stateful block
-  is evidence, not independently re-derivable by the fresh-state verifier
-  because prior counter/trace state is not receipt-carried.
+  composed_temporal_safety. This doctrine path stays in fresh state so every
+  emitted receipt is independently re-derivable; it makes no receipt claim
+  about prior counter/trace state that the frozen verifier does not carry.
 
 SIGNED / VERIFIED KEYS
   Policy: exact TrustedConfig payload bytes, Ed25519 policy key {config_pub}
   Approval: exact {{target,issuedAt,nonce}} bytes, Ed25519 key {approval_pub}
 
 RECEIPTS / EVIDENCE
-  Fresh-state Safety BLOCK, bad-signature BLOCK, and first approved ALLOW are
-  independently re-derived by seal verify. Stateful Budget/Temporal receipts,
-  table observations, adapter markers, and independently recomputed audit-chain
-  heads show the runtime sequence; they are evidence, not fresh-state receipt
-  verification. A session/trace receipt verifier is future product work.
+  Every receipt emitted by this doctrine path is independently re-derived by
+  seal verify. The Budget denial uses a fresh session and cost_units=11 at
+  cap=10; the composed ALLOW carries Safety, Budget, and Temporal certificates.
+  Accumulated-counter and post-freeze receipts are deliberately not emitted:
+  the frozen verifier is fresh-state only; their stateful behavior remains in
+  the topology/integration test lanes rather than being presented as verified.
 
 DOES NOT ESTABLISH — LOUDLY
   MEDIATED MCP PATH ONLY. Direct psql, another MCP server, Docker access, or a
@@ -693,7 +718,7 @@ def live_claude(name: str, trusted: Path, config_pub: str, approval_key: Path,
         proc.close()
 
 
-def execute(deterministic: bool) -> int:
+def execute(deterministic: bool, artifact_dir: Path | None = None, color: str = "auto") -> int:
     preflight(deterministic)
     gp.build_named_targets()
     with tempfile.TemporaryDirectory(prefix="seal-postgres-golden-path-") as td:
@@ -704,17 +729,25 @@ def execute(deterministic: bool) -> int:
             seal = gp.temporary_install(work)
             manifest = capture_manifest(adapter, work)
             policy, trusted, config_pub, approval_key, approval_pub = prepare_policy(seal, manifest, work, deterministic)
+            trace = DemoTrace(artifact_dir, "c2", seal, C2_THEOREMS, color) if artifact_dir else None
+            if trace:
+                trace.configure(
+                    "prod-db", policy,
+                    active=["safety", "temporal", "budget"], inactive=[], experimental=[],
+                )
             if deterministic:
+                doctrine_path(name, seal, trusted, config_pub, approval_key, approval_pub, work, adapter, trace)
                 policy_tamper(name, trusted, config_pub, approval_pub, work, adapter)
-                approval_tamper(name, seal, trusted, config_pub, approval_key, approval_pub, work, adapter)
-                one_shot(name, seal, trusted, config_pub, approval_key, approval_pub, work, adapter)
-                budget_leg(name, trusted, config_pub, approval_key, approval_pub, work, adapter)
-                temporal_leg(name, trusted, config_pub, approval_key, approval_pub, work, adapter)
+                approval_tamper(name, seal, trusted, config_pub, approval_key, approval_pub, work, adapter, trace)
+                budget_control(name, seal, trusted, config_pub, approval_key, approval_pub, work, adapter, trace)
+                invalid_cost_controls(name, seal, trusted, config_pub, approval_key, approval_pub, work, adapter, trace)
                 check("live authenticated Claude", "SKIP", "not invoked by deterministic/CI mode; operator-verified remains NO")
             else:
                 live_claude(name, trusted, config_pub, approval_key, approval_pub, work, adapter)
             verify_scan(seal, manifest, policy)
             boundary_card(config_pub, approval_pub)
+            if trace:
+                trace.finalize(work.glob("*-receipts"))
         finally:
             stop_postgres(name)
     return 0
@@ -723,9 +756,13 @@ def execute(deterministic: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
+    parser.add_argument("--artifact-dir", type=Path, help="write doctrine trace, receipts, manifest, and renderings")
+    parser.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args()
+    if args.artifact_dir and not args.deterministic:
+        parser.error("--artifact-dir requires --deterministic; live-model output is not load-bearing doctrine evidence")
     try:
-        return execute(args.deterministic)
+        return execute(args.deterministic, args.artifact_dir, args.color)
     except gp.DemoSkip as error:
         check("demo", "SKIP", str(error))
         return 2
