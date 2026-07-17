@@ -87,7 +87,32 @@ policy meaning out of the current core and enlarge the TCB.
 - `Host.dispatch_plan`: the dispatch loop's three per-call accumulations —
   the `phase1Held` verdicts it combines, its unconditional ingest writes, and
   its allow-only held replay — equal `pureCommit`'s components, stated in the
-  loop's own vocabulary.
+  loop's own vocabulary. (Until `dispatch_spelled` this was spoken in the
+  loop's VOCABULARY but proven over pure expressions shaped like the loop;
+  the next entry makes it literal.)
+- `Host.dispatch_spelled` (Host/DispatchSpelled.lean): the deployed
+  `Host.dispatch` `do`-block — `mut` accumulators, `for` loop, queued held
+  writes, allow-only replay — IS the explicit recursion `dispatchGo`,
+  program equality in `IO` by list induction over core's
+  `LawfulMonad (EStateM ε σ)`, with the opaque `IO.Ref` get/set as abstract
+  leaves on both sides. This pins the desugaring, the accumulator order, the
+  CONTENT AND ORDER of the queued held writes (one `set st2` per gating
+  instance, registry order) and that they replay exactly on a combined
+  allow. `dispatchGo_cons_pure_gather` + `registryFor_gather_pure` then
+  discharge gather execution for the deployed registry: every `registryFor`
+  gather is a pure constant, so executing it is the monad law `pure_bind`.
+  `registryFor_reader_invariance` pins that the registry's state slots
+  depend on nothing but the session's four named refs.
+- `Ffi.stepImpl_spelled` (Ffi.lean, file-local — `stepImpl` is private):
+  one mediation step IS the pure `stepPlanFor` wrapped around its two IO
+  leaves (`sessionRef.get`, `dispatch`) — which input field feeds which
+  parser, the single judged `line` binding, the fail-closed
+  uninitialised/unsafe-number/bad-parse/refuse branches, and that the
+  dispatched registry is `registryFor` at exactly the marshalled values.
+- `Ffi.registryFor_kernels_nodup` (with `activeKernels_nodup`): no config
+  registers a kernel twice — no double ingest, no double verdict, at most
+  one registry instance per stateful session ref. (Previously nothing pinned
+  this: a duplicated instance would have passed every existing theorem.)
 
 The load-bearing qualifier is **after classification produced a guarded
 target**. These theorems do not prove that a policy author selected the right
@@ -119,16 +144,47 @@ operations or bound every effect-relevant parameter.
   `three_way.rs::pathological_number_fails_closed_all_lanes`. True closure of
   the residual (unfound) gap needs a verified compiler / source equivalence
   proof, out of scope by magnitude.
-- The dispatch IO shell around `dispatch_plan`: snapshot faithfulness (that
-  each instance's evidence/state is what `gather`/`stateRef.get` returned —
-  `IO.Ref` get/set sequencing and ref distinctness; C, V and K share one
-  `Unit` ref), the `for`-loop/`do`-monad desugaring and `mut` accumulators,
-  the allow branch actually executing the queued held writes, and
-  `stepImpl`'s JSON marshalling of the step input into evidence. (The
-  config/evidence wiring of `commitInstsFor` against `registryFor`, formerly
-  trusted-by-inspection, is now proven per instance:
-  `commitInstsFor_wiring` + `commitInstsFor_gates`, on top of the
-  kernel-list pin `commitInstsFor_kernels`.)
+- The dispatch IO shell around `dispatch_plan` — now REDUCED to its opaque
+  core. Four of its former trusted-by-inspection items are theorems (see
+  "What the present theorems establish"): the `for`/`do` desugaring and
+  `mut` accumulators, the structure of the held replay (queued-write content,
+  order, allow-only execution), gather execution at the deployed registry,
+  and `stepImpl`'s marshalling (`dispatch_spelled`, `stepImpl_spelled` and
+  companions; the wiring of `commitInstsFor` against `registryFor` was
+  already proven: `commitInstsFor_wiring` + `commitInstsFor_gates` on top of
+  `commitInstsFor_kernels`). What REMAINS trusted is exactly this, and each
+  item names why Lean cannot close it:
+  * **`IO.Ref` value semantics.** `ST.Prim.Ref.get`/`set`/`mkRef` are
+    `opaque` extern constants in Lean core (`Init/System/ST.lean`) — that a
+    get returns the ref's current value, a set updates it, and `mkRef`
+    allocates fresh has NOTHING to unfold. A "proof" would mean axiomatising
+    an IO.Ref model, which manufactures theorems without content; refused.
+    This is the irreducible core of "snapshot faithfulness" and of the held
+    writes actually LANDING when replayed.
+  * **Typed-runtime trust covers ref distinctness.** The five session refs
+    carry pairwise-distinct state types (`SealCore.State`, `TemporalState`,
+    `LState`, `BudgetState`, `Unit` — Ffi.lean), so cross-kernel aliasing
+    through the typed API is a type error, not a runtime possibility; each
+    stateful kernel appears at most once (`registryFor_kernels_nodup`); the
+    one deliberately shared ref (`unitRef`, C/V/K) has `State = Unit`, where
+    every read and write is `()`. The residue is only that the Lean
+    runtime/FFI respects types — the standing compiler/runtime trust, not a
+    dispatch-specific assumption.
+  * **The export wrapper.** `unsafeBaseIO`/`catchExceptions` above
+    `stepImpl`: any IO exception renders `errJson` (blocked); state-wise an
+    exception between the unconditional ingest writes and the allow replay
+    leaves exactly the deny-shape state (ingests committed, held decides
+    not) — fail-closed degradation by construction, trusted because
+    exceptions live in opaque IO.
+  * **Session lifecycle.** `initFromConfig` REPLACES the session with five
+    fresh refs (re-init is state reset by construction); the exports are not
+    thread-safe and the Rust host serialises calls (Ffi.lean header). The
+    interpreter oracle (`modelStep`/`modelInitFromTrustedPayload`) bypasses
+    only signature verification and is not the deployed path.
+  Evidence backing this residue: the three-way property differential
+  (25,000 seeded cases per CI run, model ≡ native ≡ wasm byte-for-byte —
+  and the model oracle runs the SAME `stepImpl` the export wraps), the host
+  unit tests, and the Lane C status above.
 - An end-to-end proof through Rust routing, provider authenticity, filesystem
   persistence, compiler/codegen, dynamic loading, or OS behavior.
 

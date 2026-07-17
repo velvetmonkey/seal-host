@@ -256,4 +256,149 @@ def sealHostClassify (line : String) : UInt32 :=
   | .act _ => 1
   | .refuse => 2
 
+/-! ### The step plan, spelled — `stepImpl`'s marshalling as a pure function
+
+SPEC ONLY (dispatch IO shell wrap-up): nothing below is called by the
+exports. `stepImpl` is `private` by design (the sole runtime caller is the
+FFI export pair), so its specification lives HERE, in the same file, with
+file-local access. `stepImpl_spelled` proves `stepImpl` IS `stepPlanFor`
+wrapped around its only two IO leaves — `sessionRef.get` and `dispatch` —
+discharging the "stepImpl's JSON marshalling" residual of the dispatch IO
+shell: which input field feeds which parser, the single `line` binding
+judged by `classifyLine` and committed to the audit, the fail-closed
+uninitialised-session / unsafe-number / bad-parse / refuse branches, and
+that the dispatched registry is `registryFor` applied to exactly the
+marshalled values. What it does NOT cover (unchanged, named TCB): the
+`unsafeBaseIO`/`catchExceptions` export wrapper above `stepImpl`, and the
+IO realization inside `dispatch` (see `Host.dispatch_spelled` and the
+assurance docs). -/
+
+/-- The per-step inputs `stepImpl` marshals out of the step input JSON —
+    field by field the SAME expressions, as a pure record. -/
+structure StepInputs where
+  line : String
+  now : Nat
+  approvals : List SealCore.Event
+  votes : Consensus.Checker.Votes
+  grants : List LinearCore.LEvent
+  forecasts : List Kernels.ForecastRecord
+
+/-- The marshalling, purely. -/
+def stepInputsOf (session : Session) (input : Json) : StepInputs :=
+  let now := ((input.getObjVal? "now").toOption.bind (·.getNat?.toOption)).getD 0
+  { line := getStrD input "line" ""
+    now := now
+    approvals := Evidence.approvalEventsFromJson
+      ((input.getObjVal? "approvals").toOption.getD (Json.arr #[]))
+      now session.config.safety.approvalTtlMs
+    votes := Host.Evidence.parseVotesText (getStrD input "votes" "")
+    grants := Host.Evidence.parseGrantsText (getStrD input "grants" "")
+    forecasts := Host.Evidence.parseForecastsText (getStrD input "forecasts" "") }
+
+/-- What one mediation step does, purely: either a fixed response line
+    (fail-closed guard, parse failure, passthrough, refuse) or a mediated
+    dispatch of `act` at the marshalled inputs. -/
+inductive StepPlan where
+  | respond (out : String)
+  | mediate (inputs : StepInputs) (act : CanonicalAction)
+
+/-- The pure step plan: everything `stepImpl` decides before and between
+    its two IO leaves. -/
+def stepPlanFor (session : Session) (inputText : String) : StepPlan :=
+  if !Seal.JsonUtil.wireNumbersSafe inputText then
+    .respond (errJson "bad step input: unsafe numeric literal")
+  else
+    match Json.parse inputText with
+    | .error err => .respond (errJson s!"bad step input: {err}")
+    | .ok input =>
+        let inputs := stepInputsOf session input
+        match classifyLine inputs.line with
+        | .passthrough =>
+            .respond (Json.mkObj [("route", Json.str "passthrough")]).compress
+        | .refuse =>
+            .respond (Json.mkObj [
+              ("route", Json.str "block"),
+              ("response", Json.str refuseResponseLine)
+            ]).compress
+        | .act act => .mediate inputs act
+
+/-- The response rendering after a mediated dispatch, purely: the audit
+    line over the SAME judged `line` binding, routed through the proven
+    `Host.stepRoute`. -/
+def stepRender (session : Session) (inputs : StepInputs)
+    (act : CanonicalAction) (combined : VerdictKind)
+    (verdicts : List Verdict) : String :=
+  let audit := auditLine session.config.epoch act.tool combined verdicts inputs.line
+  match Host.stepRoute (classifyLine inputs.line) verdicts with
+  | .forward =>
+      (Json.mkObj [("route", Json.str "forward"), ("audit", Json.str audit)]).compress
+  | .block =>
+      (Json.mkObj [
+        ("route", Json.str "block"),
+        ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
+        ("audit", Json.str audit)
+      ]).compress
+  | .passthrough =>
+      (Json.mkObj [
+        ("route", Json.str "block"),
+        ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
+        ("audit", Json.str audit)
+      ]).compress
+
+/-- **THE STEP IS ITS PLAN.** `stepImpl` equals the pure `stepPlanFor`
+    wrapped around its two IO leaves: read the session, run the plan; a
+    `.respond` plan returns its bytes with NO dispatch, a `.mediate` plan
+    dispatches `registryFor` at EXACTLY the marshalled inputs and renders
+    through the pure `Host.stepRoute`. Program equality in `IO` — the
+    marshalling residual of the dispatch IO shell becomes this theorem. -/
+theorem stepImpl_spelled (inputText : String) :
+    stepImpl inputText
+      = (do
+        let some session ← sessionRef.get
+          | pure (errJson "session not initialised")
+        match stepPlanFor session inputText with
+        | .respond out => pure out
+        | .mediate inputs act => do
+            let (combined, verdicts) ← dispatch
+              (registryFor session inputs.now inputs.approvals inputs.votes
+                inputs.grants inputs.forecasts) act
+            pure (stepRender session inputs act combined verdicts)) := by
+  unfold stepImpl stepPlanFor stepRender stepInputsOf
+  refine congrArg (sessionRef.get >>= ·) (funext fun s? => ?_)
+  cases s? with
+  | none => rfl
+  | some session =>
+    dsimp only
+    by_cases hw : Seal.JsonUtil.wireNumbersSafe inputText
+    · simp only [hw, Bool.not_true, Bool.false_eq_true, if_false]
+      cases hp : Json.parse inputText with
+      | error e => rfl
+      | ok input =>
+        dsimp only
+        cases hlc : classifyLine (getStrD input "line" "") with
+        | passthrough => rfl
+        | refuse => rfl
+        | act act =>
+            dsimp only
+            rw [hlc]
+            refine congrArg (_ >>= ·) (funext fun p => ?_)
+            cases Host.stepRoute (LineClass.act act) p.2 <;> rfl
+    · simp only [hw, Bool.not_false, if_true]
+
 end Ffi
+
+/-! ## Axiom pins — enforced at module build
+
+The spelled step plan sits on Lean's three classical axioms at most; no
+`sorryAx`, no `Lean.ofReduceBool`, and no new axioms — the program-equality
+proof uses only core's lawful-monad laws and case analysis on the pure
+plan. Drift fails the build here and again in `Test/Axioms.lean`. -/
+
+/-- info: 'Ffi.stepInputsOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepInputsOf
+/-- info: 'Ffi.stepPlanFor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepPlanFor
+/-- info: 'Ffi.stepRender' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepRender
+/-- info: 'Ffi.stepImpl_spelled' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepImpl_spelled

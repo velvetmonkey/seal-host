@@ -484,4 +484,60 @@ info: 'Ffi.bundle_disabled_budget_not_registered' depends on axioms: [propext, C
 -/
 #guard_msgs in #print axioms bundle_disabled_budget_not_registered
 
+/-! ### No kernel registered twice — the selection is duplicate-free
+
+`registryFor_kernels` pins WHICH kernels are selected; nothing above pins
+that the selection never repeats one. A duplicated instance would
+double-ingest its evidence and contribute two verdicts without breaking any
+existing theorem (`registryFor_kernels` would still hold if `activeKernels`
+gained the same duplicate). The theorems below close that: the deployed
+selection is duplicate-free for every config — so no two registry instances
+share a STATEFUL ref (each stateful kernel appears at most once, and the
+session's four stateful refs have pairwise-distinct state types; the only
+shared ref is `unitRef`, whose `State = Unit` carries no information). -/
+
+/-- The selected kernel NAMES are duplicate-free, for every config — over
+    all 32 deployable topologies. -/
+theorem activeKernels_names_nodup (cfg : TrustedConfig) :
+    ((activeKernels cfg).map Kernel.name).Nodup := by
+  rw [activeKernels_names]
+  rcases cfg.consensus with _ | c1 <;>
+  rcases cfg.calibration with _ | c2 <;>
+  rcases cfg.linear with _ | c3 <;>
+  by_cases hv : cfg.convergence.isEmpty <;>
+  by_cases hb : cfg.budget.isEmpty <;>
+  first
+    | (cases he : c2.enabled <;> simp [hv, hb, he])
+    | simp [hv, hb]
+
+/-- The deployed kernel selection is duplicate-free: no config registers a
+    kernel twice. -/
+theorem activeKernels_nodup (cfg : TrustedConfig) :
+    (activeKernels cfg).Nodup :=
+  (activeKernels_names_nodup cfg).of_map
+
+/-- **No kernel runs twice in the deployed registry**: the kernels of the
+    list `stepImpl` dispatches are duplicate-free, for every session and
+    every step input — no double ingest, no double verdict, and (with the
+    per-instance ref wiring of `commitInstsFor_wiring`) at most one registry
+    instance per stateful session ref. -/
+theorem registryFor_kernels_nodup (s : Session) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord) :
+    ((registryFor s now approvalEvents votes grants forecasts).map
+        (·.kernel)).Nodup := by
+  rw [registryFor_kernels]
+  exact activeKernels_nodup s.config
+
+/-- info: 'Ffi.activeKernels_names_nodup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms activeKernels_names_nodup
+
+/-- info: 'Ffi.activeKernels_nodup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms activeKernels_nodup
+
+/-- info: 'Ffi.registryFor_kernels_nodup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms registryFor_kernels_nodup
+
 end Ffi

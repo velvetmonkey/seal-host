@@ -266,12 +266,23 @@ proves the deployed step dispatches:
   (`commitInstsFor_wiring`); every gating decision follows
   (`commitInstsFor_gates`).
 
-NOT proven (the named IO shell): that the run-time snapshot fed to that pure
-computation is faithful — the `IO.Ref` get/set sequencing and ref
-distinctness (C, V and K share one `Unit` ref), the `for`-loop/`do`-monad
-desugaring, the allow branch actually executing the queued held writes,
-`stepImpl`'s JSON parse of the step input into evidence, and the
-`unsafeBaseIO`/FFI/Rust/OS boundary. And no caller dimension — budget
+- The IO shell is spelled: the deployed `dispatch` `do`-block equals its
+  explicit recursion — desugaring, accumulator order, queued-held-write
+  content and order, allow-only replay (`dispatch_spelled`); one mediation
+  step equals the pure plan around its two IO leaves, so the field-to-parser
+  marshalling and fail-closed branches are pinned (`stepImpl_spelled`);
+  every deployed gather is a pure constant, so executing it is the monad
+  law (`registryFor_gather_pure`); and no config registers a kernel twice
+  (`registryFor_kernels_nodup`).
+
+NOT proven (the irreducible IO core, named and justified in
+`docs/POLICY-ASSURANCE-BOUNDARY.md`): the VALUE semantics of the opaque
+`IO.Ref` primitives (get returns the current value, sets land, `mkRef` is
+fresh — `opaque` externs in Lean core, nothing to unfold), the typed-runtime
+trust that covers ref distinctness (the five session refs carry
+pairwise-distinct state types; C, V and K share one `Unit` ref, inert by
+`State = Unit`), and the `unsafeBaseIO`/FFI/Rust/OS boundary. And no caller
+dimension — budget
 counters and linear grants are global, so one caller can exhaust another's
 allowance (characterized end-to-end in `Test/DxSurface.lean`); that is a
 feature gap, not a proof gap. Read B and L guarantees as per-config-global,

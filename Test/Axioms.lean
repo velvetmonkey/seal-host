@@ -21,6 +21,7 @@ import Host.StatefulNI
 import Host.AuthorityFrontierBridge
 import Host.DeployedAdapter
 import Host.CapabilityAdequacy
+import Host.DispatchSpelled
 import FfiSpec
 import Kernels
 import Kernels.ConsensusBytes
@@ -972,3 +973,53 @@ info: 'Host.stepRoute_refuse_ne_forward' depends on axioms: [propext, Classical.
 info: 'Host.pathological_never_forwards' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.pathological_never_forwards
+
+-- Dispatch IO shell, spelled (wrap-up): the do-desugaring, the queued
+-- held-write replay structure, the no-duplicate-kernel selection and the
+-- stepImpl marshalling are theorems — program equality in IO with the opaque
+-- IO.Ref get/set as abstract leaves, NO new axioms (that is the point: the
+-- residual TCB is exactly the opaque primitives' value semantics, named in
+-- docs/POLICY-ASSURANCE-BOUNDARY.md).
+
+/-- info: 'Host.replay' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.replay
+
+/-- info: 'Host.dispatchGo' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatchGo
+
+/-- info: 'Host.dispatch_spelled' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.dispatch_spelled
+
+/--
+info: 'Host.dispatchGo_cons_pure_gather' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.dispatchGo_cons_pure_gather
+
+/-- info: 'Host.registryFor_gather_pure' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.registryFor_gather_pure
+
+/--
+info: 'Host.registryFor_reader_invariance' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.registryFor_reader_invariance
+
+/-- info: 'Ffi.activeKernels_names_nodup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.activeKernels_names_nodup
+
+/-- info: 'Ffi.activeKernels_nodup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.activeKernels_nodup
+
+/-- info: 'Ffi.registryFor_kernels_nodup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.registryFor_kernels_nodup
+
+/-- info: 'Ffi.stepInputsOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepInputsOf
+
+/-- info: 'Ffi.stepPlanFor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepPlanFor
+
+/-- info: 'Ffi.stepRender' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepRender
+
+/-- info: 'Ffi.stepImpl_spelled' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepImpl_spelled
