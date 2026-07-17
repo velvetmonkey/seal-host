@@ -757,6 +757,18 @@ info: 'Host.pureCommit_deny_linear_ingest_only' depends on axioms: [propext, Cla
 /-- info: 'Host.commitInstsFor_kernels' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.commitInstsFor_kernels
 
+/-- info: 'Host.Registered.wiredAt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Registered.wiredAt
+
+/-- info: 'Host.CommitInst.wired' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.CommitInst.wired
+
+/-- info: 'Host.commitInstsFor_wiring' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.commitInstsFor_wiring
+
+/-- info: 'Host.commitInstsFor_gates' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.commitInstsFor_gates
+
 /-- info: 'Host.linearIngested' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.linearIngested
 

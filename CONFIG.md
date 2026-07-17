@@ -257,15 +257,20 @@ proves the deployed step dispatches:
   states it writes immediately, the states it holds and replays only on
   allow — is proven equal to the model's `pureCommit` in the loop's own
   vocabulary (`dispatch_plan`, over the `phase1Held` triple the loop calls).
+- The mirror's wiring against the deployed registry is proven instance by
+  instance, not inspected: under the common projection (kernel identity and
+  order, config section, evidence source — each deployed `gather` equals the
+  constant returning the mirror's evidence — and pre-call state slot, for
+  every pure reading of the session refs consistent with the mirror's state
+  arguments), `commitInstsFor` EQUALS `registryFor`
+  (`commitInstsFor_wiring`); every gating decision follows
+  (`commitInstsFor_gates`).
 
 NOT proven (the named IO shell): that the run-time snapshot fed to that pure
 computation is faithful — the `IO.Ref` get/set sequencing and ref
 distinctness (C, V and K share one `Unit` ref), the `for`-loop/`do`-monad
 desugaring, the allow branch actually executing the queued held writes,
-`stepImpl`'s JSON parse of the step input into evidence, the
-config/evidence wiring of `commitInstsFor` against `registryFor`
-(kernel-list equality is pinned via `commitInstsFor_kernels`; the
-per-instance wiring of the mirror is trusted-by-inspection), and the
+`stepImpl`'s JSON parse of the step input into evidence, and the
 `unsafeBaseIO`/FFI/Rust/OS boundary. And no caller dimension — budget
 counters and linear grants are global, so one caller can exhaust another's
 allowance (characterized end-to-end in `Test/DxSurface.lean`); that is a

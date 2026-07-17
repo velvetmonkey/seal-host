@@ -16,12 +16,14 @@ to. The flagship `registry_deny_ingest_only` is then one equation over all
 seven kernels: a combined deny commits ONLY the spec-allowed ingests.
 
 HONEST BOUNDARY: `commitInstsFor_kernels` pins the kernel SELECTION of the
-mirror to the deployed spec; the per-instance config/evidence wiring of the
-mirror against `registryFor` is same-shaped by construction and checked by
-inspection, not by a theorem (the two lists differ in type — `IO.Ref` +
-`gather` vs explicit state + evidence — so a wiring theorem would need its
-own faithfulness argument). This residual is named in the assurance docs
-alongside the dispatch IO shell.
+mirror to the deployed spec, and `commitInstsFor_wiring` pins the
+per-instance wiring: under the common projection `WiredInst` (kernel,
+config, gather function, pre-call state slot) the mirror and `registryFor`
+are EQUAL, instance by instance, for every pure reading of the session refs
+consistent with the mirror's state arguments. What remains trusted is the IO
+REALIZATION of that projection — that `dispatch`'s `stateRef.get` returns
+what the reader models and that executing `gather` yields its pure constant
+— i.e. the dispatch IO shell named in the assurance docs.
 -/
 
 namespace Host
@@ -33,7 +35,8 @@ open Kernels in
     S and T are unconditional; C activates on `some`, V on a non-empty
     section, K double-gated (`some cfg` AND `cfg.enabled`), L on `some`, B on
     a non-empty section — `commitInstsFor_kernels` pins the selection to
-    `Ffi.activeKernels`. -/
+    `Ffi.activeKernels`, and `commitInstsFor_wiring` pins the full
+    per-instance wiring against `registryFor`. -/
 def commitInstsFor (cfg : TrustedConfig) (now : Nat)
     (approvalEvents : List SealCore.Event)
     (votes : Consensus.Checker.Votes)
@@ -78,6 +81,110 @@ theorem commitInstsFor_kernels (cfg : TrustedConfig) (now : Nat)
   cases hk : cfg.calibration <;>
   cases hl : cfg.linear <;>
   simp [apply_ite (List.map (fun i : CommitInst => i.kernel))]
+
+/-! ### Wiring fidelity — the mirror equals the deployed registry, instance by instance
+
+`commitInstsFor_kernels` pins WHICH kernels; the theorems below pin HOW each
+one is wired. `WiredInst` is the common projection both lists map onto:
+kernel identity, config section, evidence SOURCE (the whole `gather`
+function — every `registryFor` gather is a pure constant, so it is
+comparable by plain equality against `fun _ => pure evidence`) and the
+pre-call state slot. `IO.Ref` contents cannot be projected purely, so the
+state slot goes through a universally quantified pure reader `read`,
+constrained only to agree with the mirror's state arguments on the session's
+four refs (C, V and K share `unitRef` with `State = Unit` — their slot is
+`()` for any reader).
+
+COVERED by `commitInstsFor_wiring`: kernel identity and order, per-instance
+config section, evidence source, state-slot wiring (safetyRef→sSt,
+temporalRef→tSt, linearRef→lSt, budgetRef→bSt, unitRef→()) — and hence
+every gating decision (`commitInstsFor_gates`). NOT covered — the dispatch
+IO shell, unchanged by these theorems: that `stateRef.get` at dispatch time
+returns what `read` models, that executing `gather` returns its constant,
+ref get/set sequencing and distinctness, the `for`/`do` desugaring, the
+allow branch replaying held writes, `stepImpl`'s marshalling, and the
+`unsafeBaseIO`/FFI boundary. -/
+
+/-- One wired kernel instance under the common projection: identity, config,
+    evidence SOURCE (the gather function itself) and pre-call state slot. -/
+structure WiredInst where
+  kernel : Kernel
+  config : kernel.Config
+  gather : CanonicalAction → IO kernel.Evidence
+  state : kernel.State
+
+/-- Project a deployed `Registered` instance through a pure reading of its
+    state ref. The reader is the ONLY unrealized ingredient: everything else
+    is the instance's own fields. -/
+def Registered.wiredAt (read : (K : Kernel) → IO.Ref K.State → K.State)
+    (r : Registered) : WiredInst :=
+  ⟨r.kernel, r.config, r.gather, read r.kernel r.stateRef⟩
+
+/-- Project a commit-model instance: its evidence becomes the constant
+    gather — exactly the shape every `registryFor` gather has. -/
+def CommitInst.wired (i : CommitInst) : WiredInst :=
+  ⟨i.kernel, i.config, fun _ => pure i.evidence, i.state⟩
+
+/-- **WIRING FIDELITY.** The commit-model mirror IS the deployed registry,
+    instance by instance: for EVERY pure reading of the session's refs that
+    agrees with the mirror's pre-call state arguments, `registryFor` and
+    `commitInstsFor` project to the SAME `WiredInst` list — same kernels in
+    the same order, same config section, same evidence source (each deployed
+    `gather` equals the constant returning the mirror's evidence) and same
+    pre-call state slot. This discharges the former "trusted by inspection"
+    wiring residual; what it does NOT discharge is the IO realization of the
+    reader and the gathers (the dispatch IO shell). -/
+theorem commitInstsFor_wiring (s : Ffi.Session) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord)
+    (sSt : SealCore.State) (tSt : Kernels.TemporalState)
+    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (read : (K : Kernel) → IO.Ref K.State → K.State)
+    (hs : read Kernels.safetyKernel s.safetyRef = sSt)
+    (ht : read Kernels.temporalKernel s.temporalRef = tSt)
+    (hl : read Kernels.linearKernel s.linearRef = lSt)
+    (hb : read Kernels.budgetKernel s.budgetRef = bSt) :
+    (Ffi.registryFor s now approvalEvents votes grants forecasts).map
+        (Registered.wiredAt read)
+      = (commitInstsFor s.config now approvalEvents votes grants forecasts
+          sSt tSt lSt bSt).map CommitInst.wired := by
+  subst hs ht hl hb
+  unfold Ffi.registryFor commitInstsFor
+  cases hc : s.config.consensus <;>
+  cases hk : s.config.calibration <;>
+  cases hlin : s.config.linear <;>
+  simp [Registered.wiredAt, CommitInst.wired,
+    apply_ite (List.map (Registered.wiredAt read)),
+    apply_ite (List.map CommitInst.wired)] <;>
+  -- What simp cannot see: C/V/K sit on `unitRef`, whose `State` is `Unit` —
+  -- every remaining slot equation (`read _ s.unitRef = ()`) is definitional
+  -- by `Unit` eta.
+  (repeat apply And.intro) <;> rfl
+
+/-- **GATING FIDELITY** (corollary shape, proved directly): the deployed
+    registry and the mirror make the SAME gating decision at every instance,
+    for every action — gating depends only on kernel and config, both pinned
+    by the wiring. -/
+theorem commitInstsFor_gates (s : Ffi.Session) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord)
+    (sSt : SealCore.State) (tSt : Kernels.TemporalState)
+    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (act : CanonicalAction) :
+    (Ffi.registryFor s now approvalEvents votes grants forecasts).map
+        (fun r => r.kernel.gates r.config act)
+      = (commitInstsFor s.config now approvalEvents votes grants forecasts
+          sSt tSt lSt bSt).map (fun i => i.kernel.gates i.config act) := by
+  unfold Ffi.registryFor commitInstsFor
+  cases hc : s.config.consensus <;>
+  cases hk : s.config.calibration <;>
+  cases hlin : s.config.linear <;>
+  simp [apply_ite (List.map (fun r : Registered => r.kernel.gates r.config act)),
+    apply_ite (List.map (fun i : CommitInst => i.kernel.gates i.config act))]
 
 /-- Kernel L's spec-allowed deny-side state at the deployed registry: this
     call's grants folded in when L is configured AND gates the call, the
@@ -289,6 +396,14 @@ no `sorryAx`, no `Lean.ofReduceBool`. -/
 #guard_msgs in #print axioms Host.commitInstsFor
 /-- info: 'Host.commitInstsFor_kernels' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.commitInstsFor_kernels
+/-- info: 'Host.Registered.wiredAt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Registered.wiredAt
+/-- info: 'Host.CommitInst.wired' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.CommitInst.wired
+/-- info: 'Host.commitInstsFor_wiring' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.commitInstsFor_wiring
+/-- info: 'Host.commitInstsFor_gates' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.commitInstsFor_gates
 /-- info: 'Host.linearIngested' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.linearIngested
 /-- info: 'Host.registry_deny_ingest_only' depends on axioms: [propext, Classical.choice, Quot.sound] -/

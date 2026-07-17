@@ -123,11 +123,12 @@ operations or bound every effect-relevant parameter.
   each instance's evidence/state is what `gather`/`stateRef.get` returned —
   `IO.Ref` get/set sequencing and ref distinctness; C, V and K share one
   `Unit` ref), the `for`-loop/`do`-monad desugaring and `mut` accumulators,
-  the allow branch actually executing the queued held writes, `stepImpl`'s
-  JSON marshalling of the step input into evidence, and the config/evidence
-  wiring of `commitInstsFor` against `registryFor` (kernel-list equality is
-  pinned by `commitInstsFor_kernels`; the per-instance wiring of the mirror
-  is trusted-by-inspection).
+  the allow branch actually executing the queued held writes, and
+  `stepImpl`'s JSON marshalling of the step input into evidence. (The
+  config/evidence wiring of `commitInstsFor` against `registryFor`, formerly
+  trusted-by-inspection, is now proven per instance:
+  `commitInstsFor_wiring` + `commitInstsFor_gates`, on top of the
+  kernel-list pin `commitInstsFor_kernels`.)
 - An end-to-end proof through Rust routing, provider authenticity, filesystem
   persistence, compiler/codegen, dynamic loading, or OS behavior.
 
