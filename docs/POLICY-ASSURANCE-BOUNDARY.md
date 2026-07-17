@@ -120,6 +120,12 @@ operations or bound every effect-relevant parameter.
 
 ## What is not proved yet
 
+- Per-caller / per-principal (multi-tenant) policy. Kernels key on tool-set /
+  capability-id, never on the caller; on the stdio topology caller identity is a
+  proven no-go (`stdio_no_caller_authentication`, `Host/ReceiptIdentity.lean`).
+  The honest design path (signed principal envelope over stdio, opaque
+  `AuthenticatedPrincipal`, `principal_from_auth_not_request` +
+  `principal_budget_isolation`) is specified in `docs/V2.1-PRINCIPAL-DIMENSION.md`.
 - That substring matching captures an author’s intended SQL, shell, URL,
   GitHub or filesystem operation. Prefix/substring matching is not parsing.
 - That the current first-rule selection matches author expectations when rules
