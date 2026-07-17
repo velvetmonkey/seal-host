@@ -51,6 +51,56 @@ def sha256_file(path: Path) -> str:
     return sha256_bytes(path.read_bytes())
 
 
+def argument_at_path(arguments: dict, dotted_path: str) -> object:
+    if not isinstance(dotted_path, str) or not dotted_path or any(not part for part in dotted_path.split(".")):
+        raise DoctrineFailure(f"invalid dotted argument path: {dotted_path!r}")
+    current: object = arguments
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            raise DoctrineFailure(f"argument path {dotted_path!r} is missing")
+        current = current[part]
+    return current
+
+
+def validate_budget_evidence(budget: dict, arguments: dict, *, verdict: str,
+                             deny_kernel: str | None, context: str) -> dict:
+    required = {"name", "cost_arg", "cap", "remaining_before", "remaining_after"}
+    missing = required - budget.keys()
+    if missing:
+        raise DoctrineFailure(f"Budget evidence lacks {sorted(missing)} in {context}")
+    if not isinstance(budget["name"], str) or not budget["name"]:
+        raise DoctrineFailure(f"Budget evidence has invalid name in {context}")
+    cost_arg = budget["cost_arg"]
+    if cost_arg in {"path", "sql"}:
+        raise DoctrineFailure(f"Budget costArg is a path/content stand-in: {cost_arg}")
+    cost = argument_at_path(arguments, cost_arg)
+    naturals = {
+        "cost": cost,
+        "cap": budget["cap"],
+        "remaining_before": budget["remaining_before"],
+        "remaining_after": budget["remaining_after"],
+    }
+    for field, value in naturals.items():
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise DoctrineFailure(f"Budget {field} is not a natural number in {context}")
+    before = budget["remaining_before"]
+    after = budget["remaining_after"]
+    if before > budget["cap"] or after > budget["cap"]:
+        raise DoctrineFailure(f"Budget remaining value exceeds cap in {context}")
+    normalized = "DENY" if verdict == "BLOCK" else verdict
+    if normalized == "ALLOW":
+        if cost > before or after != before - cost:
+            raise DoctrineFailure(f"Budget ALLOW arithmetic is inconsistent in {context}")
+    elif deny_kernel == "budget":
+        if cost <= before or after != before:
+            raise DoctrineFailure(f"Budget DENY must be would-exceed with unchanged state in {context}")
+    elif after != before:
+        raise DoctrineFailure(f"non-Budget denial changed Budget state in {context}")
+    result = dict(budget)
+    result["cost"] = cost
+    return result
+
+
 def run(command: list[str], *, cwd: Path = ROOT, expect: int = 0) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode != expect:
@@ -252,9 +302,16 @@ def render_tty_event(event: dict, *, color: bool) -> None:
         print(f"  receipt-path={event['receipt_path']} seal-verify={event['seal_verify']['status']}")
         if event.get("budget"):
             budget = event["budget"]
+            if event["verdict"] == "DENY" and event.get("deny_kernel") == "budget":
+                remaining = (
+                    f"{budget['remaining_before']}→would-exceed "
+                    f"(unchanged={budget['remaining_after']})"
+                )
+            else:
+                remaining = f"{budget['remaining_before']}→{budget['remaining_after']}"
             print(
                 f"  budget={budget['name']} costArg={budget['cost_arg']} cost={budget['cost']} "
-                f"remaining={budget['remaining_before']}→{budget['remaining_after']}"
+                f"cap={budget['cap']} remaining={remaining}"
             )
         print(f"  {CLAIM_SCOPE}")
     elif kind == "anti_forge":
@@ -298,9 +355,16 @@ def render_markdown(trace_path: Path, output: Path) -> str:
             )
         if event.get("budget"):
             budget = event["budget"]
+            if event["verdict"] == "DENY" and event.get("deny_kernel") == "budget":
+                remaining = (
+                    f"`{budget['remaining_before']} → would-exceed` "
+                    f"(unchanged `{budget['remaining_after']}`)"
+                )
+            else:
+                remaining = f"`{budget['remaining_before']} → {budget['remaining_after']}`"
             lines.append(
                 f"- Budget `{budget['name']}`: `costArg={budget['cost_arg']}`, cost `{budget['cost']}`, "
-                f"remaining `{budget['remaining_before']} → {budget['remaining_after']}`"
+                f"cap `{budget['cap']}`, remaining {remaining}"
             )
         lines.extend([f"- Claim scope: {CLAIM_SCOPE}", ""])
     anti = next(event for event in events if event["event"] == "anti_forge")
@@ -429,14 +493,10 @@ class DemoTrace:
         if receipt_verdict not in {"BLOCK", "ALLOW"}:
             raise DoctrineFailure(f"unexpected receipt verdict: {receipt_verdict}")
         if budget is not None:
-            cost_arg = budget.get("cost_arg")
-            cost = arguments.get(cost_arg)
-            if not isinstance(cost, int) or isinstance(cost, bool) or cost < 0:
-                raise DoctrineFailure(f"Budget costArg {cost_arg!r} is not a natural number in {dest}")
-            if cost_arg in {"path", "sql"}:
-                raise DoctrineFailure(f"Budget costArg is a path/content stand-in: {cost_arg}")
-            budget = dict(budget)
-            budget["cost"] = cost
+            budget = validate_budget_evidence(
+                budget, arguments, verdict=receipt_verdict,
+                deny_kernel=record.get("deny_kernel"), context=str(dest),
+            )
 
         relative = dest.relative_to(self.artifact_dir)
         event = {
@@ -558,6 +618,7 @@ def validate_trace(artifact_dir: Path) -> None:
         "receipt_sha256", "seal_verify", "claim_scope",
     }
     receipt_paths: set[Path] = set()
+    receipt_records: list[dict] = []
     for index, step in enumerate(steps, 1):
         missing = required - step.keys()
         if missing:
@@ -572,8 +633,16 @@ def validate_trace(artifact_dir: Path) -> None:
         if sha256_file(receipt) != step["receipt_sha256"]:
             raise DoctrineFailure(f"step {index} receipt digest mismatch")
         record = json.loads(receipt.read_text(encoding="utf-8"))
+        receipt_records.append(record)
         if ("DENY" if record["verdict"] == "BLOCK" else record["verdict"]) != step["verdict"]:
             raise DoctrineFailure(f"step {index} receipt verdict mismatch")
+        if step.get("budget"):
+            resolved = validate_budget_evidence(
+                step["budget"], record.get("arguments", {}), verdict=step["verdict"],
+                deny_kernel=step.get("deny_kernel"), context=f"step {index}",
+            )
+            if resolved != step["budget"]:
+                raise DoctrineFailure(f"step {index} Budget cost differs from receipt arguments")
         for proof in step["proof_refs"]:
             source = manifest["proofs"].get(proof["theorem_id"])
             if source is None or source["commit_pin"] != proof["commit_pin"]:
@@ -591,6 +660,8 @@ def validate_trace(artifact_dir: Path) -> None:
     non_claims = [event for event in events if event.get("event") == "non_claims"]
     if len(non_claims) != 1 or non_claims[0].get("lines") != NON_CLAIMS:
         raise DoctrineFailure("fixed non-claims block missing or changed")
+    if metadata.get("demo_id") == "c4":
+        _validate_c4(metadata, steps, receipt_records, manifest)
     expected_md = render_markdown(trace, artifact_dir / ".receipt-strip.check.md")
     check_path = artifact_dir / ".receipt-strip.check.md"
     try:
@@ -598,3 +669,60 @@ def validate_trace(artifact_dir: Path) -> None:
             raise DoctrineFailure("Markdown strip is not reproducible from NDJSON")
     finally:
         check_path.unlink(missing_ok=True)
+
+
+def _validate_c4(metadata: dict, steps: list[dict], records: list[dict], manifest: dict) -> None:
+    if metadata.get("policy_recipe") != "token-governor":
+        raise DoctrineFailure("C4 must use the token-governor recipe")
+    if metadata.get("active") != ["safety", "budget"]:
+        raise DoctrineFailure("C4 ACTIVE set must be exactly Safety+Budget")
+    if metadata.get("present_but_inactive") != [] or metadata.get("experimental") != []:
+        raise DoctrineFailure("C4 must have no inactive or experimental kernel sections")
+    expected_theorems = {
+        "BudgetCore.over_budget_denied",
+        "Host.composed_budget_cap",
+        "Host.registry_closed_algebra",
+        "Host.registry_deny_no_budget_spend",
+    }
+    if set(manifest.get("proofs", {})) != expected_theorems:
+        raise DoctrineFailure("C4 proof manifest must contain exactly the four ratified Budget+Safety theorems")
+    if len(steps) != 2 or len(records) != 2:
+        raise DoctrineFailure("C4 must contain exactly the DENY→ALLOW hero pair")
+    deny, allow = steps
+    deny_record, allow_record = records
+    if any(step.get("tool") != "llm_call" for step in steps):
+        raise DoctrineFailure("C4 hero pair must use the real llm_call tool")
+    deny_proofs = {proof["theorem_id"] for proof in deny["proof_refs"]}
+    allow_proofs = {proof["theorem_id"] for proof in allow["proof_refs"]}
+    if deny_proofs != {"BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"}:
+        raise DoctrineFailure("C4 Budget denial theorem set drift")
+    if allow_proofs != {"Host.composed_budget_cap", "Host.registry_closed_algebra"}:
+        raise DoctrineFailure("C4 composed allow theorem set drift")
+    deny_args = deny_record.get("arguments", {})
+    allow_args = allow_record.get("arguments", {})
+    if deny_args.get("prompt") != allow_args.get("prompt") or not isinstance(deny_args.get("prompt"), str):
+        raise DoctrineFailure("C4 retry must preserve the exact prompt")
+    if argument_at_path(deny_args, "usage.tokens") != 11:
+        raise DoctrineFailure("C4 first call must charge 11 token units")
+    if argument_at_path(allow_args, "usage.tokens") != 4:
+        raise DoctrineFailure("C4 retry must charge 4 token units")
+    expected_deny_budget = {
+        "name": "token-usage", "cost_arg": "usage.tokens", "cost": 11,
+        "cap": 10, "remaining_before": 10, "remaining_after": 10,
+    }
+    expected_allow_budget = {
+        "name": "token-usage", "cost_arg": "usage.tokens", "cost": 4,
+        "cap": 10, "remaining_before": 10, "remaining_after": 6,
+    }
+    if deny.get("budget") != expected_deny_budget or allow.get("budget") != expected_allow_budget:
+        raise DoctrineFailure("C4 token counter evidence drift")
+    if deny.get("deny_kernel") != "budget" or deny_record.get("deny_kernel") != "budget":
+        raise DoctrineFailure("C4 first call must be denied by Budget")
+    deny_certs = {cert.get("kernel"): cert for cert in deny_record.get("certs", [])}
+    allow_certs = {cert.get("kernel"): cert for cert in allow_record.get("certs", [])}
+    if deny_certs.get("safety", {}).get("verdict") != "allow":
+        raise DoctrineFailure("C4 over-cap call must carry a live Safety approval")
+    if deny_certs.get("budget", {}).get("reason") != "over budget token-usage (0+11>10): llm_call":
+        raise DoctrineFailure("C4 Budget deny certificate drift")
+    if allow_certs.get("safety", {}).get("verdict") != "allow" or allow_certs.get("budget", {}).get("verdict") != "allow":
+        raise DoctrineFailure("C4 retry must be allowed by both Safety and Budget")

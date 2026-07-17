@@ -1,6 +1,6 @@
 # Demo doctrine spine
 
-`./demo/run c1` and `./demo/run c2` are the deterministic, CI-load-bearing
+`./demo/run c1`, `./demo/run c2`, and `./demo/run c4` are the deterministic, CI-load-bearing
 entrypoints. Each creates one artifact directory containing:
 
 - `events.ndjson` — the single narrative source of truth;
@@ -25,3 +25,10 @@ decision logic.
 The fixed claim scope is deliberately narrow: the receipt attests the
 mediation decision under the named policy. It does not establish intent,
 full-system non-occurrence, or the H1 topology×config proof matrix.
+
+C4 is the Budget+Safety token-governor sibling of C2. It uses the shipped
+`token-governor` recipe and its real dotted `cost_arg` (`usage.tokens`) with a
+reviewed cap of 10. Its first recorded call has a live Safety approval but is
+denied by Budget at cost 11 without spending; the same prompt retries at cost
+4, allows, executes exactly once, and moves the displayed remaining balance
+from 10 to 6.
