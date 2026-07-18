@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["c1", "c2", "c3", "c4", "c5", "c6"])
+    parser.add_argument("demo", choices=["c1", "c2", "c3", "c4", "c5", "c6", "c7"])
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args()
@@ -32,7 +32,7 @@ def main() -> int:
 
     demo_name = {
         "c1": "shell", "c2": "postgres", "c3": "deploy", "c4": "token",
-        "c5": "convergence", "c6": "temporal",
+        "c5": "convergence", "c6": "temporal", "c7": "composition",
     }[args.demo]
     command = [
         sys.executable, str(ROOT / "demo" / "golden_path.py"), demo_name,

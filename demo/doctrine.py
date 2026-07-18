@@ -776,6 +776,16 @@ class DemoTrace:
 
 def validate_step_order(metadata: dict, steps: list[dict]) -> None:
     """Enforce each demo's ratified narrative without weakening siblings."""
+    if metadata.get("demo_id") == "c7":
+        expected_roles = [
+            "COMPOSED-ALLOW", "S-DENY", "T-DENY", "C-DENY",
+            "V-DENY", "L-DENY", "B-DENY",
+        ]
+        if [step.get("role") for step in steps] != expected_roles:
+            raise DoctrineFailure("C7 order must be the composed ALLOW then isolated S/T/C/V/L/B vetoes")
+        if [step.get("verdict") for step in steps] != ["ALLOW", *(["DENY"] * 6)]:
+            raise DoctrineFailure("C7 verdict order must be ALLOW then six DENYs")
+        return
     if metadata.get("demo_id") == "c3":
         if len(steps) != 3:
             raise DoctrineFailure("C3 ordered narrative must contain exactly three steps")
@@ -888,6 +898,8 @@ def validate_trace(artifact_dir: Path) -> None:
         expected_summary.update({"standalone_receipts": 1, "trace_scoped_receipts": 1})
     elif metadata.get("demo_id") == "c6":
         expected_summary.update({"standalone_receipts": 1, "trace_scoped_receipts": 1})
+    elif metadata.get("demo_id") == "c7":
+        expected_summary.update({"standalone_receipts": 0, "trace_scoped_receipts": 7})
     if summaries != [expected_summary]:
         raise DoctrineFailure("receipt verification summary mismatch")
     non_claims = [event for event in events if event.get("event") == "non_claims"]
@@ -901,6 +913,8 @@ def validate_trace(artifact_dir: Path) -> None:
         _validate_c5(metadata, steps, receipt_records, manifest, events, artifact_dir)
     if metadata.get("demo_id") == "c6":
         _validate_c6(metadata, steps, receipt_records, manifest, events, artifact_dir)
+    if metadata.get("demo_id") == "c7":
+        _validate_c7(metadata, steps, receipt_records, manifest, events, artifact_dir)
     expected_md = render_markdown(trace, artifact_dir / ".receipt-strip.check.md")
     check_path = artifact_dir / ".receipt-strip.check.md"
     try:
@@ -1559,3 +1573,191 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
     ]
     if controls != expected_controls:
         raise DoctrineFailure("C6 trace negative-control evidence missing or drifted")
+
+
+def _validate_c7(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
+                 events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    expected_active = ["safety", "temporal", "consensus", "convergence", "linear", "budget"]
+    if metadata.get("policy_recipe") != "init+add-kernel-T+C+V+L+B":
+        raise DoctrineFailure("C7 must use the shipped incremental non-experimental kernel path")
+    if metadata.get("active") != expected_active:
+        raise DoctrineFailure("C7 ACTIVE set must be exactly Safety+Temporal+Consensus+Convergence+Linear+Budget")
+    if metadata.get("present_but_inactive") != [] or metadata.get("experimental") != []:
+        raise DoctrineFailure("C7 must have no inactive or experimental kernel sections")
+    expected_theorems = {
+        "Host.registry_closed_algebra", "Host.composed_non_bypass",
+        "Host.composed_temporal_safety", "Host.composed_no_conflicting_agreement",
+        "Host.composed_convergent", "Host.composed_linear_conservation",
+        "Host.composed_budget_cap", "Host.pureCommit_deny_of_member",
+        "Host.registry_deny_no_budget_spend", "Host.registry_deny_no_capability_consumed",
+        "Host.registry_deny_temporal_frozen", "Kernels.convergence_verdict_allow_iff",
+    }
+    if set(manifest.get("proofs", {})) != expected_theorems:
+        raise DoctrineFailure("C7 proof manifest theorem set drift")
+    expected_tools = [
+        "compose.allow", "deny.safety", "deny.temporal", "deny.consensus",
+        "deny.convergence", "deny.linear", "deny.budget",
+    ]
+    expected_denies = [None, "safety", "temporal", "consensus", "convergence", "linear", "budget"]
+    if len(steps) != 7 or len(records) != 7:
+        raise DoctrineFailure("C7 must contain one headline plus six isolated veto receipts")
+    if [step.get("tool") for step in steps] != expected_tools:
+        raise DoctrineFailure("C7 tool order drift")
+    if [step.get("receipt_verdict") for step in steps] != ["ALLOW", *(["BLOCK"] * 6)]:
+        raise DoctrineFailure("C7 receipt vocabulary must be ALLOW then six BLOCKs")
+    if [step.get("deny_kernel") for step in steps] != expected_denies:
+        raise DoctrineFailure("C7 trace denying-kernel matrix drift")
+    if [record.get("deny_kernel") for record in records] != expected_denies:
+        raise DoctrineFailure("C7 runtime denying-kernel matrix drift")
+    if any(step.get("verification_lane") != "trace" for step in steps):
+        raise DoctrineFailure("every combined C7 receipt must be trace-scoped")
+
+    lane_reason = (
+        "combined receipt omits Consensus votes and Linear grant events; C7 also carries "
+        "session-scoped Temporal/Linear/Budget state"
+    )
+    expected_kernels = expected_active
+    for index, (step, record, deny_kernel) in enumerate(zip(steps, records, expected_denies)):
+        verification = step.get("seal_verify", {})
+        if (verification.get("command") != "seal verify"
+                or verification.get("status") != "TRACE-SCOPED"
+                or verification.get("exit_code") == 0
+                or verification.get("rederived_verdict") != "BLOCK"
+                or verification.get("live_session_verdict") != ("ALLOW" if index == 0 else "BLOCK")
+                or verification.get("artifact_lane_reason") != lane_reason):
+            raise DoctrineFailure(f"C7 step {index + 1} trace-lane label drift")
+        certs = record.get("certs", [])
+        fired = step.get("kernel_fired", [])
+        if [cert.get("kernel") for cert in certs] != expected_kernels:
+            raise DoctrineFailure(f"C7 step {index + 1} runtime certificate set/order drift")
+        if [cert.get("kernel") for cert in fired] != expected_kernels:
+            raise DoctrineFailure(f"C7 step {index + 1} trace certificate set/order drift")
+        if any(cert.get("participation") != "ACTIVE" for cert in fired):
+            raise DoctrineFailure(f"C7 step {index + 1} must label all six certificates ACTIVE")
+        denied = [cert.get("kernel") for cert in certs if cert.get("verdict") == "deny"]
+        if denied != ([] if deny_kernel is None else [deny_kernel]):
+            raise DoctrineFailure(f"C7 step {index + 1} is not an isolated one-kernel veto")
+        if any(cert.get("verdict") not in {"allow", "deny"} for cert in certs):
+            raise DoctrineFailure(f"C7 step {index + 1} has an unknown certificate verdict")
+        rules = record.get("kernel_config", {}).get("safety", {}).get("tools", [])
+        tiers = [rule.get("_seal_demo_tier") for rule in rules]
+        if len(rules) != 7 or not all(isinstance(tier, dict) for tier in tiers):
+            raise DoctrineFailure("C7 receipts must carry the honest tier block on every Safety rule")
+        if any(tier.get("ci_tested") is not False or tier.get("operator_verified") is not False for tier in tiers):
+            raise DoctrineFailure("C7 tier must remain ci_tested:false and operator_verified:false")
+
+    configs = [record.get("kernel_config") for record in records]
+    if any(config != configs[0] for config in configs[1:]):
+        raise DoctrineFailure("C7 calls must use one identical signed policy")
+    config = configs[0]
+    if "calibration" in config:
+        raise DoctrineFailure("C7 must deliberately omit experimental Calibration")
+    if set(config) != {"epoch", "server", "safety", "temporal", "consensus", "convergence", "linear", "budget"}:
+        raise DoctrineFailure("C7 signed policy section set drift")
+    if config.get("temporal", {}).get("policies") != [{
+        "name": "c7-headline-arms-temporal-veto", "type": "no_after",
+        "trigger": ["compose.allow"], "forbidden": ["deny.temporal"],
+    }]:
+        raise DoctrineFailure("C7 narrow Temporal trigger/forbidden mapping drift")
+    if config.get("consensus", {}).get("roster") != [101, 202, 303]:
+        raise DoctrineFailure("C7 Consensus roster drift")
+    if config.get("consensus", {}).get("high_stakes") != expected_tools:
+        raise DoctrineFailure("C7 Consensus coverage drift")
+    if config.get("convergence", {}).get("tools") != [
+            {"tool": tool, "op_arg": "op"} for tool in expected_tools]:
+        raise DoctrineFailure("C7 Convergence mappings drift")
+    if config.get("linear", {}).get("tools") != [
+            {"tool": tool, "cap_arg": "capability.id"} for tool in expected_tools]:
+        raise DoctrineFailure("C7 Linear mappings drift")
+    if config.get("budget", {}).get("budgets") != [{
+            "name": "c7-token-budget", "cap": 20, "tools": expected_tools,
+            "cost_arg": "usage.tokens",
+    }]:
+        raise DoctrineFailure("C7 Budget mapping drift")
+
+    headline_proofs = {proof["theorem_id"] for proof in steps[0].get("proof_refs", [])}
+    if headline_proofs != {
+        "Host.registry_closed_algebra", "Host.composed_non_bypass",
+        "Host.composed_temporal_safety", "Host.composed_no_conflicting_agreement",
+        "Host.composed_convergent", "Host.composed_linear_conservation",
+        "Host.composed_budget_cap",
+    }:
+        raise DoctrineFailure("C7 composed-ALLOW theorem set drift")
+    common_deny = {
+        "Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed",
+        "Host.registry_deny_no_budget_spend",
+    }
+    for index, step in enumerate(steps[1:], 1):
+        expected = set(common_deny)
+        if index == 2:
+            expected.add("Host.registry_deny_temporal_frozen")
+        if index == 4:
+            expected.add("Kernels.convergence_verdict_allow_iff")
+        if {proof["theorem_id"] for proof in step.get("proof_refs", [])} != expected:
+            raise DoctrineFailure(f"C7 deny step {index} theorem set drift")
+
+    if events is None or artifact_dir is None:
+        return
+    transcript_meta = metadata.get("trace_transcript")
+    expected_lanes = {
+        "standalone": "not applicable: every receipt includes omitted votes/grants evidence",
+        "trace": "one init plus seven ordered requests/events; raw outputs byte-compared",
+    }
+    if (not isinstance(transcript_meta, dict)
+            or transcript_meta.get("path") != "trace-transcript.json"
+            or transcript_meta.get("harness") != "demo/trace_replay.cjs"
+            or transcript_meta.get("status") != "PASS"
+            or transcript_meta.get("lanes") != expected_lanes):
+        raise DoctrineFailure("C7 transcript metadata or lane contract drift")
+    transcript_sha = transcript_meta.get("sha256")
+    if not isinstance(transcript_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha):
+        raise DoctrineFailure("C7 transcript SHA-256 malformed")
+    if any(step.get("requires_trace") != transcript_sha for step in steps):
+        raise DoctrineFailure("C7 receipt-to-transcript dependency drift")
+    transcript_path = artifact_dir / "trace-transcript.json"
+    if not transcript_path.is_file() or sha256_file(transcript_path) != transcript_sha:
+        raise DoctrineFailure("C7 transcript missing or digest mismatch")
+    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    if (transcript.get("schema") != "seal-demo-trace-transcript/v1"
+            or transcript.get("demo_id") != "c7"
+            or len(transcript.get("steps", [])) != 7):
+        raise DoctrineFailure("C7 transcript shape drift")
+    if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
+        raise DoctrineFailure("C7 transcript WASM metadata drift")
+    for index, (step, record, transcript_step) in enumerate(
+            zip(steps, records, transcript["steps"]), 1):
+        if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
+            raise DoctrineFailure(f"C7 transcript step {index} order/role drift")
+        if transcript_step.get("canonical_request") != record.get("canonical_request"):
+            raise DoctrineFailure(f"C7 transcript step {index} request drift")
+        if transcript_step.get("raw_kernel_output") != record.get("emitted_bytes"):
+            raise DoctrineFailure(f"C7 transcript step {index} raw output drift")
+        try:
+            receipt_bytes = base64.b64decode(transcript_step["receipt_bytes_base64"], validate=True)
+        except Exception as error:
+            raise DoctrineFailure(f"C7 transcript step {index} receipt bytes malformed") from error
+        artifact_receipt = (artifact_dir / step["receipt_path"]).read_bytes()
+        if receipt_bytes != artifact_receipt or sha256_bytes(receipt_bytes) != transcript_step.get("receipt_sha256"):
+            raise DoctrineFailure(f"C7 transcript step {index} receipt pin drift")
+    replay = [event for event in events if event.get("event") == "trace_replay"]
+    if replay != [{
+        "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
+        "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 7,
+        "harness": "demo/trace_replay.cjs",
+    }]:
+        raise DoctrineFailure("C7 full trace replay evidence drift")
+    controls = [event for event in events if event.get("event") == "trace_negative_control"]
+    expected_controls = [
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "drop-trigger",
+         "expected": "BYTE-MISMATCH", "observed": "BYTE-MISMATCH", "status": "PASS",
+         "evidence": "without COMPOSED-ALLOW, approval/grant/Temporal state differs"},
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "byte-flip",
+         "expected": "FAIL", "observed": "FAIL", "status": "PASS",
+         "evidence": "one byte flipped in a denied raw kernel output"},
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "restore",
+         "expected": "SHA-MATCH+PASS", "observed": "SHA-MATCH+PASS", "status": "PASS",
+         "evidence": f"restored transcript sha256={transcript_sha}; full ordered replay PASS"},
+    ]
+    if controls != expected_controls:
+        raise DoctrineFailure("C7 trace negative-control evidence drift")

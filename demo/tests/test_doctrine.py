@@ -125,6 +125,20 @@ class DoctrineUnitTests(unittest.TestCase):
         with self.assertRaises(doctrine.DoctrineFailure):
             doctrine.validate_step_order({"demo_id": "c3"}, [c3_steps[1], c3_steps[0], c3_steps[2]])
 
+    def test_c7_order_is_composed_allow_then_each_kernel_veto(self):
+        steps = [
+            {"role": role, "verdict": "ALLOW" if index == 0 else "DENY"}
+            for index, role in enumerate([
+                "COMPOSED-ALLOW", "S-DENY", "T-DENY", "C-DENY",
+                "V-DENY", "L-DENY", "B-DENY",
+            ])
+        ]
+        doctrine.validate_step_order({"demo_id": "c7"}, steps)
+        drifted = copy.deepcopy(steps)
+        drifted[2], drifted[3] = drifted[3], drifted[2]
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine.validate_step_order({"demo_id": "c7"}, drifted)
+
     def test_c3_validator_locks_participation_denials_linear_state_and_lanes(self):
         theorem_sets = [
             {"Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed"},
@@ -437,6 +451,107 @@ class DoctrineUnitTests(unittest.TestCase):
         drifted["proofs"]["Invented.extra"] = {}
         with self.assertRaises(doctrine.DoctrineFailure):
             doctrine._validate_c6(metadata, steps, records, drifted)
+
+    def test_c7_validator_locks_six_active_kernels_and_isolated_denials(self):
+        tools = [
+            "compose.allow", "deny.safety", "deny.temporal", "deny.consensus",
+            "deny.convergence", "deny.linear", "deny.budget",
+        ]
+        kernels = ["safety", "temporal", "consensus", "convergence", "linear", "budget"]
+        denies = [None, *kernels]
+        tier = {"ci_tested": False, "operator_verified": False}
+        config = {
+            "epoch": 1,
+            "server": "seal-c7-composition-demo@1.0.0",
+            "safety": {"tools": [
+                {"name": tool, "_seal_demo_tier": tier} for tool in tools
+            ]},
+            "temporal": {"policies": [{
+                "name": "c7-headline-arms-temporal-veto", "type": "no_after",
+                "trigger": ["compose.allow"], "forbidden": ["deny.temporal"],
+            }]},
+            "consensus": {
+                "roster": [101, 202, 303], "votes_file": "/real/votes",
+                "high_stakes": tools,
+            },
+            "convergence": {"tools": [{"tool": tool, "op_arg": "op"} for tool in tools]},
+            "linear": {
+                "grants_file": "/real/grants",
+                "tools": [{"tool": tool, "cap_arg": "capability.id"} for tool in tools],
+            },
+            "budget": {"budgets": [{
+                "name": "c7-token-budget", "cap": 20, "tools": tools,
+                "cost_arg": "usage.tokens",
+            }]},
+        }
+        headline_proofs = {
+            "Host.registry_closed_algebra", "Host.composed_non_bypass",
+            "Host.composed_temporal_safety", "Host.composed_no_conflicting_agreement",
+            "Host.composed_convergent", "Host.composed_linear_conservation",
+            "Host.composed_budget_cap",
+        }
+        deny_proofs = {
+            "Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed",
+            "Host.registry_deny_no_budget_spend",
+        }
+        theorem_sets = [headline_proofs]
+        for kernel in kernels:
+            proof_set = set(deny_proofs)
+            if kernel == "temporal":
+                proof_set.add("Host.registry_deny_temporal_frozen")
+            if kernel == "convergence":
+                proof_set.add("Kernels.convergence_verdict_allow_iff")
+            theorem_sets.append(proof_set)
+        manifest = {"proofs": {name: {} for name in set().union(*theorem_sets)}}
+        lane_reason = (
+            "combined receipt omits Consensus votes and Linear grant events; C7 also carries "
+            "session-scoped Temporal/Linear/Budget state"
+        )
+        records = []
+        steps = []
+        for index, (tool, deny_kernel, proof_set) in enumerate(zip(tools, denies, theorem_sets)):
+            certs = [
+                {
+                    "kernel": kernel,
+                    "verdict": "deny" if kernel == deny_kernel else "allow",
+                    "reason": "runtime",
+                }
+                for kernel in kernels
+            ]
+            records.append({"deny_kernel": deny_kernel, "kernel_config": config, "certs": certs})
+            steps.append({
+                "tool": tool,
+                "receipt_verdict": "ALLOW" if index == 0 else "BLOCK",
+                "deny_kernel": deny_kernel,
+                "verification_lane": "trace",
+                "seal_verify": {
+                    "command": "seal verify", "status": "TRACE-SCOPED", "exit_code": 1,
+                    "rederived_verdict": "BLOCK",
+                    "live_session_verdict": "ALLOW" if index == 0 else "BLOCK",
+                    "artifact_lane_reason": lane_reason,
+                },
+                "kernel_fired": [
+                    {"kernel": kernel, "participation": "ACTIVE"} for kernel in kernels
+                ],
+                "proof_refs": [{"theorem_id": name} for name in proof_set],
+            })
+        metadata = {
+            "policy_recipe": "init+add-kernel-T+C+V+L+B",
+            "active": kernels, "present_but_inactive": [], "experimental": [],
+        }
+        doctrine._validate_c7(metadata, steps, records, manifest)
+
+        drifted = copy.deepcopy(records)
+        drifted[4]["certs"][0]["verdict"] = "deny"
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c7(metadata, steps, drifted, manifest)
+        drifted = copy.deepcopy(config)
+        drifted["calibration"] = {"enabled": True}
+        records_with_k = copy.deepcopy(records)
+        for record in records_with_k:
+            record["kernel_config"] = drifted
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c7(metadata, steps, records_with_k, manifest)
 
     def test_fixed_non_claims_cover_all_three_boundaries(self):
         text = " ".join(doctrine.NON_CLAIMS).lower()

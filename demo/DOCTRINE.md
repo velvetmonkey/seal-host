@@ -1,7 +1,7 @@
 # Demo doctrine spine
 
 `./demo/run c1`, `./demo/run c2`, `./demo/run c3`, `./demo/run c4`, `./demo/run c5`,
-and `./demo/run c6` are the
+`./demo/run c6`, and `./demo/run c7` are the
 deterministic, CI-load-bearing entrypoints. Each creates one artifact directory
 containing:
 
@@ -100,3 +100,19 @@ and approval-event sequence and exercises full replay, drop-trigger
 byte-mismatch, byte-flip, and byte-exact restoration controls. The receipt
 attests only that this specific `assign` call was mediated to DENY under the
 mesh policy; C5 makes no universal replicated-store convergence claim.
+
+C7 is the flagship six-kernel composition. It uses the shipped incremental
+`init` + `add-kernel T/C/V/L/B` machinery and one signed policy with exactly
+`ACTIVE {S,T,C,V,L,B}`; experimental Calibration (K) is deliberately absent.
+Its headline call is mediated ALLOW with all six active kernel certificates
+present and ALLOW, exhibiting `Host.registry_closed_algebra` for this one call.
+Six following calls isolate one S, T, C, V, L, or B denial apiece while the
+other five certificates remain ALLOW; every denial leaves candidate Linear
+and Budget spend uncommitted and never reaches the adapter. All seven receipts
+are Lane B because their composite bytes depend on omitted Consensus votes and
+Linear grant events, with the later receipts also carrying session state. The
+single transcript therefore performs full byte-exact replay, drop-trigger
+mismatch, byte-flip mismatch, and exact SHA restoration plus replay. The claim
+is only that each specific call was mediated under this signed policy, not
+intent, full-system non-occurrence, universality, or the H1 topology×config
+matrix.
