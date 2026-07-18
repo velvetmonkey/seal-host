@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: Golden Path - deterministic shell + Postgres + token governor + filesystem
+name: Golden Path - deterministic shell + Postgres + token governor + temporal freeze + filesystem
 
 on:
   push:
@@ -127,6 +127,48 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c4.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c4.txt"
 
+      - name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
+        run: |
+          C6_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c6"
+          ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
+          python3 demo/doctrine_check.py "$C6_ARTIFACT"
+          python3 demo/render_trace.py "$C6_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C6_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C6_ARTIFACT/receipt-strip.md" "$C6_ARTIFACT/receipt-strip.regenerated.md"
+          node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT"
+          if node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            echo "::error::dropping the Temporal trigger unexpectedly preserved transcript bytes"
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/golden-path-c6.txt" <<'PY'
+          import sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8") if "\x1b[" in line]
+          assert len(lines) == 2, lines
+          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[1]
+          PY
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:DENY[ACTIVE]; deny_kernel=temporal" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "temporal=freeze-destructive-after-trigger type=no_after trigger={session.revoke,audit.destroy} forbidden={session.revoke,audit.destroy}" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "temporal-trace=0→1 evidence=runtime-certificate:trace ok (1 events)" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "temporal-trace=1→1 evidence=theorem:Host.registry_deny_temporal_frozen" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "capability-consumed=false[Host.registry_deny_no_capability_consumed]" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "approved session.revoke ALLOW; downstream execution exactly once" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "approved audit.destroy DENY by Temporal; trace theorem-backed unchanged at 1; downstream execution zero" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "wall-clock-claim=false" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "seal-verify=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "seal-verify=TRACE-SCOPED" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "plain seal verify fails honestly: fresh-state ALLOW differs from live-session BLOCK" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-REPLAY PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-CONTROL drop-trigger expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-CONTROL restore expected=SHA-MATCH+PASS observed=SHA-MATCH+PASS status=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c6.txt"
+
       - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
           python3 demo/golden_path.py filesystem --deterministic | tee /tmp/golden-path-filesystem.txt
@@ -154,8 +196,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: doctrine-c1-c2-c4-${{ github.sha }}
+          name: doctrine-c1-c2-c4-c6-${{ github.sha }}
           path: |
             ${{ runner.temp }}/seal-doctrine-c1
             ${{ runner.temp }}/seal-doctrine-c2
             ${{ runner.temp }}/seal-doctrine-c4
+            ${{ runner.temp }}/seal-doctrine-c6

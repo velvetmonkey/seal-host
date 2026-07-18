@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reusable doctrine spine for Seal demos.
 
-Runtime receipts are copied byte-for-byte into a durable artifact directory,
-verified there, and described by one NDJSON trace.  TTY and Markdown output
-are projections of that trace; neither is an independent demo script.
+Runtime receipts are copied byte-for-byte into a durable artifact directory
+and described by one NDJSON trace. Standalone receipts verify independently;
+history-dependent receipts bind to a byte-replayed trace transcript. TTY and
+Markdown output are projections of that trace; neither is an independent demo
+script.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -299,7 +302,12 @@ def render_tty_event(event: dict, *, color: bool) -> None:
         print(f"  kernel_fired={fired}; deny_kernel={event['deny_kernel'] or '-'}")
         for proof in event["proof_refs"]:
             print(f"  theorem-id={proof['theorem_id']} commit-pin={proof['commit_pin']}")
-        print(f"  receipt-path={event['receipt_path']} seal-verify={event['seal_verify']['status']}")
+        print(
+            f"  receipt-path={event['receipt_path']} verification-lane={event.get('verification_lane', 'standalone')} "
+            f"seal-verify={event['seal_verify']['status']}"
+        )
+        if event.get("requires_trace"):
+            print(f"  requires-trace={event['requires_trace']}")
         if event.get("budget"):
             budget = event["budget"]
             if event["verdict"] == "DENY" and event.get("deny_kernel") == "budget":
@@ -313,11 +321,44 @@ def render_tty_event(event: dict, *, color: bool) -> None:
                 f"  budget={budget['name']} costArg={budget['cost_arg']} cost={budget['cost']} "
                 f"cap={budget['cap']} remaining={remaining}"
             )
+        if event.get("temporal"):
+            temporal = event["temporal"]
+            print(
+                f"  temporal={temporal['policy_name']} type={temporal['policy_type']} "
+                f"trigger={{{','.join(temporal['trigger'])}}} "
+                f"forbidden={{{','.join(temporal['forbidden'])}}}"
+            )
+            print(
+                f"  temporal-trace={temporal['trace_events_before']}→"
+                f"{temporal['trace_events_after']} evidence={temporal['trace_evidence']}"
+            )
+            if temporal.get("deny_state"):
+                state = temporal["deny_state"]
+                print(
+                    "  deny-state="
+                    f"trace-unchanged[{state['trace_theorem']}]; "
+                    f"capability-consumed={str(state['capability_consumed']).lower()}"
+                    f"[{state['capability_theorem']}]"
+                )
+            print(
+                f"  freeze-scope={temporal['freeze_scope']} "
+                f"wall-clock-claim={str(temporal['wall_clock_claim']).lower()}"
+            )
         print(f"  {CLAIM_SCOPE}")
     elif kind == "anti_forge":
         print(
             f"ANTI-FORGE rejected exit={event['tampered_verify_exit']} "
             f"restore-byte-exact={str(event['restored_sha256'] == event['original_sha256']).lower()}"
+        )
+    elif kind == "trace_replay":
+        print(
+            f"TRACE-REPLAY {event['status']} transcript={event['transcript_path']} "
+            f"sha256={event['transcript_sha256']} steps={event['steps']}"
+        )
+    elif kind == "trace_negative_control":
+        print(
+            f"TRACE-CONTROL {event['name']} expected={event['expected']} "
+            f"observed={event['observed']} status={event['status']}"
         )
     elif kind == "non_claims":
         print("NON-CLAIMS")
@@ -347,8 +388,11 @@ def render_markdown(trace_path: Path, output: Path) -> str:
             f"- Tool: `{event['tool']}`; args digest: `{event['args_digest']}`",
             f"- Kernel fired: `{event['kernel_fired']}`; deny kernel: `{event['deny_kernel']}`",
             f"- Receipt: `{event['receipt_path']}` (`{event['receipt_sha256']}`)",
+            f"- Verification lane: `{event.get('verification_lane', 'standalone')}`",
             f"- `seal verify`: **{event['seal_verify']['status']}** (exit `{event['seal_verify']['exit_code']}`)",
         ])
+        if event.get("requires_trace"):
+            lines.append(f"- Requires trace transcript: `{event['requires_trace']}`")
         for proof in event["proof_refs"]:
             lines.append(
                 f"- Theorem: [`{proof['theorem_id']}`]({proof['source_url']}) at commit `{proof['commit_pin']}`"
@@ -366,7 +410,44 @@ def render_markdown(trace_path: Path, output: Path) -> str:
                 f"- Budget `{budget['name']}`: `costArg={budget['cost_arg']}`, cost `{budget['cost']}`, "
                 f"cap `{budget['cap']}`, remaining {remaining}"
             )
+        if event.get("temporal"):
+            temporal = event["temporal"]
+            lines.extend([
+                f"- Temporal `{temporal['policy_name']}` (`{temporal['policy_type']}`): "
+                f"trigger `{temporal['trigger']}`; forbidden `{temporal['forbidden']}`",
+                f"- Temporal executed trace: `{temporal['trace_events_before']} → "
+                f"{temporal['trace_events_after']}`; evidence: `{temporal['trace_evidence']}`",
+            ])
+            if temporal.get("deny_state"):
+                state = temporal["deny_state"]
+                lines.append(
+                    f"- Deny state (theorem-backed): trace unchanged "
+                    f"(`{state['trace_theorem']}`); capability consumed `false` "
+                    f"(`{state['capability_theorem']}`)"
+                )
+            lines.append(
+                f"- Freeze scope: {temporal['freeze_scope']} "
+                f"Wall-clock claim: `{str(temporal['wall_clock_claim']).lower()}`"
+            )
         lines.extend([f"- Claim scope: {CLAIM_SCOPE}", ""])
+    replays = [event for event in events if event.get("event") == "trace_replay"]
+    controls = [event for event in events if event.get("event") == "trace_negative_control"]
+    if replays:
+        replay = replays[0]
+        lines.extend([
+            "### Trace transcript replay",
+            "",
+            f"Full ordered replay: **{replay['status']}**; transcript "
+            f"`{replay['transcript_path']}` (`{replay['transcript_sha256']}`), "
+            f"steps `{replay['steps']}`, pinned WASM `{replay['wasm_sha256']}`.",
+            "",
+        ])
+        for control in controls:
+            lines.append(
+                f"- `{control['name']}`: expected `{control['expected']}`, "
+                f"observed `{control['observed']}` — **{control['status']}**"
+            )
+        lines.append("")
     anti = next(event for event in events if event["event"] == "anti_forge")
     lines.extend([
         "### Anti-forge negative control",
@@ -410,6 +491,8 @@ class DemoTrace:
         self.sequence = 0
         self.recorded_sources: set[Path] = set()
         self.copied_receipts: list[Path] = []
+        self.standalone_receipts: list[Path] = []
+        self.trace_scoped_receipts: list[Path] = []
         self.metadata: dict | None = None
 
     def emit(self, event: dict, *, render: bool = True) -> None:
@@ -420,7 +503,8 @@ class DemoTrace:
         if render:
             render_tty_event(event, color=self.color)
 
-    def configure(self, policy_recipe: str, policy: Path, *, active: list[str], inactive: list[str], experimental: list[str]) -> None:
+    def configure(self, policy_recipe: str, policy: Path, *, active: list[str], inactive: list[str],
+                  experimental: list[str], trace_transcript: dict | None = None) -> None:
         value = json.loads(policy.read_text(encoding="utf-8"))
         config_hash = sha256_bytes(compact(value).encode())
         self.metadata = {
@@ -435,9 +519,14 @@ class DemoTrace:
             "proof_manifest": self.manifest_path.name,
             "proof_manifest_sha256": sha256_file(self.manifest_path),
         }
+        if trace_transcript is not None:
+            self.metadata["trace_transcript"] = trace_transcript
         self.emit(self.metadata)
 
-    def record_receipt(self, source: Path, *, role: str, theorem_ids: list[str], budget: dict | None = None) -> Path:
+    def record_receipt(self, source: Path, *, role: str, theorem_ids: list[str],
+                       budget: dict | None = None, temporal: dict | None = None,
+                       verification_lane: str = "standalone", requires_trace: str | None = None,
+                       standalone_failure: dict | None = None) -> Path:
         if self.metadata is None:
             raise DoctrineFailure("demo metadata must be emitted before any receipt")
         source = source.resolve()
@@ -449,9 +538,23 @@ class DemoTrace:
         shutil.copyfile(source, dest)
         if source.read_bytes() != dest.read_bytes():
             raise DoctrineFailure(f"receipt copy changed bytes: {source}")
-        verified = run([str(self.seal), "verify", str(dest)])
-        if "PASS  VERIFIED" not in verified.stdout:
-            raise DoctrineFailure(f"seal verify did not report PASS VERIFIED: {dest}")
+        if verification_lane == "standalone":
+            if requires_trace is not None or standalone_failure is not None:
+                raise DoctrineFailure("standalone receipt cannot carry trace-only verification metadata")
+            verified = run([str(self.seal), "verify", str(dest)])
+            if "PASS  VERIFIED" not in verified.stdout:
+                raise DoctrineFailure(f"seal verify did not report PASS VERIFIED: {dest}")
+            seal_verify = {"command": "seal verify", "status": "PASS", "exit_code": verified.returncode}
+        elif verification_lane == "trace":
+            if not isinstance(requires_trace, str) or not re.fullmatch(r"[0-9a-f]{64}", requires_trace):
+                raise DoctrineFailure("trace-scoped receipt requires a transcript SHA-256")
+            if not isinstance(standalone_failure, dict) or standalone_failure.get("exit_code") == 0:
+                raise DoctrineFailure("trace-scoped receipt must record its non-green standalone replay")
+            seal_verify = dict(standalone_failure)
+            if seal_verify.get("command") != "seal verify" or seal_verify.get("status") != "TRACE-SCOPED":
+                raise DoctrineFailure("trace-scoped receipt standalone label drift")
+        else:
+            raise DoctrineFailure(f"unknown verification lane: {verification_lane}")
 
         arguments = record.get("arguments")
         if not isinstance(arguments, dict):
@@ -514,26 +617,35 @@ class DemoTrace:
             "proof_refs": proof_refs,
             "receipt_path": str(relative),
             "receipt_sha256": sha256_file(dest),
-            "seal_verify": {"command": "seal verify", "status": "PASS", "exit_code": verified.returncode},
+            "verification_lane": verification_lane,
+            "seal_verify": seal_verify,
             "claim_scope": CLAIM_SCOPE,
         }
         if budget is not None:
             event["budget"] = budget
+        if temporal is not None:
+            event["temporal"] = temporal
+        if requires_trace is not None:
+            event["requires_trace"] = requires_trace
         self.recorded_sources.add(source)
         self.copied_receipts.append(dest)
+        if verification_lane == "standalone":
+            self.standalone_receipts.append(dest)
+        else:
+            self.trace_scoped_receipts.append(dest)
         self.emit(event)
         return dest
 
     def _verify_all(self) -> None:
-        for receipt in self.copied_receipts:
+        for receipt in self.standalone_receipts:
             result = run([str(self.seal), "verify", str(receipt)])
             if "PASS  VERIFIED" not in result.stdout:
                 raise DoctrineFailure(f"final seal verify did not report PASS: {receipt}")
 
     def _anti_forge(self) -> None:
-        if not self.copied_receipts:
-            raise DoctrineFailure("anti-forge control requires an emitted receipt")
-        receipt = self.copied_receipts[0]
+        if not self.standalone_receipts:
+            raise DoctrineFailure("anti-forge control requires a standalone receipt")
+        receipt = self.standalone_receipts[0]
         original = receipt.read_bytes()
         original_hash = sha256_bytes(original)
         marker = b'"args_hash": "'
@@ -583,7 +695,13 @@ class DemoTrace:
         self._verify_all()
         self._anti_forge()
         self._verify_all()
-        self.emit({"schema": SCHEMA, "event": "verification_summary", "receipts": len(self.copied_receipts), "status": "PASS"}, render=False)
+        summary = {"schema": SCHEMA, "event": "verification_summary", "receipts": len(self.copied_receipts), "status": "PASS"}
+        if self.trace_scoped_receipts:
+            summary.update({
+                "standalone_receipts": len(self.standalone_receipts),
+                "trace_scoped_receipts": len(self.trace_scoped_receipts),
+            })
+        self.emit(summary, render=False)
         self.emit({"schema": SCHEMA, "event": "non_claims", "lines": NON_CLAIMS})
         markdown = render_markdown(self.trace_path, self.artifact_dir / "receipt-strip.md")
         validate_trace(self.artifact_dir)
@@ -591,6 +709,32 @@ class DemoTrace:
         if summary:
             with Path(summary).open("a", encoding="utf-8") as handle:
                 handle.write(markdown)
+
+
+def validate_step_order(metadata: dict, steps: list[dict]) -> None:
+    """Enforce each demo's ratified narrative without weakening siblings."""
+    if metadata.get("demo_id") == "c6":
+        if len(steps) != 2:
+            raise DoctrineFailure("C6 ordered narrative must contain exactly two steps")
+        if [step.get("role") for step in steps] != ["LEGIT-TRIGGER", "ATTACK-DENY"]:
+            raise DoctrineFailure("C6 ordered narrative must be LEGIT-TRIGGER then ATTACK-DENY")
+        if [step.get("verdict") for step in steps] != ["ALLOW", "DENY"]:
+            raise DoctrineFailure("C6 ordered narrative must be ALLOW trigger then DENY forbidden call")
+        return
+    if not steps or steps[0].get("verdict") != "DENY":
+        raise DoctrineFailure("first persuasive step must be DENY")
+    if len(steps) < 2 or steps[0].get("role") != "ATTACK-DENY" or steps[1].get("role") != "LEGIT":
+        raise DoctrineFailure("ordered narrative must begin ATTACK-DENY then LEGIT")
+    if steps[1].get("verdict") != "ALLOW":
+        raise DoctrineFailure("the LEGIT step immediately after ATTACK-DENY must ALLOW")
+    if any(step.get("role") != "CONTROL" for step in steps[2:]):
+        raise DoctrineFailure("only CONTROL steps may follow the DENY→ALLOW hero pair")
+
+
+def validate_lane_scope(demo_id: str, lane: str) -> None:
+    """Keep the ratified C1/C2/C4 standalone contract closed."""
+    if demo_id in {"c1", "c2", "c4"} and lane != "standalone":
+        raise DoctrineFailure(f"{demo_id.upper()} receipts must remain on the standalone verification lane")
 
 
 def validate_trace(artifact_dir: Path) -> None:
@@ -605,14 +749,7 @@ def validate_trace(artifact_dir: Path) -> None:
         raise DoctrineFailure("trace proof-manifest digest mismatch")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     steps = [event for event in events if event.get("event") == "step"]
-    if not steps or steps[0].get("verdict") != "DENY":
-        raise DoctrineFailure("first persuasive step must be DENY")
-    if len(steps) < 2 or steps[0].get("role") != "ATTACK-DENY" or steps[1].get("role") != "LEGIT":
-        raise DoctrineFailure("ordered narrative must begin ATTACK-DENY then LEGIT")
-    if steps[1].get("verdict") != "ALLOW":
-        raise DoctrineFailure("the LEGIT step immediately after ATTACK-DENY must ALLOW")
-    if any(step.get("role") != "CONTROL" for step in steps[2:]):
-        raise DoctrineFailure("only CONTROL steps may follow the DENY→ALLOW hero pair")
+    validate_step_order(metadata, steps)
     required = {
         "tool", "args_digest", "verdict", "kernel_fired", "proof_refs", "receipt_path",
         "receipt_sha256", "seal_verify", "claim_scope",
@@ -625,8 +762,22 @@ def validate_trace(artifact_dir: Path) -> None:
             raise DoctrineFailure(f"step {index} lacks doctrine fields: {sorted(missing)}")
         if step["claim_scope"] != CLAIM_SCOPE:
             raise DoctrineFailure(f"step {index} claim scope drift")
-        if step["seal_verify"] != {"command": "seal verify", "status": "PASS", "exit_code": 0}:
-            raise DoctrineFailure(f"step {index} lacks green seal verify")
+        lane = step.get("verification_lane", "standalone")
+        validate_lane_scope(metadata.get("demo_id", ""), lane)
+        if lane == "standalone":
+            if step["seal_verify"] != {"command": "seal verify", "status": "PASS", "exit_code": 0}:
+                raise DoctrineFailure(f"step {index} lacks green standalone seal verify")
+            if step.get("requires_trace") is not None:
+                raise DoctrineFailure(f"step {index} standalone receipt unexpectedly requires a trace")
+        elif lane == "trace":
+            transcript_sha = metadata.get("trace_transcript", {}).get("sha256")
+            if step.get("requires_trace") != transcript_sha:
+                raise DoctrineFailure(f"step {index} trace dependency differs from demo metadata")
+            verification = step.get("seal_verify", {})
+            if verification.get("command") != "seal verify" or verification.get("status") != "TRACE-SCOPED" or verification.get("exit_code") == 0:
+                raise DoctrineFailure(f"step {index} trace-scoped receipt has a dishonest standalone label")
+        else:
+            raise DoctrineFailure(f"step {index} has unknown verification lane")
         receipt = (artifact_dir / step["receipt_path"]).resolve()
         if artifact_dir not in receipt.parents or not receipt.is_file():
             raise DoctrineFailure(f"step {index} receipt path invalid: {receipt}")
@@ -655,13 +806,18 @@ def validate_trace(artifact_dir: Path) -> None:
     if len(anti) != 1 or anti[0]["tampered_verify_exit"] == 0 or anti[0]["original_sha256"] != anti[0]["restored_sha256"]:
         raise DoctrineFailure("anti-forge rejection/restoration evidence missing")
     summaries = [event for event in events if event.get("event") == "verification_summary"]
-    if summaries != [{"schema": SCHEMA, "event": "verification_summary", "receipts": len(steps), "status": "PASS"}]:
+    expected_summary = {"schema": SCHEMA, "event": "verification_summary", "receipts": len(steps), "status": "PASS"}
+    if metadata.get("demo_id") == "c6":
+        expected_summary.update({"standalone_receipts": 1, "trace_scoped_receipts": 1})
+    if summaries != [expected_summary]:
         raise DoctrineFailure("receipt verification summary mismatch")
     non_claims = [event for event in events if event.get("event") == "non_claims"]
     if len(non_claims) != 1 or non_claims[0].get("lines") != NON_CLAIMS:
         raise DoctrineFailure("fixed non-claims block missing or changed")
     if metadata.get("demo_id") == "c4":
         _validate_c4(metadata, steps, receipt_records, manifest)
+    if metadata.get("demo_id") == "c6":
+        _validate_c6(metadata, steps, receipt_records, manifest, events, artifact_dir)
     expected_md = render_markdown(trace, artifact_dir / ".receipt-strip.check.md")
     check_path = artifact_dir / ".receipt-strip.check.md"
     try:
@@ -726,3 +882,191 @@ def _validate_c4(metadata: dict, steps: list[dict], records: list[dict], manifes
         raise DoctrineFailure("C4 Budget deny certificate drift")
     if allow_certs.get("safety", {}).get("verdict") != "allow" or allow_certs.get("budget", {}).get("verdict") != "allow":
         raise DoctrineFailure("C4 retry must be allowed by both Safety and Budget")
+
+
+def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
+                 events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    if metadata.get("policy_recipe") != "init+add-kernel-T":
+        raise DoctrineFailure("C6 must use the shipped init + add-kernel T authoring path")
+    if metadata.get("active") != ["safety", "temporal"]:
+        raise DoctrineFailure("C6 ACTIVE set must be exactly Safety+Temporal")
+    if metadata.get("present_but_inactive") != [] or metadata.get("experimental") != []:
+        raise DoctrineFailure("C6 must have no inactive or experimental kernel sections")
+    expected_theorems = {
+        "Host.composed_temporal_safety",
+        "Host.registry_closed_algebra",
+        "Host.registry_deny_no_capability_consumed",
+        "Host.registry_deny_temporal_frozen",
+    }
+    if set(manifest.get("proofs", {})) != expected_theorems:
+        raise DoctrineFailure("C6 proof manifest must contain exactly the four ratified Temporal+Safety theorems")
+    if len(steps) != 2 or len(records) != 2:
+        raise DoctrineFailure("C6 must contain exactly the trigger-ALLOW then frozen-DENY pair")
+    trigger, denied = steps
+    trigger_record, denied_record = records
+    if [step.get("tool") for step in steps] != ["session.revoke", "audit.destroy"]:
+        raise DoctrineFailure("C6 tools must be session.revoke then audit.destroy")
+    if trigger.get("receipt_verdict") != "ALLOW" or denied.get("receipt_verdict") != "BLOCK":
+        raise DoctrineFailure("C6 must retain ALLOW/BLOCK receipt vocabulary")
+    if trigger.get("verification_lane") != "standalone" or denied.get("verification_lane") != "trace":
+        raise DoctrineFailure("C6 must place only the trigger on the standalone lane and the frozen deny on the trace lane")
+    if trigger.get("seal_verify") != {"command": "seal verify", "status": "PASS", "exit_code": 0}:
+        raise DoctrineFailure("C6 trigger receipt must independently verify")
+    denied_verify = denied.get("seal_verify", {})
+    if denied_verify.get("command") != "seal verify" or denied_verify.get("status") != "TRACE-SCOPED" or denied_verify.get("exit_code") == 0:
+        raise DoctrineFailure("C6 frozen receipt must be honestly labelled trace-scoped")
+    if denied_verify.get("fresh_state_verdict") != "ALLOW" or denied_verify.get("live_session_verdict") != "BLOCK":
+        raise DoctrineFailure("C6 standalone failure must exhibit fresh-state ALLOW versus live-session BLOCK")
+    if trigger.get("deny_kernel") is not None or denied.get("deny_kernel") != "temporal":
+        raise DoctrineFailure("C6 denying kernel must be Temporal on only the second step")
+    if trigger_record.get("deny_kernel") is not None or denied_record.get("deny_kernel") != "temporal":
+        raise DoctrineFailure("C6 runtime receipt deny-kernel evidence drift")
+    trigger_proofs = {proof["theorem_id"] for proof in trigger["proof_refs"]}
+    denied_proofs = {proof["theorem_id"] for proof in denied["proof_refs"]}
+    if trigger_proofs != {"Host.composed_temporal_safety", "Host.registry_closed_algebra"}:
+        raise DoctrineFailure("C6 trigger theorem set drift")
+    if denied_proofs != {
+        "Host.registry_deny_temporal_frozen", "Host.registry_deny_no_capability_consumed",
+    }:
+        raise DoctrineFailure("C6 frozen-deny theorem set drift")
+
+    expected_kernels = ["safety", "temporal"]
+    for label, step, record in (
+        ("trigger", trigger, trigger_record), ("denied", denied, denied_record),
+    ):
+        certs = record.get("certs", [])
+        if [cert.get("kernel") for cert in certs] != expected_kernels:
+            raise DoctrineFailure(f"C6 {label} receipt certificate set/order drift")
+        fired = step.get("kernel_fired", [])
+        if [cert.get("kernel") for cert in fired] != expected_kernels:
+            raise DoctrineFailure(f"C6 {label} trace certificate set/order drift")
+        if any(cert.get("participation") != "ACTIVE" for cert in fired):
+            raise DoctrineFailure(f"C6 {label} must show every fired kernel ACTIVE")
+        if certs[0].get("verdict") != "allow" or not re.fullmatch(r"[0-9a-f]{64}", certs[0].get("reason", "")):
+            raise DoctrineFailure(f"C6 {label} must carry a live matching Safety approval")
+    if trigger_record["certs"][1].get("verdict") != "allow" or trigger_record["certs"][1].get("reason") != "trace ok (1 events)":
+        raise DoctrineFailure("C6 trigger must allow and arm a one-event Temporal trace")
+    if denied_record["certs"][1].get("verdict") != "deny" or denied_record["certs"][1].get("reason") != "temporal policy violated: freeze-destructive-after-trigger":
+        raise DoctrineFailure("C6 forbidden call must carry the exact Temporal frozen deny certificate")
+
+    policy = {
+        "policy_name": "freeze-destructive-after-trigger",
+        "policy_type": "no_after",
+        "trigger": ["session.revoke", "audit.destroy"],
+        "forbidden": ["session.revoke", "audit.destroy"],
+    }
+    expected_trigger_temporal = {
+        **policy,
+        "trace_events_before": 0,
+        "trace_events_after": 1,
+        "trace_evidence": "runtime-certificate:trace ok (1 events)",
+        "freeze_scope": "session.revoke armed the trigger-driven freeze",
+        "wall_clock_claim": False,
+    }
+    expected_denied_temporal = {
+        **policy,
+        "trace_events_before": 1,
+        "trace_events_after": 1,
+        "trace_evidence": "theorem:Host.registry_deny_temporal_frozen",
+        "deny_state": {
+            "trace_theorem": "Host.registry_deny_temporal_frozen",
+            "capability_consumed": False,
+            "capability_theorem": "Host.registry_deny_no_capability_consumed",
+        },
+        "freeze_scope": "this specific audit.destroy call was mediated to DENY under the armed policy",
+        "wall_clock_claim": False,
+    }
+    if trigger.get("temporal") != expected_trigger_temporal:
+        raise DoctrineFailure("C6 trigger Temporal evidence drift")
+    if denied.get("temporal") != expected_denied_temporal:
+        raise DoctrineFailure("C6 frozen-deny Temporal evidence drift")
+
+    temporal_cfg = trigger_record.get("kernel_config", {}).get("temporal", {})
+    policies = temporal_cfg.get("policies")
+    expected_policy = [{
+        "name": policy["policy_name"], "type": policy["policy_type"],
+        "trigger": policy["trigger"], "forbidden": policy["forbidden"],
+    }]
+    if policies != expected_policy or denied_record.get("kernel_config", {}).get("temporal", {}).get("policies") != expected_policy:
+        raise DoctrineFailure("C6 receipt policy must retain the exact shipped freeze policy")
+    if trigger_record.get("kernel_config") != denied_record.get("kernel_config"):
+        raise DoctrineFailure("C6 trigger and denied call must use one identical signed policy")
+    if events is None or artifact_dir is None:
+        return
+
+    transcript_meta = metadata.get("trace_transcript")
+    if not isinstance(transcript_meta, dict):
+        raise DoctrineFailure("C6 demo metadata lacks its trace transcript")
+    transcript_sha = transcript_meta.get("sha256")
+    if not isinstance(transcript_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha):
+        raise DoctrineFailure("C6 trace transcript SHA-256 is malformed")
+    if denied.get("requires_trace") != transcript_sha or trigger.get("requires_trace") is not None:
+        raise DoctrineFailure("C6 receipt-to-trace dependency drift")
+    expected_lanes = {
+        "standalone": "fresh-state receipt; plain seal verify required",
+        "trace": "one init plus exact ordered requests; raw outputs byte-compared",
+    }
+    if transcript_meta.get("path") != "trace-transcript.json" or transcript_meta.get("harness") != "demo/trace_replay.cjs":
+        raise DoctrineFailure("C6 transcript path or reusable harness identity drift")
+    if transcript_meta.get("status") != "PASS" or transcript_meta.get("lanes") != expected_lanes:
+        raise DoctrineFailure("C6 transcript verification status or lane contract drift")
+    transcript_path = artifact_dir / transcript_meta["path"]
+    if not transcript_path.is_file() or sha256_file(transcript_path) != transcript_sha:
+        raise DoctrineFailure("C6 trace transcript missing or digest mismatch")
+    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    if transcript.get("schema") != "seal-demo-trace-transcript/v1" or transcript.get("demo_id") != "c6" or len(transcript.get("steps", [])) != 2:
+        raise DoctrineFailure("C6 trace transcript shape drift")
+    if transcript.get("wasm_sha256") != trigger_record.get("kernel_identity", {}).get("wasm_sha256"):
+        raise DoctrineFailure("C6 transcript WASM pin differs from runtime receipt")
+    if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
+        raise DoctrineFailure("C6 trace metadata WASM pin differs from transcript")
+    if transcript.get("signed_config") != trigger_record.get("signed_config") or transcript.get("signed_config") != denied_record.get("signed_config"):
+        raise DoctrineFailure("C6 transcript signed config differs from runtime receipts")
+    for index, (step, transcript_step) in enumerate(zip(steps, transcript["steps"]), 1):
+        record = records[index - 1]
+        if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
+            raise DoctrineFailure(f"C6 transcript step {index} sequence/role drift")
+        if transcript_step.get("canonical_request") != record.get("canonical_request"):
+            raise DoctrineFailure(f"C6 transcript step {index} request/order drift")
+        if transcript_step.get("canonical_request_sha256") != record.get("canonical_request_sha256"):
+            raise DoctrineFailure(f"C6 transcript step {index} request digest drift")
+        if transcript_step.get("raw_kernel_output") != record.get("emitted_bytes"):
+            raise DoctrineFailure(f"C6 transcript step {index} raw output drift")
+        try:
+            transcript_receipt = base64.b64decode(transcript_step["receipt_bytes_base64"], validate=True)
+        except Exception as error:
+            raise DoctrineFailure(f"C6 transcript step {index} receipt bytes malformed") from error
+        artifact_receipt = (artifact_dir / step["receipt_path"]).read_bytes()
+        if transcript_receipt != artifact_receipt or sha256_bytes(transcript_receipt) != transcript_step.get("receipt_sha256"):
+            raise DoctrineFailure(f"C6 transcript step {index} receipt is not byte-identical to the artifact")
+        if transcript_step.get("receipt_path") != step["receipt_path"]:
+            raise DoctrineFailure(f"C6 transcript step {index} receipt path drift")
+
+    replay = [event for event in events if event.get("event") == "trace_replay"]
+    if replay != [{
+        "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
+        "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 2,
+        "harness": "demo/trace_replay.cjs",
+    }]:
+        raise DoctrineFailure("C6 full trace replay evidence missing or drifted")
+    controls = [event for event in events if event.get("event") == "trace_negative_control"]
+    expected_controls = [
+        {
+            "schema": SCHEMA, "event": "trace_negative_control", "name": "drop-trigger",
+            "expected": "FAIL", "observed": "FAIL", "status": "PASS",
+            "evidence": "fresh-state audit.destroy re-derived forward/ALLOW, mismatching live-session BLOCK bytes",
+        },
+        {
+            "schema": SCHEMA, "event": "trace_negative_control", "name": "byte-flip",
+            "expected": "FAIL", "observed": "FAIL", "status": "PASS",
+            "evidence": "one byte flipped in the post-trigger raw kernel output",
+        },
+        {
+            "schema": SCHEMA, "event": "trace_negative_control", "name": "restore",
+            "expected": "SHA-MATCH+PASS", "observed": "SHA-MATCH+PASS", "status": "PASS",
+            "evidence": f"restored transcript sha256={transcript_sha}; full ordered replay PASS",
+        },
+    ]
+    if controls != expected_controls:
+        raise DoctrineFailure("C6 trace negative-control evidence missing or drifted")
