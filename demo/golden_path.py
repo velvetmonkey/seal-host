@@ -746,13 +746,16 @@ def execute(deterministic: bool, artifact_dir: Path | None = None, color: str = 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["shell", "postgres", "filesystem", "deploy", "token", "temporal"])
+    parser.add_argument(
+        "demo",
+        choices=["shell", "postgres", "filesystem", "deploy", "token", "convergence", "temporal", "composition"],
+    )
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
     parser.add_argument("--receipt-output", help="preserve selected deterministic filesystem receipts")
     parser.add_argument("--artifact-dir", type=Path, help="write doctrine trace, receipts, manifest, and renderings")
     parser.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args()
-    if args.demo in {"postgres", "filesystem", "deploy", "token", "temporal"}:
+    if args.demo in {"postgres", "filesystem", "deploy", "token", "convergence", "temporal", "composition"}:
         if args.receipt_output and (args.demo != "filesystem" or not args.deterministic):
             parser.error("--receipt-output requires filesystem --deterministic")
         command = [sys.executable, str(ROOT / "demo" / f"golden_path_{args.demo}.py")]
