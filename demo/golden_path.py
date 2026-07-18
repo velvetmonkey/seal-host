@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
+from doctrine import DemoTrace
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT.parent
 KIT = Path(os.environ.get("SEAL_ASSURANCE_KIT_ROOT", SRC / "seal-assurance-kit")).resolve()
@@ -30,6 +32,11 @@ IMAGE = os.environ.get(
     "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4",
 )
 COMMAND = "rm -rf /"
+C1_THEOREMS = [
+    "Seal.shell_rm_rf_blocks_on_fresh_state",
+    "Seal.shell_read_flows",
+    "SealV2.tampered_approvals_deny",
+]
 TIER = {
     "tier": "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO",
     "evidence_scope": "local containment, injected BLOCK, both tamper legs, downstream non-receipt, receipt verify, and scan passed",
@@ -322,6 +329,10 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool) 
     replay = work / "approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
     value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    # Safety is the only non-vacuous C1 kernel. Temporal remains visibly
+    # registered but explicitly inactive, so the receipt strip cannot count
+    # its vacuous allow certificate in the hero ACTIVE set.
+    value["temporal"] = {"enabled": False, "policies": []}
     for rule in value["safety"]["tools"]:
         if rule.get("mode") == "allow" and "_comment" in rule:
             # SealV2 canonical bytes require non-ASCII to use explicit escapes,
@@ -406,7 +417,7 @@ def target_from(response: dict) -> str:
 
 
 def raw_gate(trusted: Path, config_pub: str, approval_key: Path, approval_pub: str,
-             work: Path, server: Path, primary_needed: bool) -> Path:
+             work: Path, server: Path, trace: DemoTrace | None = None) -> Path:
     tokens = work / "raw-approval-tokens.ndjson"; tokens.write_text("", encoding="utf-8")
     receipts = work / "raw-receipts"
     name = f"seal-gp-raw-{uuid.uuid4().hex[:10]}"
@@ -431,35 +442,99 @@ def raw_gate(trusted: Path, config_pub: str, approval_key: Path, approval_pub: s
         # for the primary injected call so the stored emitted response remains
         # byte-identical under independent replay.
         call = request(1, "tools/call", {"name": "shell_exec", "arguments": {"command": COMMAND}})
+        before = set(receipts.glob("receipt-*.json")) if receipts.exists() else set()
         proc.send(call)
         first = json.loads(proc.line())
         if not is_block(first): raise DemoFailure(f"injected destructive call was not blocked: {first}")
+        attack_receipt = wait_for_receipt(receipts, before, "shell_exec")
+        if trace:
+            trace.record_receipt(
+                attack_receipt, role="ATTACK-DENY",
+                theorem_ids=["Seal.shell_rm_rf_blocks_on_fresh_state"],
+            )
         target = target_from(first)
         check("injected sealed tool call", "PASS", f"BLOCK target={target}")
 
-        token = approval_token(approval_key, target, f"golden-path-tamper-{uuid.uuid4().hex}")
-        signature = token["signature"]
-        token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
-        tokens.write_text(compact(token) + "\n", encoding="utf-8")
-        proc.send(request(2, "tools/call", {"name": "shell_exec", "arguments": {"command": COMMAND}}))
-        second = json.loads(proc.line())
-        if not is_block(second): raise DemoFailure(f"tampered approval unlocked the call: {second}")
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not any("bad_signature" in line for line in proc.stderr_lines):
-            time.sleep(0.05)
-        if not any("approval_drop" in line and "bad_signature" in line for line in proc.stderr_lines):
-            raise DemoFailure("provider did not report approval_drop/bad_signature")
+        before = set(receipts.glob("receipt-*.json"))
+        proc.send(request(2, "tools/call", {
+            "name": "read_file", "arguments": {"path": "/etc/os-release"},
+        }))
+        legitimate = json.loads(proc.line())
+        if legitimate.get("result", {}).get("isError") is not False:
+            raise DemoFailure(f"legitimate readonly call did not flow: {legitimate}")
+        legit_receipt = wait_for_receipt(receipts, before, "read_file")
+        if trace:
+            trace.record_receipt(
+                legit_receipt, role="LEGIT",
+                theorem_ids=["Seal.shell_read_flows"],
+            )
+        check("legitimate readonly call", "PASS", "read_file flowed through the mediated path")
+
         after_logs = docker_logs(name)
         if "SEAL_DEMO_SHELL_EXEC_RECEIVED" in after_logs:
             raise DemoFailure("downstream server received the destructive call")
-        check("approval tamper fail-closed", "PASS", "flipped signature byte -> bad_signature; retry BLOCKED")
         check("downstream non-receipt", "PASS", "live Docker logs contain no shell_exec marker")
     finally:
         proc.close()
         stop_container(name)
     produced = sorted(receipts.glob("receipt-*.json"))
-    if len(produced) < 2: raise DemoFailure(f"raw gate produced fewer than two BLOCK receipts: {produced}")
-    return produced[0]
+    if len(produced) != 2: raise DemoFailure(f"raw gate expected DENY+ALLOW receipts: {produced}")
+    approval_tamper_control(
+        trusted, config_pub, approval_key, approval_pub, work, server, target, trace,
+    )
+    return attack_receipt
+
+
+def approval_tamper_control(trusted: Path, config_pub: str, approval_key: Path,
+                            approval_pub: str, work: Path, server: Path, target: str,
+                            trace: DemoTrace | None) -> None:
+    tokens = work / "tamper-control-tokens.ndjson"
+    token = approval_token(approval_key, target, f"golden-path-tamper-{uuid.uuid4().hex}")
+    signature = token["signature"]
+    token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
+    tokens.write_text(compact(token) + "\n", encoding="utf-8")
+    receipts = work / "tamper-control-receipts"
+    name = f"seal-gp-approval-tamper-{uuid.uuid4().hex[:10]}"
+    proc = LineProcess(host_command(trusted, config_pub, approval_pub, tokens, receipts, name, server))
+    try:
+        wait_container(name)
+        proc.send(request(10, "initialize", {"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"seal-tamper-control","version":"1"}}))
+        json.loads(proc.line())
+        proc.send(request(11, "tools/list")); json.loads(proc.line())
+        before = set(receipts.glob("receipt-*.json")) if receipts.exists() else set()
+        proc.send(request(1, "tools/call", {"name":"shell_exec", "arguments":{"command":COMMAND}}))
+        response = json.loads(proc.line())
+        if not is_block(response): raise DemoFailure(f"tampered approval unlocked the call: {response}")
+        receipt = wait_for_receipt(receipts, before, "shell_exec")
+        if trace:
+            trace.record_receipt(
+                receipt, role="CONTROL",
+                theorem_ids=["SealV2.tampered_approvals_deny"],
+            )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not any("bad_signature" in line for line in proc.stderr_lines):
+            time.sleep(0.05)
+        if not any("approval_drop" in line and "bad_signature" in line for line in proc.stderr_lines):
+            raise DemoFailure("provider did not report approval_drop/bad_signature")
+        if "SEAL_DEMO_SHELL_EXEC_RECEIVED" in docker_logs(name):
+            raise DemoFailure("tampered-approval call reached downstream")
+        check("approval tamper fail-closed", "PASS", "flipped signature byte -> bad_signature; fresh-session retry BLOCKED")
+    finally:
+        proc.close()
+        stop_container(name)
+
+
+def wait_for_receipt(receipts: Path, before: set[Path], tool: str, timeout: float = 5.0) -> Path:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        after = set(receipts.glob("receipt-*.json")) if receipts.exists() else set()
+        created = sorted(after - before)
+        if len(created) == 1:
+            return created[0]
+        if len(created) > 1:
+            raise DemoFailure(f"multiple receipts for one {tool} call: {created}")
+        time.sleep(0.02)
+    raise DemoFailure(f"receipt missing for {tool}")
 
 
 def claude_events_until_result(proc: LineProcess, timeout: float = 240.0) -> list[dict]:
@@ -606,15 +681,13 @@ TIER
 def preflight(deterministic: bool) -> None:
     branch = run(["git", "branch", "--show-current"]).stdout.strip()
     head = run(["git", "rev-parse", "--short", "HEAD"]).stdout.strip()
-    if branch != "main" and os.environ.get("GITHUB_ACTIONS") != "true":
-        raise DemoSkip(f"seal-host must run from main, got {branch or 'detached'}")
     for binary in ["docker", "node", "npm", "cargo", "lake"]:
         if not shutil.which(binary): raise DemoSkip(f"required command missing: {binary}")
     image = subprocess.run(["docker", "image", "inspect", IMAGE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if image.returncode != 0: raise DemoSkip(f"pinned image is not local; refusing to pull: {IMAGE}")
     if not deterministic and (not sys.stdin.isatty() or not sys.stderr.isatty()):
         raise DemoSkip("live mode requires a controlling TTY for policy signing")
-    check("base + prerequisites", "PASS", f"main@{head}; pinned image local; mode={'deterministic' if deterministic else 'live'}")
+    check("base + prerequisites", "PASS", f"{branch or 'detached'}@{head}; pinned image local; mode={'deterministic' if deterministic else 'live'}")
 
 
 def build_named_targets() -> None:
@@ -632,7 +705,7 @@ def print_table() -> None:
     print("=========================================================")
 
 
-def execute(deterministic: bool) -> int:
+def execute(deterministic: bool, artifact_dir: Path | None = None, color: str = "auto") -> int:
     preflight(deterministic)
     build_named_targets()
     with tempfile.TemporaryDirectory(prefix="seal-golden-path-") as td:
@@ -643,6 +716,12 @@ def execute(deterministic: bool) -> int:
         manifest = capture_manifest(server, work)
         trusted, config_pub, approval_key, approval_pub = prepare_policy(seal, manifest, work, deterministic)
         policy = work / "shell.policy.json"
+        trace = DemoTrace(artifact_dir, "c1", seal, C1_THEOREMS, color) if artifact_dir else None
+        if trace:
+            trace.configure(
+                "scaffolded-shell", policy,
+                active=["safety"], inactive=["temporal"], experimental=[],
+            )
         policy_tamper(trusted, config_pub, approval_pub, work, server)
 
         claude_receipt = None
@@ -653,33 +732,41 @@ def execute(deterministic: bool) -> int:
 
         raw_receipt = raw_gate(
             trusted, config_pub, approval_key, approval_pub, work, server,
-            primary_needed=claude_receipt is None,
+            trace=trace,
         )
         primary = claude_receipt or raw_receipt
         verify_error = verify_receipt_and_scan(seal, primary, manifest, policy)
         boundary_card(config_pub, approval_pub, receipt_verified=verify_error is None)
         if verify_error:
             raise DemoFailure(verify_error)
+        if trace:
+            trace.finalize(work.glob("*-receipts"))
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["shell", "postgres", "filesystem"])
+    parser.add_argument("demo", choices=["shell", "postgres", "filesystem", "deploy", "token", "temporal"])
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
     parser.add_argument("--receipt-output", help="preserve selected deterministic filesystem receipts")
+    parser.add_argument("--artifact-dir", type=Path, help="write doctrine trace, receipts, manifest, and renderings")
+    parser.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args()
-    if args.demo in {"postgres", "filesystem"}:
+    if args.demo in {"postgres", "filesystem", "deploy", "token", "temporal"}:
         if args.receipt_output and (args.demo != "filesystem" or not args.deterministic):
             parser.error("--receipt-output requires filesystem --deterministic")
         command = [sys.executable, str(ROOT / "demo" / f"golden_path_{args.demo}.py")]
         if args.deterministic: command.append("--deterministic")
         if args.receipt_output: command.extend(["--receipt-output", args.receipt_output])
+        if args.artifact_dir: command.extend(["--artifact-dir", str(args.artifact_dir)])
+        command.extend(["--color", args.color])
         return subprocess.run(command, cwd=ROOT).returncode
     if args.receipt_output:
         parser.error("--receipt-output requires filesystem --deterministic")
+    if args.artifact_dir and not args.deterministic:
+        parser.error("--artifact-dir requires --deterministic; live-model output is not load-bearing doctrine evidence")
     try:
-        return execute(args.deterministic)
+        return execute(args.deterministic, args.artifact_dir, args.color)
     except DemoSkip as error:
         check("demo", "SKIP", str(error))
         return 2

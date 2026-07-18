@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: Golden Path - deterministic shell + Postgres + filesystem
+name: Golden Path - deterministic shell + Postgres + deploy + token governor + temporal freeze + filesystem
 
 on:
   push:
@@ -16,6 +16,16 @@ jobs:
       SEAL_ASSURANCE_KIT_ROOT: ${{ github.workspace }}/seal-assurance-kit
     steps:
       - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Proven Lean surface is read-only in this push
+        run: |
+          PUSH_BASE="${{ github.event.before }}"
+          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
+            PUSH_BASE="$(git merge-base origin/main HEAD)"
+          fi
+          git diff --exit-code "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'
 
       - name: Require private dependency access
         run: |
@@ -29,13 +39,13 @@ jobs:
       # verifies today's receipts against yesterday's kernel and fails
       # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
-      # by hand. f95ac81 carries kernel a3790181 (0aeb35a carried ff1bfd68,
-      # 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+      # by hand. 62f5fe5 carries kernel a3790181 plus the current 7-kernel
+      # policy bundle (f95ac81 carried the same kernel before that merge).
       - name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: f95ac81265982b443e04fba2692f412721d68769
+          ref: 62f5fe5d2f3f9d1d700b524aa1d415db449799fc
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
@@ -65,35 +75,142 @@ jobs:
       - name: Stage pinned Postgres image
         run: docker pull "$SEAL_POSTGRES_IMAGE"
 
+      - name: Doctrine spine unit checks
+        run: python3 -m unittest discover -s demo/tests -v
+
       - name: Deterministic shell acceptance (no model, no operator auth)
         run: |
-          python3 demo/golden_path.py shell --deterministic | tee /tmp/golden-path.txt
-          grep -F "policy tamper fail-closed" /tmp/golden-path.txt
-          grep -F "approval tamper fail-closed" /tmp/golden-path.txt
-          grep -F "downstream non-receipt" /tmp/golden-path.txt
-          grep -F "receipt verify + tier" /tmp/golden-path.txt
-          grep -F "local deterministic-tested, ci_tested=false, operator_verified=false" /tmp/golden-path.txt
-          grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path.txt
-          grep -F "operator-untested until run by Ben" /tmp/golden-path.txt
+          C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
+          ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
+          python3 demo/doctrine_check.py "$C1_ARTIFACT"
+          python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C1_ARTIFACT/receipt-strip.md" "$C1_ARTIFACT/receipt-strip.regenerated.md"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c1.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
 
       - name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
         run: |
-          python3 demo/golden_path.py postgres --deterministic | tee /tmp/golden-path-postgres.txt
-          grep -F "containment preflight" /tmp/golden-path-postgres.txt
-          grep -F "prod-db review + signed policy" /tmp/golden-path-postgres.txt
-          grep -F "policy tamper fail-closed" /tmp/golden-path-postgres.txt
-          grep -F "approval tamper fail-closed" /tmp/golden-path-postgres.txt
-          grep -F "approved one-shot real DROP" /tmp/golden-path-postgres.txt
-          grep -F "accumulated Budget cap" /tmp/golden-path-postgres.txt
-          grep -F "Budget stateful evidence" /tmp/golden-path-postgres.txt
-          grep -F "Temporal freeze" /tmp/golden-path-postgres.txt
-          grep -F "Temporal stateful evidence" /tmp/golden-path-postgres.txt
-          grep -F "fresh receipt verification" /tmp/golden-path-postgres.txt
-          grep -F "seal scan composition" /tmp/golden-path-postgres.txt
-          grep -F "Budget/Temporal enforcement is machine-checked" /tmp/golden-path-postgres.txt
-          grep -F "receipt not called independently verified" /tmp/golden-path-postgres.txt
-          grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-postgres.txt
-          grep -F "operator-untested until run by Ben" /tmp/golden-path-postgres.txt
+          C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"
+          ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
+          python3 demo/doctrine_check.py "$C2_ARTIFACT"
+          python3 demo/render_trace.py "$C2_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C2_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C2_ARTIFACT/receipt-strip.md" "$C2_ARTIFACT/receipt-strip.regenerated.md"
+          grep -F "real costArg Budget control" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "costArg type fail-closed" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c2.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c2.txt"
+
+      - name: Deterministic token-governor S+B acceptance (no model, no operator auth)
+        run: |
+          C4_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c4"
+          ./demo/run c4 --output-dir "$C4_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c4.txt"
+          python3 demo/doctrine_check.py "$C4_ARTIFACT"
+          python3 demo/render_trace.py "$C4_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C4_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C4_ARTIFACT/receipt-strip.md" "$C4_ARTIFACT/receipt-strip.regenerated.md"
+          python3 - "$RUNNER_TEMP/golden-path-c4.txt" <<'PY'
+          import sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          start = text.find("\x1b[")
+          assert start >= 0, "C4 output has no coloured line"
+          assert text[start:].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY"), text[start:start + 80]
+          PY
+          grep -F "deny_kernel=budget" "$RUNNER_TEMP/golden-path-c4.txt"
+          grep -F "budget=token-usage costArg=usage.tokens cost=11 cap=10 remaining=10→would-exceed (unchanged=10)" "$RUNNER_TEMP/golden-path-c4.txt"
+          grep -F "budget=token-usage costArg=usage.tokens cost=4 cap=10 remaining=10→6" "$RUNNER_TEMP/golden-path-c4.txt"
+          grep -F "same llm_call prompt; usage.tokens=4 ALLOW; remaining 10->6; exactly one downstream execution" "$RUNNER_TEMP/golden-path-c4.txt"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c4.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c4.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c4.txt"
+
+      - name: Deterministic deploy S+C+L acceptance (no model, no operator auth)
+        run: |
+          C3_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c3"
+          ./demo/run c3 --output-dir "$C3_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c3.txt"
+          python3 demo/doctrine_check.py "$C3_ARTIFACT"
+          python3 demo/render_trace.py "$C3_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C3_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C3_ARTIFACT/receipt-strip.md" "$C3_ARTIFACT/receipt-strip.regenerated.md"
+          node demo/trace_replay.cjs "$C3_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT"
+          if node demo/trace_replay.cjs "$C3_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --variant quorum-met; then
+            echo "::error::quorum-met variant unexpectedly preserved Consensus-deny bytes"
+            exit 1
+          fi
+          if node demo/trace_replay.cjs "$C3_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-sequence 2; then
+            echo "::error::dropping DEPLOY-OK unexpectedly preserved Linear-deny bytes"
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/golden-path-c3.txt" <<'PY'
+          import sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8") if "\x1b[" in line]
+          assert len(lines) == 3, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m QUORUM-SHORT  deploy"), lines[0]
+          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m DEPLOY-OK  deploy"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m REPLAY-DENY  deploy"), lines[2]
+          PY
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:DENY[ACTIVE], linear:ALLOW[ACTIVE]; deny_kernel=consensus" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:ALLOW[ACTIVE], linear:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:ALLOW[ACTIVE], linear:DENY[ACTIVE]; deny_kernel=linear" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "consensus=tool-name:deploy votes=1/3 required=2 quorum=short" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→1 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→0 consumed=true" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=0→0 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
+          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 3
+          grep -F "TRACE-CONTROL quorum-met expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "TRACE-CONTROL drop-deploy-ok expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "TRACE-CONTROL restore expected=SHA-MATCH+PASS observed=SHA-MATCH+PASS status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "deploy executed exactly once; capability 1->0" "$RUNNER_TEMP/golden-path-c3.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c3.txt"
+
+      - name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
+        run: |
+          C6_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c6"
+          ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
+          python3 demo/doctrine_check.py "$C6_ARTIFACT"
+          python3 demo/render_trace.py "$C6_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C6_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C6_ARTIFACT/receipt-strip.md" "$C6_ARTIFACT/receipt-strip.regenerated.md"
+          node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT"
+          if node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            echo "::error::dropping the Temporal trigger unexpectedly preserved transcript bytes"
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/golden-path-c6.txt" <<'PY'
+          import sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8") if "\x1b[" in line]
+          assert len(lines) == 2, lines
+          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[1]
+          PY
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:DENY[ACTIVE]; deny_kernel=temporal" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "temporal=freeze-destructive-after-trigger type=no_after trigger={session.revoke,audit.destroy} forbidden={session.revoke,audit.destroy}" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "temporal-trace=0→1 evidence=runtime-certificate:trace ok (1 events)" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "temporal-trace=1→1 evidence=theorem:Host.registry_deny_temporal_frozen" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "capability-consumed=false[Host.registry_deny_no_capability_consumed]" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "approved session.revoke ALLOW; downstream execution exactly once" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "approved audit.destroy DENY by Temporal; trace theorem-backed unchanged at 1; downstream execution zero" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "wall-clock-claim=false" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "seal-verify=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "seal-verify=TRACE-SCOPED" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "plain seal verify fails honestly: fresh-state ALLOW differs from live-session BLOCK" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-REPLAY PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-CONTROL drop-trigger expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "TRACE-CONTROL restore expected=SHA-MATCH+PASS observed=SHA-MATCH+PASS status=PASS" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c6.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c6.txt"
 
       - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
@@ -117,3 +234,15 @@ jobs:
           grep -F "receipt not called independently verified" /tmp/golden-path-filesystem.txt
           grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-filesystem.txt
           grep -F "operator-untested until run by Ben" /tmp/golden-path-filesystem.txt
+
+      - name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctrine-c1-c2-c3-c4-c6-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/seal-doctrine-c1
+            ${{ runner.temp }}/seal-doctrine-c2
+            ${{ runner.temp }}/seal-doctrine-c3
+            ${{ runner.temp }}/seal-doctrine-c4
+            ${{ runner.temp }}/seal-doctrine-c6
