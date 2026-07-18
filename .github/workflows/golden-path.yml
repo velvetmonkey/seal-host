@@ -114,10 +114,11 @@ jobs:
           cmp "$C4_ARTIFACT/receipt-strip.md" "$C4_ARTIFACT/receipt-strip.regenerated.md"
           python3 - "$RUNNER_TEMP/golden-path-c4.txt" <<'PY'
           import sys
-          text = open(sys.argv[1], encoding="utf-8").read()
-          start = text.find("\x1b[")
-          assert start >= 0, "C4 output has no coloured line"
-          assert text[start:].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY"), text[start:start + 80]
+          lines = [line for line in open(sys.argv[1], encoding="utf-8")
+                   if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
+          assert len(lines) == 2, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  llm_call"), lines[0]
+          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT  llm_call"), lines[1]
           PY
           grep -F "deny_kernel=budget" "$RUNNER_TEMP/golden-path-c4.txt"
           grep -F "budget=token-usage costArg=usage.tokens cost=11 cap=10 remaining=10→would-exceed (unchanged=10)" "$RUNNER_TEMP/golden-path-c4.txt"
@@ -169,6 +170,46 @@ jobs:
           grep -F "TRACE-CONTROL restore expected=SHA-MATCH+PASS observed=SHA-MATCH+PASS status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "deploy executed exactly once; capability 1->0" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c3.txt"
+
+      - name: Deterministic replicated-store S+V convergence acceptance (no model, no operator auth)
+        run: |
+          C5_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c5"
+          ./demo/run c5 --output-dir "$C5_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c5.txt"
+          python3 demo/doctrine_check.py "$C5_ARTIFACT"
+          python3 demo/render_trace.py "$C5_ARTIFACT/events.ndjson" \
+            --format markdown --output "$C5_ARTIFACT/receipt-strip.regenerated.md"
+          cmp "$C5_ARTIFACT/receipt-strip.md" "$C5_ARTIFACT/receipt-strip.regenerated.md"
+          node demo/trace_replay.cjs "$C5_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT"
+          if node demo/trace_replay.cjs "$C5_ARTIFACT/trace-transcript.json" \
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            echo "::error::dropping the C5 first call unexpectedly preserved transcript bytes"
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/golden-path-c5.txt" <<'PY'
+          import sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8")
+                   if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
+          assert len(lines) == 2, lines
+          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  store.update"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  store.update"), lines[1]
+          PY
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], convergence:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], convergence:DENY[ACTIVE]; deny_kernel=convergence" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "convergence=orset.add opArg=op in-proven-set=true stateful=false" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "convergence=assign opArg=op in-proven-set=false stateful=false" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "approved orset.add ALLOW; downstream store.update execution exactly once" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "separately approved assign DENY by Convergence; downstream execution zero" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "seal-verify=PASS" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "seal-verify=TRACE-SCOPED" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "plain seal verify re-derives BLOCK but fails byte identity: fresh Temporal trace differs from live step 2" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "TRACE-REPLAY PASS" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "TRACE-CONTROL drop-trigger expected=BYTE-MISMATCH observed=BYTE-MISMATCH status=PASS" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "TRACE-CONTROL restore expected=SHA-MATCH+PASS observed=SHA-MATCH+PASS status=PASS" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c5.txt"
+          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c5.txt"
 
       - name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
         run: |
@@ -239,10 +280,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: doctrine-c1-c2-c3-c4-c6-${{ github.sha }}
+          name: doctrine-c1-c2-c3-c4-c5-c6-${{ github.sha }}
           path: |
             ${{ runner.temp }}/seal-doctrine-c1
             ${{ runner.temp }}/seal-doctrine-c2
             ${{ runner.temp }}/seal-doctrine-c3
             ${{ runner.temp }}/seal-doctrine-c4
+            ${{ runner.temp }}/seal-doctrine-c5
             ${{ runner.temp }}/seal-doctrine-c6
