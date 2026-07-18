@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["c1", "c2", "c4", "c6"])
+    parser.add_argument("demo", choices=["c1", "c2", "c3", "c4", "c6"])
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args()
@@ -30,7 +30,7 @@ def main() -> int:
         parser.error(f"output directory is not empty; refusing to overwrite evidence: {output}")
     output.mkdir(parents=True, exist_ok=True)
 
-    demo_name = {"c1": "shell", "c2": "postgres", "c4": "token", "c6": "temporal"}[args.demo]
+    demo_name = {"c1": "shell", "c2": "postgres", "c3": "deploy", "c4": "token", "c6": "temporal"}[args.demo]
     command = [
         sys.executable, str(ROOT / "demo" / "golden_path.py"), demo_name,
         "--deterministic", "--artifact-dir", str(output), "--color", args.color,

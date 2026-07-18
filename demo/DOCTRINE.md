@@ -1,6 +1,6 @@
 # Demo doctrine spine
 
-`./demo/run c1`, `./demo/run c2`, `./demo/run c4`, and `./demo/run c6` are the
+`./demo/run c1`, `./demo/run c2`, `./demo/run c3`, `./demo/run c4`, and `./demo/run c6` are the
 deterministic, CI-load-bearing entrypoints. Each creates one artifact directory
 containing:
 
@@ -62,6 +62,17 @@ reviewed cap of 10. Its first recorded call has a live Safety approval but is
 denied by Budget at cost 11 without spending; the same prompt retries at cost
 4, allows, executes exactly once, and moves the displayed remaining balance
 from 10 to 6.
+
+C3 is the Linear+Consensus+Safety deploy sibling. It uses the shipped `deploy`
+recipe with a reviewed three-member roster, live votes file, real nested
+`capability.id`, and a one-use grant. A 1-of-3 attempt is denied by Consensus
+without committing Linear's candidate spend; 2-of-3 then allows one deployment
+and consumes the capability; the identical retry is denied by Linear. Consensus
+is semantically stateless (`State = Unit`, identity ingest), but artifact lanes
+are assigned to whole receipts: because the receipt/verifier pair does not carry
+and replay votes or Linear grant events, all three combined C3 receipts are
+trace-scoped. The shared replay harness proves the Consensus veto with a
+quorum-met input variant and the Linear history with a drop-DEPLOY-OK control.
 
 C6 is the Temporal+Safety sibling of C4. It uses the shipped incremental
 `init` + `add-kernel T` machinery, which emits the

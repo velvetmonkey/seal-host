@@ -344,6 +344,20 @@ def render_tty_event(event: dict, *, color: bool) -> None:
                 f"  freeze-scope={temporal['freeze_scope']} "
                 f"wall-clock-claim={str(temporal['wall_clock_claim']).lower()}"
             )
+        if event.get("consensus"):
+            consensus = event["consensus"]
+            print(
+                f"  consensus=tool-name:{consensus['value']} votes={consensus['votes']}/"
+                f"{len(consensus['roster'])} required={consensus['required']} "
+                f"quorum={'met' if consensus['quorum_met'] else 'short'}"
+            )
+        if event.get("linear"):
+            linear = event["linear"]
+            print(
+                f"  linear={linear['capability_id']} capArg={linear['cap_arg']} "
+                f"committed={linear['remaining_before']}→{linear['remaining_after']} "
+                f"consumed={str(linear['consumed']).lower()}"
+            )
         print(f"  {CLAIM_SCOPE}")
     elif kind == "anti_forge":
         print(
@@ -429,6 +443,20 @@ def render_markdown(trace_path: Path, output: Path) -> str:
                 f"- Freeze scope: {temporal['freeze_scope']} "
                 f"Wall-clock claim: `{str(temporal['wall_clock_claim']).lower()}`"
             )
+        if event.get("consensus"):
+            consensus = event["consensus"]
+            lines.append(
+                f"- Consensus tool-name value `{consensus['value']}`: votes "
+                f"`{consensus['votes']}/{len(consensus['roster'])}`; strict-majority required "
+                f"`{consensus['required']}`; quorum met `{str(consensus['quorum_met']).lower()}`"
+            )
+        if event.get("linear"):
+            linear = event["linear"]
+            lines.append(
+                f"- Linear `{linear['capability_id']}` via `{linear['cap_arg']}`: committed holding "
+                f"`{linear['remaining_before']} → {linear['remaining_after']}`; consumed "
+                f"`{str(linear['consumed']).lower()}`"
+            )
         lines.extend([f"- Claim scope: {CLAIM_SCOPE}", ""])
     replays = [event for event in events if event.get("event") == "trace_replay"]
     controls = [event for event in events if event.get("event") == "trace_negative_control"]
@@ -449,10 +477,11 @@ def render_markdown(trace_path: Path, output: Path) -> str:
             )
         lines.append("")
     anti = next(event for event in events if event["event"] == "anti_forge")
+    anti_subject = anti.get("subject", "receipt")
     lines.extend([
         "### Anti-forge negative control",
         "",
-        f"Corrupted receipt rejected with exit `{anti['tampered_verify_exit']}`; restored SHA-256 "
+        f"Corrupted {anti_subject} rejected with exit `{anti['tampered_verify_exit']}`; restored SHA-256 "
         f"`{anti['restored_sha256']}` matches the original byte-for-byte.",
         "",
         "### Non-claims",
@@ -525,6 +554,7 @@ class DemoTrace:
 
     def record_receipt(self, source: Path, *, role: str, theorem_ids: list[str],
                        budget: dict | None = None, temporal: dict | None = None,
+                       consensus: dict | None = None, linear: dict | None = None,
                        verification_lane: str = "standalone", requires_trace: str | None = None,
                        standalone_failure: dict | None = None) -> Path:
         if self.metadata is None:
@@ -625,6 +655,10 @@ class DemoTrace:
             event["budget"] = budget
         if temporal is not None:
             event["temporal"] = temporal
+        if consensus is not None:
+            event["consensus"] = consensus
+        if linear is not None:
+            event["linear"] = linear
         if requires_trace is not None:
             event["requires_trace"] = requires_trace
         self.recorded_sources.add(source)
@@ -644,7 +678,16 @@ class DemoTrace:
 
     def _anti_forge(self) -> None:
         if not self.standalone_receipts:
-            raise DoctrineFailure("anti-forge control requires a standalone receipt")
+            controls = [event for event in load_trace(self.trace_path) if event.get("event") == "anti_forge"]
+            if len(controls) != 1:
+                raise DoctrineFailure("trace-only demo requires one pre-recorded anti-forge control")
+            control = controls[0]
+            if (control.get("subject") != "trace-transcript" or
+                    control.get("tampered_verify_exit") == 0 or
+                    control.get("original_sha256") != control.get("restored_sha256") or
+                    control.get("restored_verify") != "PASS"):
+                raise DoctrineFailure("trace-only anti-forge control is malformed")
+            return
         receipt = self.standalone_receipts[0]
         original = receipt.read_bytes()
         original_hash = sha256_bytes(original)
@@ -713,6 +756,14 @@ class DemoTrace:
 
 def validate_step_order(metadata: dict, steps: list[dict]) -> None:
     """Enforce each demo's ratified narrative without weakening siblings."""
+    if metadata.get("demo_id") == "c3":
+        if len(steps) != 3:
+            raise DoctrineFailure("C3 ordered narrative must contain exactly three steps")
+        if [step.get("role") for step in steps] != ["QUORUM-SHORT", "DEPLOY-OK", "REPLAY-DENY"]:
+            raise DoctrineFailure("C3 order must be QUORUM-SHORT, DEPLOY-OK, REPLAY-DENY")
+        if [step.get("verdict") for step in steps] != ["DENY", "ALLOW", "DENY"]:
+            raise DoctrineFailure("C3 verdict order must be DENY, ALLOW, DENY")
+        return
     if metadata.get("demo_id") == "c6":
         if len(steps) != 2:
             raise DoctrineFailure("C6 ordered narrative must contain exactly two steps")
@@ -807,13 +858,17 @@ def validate_trace(artifact_dir: Path) -> None:
         raise DoctrineFailure("anti-forge rejection/restoration evidence missing")
     summaries = [event for event in events if event.get("event") == "verification_summary"]
     expected_summary = {"schema": SCHEMA, "event": "verification_summary", "receipts": len(steps), "status": "PASS"}
-    if metadata.get("demo_id") == "c6":
+    if metadata.get("demo_id") == "c3":
+        expected_summary.update({"standalone_receipts": 0, "trace_scoped_receipts": 3})
+    elif metadata.get("demo_id") == "c6":
         expected_summary.update({"standalone_receipts": 1, "trace_scoped_receipts": 1})
     if summaries != [expected_summary]:
         raise DoctrineFailure("receipt verification summary mismatch")
     non_claims = [event for event in events if event.get("event") == "non_claims"]
     if len(non_claims) != 1 or non_claims[0].get("lines") != NON_CLAIMS:
         raise DoctrineFailure("fixed non-claims block missing or changed")
+    if metadata.get("demo_id") == "c3":
+        _validate_c3(metadata, steps, receipt_records, manifest, events, artifact_dir)
     if metadata.get("demo_id") == "c4":
         _validate_c4(metadata, steps, receipt_records, manifest)
     if metadata.get("demo_id") == "c6":
@@ -825,6 +880,185 @@ def validate_trace(artifact_dir: Path) -> None:
             raise DoctrineFailure("Markdown strip is not reproducible from NDJSON")
     finally:
         check_path.unlink(missing_ok=True)
+
+
+def _validate_c3(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
+                 events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    if metadata.get("policy_recipe") != "deploy":
+        raise DoctrineFailure("C3 must use the shipped deploy recipe")
+    if metadata.get("active") != ["safety", "consensus", "linear"]:
+        raise DoctrineFailure("C3 ACTIVE set must be exactly Safety+Consensus+Linear")
+    if metadata.get("present_but_inactive") != [] or metadata.get("experimental") != []:
+        raise DoctrineFailure("C3 must have no inactive or experimental kernel sections")
+    expected_theorems = {
+        "Host.composed_non_bypass",
+        "Host.composed_no_conflicting_agreement",
+        "Host.composed_linear_conservation",
+        "Host.registry_closed_algebra",
+        "Host.pureCommit_deny_of_member",
+        "Host.registry_deny_no_capability_consumed",
+        "Host.linear_committed_trace_no_double_spend",
+    }
+    if set(manifest.get("proofs", {})) != expected_theorems:
+        raise DoctrineFailure("C3 proof manifest theorem set drift")
+    if len(steps) != 3 or len(records) != 3 or any(step.get("tool") != "deploy" for step in steps):
+        raise DoctrineFailure("C3 must contain exactly three deploy receipts")
+    if records[1].get("arguments") != records[2].get("arguments"):
+        raise DoctrineFailure("C3 DEPLOY-OK and REPLAY-DENY must be byte-identical calls")
+    if records[0].get("arguments") == records[1].get("arguments"):
+        raise DoctrineFailure("C3 quorum-short probe must have its own Safety target")
+    if [step.get("receipt_verdict") for step in steps] != ["BLOCK", "ALLOW", "BLOCK"]:
+        raise DoctrineFailure("C3 must retain BLOCK/ALLOW/BLOCK receipt vocabulary")
+    if any(step.get("verification_lane") != "trace" for step in steps):
+        raise DoctrineFailure("every combined C3 receipt must be trace-scoped")
+    if [step.get("deny_kernel") for step in steps] != ["consensus", None, "linear"]:
+        raise DoctrineFailure("C3 denying kernels must be Consensus, none, Linear")
+    if [record.get("deny_kernel") for record in records] != ["consensus", None, "linear"]:
+        raise DoctrineFailure("C3 runtime denying-kernel evidence drift")
+
+    proof_sets = [
+        {"Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed"},
+        {"Host.registry_closed_algebra", "Host.composed_non_bypass",
+         "Host.composed_no_conflicting_agreement", "Host.composed_linear_conservation"},
+        {"Host.linear_committed_trace_no_double_spend", "Host.pureCommit_deny_of_member",
+         "Host.registry_deny_no_capability_consumed"},
+    ]
+    verdicts = [
+        ["allow", "allow", "deny", "allow"],
+        ["allow", "allow", "allow", "allow"],
+        ["allow", "allow", "allow", "deny"],
+    ]
+    for index, (step, record, proof_set, expected_verdicts) in enumerate(
+            zip(steps, records, proof_sets, verdicts), 1):
+        if {proof["theorem_id"] for proof in step.get("proof_refs", [])} != proof_set:
+            raise DoctrineFailure(f"C3 step {index} theorem set drift")
+        certs = record.get("certs", [])
+        expected_runtime = ["safety", "temporal", "consensus", "linear"]
+        if [cert.get("kernel") for cert in certs] != expected_runtime:
+            raise DoctrineFailure(f"C3 step {index} certificate set/order drift")
+        if [cert.get("verdict") for cert in certs] != expected_verdicts:
+            raise DoctrineFailure(f"C3 step {index} certificate verdict drift")
+        fired = step.get("kernel_fired", [])
+        if [cert.get("kernel") for cert in fired] != expected_runtime:
+            raise DoctrineFailure(f"C3 step {index} trace participation order drift")
+        participation = {cert.get("kernel"): cert.get("participation") for cert in fired}
+        if participation != {"safety": "ACTIVE", "temporal": "ABSENT/OFF", "consensus": "ACTIVE", "linear": "ACTIVE"}:
+            raise DoctrineFailure(f"C3 step {index} participation labels drift")
+        if certs[0].get("verdict") != "allow" or not re.fullmatch(r"[0-9a-f]{64}", certs[0].get("reason", "")):
+            raise DoctrineFailure(f"C3 step {index} lacks a live matching Safety approval")
+        verification = step.get("seal_verify", {})
+        if (verification.get("command") != "seal verify" or verification.get("status") != "TRACE-SCOPED" or
+                verification.get("exit_code") == 0 or verification.get("rederived_verdict") != "BLOCK" or
+                verification.get("artifact_lane_reason") != "combined receipt omits votes/grants; verifier replays both empty"):
+            raise DoctrineFailure(f"C3 step {index} standalone boundary evidence drift")
+        expected_live = ["BLOCK", "ALLOW", "BLOCK"][index - 1]
+        if verification.get("live_session_verdict") != expected_live:
+            raise DoctrineFailure(f"C3 step {index} live verdict label drift")
+
+    expected_consensus = [
+        {"roster": [101, 202, 303], "value": "deploy", "votes": 1, "required": 2, "quorum_met": False},
+        {"roster": [101, 202, 303], "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
+        {"roster": [101, 202, 303], "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
+    ]
+    expected_linear = [
+        {"cap_arg": "capability.id", "capability_id": "deploy-cap-c3-001", "grant_events": 1,
+         "remaining_before": 1, "remaining_after": 1, "consumed": False},
+        {"cap_arg": "capability.id", "capability_id": "deploy-cap-c3-001", "grant_events": 0,
+         "remaining_before": 1, "remaining_after": 0, "consumed": True},
+        {"cap_arg": "capability.id", "capability_id": "deploy-cap-c3-001", "grant_events": 0,
+         "remaining_before": 0, "remaining_after": 0, "consumed": False},
+    ]
+    if [step.get("consensus") for step in steps] != expected_consensus:
+        raise DoctrineFailure("C3 quorum evidence drift")
+    if [step.get("linear") for step in steps] != expected_linear:
+        raise DoctrineFailure("C3 committed Linear evidence drift")
+
+    configs = [record.get("kernel_config") for record in records]
+    if any(config != configs[0] for config in configs[1:]):
+        raise DoctrineFailure("C3 receipts must share one identical signed policy")
+    cfg = configs[0]
+    if cfg.get("consensus", {}).get("roster") != [101, 202, 303] or cfg.get("consensus", {}).get("high_stakes") != ["deploy"]:
+        raise DoctrineFailure("C3 receipt roster/high-stakes policy drift")
+    if cfg.get("linear", {}).get("tools") != [{"tool": "deploy", "cap_arg": "capability.id"}]:
+        raise DoctrineFailure("C3 receipt Linear capability path drift")
+    if any(section in cfg for section in ["convergence", "calibration", "budget"]):
+        raise DoctrineFailure("C3 receipt carries an out-of-scope kernel section")
+    if events is None or artifact_dir is None:
+        return
+
+    transcript_meta = metadata.get("trace_transcript")
+    if not isinstance(transcript_meta, dict):
+        raise DoctrineFailure("C3 demo metadata lacks its trace transcript")
+    transcript_sha = transcript_meta.get("sha256")
+    if not isinstance(transcript_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha):
+        raise DoctrineFailure("C3 trace transcript SHA-256 malformed")
+    if any(step.get("requires_trace") != transcript_sha for step in steps):
+        raise DoctrineFailure("C3 receipt-to-trace dependency drift")
+    if transcript_meta.get("path") != "trace-transcript.json" or transcript_meta.get("harness") != "demo/trace_replay.cjs" or transcript_meta.get("status") != "PASS":
+        raise DoctrineFailure("C3 transcript metadata drift")
+    transcript_path = artifact_dir / "trace-transcript.json"
+    if not transcript_path.is_file() or sha256_file(transcript_path) != transcript_sha:
+        raise DoctrineFailure("C3 transcript missing or digest mismatch")
+    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    if transcript.get("schema") != "seal-demo-trace-transcript/v1" or transcript.get("demo_id") != "c3" or len(transcript.get("steps", [])) != 3:
+        raise DoctrineFailure("C3 transcript shape drift")
+    if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
+        raise DoctrineFailure("C3 transcript WASM pin drift")
+    if transcript.get("signed_config") != records[0].get("signed_config"):
+        raise DoctrineFailure("C3 transcript signed config differs from receipts")
+
+    for index, (step, record, transcript_step) in enumerate(zip(steps, records, transcript["steps"]), 1):
+        if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
+            raise DoctrineFailure(f"C3 transcript step {index} order/role drift")
+        if transcript_step.get("canonical_request") != record.get("canonical_request") or transcript_step.get("raw_kernel_output") != record.get("emitted_bytes"):
+            raise DoctrineFailure(f"C3 transcript step {index} request/output drift")
+        try:
+            embedded = base64.b64decode(transcript_step["receipt_bytes_base64"], validate=True)
+        except Exception as error:
+            raise DoctrineFailure(f"C3 transcript step {index} receipt bytes malformed") from error
+        artifact_receipt = (artifact_dir / step["receipt_path"]).read_bytes()
+        if embedded != artifact_receipt or sha256_bytes(embedded) != transcript_step.get("receipt_sha256"):
+            raise DoctrineFailure(f"C3 transcript step {index} receipt is not byte-identical")
+        replay_input = transcript_step.get("step_input", {})
+        expected_approvals = [{"target": grant["target"]} for grant in record.get("granted_capabilities", [])]
+        if replay_input.get("line") != record.get("canonical_request") or replay_input.get("now") != record.get("now") or replay_input.get("approvals") != expected_approvals:
+            raise DoctrineFailure(f"C3 transcript step {index} replay input binding drift")
+        vote_lines = [line for line in replay_input.get("votes", "").splitlines() if line.strip()]
+        grant_lines = [line for line in replay_input.get("grants", "").splitlines() if line.strip()]
+        if len(vote_lines) != [1, 2, 2][index - 1] or len(grant_lines) != [1, 0, 0][index - 1]:
+            raise DoctrineFailure(f"C3 transcript step {index} votes/grants evidence drift")
+        if replay_input.get("forecasts") != "":
+            raise DoctrineFailure(f"C3 transcript step {index} unexpectedly carries forecasts")
+    variants = transcript["steps"][0].get("input_variants", {})
+    if set(variants) != {"quorum-met"} or variants["quorum-met"].get("votes") != transcript["steps"][1]["step_input"]["votes"]:
+        raise DoctrineFailure("C3 quorum-met input variant drift")
+    if any(step.get("input_variants") for step in transcript["steps"][1:]):
+        raise DoctrineFailure("C3 input variant must exist only on QUORUM-SHORT")
+
+    replay = [event for event in events if event.get("event") == "trace_replay"]
+    if replay != [{
+        "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
+        "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 3, "harness": "demo/trace_replay.cjs",
+    }]:
+        raise DoctrineFailure("C3 full trace replay evidence drift")
+    controls = [event for event in events if event.get("event") == "trace_negative_control"]
+    expected_controls = [
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "quorum-met",
+         "expected": "FAIL", "observed": "FAIL", "status": "PASS",
+         "evidence": "1-of-3 Consensus BLOCK changed to 2-of-3 forward/ALLOW and mismatched receipt bytes"},
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "drop-deploy-ok",
+         "expected": "FAIL", "observed": "FAIL", "status": "PASS",
+         "evidence": "without DEPLOY-OK the one-use capability remained held and REPLAY-DENY re-derived forward/ALLOW"},
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "byte-flip",
+         "expected": "FAIL", "observed": "FAIL", "status": "PASS",
+         "evidence": "one byte flipped in the REPLAY-DENY raw kernel output"},
+        {"schema": SCHEMA, "event": "trace_negative_control", "name": "restore",
+         "expected": "SHA-MATCH+PASS", "observed": "SHA-MATCH+PASS", "status": "PASS",
+         "evidence": f"restored transcript sha256={transcript_sha}; full ordered replay PASS"},
+    ]
+    if controls != expected_controls:
+        raise DoctrineFailure("C3 trace negative-control evidence drift")
 
 
 def _validate_c4(metadata: dict, steps: list[dict], records: list[dict], manifest: dict) -> None:

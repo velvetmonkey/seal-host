@@ -26,6 +26,11 @@ class DoctrineUnitTests(unittest.TestCase):
             "Host.registry_deny_no_budget_spend",
             "Host.registry_deny_temporal_frozen",
             "Host.registry_deny_no_capability_consumed",
+            "Host.composed_non_bypass",
+            "Host.composed_no_conflicting_agreement",
+            "Host.composed_linear_conservation",
+            "Host.pureCommit_deny_of_member",
+            "Host.linear_committed_trace_no_double_spend",
         ]
         for theorem_id in theorem_ids:
             with self.subTest(theorem_id=theorem_id):
@@ -102,6 +107,103 @@ class DoctrineUnitTests(unittest.TestCase):
                 doctrine.validate_lane_scope(demo_id, "trace")
             doctrine.validate_lane_scope(demo_id, "standalone")
         doctrine.validate_lane_scope("c6", "trace")
+
+    def test_c3_order_and_lane_are_receipt_properties(self):
+        c3_steps = [
+            {"role": "QUORUM-SHORT", "verdict": "DENY"},
+            {"role": "DEPLOY-OK", "verdict": "ALLOW"},
+            {"role": "REPLAY-DENY", "verdict": "DENY"},
+        ]
+        doctrine.validate_step_order({"demo_id": "c3"}, c3_steps)
+        doctrine.validate_lane_scope("c3", "trace")
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine.validate_step_order({"demo_id": "c3"}, c3_steps[:2])
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine.validate_step_order({"demo_id": "c3"}, [c3_steps[1], c3_steps[0], c3_steps[2]])
+
+    def test_c3_validator_locks_participation_denials_linear_state_and_lanes(self):
+        theorem_sets = [
+            {"Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed"},
+            {"Host.registry_closed_algebra", "Host.composed_non_bypass",
+             "Host.composed_no_conflicting_agreement", "Host.composed_linear_conservation"},
+            {"Host.linear_committed_trace_no_double_spend", "Host.pureCommit_deny_of_member",
+             "Host.registry_deny_no_capability_consumed"},
+        ]
+        all_theorems = set().union(*theorem_sets)
+        metadata = {
+            "policy_recipe": "deploy", "active": ["safety", "consensus", "linear"],
+            "present_but_inactive": [], "experimental": [],
+        }
+        manifest = {"proofs": {name: {} for name in all_theorems}}
+        config = {
+            "consensus": {"roster": [101, 202, 303], "votes_file": "/real/votes", "high_stakes": ["deploy"]},
+            "linear": {"grants_file": "/real/grants", "tools": [{"tool": "deploy", "cap_arg": "capability.id"}]},
+        }
+        args_short = {"release": "short", "capability": {"id": "deploy-cap-c3-001"}}
+        args_deploy = {"release": "ok", "capability": {"id": "deploy-cap-c3-001"}}
+        cert_verdicts = [
+            ["allow", "allow", "deny", "allow"],
+            ["allow", "allow", "allow", "allow"],
+            ["allow", "allow", "allow", "deny"],
+        ]
+        records = []
+        for index, verdicts in enumerate(cert_verdicts):
+            records.append({
+                "arguments": args_short if index == 0 else args_deploy,
+                "deny_kernel": ["consensus", None, "linear"][index],
+                "kernel_config": config,
+                "certs": [
+                    {"kernel": kernel, "verdict": verdict, "reason": "a" * 64 if kernel == "safety" else "runtime"}
+                    for kernel, verdict in zip(["safety", "temporal", "consensus", "linear"], verdicts)
+                ],
+            })
+        consensus = [
+            {"roster": [101, 202, 303], "value": "deploy", "votes": 1, "required": 2, "quorum_met": False},
+            {"roster": [101, 202, 303], "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
+            {"roster": [101, 202, 303], "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
+        ]
+        linear = [
+            {"cap_arg": "capability.id", "capability_id": "deploy-cap-c3-001", "grant_events": 1,
+             "remaining_before": 1, "remaining_after": 1, "consumed": False},
+            {"cap_arg": "capability.id", "capability_id": "deploy-cap-c3-001", "grant_events": 0,
+             "remaining_before": 1, "remaining_after": 0, "consumed": True},
+            {"cap_arg": "capability.id", "capability_id": "deploy-cap-c3-001", "grant_events": 0,
+             "remaining_before": 0, "remaining_after": 0, "consumed": False},
+        ]
+        steps = []
+        for index in range(3):
+            steps.append({
+                "tool": "deploy", "receipt_verdict": ["BLOCK", "ALLOW", "BLOCK"][index],
+                "verification_lane": "trace", "deny_kernel": ["consensus", None, "linear"][index],
+                "proof_refs": [{"theorem_id": name} for name in theorem_sets[index]],
+                "kernel_fired": [
+                    {"kernel": kernel, "participation": participation}
+                    for kernel, participation in [
+                        ("safety", "ACTIVE"), ("temporal", "ABSENT/OFF"),
+                        ("consensus", "ACTIVE"), ("linear", "ACTIVE"),
+                    ]
+                ],
+                "seal_verify": {
+                    "command": "seal verify", "status": "TRACE-SCOPED", "exit_code": 1,
+                    "rederived_verdict": "BLOCK", "live_session_verdict": ["BLOCK", "ALLOW", "BLOCK"][index],
+                    "artifact_lane_reason": "combined receipt omits votes/grants; verifier replays both empty",
+                },
+                "consensus": consensus[index], "linear": linear[index],
+            })
+        doctrine._validate_c3(metadata, steps, records, manifest)
+
+        drifted = copy.deepcopy(steps)
+        drifted[0]["kernel_fired"].pop()
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c3(metadata, drifted, records, manifest)
+        drifted = copy.deepcopy(steps)
+        drifted[2]["linear"]["remaining_before"] = 1
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c3(metadata, drifted, records, manifest)
+        drifted = copy.deepcopy(steps)
+        drifted[1]["verification_lane"] = "standalone"
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c3(metadata, drifted, records, manifest)
 
     def test_c6_temporal_deny_renders_scope_and_theorem_backed_state(self):
         event = {
