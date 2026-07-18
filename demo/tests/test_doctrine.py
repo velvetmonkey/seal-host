@@ -26,6 +26,8 @@ class DoctrineUnitTests(unittest.TestCase):
             "Host.registry_deny_no_budget_spend",
             "Host.registry_deny_temporal_frozen",
             "Host.registry_deny_no_capability_consumed",
+            "Host.composed_convergent",
+            "Kernels.convergence_verdict_allow_iff",
             "Host.composed_non_bypass",
             "Host.composed_no_conflicting_agreement",
             "Host.composed_linear_conservation",
@@ -88,11 +90,12 @@ class DoctrineUnitTests(unittest.TestCase):
         self.assertIn("cap=10", output.getvalue())
         self.assertIn("remaining=10→would-exceed (unchanged=10)", output.getvalue())
 
-    def test_c6_order_is_allow_trigger_then_deny_without_weakening_c4(self):
+    def test_c5_c6_order_is_allow_trigger_then_deny_without_weakening_c4(self):
         c6_steps = [
             {"role": "LEGIT-TRIGGER", "verdict": "ALLOW"},
             {"role": "ATTACK-DENY", "verdict": "DENY"},
         ]
+        doctrine.validate_step_order({"demo_id": "c5"}, c6_steps)
         doctrine.validate_step_order({"demo_id": "c6"}, c6_steps)
         with self.assertRaises(doctrine.DoctrineFailure):
             doctrine.validate_step_order({"demo_id": "c6"}, c6_steps + [{"role": "CONTROL", "verdict": "DENY"}])
@@ -106,6 +109,7 @@ class DoctrineUnitTests(unittest.TestCase):
             with self.subTest(demo_id=demo_id), self.assertRaises(doctrine.DoctrineFailure):
                 doctrine.validate_lane_scope(demo_id, "trace")
             doctrine.validate_lane_scope(demo_id, "standalone")
+        doctrine.validate_lane_scope("c5", "trace")
         doctrine.validate_lane_scope("c6", "trace")
 
     def test_c3_order_and_lane_are_receipt_properties(self):
@@ -204,6 +208,103 @@ class DoctrineUnitTests(unittest.TestCase):
         drifted[1]["verification_lane"] = "standalone"
         with self.assertRaises(doctrine.DoctrineFailure):
             doctrine._validate_c3(metadata, drifted, records, manifest)
+
+    def test_c5_validator_locks_stateless_lanes_operations_and_certificates(self):
+        theorem_sets = [
+            {"Host.composed_convergent", "Host.registry_closed_algebra"},
+            {"Kernels.convergence_verdict_allow_iff", "Host.pureCommit_deny_of_member"},
+        ]
+        metadata = {
+            "policy_recipe": "mesh",
+            "active": ["safety", "convergence"],
+            "present_but_inactive": [],
+            "experimental": [],
+        }
+        manifest = {"proofs": {name: {} for name in set().union(*theorem_sets)}}
+        kernel_config = {
+            "convergence": {"tools": [{"tool": "store.update", "op_arg": "op"}]},
+        }
+        records = [
+            {
+                "arguments": {"op": "orset.add", "key": "team/c5", "value": "member-a"},
+                "deny_kernel": None,
+                "kernel_config": kernel_config,
+                "certs": [
+                    {"kernel": "safety", "verdict": "allow", "reason": "a" * 64},
+                    {"kernel": "temporal", "verdict": "allow", "reason": "trace ok (1 events)"},
+                    {"kernel": "convergence", "verdict": "allow", "reason": "convergent op admitted: orset.add"},
+                ],
+            },
+            {
+                "arguments": {"op": "assign", "key": "team/c5", "value": "blind-overwrite"},
+                "deny_kernel": "convergence",
+                "kernel_config": kernel_config,
+                "certs": [
+                    {"kernel": "safety", "verdict": "allow", "reason": "b" * 64},
+                    {"kernel": "temporal", "verdict": "allow", "reason": "trace ok (2 events)"},
+                    {
+                        "kernel": "convergence",
+                        "verdict": "deny",
+                        "reason": "op not in the proven-convergent set: assign",
+                    },
+                ],
+            },
+        ]
+        proven_set = [
+            "gset.add", "gcounter.inc", "pncounter.inc", "pncounter.dec",
+            "orset.add", "orset.remove", "rga.insert", "rga.remove",
+        ]
+        scope = (
+            "this specific operation was mediated under the fixed kernel set; "
+            "no universal replicated-store convergence claim"
+        )
+        steps = []
+        for index, operation in enumerate(["orset.add", "assign"]):
+            seal_verify = {"command": "seal verify", "status": "PASS", "exit_code": 0}
+            if index == 1:
+                seal_verify = {
+                    "command": "seal verify",
+                    "status": "TRACE-SCOPED",
+                    "exit_code": 1,
+                    "fresh_state_verdict": "BLOCK",
+                    "live_session_verdict": "BLOCK",
+                    "artifact_lane_reason": (
+                        "Convergence is stateless, but the always-registered Temporal certificate "
+                        "is trace-indexed and changes the composite emitted bytes"
+                    ),
+                }
+            steps.append({
+                "tool": "store.update",
+                "receipt_verdict": ["ALLOW", "BLOCK"][index],
+                "verification_lane": ["standalone", "trace"][index],
+                "seal_verify": seal_verify,
+                "deny_kernel": [None, "convergence"][index],
+                "proof_refs": [{"theorem_id": name} for name in theorem_sets[index]],
+                "kernel_fired": [
+                    {"kernel": "safety", "participation": "ACTIVE"},
+                    {"kernel": "temporal", "participation": "ABSENT/OFF"},
+                    {"kernel": "convergence", "participation": "ACTIVE"},
+                ],
+                "convergence": {
+                    "tool": "store.update", "op_arg": "op", "operation": operation,
+                    "in_proven_set": index == 0, "proven_set": proven_set,
+                    "stateful": False, "claim_scope": scope,
+                },
+            })
+        doctrine._validate_c5(metadata, steps, records, manifest)
+
+        drifted = copy.deepcopy(steps)
+        drifted[1]["verification_lane"] = "standalone"
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c5(metadata, drifted, records, manifest)
+        drifted = copy.deepcopy(records)
+        drifted[1]["certs"][2]["reason"] = "universal convergence denied"
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c5(metadata, steps, drifted, manifest)
+        drifted = copy.deepcopy(steps)
+        drifted[0]["convergence"]["stateful"] = True
+        with self.assertRaises(doctrine.DoctrineFailure):
+            doctrine._validate_c5(metadata, drifted, records, manifest)
 
     def test_c6_temporal_deny_renders_scope_and_theorem_backed_state(self):
         event = {

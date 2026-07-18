@@ -1,6 +1,7 @@
 # Demo doctrine spine
 
-`./demo/run c1`, `./demo/run c2`, `./demo/run c3`, `./demo/run c4`, and `./demo/run c6` are the
+`./demo/run c1`, `./demo/run c2`, `./demo/run c3`, `./demo/run c4`, `./demo/run c5`,
+and `./demo/run c6` are the
 deterministic, CI-load-bearing entrypoints. Each creates one artifact directory
 containing:
 
@@ -84,3 +85,18 @@ only that this specific forbidden call was mediated to DENY under the armed
 policy; C6 makes no wall-clock claim and does not claim that no destructive
 action can ever occur. The trigger receipt is Lane A and independently verifies;
 the frozen receipt is Lane B and requires the C6 transcript.
+
+C5 is the Convergence+Safety mesh sibling. It uses the shipped `mesh` recipe
+with the reviewed real `op` argument on `store.update`. Its first recorded call
+has a live Safety approval, uses the kernel-fixed `orset.add` operation, allows,
+and executes exactly once. Its second recorded call has a separate live Safety
+approval but uses `assign`, is denied by Convergence, and never executes.
+Convergence itself is stateless (`State = Unit`), so fresh replay still
+re-derives BLOCK; however, the always-registered Temporal kernel's certificate
+is trace-indexed, making the composite emitted bytes differ on fresh replay.
+The first receipt is therefore Lane A while the second is honestly Lane B and
+requires the C5 transcript. That transcript pins the exact two-call ordering
+and approval-event sequence and exercises full replay, drop-trigger
+byte-mismatch, byte-flip, and byte-exact restoration controls. The receipt
+attests only that this specific `assign` call was mediated to DENY under the
+mesh policy; C5 makes no universal replicated-store convergence claim.

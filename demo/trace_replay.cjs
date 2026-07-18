@@ -79,8 +79,22 @@ function replayInput(step, receipt, grants, canonical, variantName) {
   const expectedApprovals = grants.approvals.map((target) => ({ target }));
   if (input.line !== canonical) fail(`step ${step.sequence} replay input line differs from receipt`);
   if (input.now !== receipt.now) fail(`step ${step.sequence} replay input clock differs from receipt`);
-  if (!isDeepStrictEqual(input.approvals, expectedApprovals))
-    fail(`step ${step.sequence} replay approvals differ from receipt grants`);
+  const traceApprovalEvents = input.approval_evidence === "trace-events";
+  if (input.approval_evidence !== undefined && !traceApprovalEvents)
+    fail("step " + step.sequence + " replay approval evidence mode is unsupported");
+  if (traceApprovalEvents) {
+    if (!Array.isArray(input.approvals))
+      fail("step " + step.sequence + " trace approval events must be an array");
+    const available = new Set(expectedApprovals.map((approval) => approval.target));
+    if (input.approvals.some((approval) =>
+      !approval || typeof approval !== "object" ||
+      Object.keys(approval).length !== 1 ||
+      typeof approval.target !== "string" ||
+      !available.has(approval.target)))
+      fail("step " + step.sequence + " trace approval event is not bound by the receipt grants");
+  } else if (!isDeepStrictEqual(input.approvals, expectedApprovals)) {
+    fail("step " + step.sequence + " replay approvals differ from receipt grants");
+  }
   for (const field of ["votes", "grants", "forecasts"]) {
     if (typeof input[field] !== "string") fail(`step ${step.sequence} replay input ${field} must be a string`);
   }
