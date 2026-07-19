@@ -118,3 +118,8 @@ pub fn route_of_step_output(out: Result<String, SeamError>) -> Route {
 /// id would mean re-parsing raw input — the parser differential this host
 /// forbids. Named in RUST_BRIDGE.md.
 pub const SEAM_ERROR_RESPONSE: &str = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"seal-host: mediation seam failure; request blocked\"}}\n";
+
+/// Stable response for any hostile-boundary resource-limit refusal. The
+/// detailed, non-secret limit name is emitted once on stderr; the wire shape
+/// remains constant and never reflects attacker-controlled bytes.
+pub const RESOURCE_LIMIT_RESPONSE: &str = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32001,\"message\":\"seal-host: resource limit exceeded; request blocked\"}}\n";

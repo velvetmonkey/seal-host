@@ -41,11 +41,16 @@ use seal_host_rs::decision_receipt::{
     request_parts, sha256_hex, ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
 };
 use seal_host_rs::lean;
+use seal_host_rs::limits::{
+    check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus,
+    MAX_AUXILIARY_FILE_BYTES, MAX_PENDING_APPROVALS, MAX_WIRE_MESSAGE_BYTES,
+};
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
 use seal_host_rs::replay_store::SqliteReplayStore;
 use seal_host_rs::route::{
-    route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE,
+    route_of_classify, route_of_step_output, ClassifyRoute, Route, RESOURCE_LIMIT_RESPONSE,
+    SEAM_ERROR_RESPONSE,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -76,7 +81,7 @@ impl Channel {
         }
     }
 }
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -178,7 +183,10 @@ fn read_or_empty(path: &str) -> String {
     if path.is_empty() {
         String::new()
     } else {
-        std::fs::read_to_string(path).unwrap_or_default()
+        read_file_bounded(std::path::Path::new(path), MAX_AUXILIARY_FILE_BYTES)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
     }
 }
 
@@ -294,7 +302,12 @@ impl GrantsCursor {
         if self.path.is_empty() {
             return String::new();
         }
-        let Ok(text) = std::fs::read_to_string(&self.path) else {
+        let Ok(bytes) =
+            read_file_bounded(std::path::Path::new(&self.path), MAX_AUXILIARY_FILE_BYTES)
+        else {
+            return String::new();
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
             return String::new();
         };
         let lines: Vec<&str> = text
@@ -342,6 +355,37 @@ fn emit_approval_drop_warnings(warnings: &[providers::ApprovalDropWarning]) {
     for w in warnings {
         eprintln!("{}", approval_drop_line(w));
     }
+}
+
+fn emit_resource_limit(limit: &str, maximum: usize) {
+    eprintln!(
+        "{}",
+        json!({
+            "seal_host_event": "resource_limit_refusal",
+            "limit": limit,
+            "maximum": maximum,
+        })
+    );
+}
+
+fn admit_pending_approvals(
+    pending: &mut Vec<providers::ApprovalRecord>,
+    records: &[providers::ApprovalRecord],
+    now: u64,
+    ttl_ms: u64,
+) -> bool {
+    pending.retain(|record| {
+        record
+            .issued_at
+            .map(|issued| issued.saturating_add(ttl_ms) >= now)
+            .unwrap_or(true)
+    });
+    if records.len() > MAX_PENDING_APPROVALS.saturating_sub(pending.len()) {
+        emit_resource_limit("pending_approval_records", MAX_PENDING_APPROVALS);
+        return false;
+    }
+    pending.extend(records.iter().cloned());
+    true
 }
 
 /// The P2-c observability signal for a FORCED reduced-scope forward: an ALLOW
@@ -679,13 +723,20 @@ fn run() -> i32 {
     let host = lean::LeanHost::new();
 
     // Fail-closed: a rejected config aborts before any stdio is mediated.
-    let envelope = match std::fs::read_to_string(&args.config) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("trusted config rejected: cannot read {}: {e}", args.config);
-            return 3;
-        }
-    };
+    let envelope =
+        match read_file_bounded(std::path::Path::new(&args.config), MAX_WIRE_MESSAGE_BYTES) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(_) => {
+                    eprintln!("trusted config rejected: config is not UTF-8");
+                    return 3;
+                }
+            },
+            Err(e) => {
+                eprintln!("trusted config rejected: cannot read {}: {e}", args.config);
+                return 3;
+            }
+        };
     let init_out = match host.init(&envelope, &args.pubkey) {
         Ok(t) => t,
         Err(e) => {
@@ -881,9 +932,14 @@ fn run() -> i32 {
     let mut reduced_scope_forwards: u64 = 0;
     loop {
         wire.clear();
-        match reader.read_until(b'\n', &mut wire) {
-            Ok(0) => break, // EOF: session over
-            Ok(_) => {}
+        match read_bounded_frame(&mut reader, &mut wire, MAX_WIRE_MESSAGE_BYTES) {
+            Ok(FrameStatus::Eof) => break,
+            Ok(FrameStatus::Complete) => {}
+            Ok(FrameStatus::Oversized) => {
+                emit_resource_limit("wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
+                write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+                continue;
+            }
             Err(e) => {
                 eprintln!("{}", json!({"error": format!("stdin read error: {e}")}));
                 break; // transport dead: stop mediating, kill child
@@ -898,6 +954,11 @@ fn run() -> i32 {
             write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
             continue;
         };
+        if let Err(limit) = check_json_limits(line.as_bytes()) {
+            emit_resource_limit(limit.name(), limit.maximum());
+            write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+            continue;
+        }
         // V2.1 envelope extraction — ONCE, BEFORE classify (a wrapper line
         // is not a tools/call, so classifying the wrapper would passthrough
         // the wrapper bytes unjudged). From here on `line` is the JUDGED
@@ -918,6 +979,13 @@ fn run() -> i32 {
             }
         };
         let line: &str = inner.as_deref().unwrap_or(line);
+        if inner.is_some() {
+            if let Err(limit) = check_json_limits(line.as_bytes()) {
+                emit_resource_limit(limit.name(), limit.maximum());
+                write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+                continue;
+            }
+        }
         // Bytes the child receives on allow: the original wire verbatim for
         // a plain line; for an enveloped line, exactly the judged inner
         // string plus ONE host-authored `\n` (the inner string is verifiably
@@ -965,7 +1033,12 @@ fn run() -> i32 {
         let poll = provider.poll();
         let mut warnings = poll.warnings;
         let (records, a3_warnings) = a3.filter(poll.records, now);
-        pending_approvals.extend(records.iter().cloned());
+        if !admit_pending_approvals(&mut pending_approvals, &records, now, ttl_ms) {
+            warnings.extend(a3_warnings);
+            emit_approval_drop_warnings(&warnings);
+            write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+            continue;
+        }
         warnings.extend(a3_warnings);
         emit_approval_drop_warnings(&warnings);
         let declines = poll.declines;
@@ -1140,7 +1213,17 @@ fn run() -> i32 {
                         // captured at line arrival dropped any approval minted >5s
                         // (MAX_FUTURE_SKEW_MS) after the line arrived as future_issued_at.
                         let (records, a3_warnings) = a3.filter(poll.records, now_ms());
-                        pending_approvals.extend(records.iter().cloned());
+                        if !admit_pending_approvals(
+                            &mut pending_approvals,
+                            &records,
+                            now_ms(),
+                            ttl_ms,
+                        ) {
+                            warnings.extend(a3_warnings);
+                            emit_approval_drop_warnings(&warnings);
+                            write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+                            continue;
+                        }
                         warnings.extend(a3_warnings);
                         emit_approval_drop_warnings(&warnings);
                         if !records.is_empty() {
