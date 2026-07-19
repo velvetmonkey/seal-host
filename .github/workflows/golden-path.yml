@@ -166,7 +166,8 @@ jobs:
           fi
           python3 - "$RUNNER_TEMP/golden-path-c3.txt" <<'PY'
           import sys
-          lines = [line for line in open(sys.argv[1], encoding="utf-8") if "\x1b[" in line]
+          lines = [line for line in open(sys.argv[1], encoding="utf-8")
+                   if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
           assert len(lines) == 3, lines
           assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m QUORUM-SHORT  deploy"), lines[0]
           assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m DEPLOY-OK  deploy"), lines[1]
@@ -244,7 +245,8 @@ jobs:
           fi
           python3 - "$RUNNER_TEMP/golden-path-c6.txt" <<'PY'
           import sys
-          lines = [line for line in open(sys.argv[1], encoding="utf-8") if "\x1b[" in line]
+          lines = [line for line in open(sys.argv[1], encoding="utf-8")
+                   if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
           assert len(lines) == 2, lines
           assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[0]
           assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[1]
