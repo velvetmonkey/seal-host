@@ -77,7 +77,7 @@ use std::sync::OnceLock;
 /// mcp-seal-dev 1d35669 — principals is the sole acceptance delta, proven —
 /// Lean v4.28.0, emscripten 6.0.0). This harness NEVER rebuilds the
 /// wasm; a hash mismatch is a preflight failure.
-const PINNED_WASM_SHA256: &str = "0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130";
+const PINNED_WASM_SHA256: &str = "3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01";
 
 const DEFAULT_SEED: u64 = 0x5EA1_C0DE_2026_0716;
 /// Fresh session every SEGMENT cases — bounds failure repro to one segment.

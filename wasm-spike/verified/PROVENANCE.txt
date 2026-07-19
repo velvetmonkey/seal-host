@@ -16,13 +16,14 @@ Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130  (3964808 bytes)
+  seal.wasm  3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01  (3964760 bytes)
   seal.js    c93a96b21c1186d112b945f70ae9ed4dbc08e059edff761d772aa65ae53c357e
 
 Supersedes the previous conformance pin sha256
+  0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130
+That build superseded
   fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878
-(the codec-refactor build; its parsers carry into this build unchanged and
-the principal section is the sole delta). That build superseded a3790181
+(the stale pre-refactor pin). That build superseded a3790181
 (7-kernel DX surface), which superseded ff1bfd68 (pathological-number
 fail-closed), which superseded d3067bc0 (Lane C divergence, closed), which
 superseded the fleet pin df42cbad.

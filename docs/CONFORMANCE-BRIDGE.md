@@ -161,10 +161,11 @@ before the differential, and driving the fresh artifact:
   (the single-source policy codec + the V2.1 `principals` section — the sole
   acceptance delta, proven by the re-closed `Seal/PolicyEquiv.lean` — plus
   `Host.ofBundle` / `Host.verifyEnvelope` / Kernel PB)
-- `seal.wasm` sha256: `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
+- `seal.wasm` sha256: `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878`
-  (the codec-refactor build, parsers carried unchanged), which superseded
+- Supersedes `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`,
+  which superseded `fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878`
+  (the stale pre-refactor pin), which superseded
   `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
   (the 7-kernel DX-surface build; decision semantics carried forward
   unchanged, parser equivalence PROVEN at the codec refactor), which superseded
@@ -183,6 +184,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `0d3536e5…`). That repin is a separate, audited step gated to the
+build (sha256 `3d70637f…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.
