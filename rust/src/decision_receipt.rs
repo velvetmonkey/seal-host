@@ -249,6 +249,14 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
     // Cross-checked above against the kernel-attested hash in the audit, so
     // this value is kernel-backed, not merely host-asserted.
     receipt.insert("request_sha256".into(), Value::String(host_request_sha256));
+    // V2.1 authenticated principal — copied ONLY from the authoritative Lean
+    // step output (the parse-path `Host.verifyEnvelope` value; this is the
+    // whole Rust half of the R-PRINC seam: one producer, zero derivation).
+    // Absent when the kernel returned none — never null-filled, never read
+    // from the request line, arguments, or any approval record.
+    if let Some(principal) = step.get("principal").and_then(Value::as_str) {
+        receipt.insert("principal".into(), Value::String(principal.to_owned()));
+    }
     if let Err(parse_error) = &request_material {
         receipt.insert(
             "request_parse_error".into(),

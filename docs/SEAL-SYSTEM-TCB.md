@@ -184,7 +184,7 @@ Inherited from the mcp-seal threat model plus the system seams:
 | Routing agreement incl. full obfuscation disguise corpus | corpus + property tests | `seal-host/rust/tests/differential.rs` (`corpus_agreement*`, `no_routing_bypass`) | `cargo test --test differential` |
 | Panic → abort (F1 closed), fail-open demonstrated + fixed | binary-driven probes | `seal-host/rust/tests/panic_probe.rs` | `cargo test --test panic_probe` |
 | Full-path mediation: disguises block, approval one-shot, non-UTF8 refused, verbatim forward | full-binary oracle | `seal-host/rust/tests/host_path.rs` | `cargo test --test host_path` |
-| Which binary ran (identity, not equivalence) | wasm sha256 pin | `seal-host/wasm-spike/verified/PROVENANCE.txt` (`seal.wasm` pin `a37901811df4…09af`) | `sha256sum wasm-spike/verified/seal.wasm` |
+| Which binary ran (identity, not equivalence) | wasm sha256 pin | `seal-host/wasm-spike/verified/PROVENANCE.txt` (`seal.wasm` pin `3d70637f60f3…ce01`) | `sha256sum wasm-spike/verified/seal.wasm` |
 | wasm computes same function as Lean (T3) | conformance bridge — GREEN (R6, 2026-07-05): 15/15 corpus inputs agree across model/native/wasm; deployed record head agrees too (risk-reducing evidence, not a proof) | `seal-host/scripts/conformance_bridge.mjs` | `node scripts/conformance_bridge.mjs --wasm` |
 
 ---

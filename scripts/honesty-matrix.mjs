@@ -6,7 +6,7 @@
 //   1. DERIVED (machine): `lake exe honesty_matrix` JSON — the proven?/wired?
 //      cells and the arithmetic. The exe term-binds the nine FfiSpec theorems
 //      (rename/delete breaks its build) and EVALUATES `Ffi.activeKernels`
-//      over all 32 deployable configs; nothing in those cells is transcribed.
+//      over all 64 deployable configs; nothing in those cells is transcribed.
 //   2. DERIVED (machine): fail-loud structural parse of
 //      rust/tests/topology_matrix.rs and .github/workflows/ci.yml — the
 //      tested? cells. A missing pattern is a hard error, never a silent
@@ -41,7 +41,7 @@ const CI_YML = join(REPO, ".github", "workflows", "ci.yml");
 // A record is neither a derivation (it is not re-established by this script)
 // nor an assertion of judgement (it is a checkable historical fact).
 const EVIDENCE_RECORDS = [
-  "GitHub Actions run 29443393591 (`ci.yml` → `rust-conformance`), green on a clean runner, 2026-07-15 — the A1 suite exercising all 32 topologies plus calibration's 16 disabled variants against the shipped binary.",
+  "The A1 suite exercises all 64 topologies (V2.1 adds the principal-budget bit) plus calibration's 32 disabled variants against the shipped binary — green locally on the codec+V2.1 fold; the last green clean-runner run is GitHub Actions 29443393591 (`ci.yml` → `rust-conformance`, 2026-07-15, then 32 topologies), CI rerun pending the post-frisk push.",
 ];
 
 function die(msg) {
@@ -99,7 +99,7 @@ function parseTestedEvidence(lean) {
     "fn topology_masks_partition",
     "fn topology_matrix_calibration_enabled",
     "fn topology_matrix_calibration_absent_vs_disabled",
-    "(0u8..32)",
+    "(0u8..64)",
     "CARGO_BIN_EXE_seal-host-rs",
     "CalVariant::Absent",
     "CalVariant::Disabled",
@@ -109,7 +109,7 @@ function parseTestedEvidence(lean) {
 
   const probesBlock = rust.match(/const PROBES:[^=]*=\s*\[([\s\S]*?)\n\];/);
   if (!probesBlock) die("rust/tests/topology_matrix.rs: PROBES table not found");
-  const probeKernels = [...probesBlock[1].matchAll(/\(\s*BIT_[A-Z]+,\s*"([a-z-]+)"/g)].map(
+  const probeKernels = [...probesBlock[1].matchAll(/\(\s*BIT_[A-Z_]+,\s*"([a-z_-]+)"/g)].map(
     (m) => m[1],
   );
 
@@ -185,13 +185,13 @@ function provenCell(k) {
 }
 
 function wiredCell(k) {
-  const evalNote = `evaluated over all 32 configs`;
+  const evalNote = `evaluated over all 64 configs`;
   if (k.wired === "always")
-    return `✅ always (${k.activeCount}/32) derived — ${evalNote}`;
+    return `✅ always (${k.activeCount}/64) derived — ${evalNote}`;
   if (k.wired === "never")
-    return `❌ never (${k.activeCount}/32) derived — ${evalNote}`;
+    return `❌ never (${k.activeCount}/64) derived — ${evalNote}`;
   const dg = k.doubleGate ? "; double-gated (present AND enabled)" : "";
-  return `⚙️ config-gated (${k.activeCount}/32) derived — ${evalNote}${dg}`;
+  return `⚙️ config-gated (${k.activeCount}/64) derived — ${evalNote}${dg}`;
 }
 
 function reachableCell(a) {
@@ -202,11 +202,11 @@ function testedCell(k) {
   if (k.wired === "never")
     return "❌ untested in deployment — no deployable topology exists (derived from wired: never)";
   if (k.wired === "always")
-    return `✅ derived — shown denying at all 32 topologies (\`rust/tests/topology_matrix.rs\`)`;
+    return `✅ derived — shown denying at all 64 topologies (\`rust/tests/topology_matrix.rs\`)`;
   const dg = k.doubleGate
     ? "; disabled-vs-absent exercised at all 16 inactive topologies"
     : "";
-  return `✅ derived — shown denying at all ${k.activeCount} active topologies and not gating at the ${32 - k.activeCount} inactive ones (\`rust/tests/topology_matrix.rs\`)${dg}`;
+  return `✅ derived — shown denying at all ${k.activeCount} active topologies and not gating at the ${64 - k.activeCount} inactive ones (\`rust/tests/topology_matrix.rs\`)${dg}`;
 }
 
 function render(lean, assertions) {
@@ -298,7 +298,7 @@ function render(lean, assertions) {
   push("## Tested — what is derived and what is record");
   push("");
   push(
-    "Derived (re-established on every regeneration): `rust/tests/topology_matrix.rs` exists with the mask partition pin (`topology_masks_partition`, 16+16 = the disjoint `0..32`), both spawning tests, the `CARGO_BIN_EXE_seal-host-rs` forced-binary path, and a `PROBES` table whose kernel names equal the Lean derivation's config-gated set exactly; `ci.yml` runs `cargo test` in `rust/` on every push. If any of that goes away, this file cannot regenerate.",
+    "Derived (re-established on every regeneration): `rust/tests/topology_matrix.rs` exists with the mask partition pin (`topology_masks_partition`, 32+32 = the disjoint `0..64`), both spawning tests, the `CARGO_BIN_EXE_seal-host-rs` forced-binary path, and a `PROBES` table whose kernel names equal the Lean derivation's config-gated set exactly; `ci.yml` runs `cargo test` in `rust/` on every push. If any of that goes away, this file cannot regenerate.",
   );
   push("");
   push("Record (a checkable historical fact, quoted with its date, not re-established here):");

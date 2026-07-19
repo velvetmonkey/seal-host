@@ -22,6 +22,9 @@ import Host.AuthorityFrontierBridge
 import Host.DeployedAdapter
 import Host.CapabilityAdequacy
 import Host.DispatchSpelled
+import Host.Principal
+import Host.PrincipalCommit
+import Kernels.PrincipalBudget
 import FfiSpec
 import Kernels
 import Kernels.ConsensusBytes
@@ -715,7 +718,7 @@ info: 'Host.linear_committed_trace_no_double_spend' depends on axioms: [propext,
 
 -- The budget × linear × safety composition: deny-side per-kernel corollaries,
 -- the dispatch loop's plan bound to the pure model (Host/Commit.lean), and
--- the 7-kernel registry-level deny composition (Host/CommitRegistry.lean)
+-- the 8-kernel registry-level deny composition (Host/CommitRegistry.lean)
 
 /-- info: 'Host.pureCommit_deny_of_member' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.pureCommit_deny_of_member
@@ -1023,3 +1026,121 @@ info: 'Host.registryFor_reader_invariance' depends on axioms: [propext, Classica
 
 /-- info: 'Ffi.stepImpl_spelled' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Ffi.stepImpl_spelled
+
+-- V2.1 signed-envelope principal (Route 2): the opaque credential, the
+-- per-principal Budget kernel, the commit-discipline twins and the receipt
+-- model half. Same axiom baseline as everything above; the Ed25519 extern is
+-- `opaque`, never an axiom, so no crypto assumption can appear here.
+
+/-- info: 'Host.verifyEnvelope' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.verifyEnvelope
+
+/-- info: 'Host.AuthenticatedPrincipal.ext_id' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.AuthenticatedPrincipal.ext_id
+
+/-- info: 'Host.envelope_gates_presence_not_value' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.envelope_gates_presence_not_value
+
+/-- info: 'Host.principal_value_key_constant' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.principal_value_key_constant
+
+/-- info: 'Host.verifyEnvelope_none_of_unregistered' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.verifyEnvelope_none_of_unregistered
+
+/-- info: 'Host.verifyEnvelope_id_registered' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.verifyEnvelope_id_registered
+
+/-- info: 'Host.envelope_topology_authenticates' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.envelope_topology_authenticates
+
+/-- info: 'Host.envelope_constrained_excludes_totality' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.envelope_constrained_excludes_totality
+
+/-- info: 'Kernels.principalBudgetKernel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.principalBudgetKernel
+
+/-- info: 'Kernels.principal_budget_ingest_id' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.principal_budget_ingest_id
+
+/-- info: 'Kernels.principal_budget_none_denies' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.principal_budget_none_denies
+
+/-- info: 'Kernels.principal_budget_none_frozen' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.principal_budget_none_frozen
+
+/-- info: 'Kernels.pbStateFor_set_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.pbStateFor_set_eq
+
+/-- info: 'Kernels.pbStateFor_set_ne' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Kernels.pbStateFor_set_ne
+
+/-- info: 'Kernels.principal_budget_isolation' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Kernels.principal_budget_isolation
+
+/-- info: 'Host.principal_budget_commitStep_deny' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.principal_budget_commitStep_deny
+
+/--
+info: 'Host.principal_budget_committed_trace_within_cap' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.principal_budget_committed_trace_within_cap
+
+/--
+info: 'Host.principal_budget_committed_trace_within_cap_of_consistent' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+-/
+#guard_msgs in #print axioms Host.principal_budget_committed_trace_within_cap_of_consistent
+
+/--
+info: 'Host.principal_budget_committed_trace_from_init' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.principal_budget_committed_trace_from_init
+
+/-- info: 'Host.principal_budget_trace_isolation' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.principal_budget_trace_isolation
+
+/-- info: 'Host.principalsConsistent' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.principalsConsistent
+
+/-- info: 'Host.ofBundle_principals' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.ofBundle_principals
+
+/-- info: 'Host.ofBundle_principals_consistent' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.ofBundle_principals_consistent
+
+/-- info: 'Seal.effectivePrincipals_isSome_iff' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Seal.effectivePrincipals_isSome_iff
+
+/-- info: 'Ffi.principal_budget_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.principal_budget_registered_iff
+
+/--
+info: 'Ffi.registryFor_kernels_principal_irrelevant' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.registryFor_kernels_principal_irrelevant
+
+/--
+info: 'Ffi.bundle_principal_budget_registered_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.bundle_principal_budget_registered_iff
+
+/--
+info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Ffi.bundle_disabled_principals_not_registered
+
+/-- info: 'Host.registry_deny_no_principal_budget_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.registry_deny_no_principal_budget_spend
+
+/-- info: 'Ffi.principalOutField_lookup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.principalOutField_lookup
+
+/-- info: 'Ffi.principalOutField_authenticated' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.principalOutField_authenticated
+
+/-- info: 'Ffi.faithful_principal_authenticated' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Ffi.faithful_principal_authenticated
+
+/-- info: 'Ffi.receipt_principal_authenticated' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.receipt_principal_authenticated

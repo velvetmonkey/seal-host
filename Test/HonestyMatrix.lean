@@ -13,16 +13,17 @@ Emits the machine-derivable cells of the per-kernel honesty matrix
 
 Two derivation mechanisms, one per bug class:
 
-- **Compile-time theorem binding.** `boundTheorems` term-references all nine
-  FfiSpec theorems by name. Rename or delete one and this executable stops
+- **Compile-time theorem binding.** `boundTheorems` term-references all
+  eleven FfiSpec theorems by name. Rename or delete one and this executable stops
   building, the matrix cannot regenerate, and the CI drift gate goes red.
   Scope stated honestly: this catches RENAME and DELETE, not RESTATEMENT — a
   weakened theorem that keeps its name still builds. That is exactly the bug
   class A0 was written to kill (edit `registryFor`, no proof notices), no
   more.
-- **Evaluation.** `Ffi.activeKernels` is evaluated over all 32 deployable
-  configs (5-bit mask over {C,V,K,L,B}; S+T unconditional — same enumeration
-  as `rust/tests/topology_matrix.rs`) plus calibration's 16
+- **Evaluation.** `Ffi.activeKernels` is evaluated over all 64 deployable
+  configs (6-bit mask over {C,V,K,L,B,PB}; S+T unconditional — V2.1 adds PB
+  as a NEW high bit, so masks 0–31 are byte-identical to
+  `rust/tests/topology_matrix.rs`'s 5-bit enumeration) plus calibration's
   configured-but-disabled variants. Every "wired" verdict below is computed
   from those evaluations, never transcribed. `Ffi.registryFor_kernels` is
   the theorem that licenses this: the deployed registry maps to exactly
@@ -31,7 +32,7 @@ Two derivation mechanisms, one per bug class:
 
 `Host.Kernel` carries `Type` fields and function fields, so `List Kernel`
 has no decidable equality — every membership test, set comparison and dedup
-below projects to `Kernel.name` first (the eight names are distinct string
+below projects to `Kernel.name` first (the nine names are distinct string
 literals; `FfiSpec.not_mem_of_name` is the proof-side twin of this move).
 
 Any failed self-check prints to stderr and exits non-zero: no partial JSON,
@@ -43,7 +44,7 @@ namespace Test.HonestyMatrix
 open Host
 open Lean (Json toJson)
 
-/-- Compile-time binding to the nine FfiSpec theorems. Each string is
+/-- Compile-time binding to the eleven FfiSpec theorems. Each string is
     inseparable from a term reference to the theorem it names: if the
     theorem goes, the string goes with it or the build breaks. -/
 private def boundTheorems : List String :=
@@ -55,6 +56,9 @@ private def boundTheorems : List String :=
    (let _ := @Ffi.calibration_registered_iff; "Ffi.calibration_registered_iff"),
    (let _ := @Ffi.linear_registered_iff; "Ffi.linear_registered_iff"),
    (let _ := @Ffi.budget_registered_iff; "Ffi.budget_registered_iff"),
+   (let _ := @Ffi.principal_budget_registered_iff; "Ffi.principal_budget_registered_iff"),
+   (let _ := @Ffi.registryFor_kernels_principal_irrelevant;
+    "Ffi.registryFor_kernels_principal_irrelevant"),
    (let _ := @Ffi.byteConsensus_never_registered; "Ffi.byteConsensus_never_registered")]
 
 /-- Compile-time binding to the D3 receipt-identity theorems
@@ -115,14 +119,21 @@ private def sampleLinear : Kernels.LinearConfig :=
 private def sampleBudget : Kernels.BudgetConfig :=
   [{ name := "notes", cap := 1, tools := ["notes.add"], costArg := none }]
 
-/-! ## The 32-topology enumeration (bit order matches
-`rust/tests/topology_matrix.rs`) -/
+private def samplePrincipals : Kernels.PrincipalsConfig :=
+  { registry := [{ id := "alice", pubkey :=
+      "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" }]
+    budgets := [{ name := "alice-notes", cap := 1, tools := ["notes.add"],
+                  costArg := none }] }
+
+/-! ## The 64-topology enumeration (bits 0–4 match
+`rust/tests/topology_matrix.rs`; bit 5 is the V2.1 principals section) -/
 
 private def bitConsensus : Nat := 1
 private def bitConvergence : Nat := 2
 private def bitCalibration : Nat := 4
 private def bitLinear : Nat := 8
 private def bitBudget : Nat := 16
+private def bitPrincipals : Nat := 32
 
 /-- Calibration's three config states. `disabled` (section present,
     `enabled := false`) is the double gate's distinct middle state. -/
@@ -143,7 +154,9 @@ private def configFor (mask : Nat) (cal : CalVariant) : TrustedConfig :=
       | .absent => none
       | .disabled => some (sampleCalibration false)
     linear := if mask &&& bitLinear != 0 then some sampleLinear else none
-    budget := if mask &&& bitBudget != 0 then sampleBudget else [] }
+    budget := if mask &&& bitBudget != 0 then sampleBudget else []
+    principals := if mask &&& bitPrincipals != 0 then some samplePrincipals
+                  else none }
 
 /-- The selected kernel NAMES at a config — the only representation the exe
     compares (no `DecidableEq` on `Kernel`). -/
@@ -163,8 +176,10 @@ private def expectedNames (mask : Nat) (cal : CalVariant) : List String :=
       | _ => [])
   ++ (if mask &&& bitLinear != 0 then [Kernels.linearKernel.name] else [])
   ++ (if mask &&& bitBudget != 0 then [Kernels.budgetKernel.name] else [])
+  ++ (if mask &&& bitPrincipals != 0 then [Kernels.principalBudgetKernel.name]
+      else [])
 
-/-- All eight proven kernels, bound to their definitions: the name strings
+/-- All nine proven kernels, bound to their definitions: the name strings
     are read off the defs, never retyped. -/
 private def provenKernelNames : List String :=
   [Kernels.safetyKernel.name,
@@ -174,6 +189,7 @@ private def provenKernelNames : List String :=
    Kernels.calibrationKernel.name,
    Kernels.linearKernel.name,
    Kernels.budgetKernel.name,
+   Kernels.principalBudgetKernel.name,
    Kernels.byteConsensusKernel.name]
 
 /-- Which FfiSpec theorems speak for which kernel. Every string here must be
@@ -194,6 +210,9 @@ private def kernelTheorems : List (String × List String) :=
     ["Ffi.registryFor_kernels", "Ffi.linear_registered_iff"]),
    (Kernels.budgetKernel.name,
     ["Ffi.registryFor_kernels", "Ffi.budget_registered_iff"]),
+   (Kernels.principalBudgetKernel.name,
+    ["Ffi.registryFor_kernels", "Ffi.principal_budget_registered_iff",
+     "Ffi.registryFor_kernels_principal_irrelevant"]),
    (Kernels.byteConsensusKernel.name,
     ["Ffi.registryFor_kernels", "Ffi.byteConsensus_never_registered"])]
 
@@ -202,7 +221,7 @@ private def kernelTheorems : List (String × List String) :=
 private def calFor (mask : Nat) : CalVariant :=
   if mask &&& bitCalibration != 0 then .active else .absent
 
-private def allMasks : List Nat := List.range 32
+private def allMasks : List Nat := List.range 64
 
 /-- Self-checks over the evaluated space. Returns human-readable failures;
     empty means every derivation below is backed by an evaluation that held. -/
@@ -232,10 +251,10 @@ private def selfCheckErrors : List String := Id.run do
           [s!"mask {mask}: disabled {disabled} ≠ absent {absent} — double gate broken"]
       if disabled.contains Kernels.calibrationKernel.name then
         errs := errs ++ [s!"mask {mask}: disabled calibration selected"]
-  -- The 32 masks yield 32 DISTINCT selections (the topology count is real).
+  -- The 64 masks yield 64 DISTINCT selections (the topology count is real).
   let sets := allMasks.map (fun m => activeNames m (calFor m))
-  if sets.eraseDups.length != 32 then
-    errs := errs ++ [s!"expected 32 distinct active sets, got {sets.eraseDups.length}"]
+  if sets.eraseDups.length != 64 then
+    errs := errs ++ [s!"expected 64 distinct active sets, got {sets.eraseDups.length}"]
   -- Every per-kernel theorem citation is a bound theorem.
   for (k, thms) in kernelTheorems do
     for t in thms do
@@ -246,14 +265,14 @@ private def selfCheckErrors : List String := Id.run do
     errs := errs ++ ["kernelTheorems keys ≠ provenKernelNames"]
   return errs
 
-/-- In how many of the 32 deployable configs a kernel is selected. -/
+/-- In how many of the 64 deployable configs a kernel is selected. -/
 private def activeCount (kernel : String) : Nat :=
   (allMasks.filter (fun m => (activeNames m (calFor m)).contains kernel)).length
 
 /-- Wired verdict, computed from the evaluation — never transcribed. -/
 private def wiredVerdict (kernel : String) : String :=
   match activeCount kernel with
-  | 32 => "always"
+  | 64 => "always"
   | 0 => "never"
   | _ => "config-gated"
 
@@ -266,7 +285,7 @@ private def hasDoubleGate (kernel : String) : Bool :=
 
 /-- Kernels selected at EVERY deployable config (the mandatory set). -/
 private def mandatoryKernels : List String :=
-  provenKernelNames.filter (fun k => activeCount k == 32)
+  provenKernelNames.filter (fun k => activeCount k == 64)
 
 /-- Kernels selected at SOME deployable config (the selectable set). -/
 private def selectableKernels : List String :=

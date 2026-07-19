@@ -433,4 +433,39 @@ def main : IO Unit := do
       [{ name := "a", cap := 3, tools := [], costArg := none },
        { name := "a", cap := 4, tools := [], costArg := none }])
 
+  -- V2.1 per-principal budget: the pure counter map at the pair key. (No
+  -- AuthenticatedPrincipal is constructed here — the constructor is private,
+  -- which is the point; behavioral coverage of decide/verify lives in the
+  -- compiled dx_surface_tests lane.)
+  let pbSt := Kernels.setPbState (Kernels.setPbState []
+    ("alice", "notes") { spent := 2 }) ("bob", "notes") { spent := 1 }
+  check "pbState: alice's counter reads back"
+    ((Kernels.pbStateFor pbSt ("alice", "notes")).spent == 2)
+  check "pbState: bob's counter isolated"
+    ((Kernels.pbStateFor pbSt ("bob", "notes")).spent == 1)
+  check "pbState: same principal, other budget empty"
+    ((Kernels.pbStateFor pbSt ("alice", "other")).spent == 0)
+  check "pbState: other principal, same budget empty"
+    ((Kernels.pbStateFor pbSt ("carol", "notes")).spent == 0)
+  let pk := fun (id pub : String) => ({ id, pubkey := pub } : Host.PrincipalKey)
+  let bspec := fun (name : String) (cap : Nat) =>
+    ({ name, cap, tools := ["t"], costArg := none } : Kernels.BudgetSpec)
+  check "principalsConsistent: well-formed section accepted"
+    (Host.principalsConsistent
+      { registry := [pk "alice" "aa", pk "bob" "bb"], budgets := [bspec "p" 1] })
+  check "principalsConsistent: duplicate id same pubkey accepted"
+    (Host.principalsConsistent
+      { registry := [pk "alice" "aa", pk "alice" "aa"], budgets := [] })
+  check "principalsConsistent: duplicate id different pubkey rejected"
+    (!Host.principalsConsistent
+      { registry := [pk "alice" "aa", pk "alice" "bb"], budgets := [] })
+  check "principalsConsistent: conflicting per-principal caps rejected"
+    (!Host.principalsConsistent
+      { registry := [pk "alice" "aa"], budgets := [bspec "p" 1, bspec "p" 2] })
+  check "principalsConsistent: budgets with empty registry rejected"
+    (!Host.principalsConsistent
+      { registry := [], budgets := [bspec "p" 1] })
+  check "principalsConsistent: empty section accepted"
+    (Host.principalsConsistent { registry := [], budgets := [] })
+
   IO.println "all host unit tests passed"

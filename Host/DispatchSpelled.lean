@@ -172,20 +172,22 @@ theorem registryFor_gather_pure (s : Ffi.Session) (now : Nat)
     (approvalEvents : List SealCore.Event)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
-    (forecasts : List Kernels.ForecastRecord) :
-    ∀ r ∈ Ffi.registryFor s now approvalEvents votes grants forecasts,
+    (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal) :
+    ∀ r ∈ Ffi.registryFor s now approvalEvents votes grants forecasts principal?,
       ∃ ev : r.kernel.Evidence, r.gather = fun _ => pure ev := by
   intro r hr
   unfold Ffi.registryFor at hr
   simp only [List.mem_append] at hr
-  rcases hr with (((((h | h) | h) | h) | h) | h) <;>
+  rcases hr with ((((((h | h) | h) | h) | h) | h) | h) <;>
     (repeat split at h) <;>
     simp only [List.mem_cons, List.not_mem_nil, or_false] at h <;>
     (try rcases h with h | h) <;> subst_vars <;> exact ⟨_, rfl⟩
 
 /-- The deployed registry's state slots depend on NOTHING but the session's
-    four named refs: any two pure readers that agree on
-    `safetyRef`/`temporalRef`/`linearRef`/`budgetRef` project `registryFor`
+    five named refs: any two pure readers that agree on
+    `safetyRef`/`temporalRef`/`linearRef`/`budgetRef`/`principalBudgetRef`
+    project `registryFor`
     to the same `WiredInst` list (C/V/K sit on `unitRef` with `State = Unit`,
     where every reader returns `()`). No instance smuggles in an unnamed
     stateful ref. Two applications of `commitInstsFor_wiring`. -/
@@ -194,6 +196,7 @@ theorem registryFor_reader_invariance (s : Ffi.Session) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (read₁ read₂ : (K : Kernel) → IO.Ref K.State → K.State)
     (hs : read₂ Kernels.safetyKernel s.safetyRef
             = read₁ Kernels.safetyKernel s.safetyRef)
@@ -202,15 +205,17 @@ theorem registryFor_reader_invariance (s : Ffi.Session) (now : Nat)
     (hl : read₂ Kernels.linearKernel s.linearRef
             = read₁ Kernels.linearKernel s.linearRef)
     (hb : read₂ Kernels.budgetKernel s.budgetRef
-            = read₁ Kernels.budgetKernel s.budgetRef) :
-    (Ffi.registryFor s now approvalEvents votes grants forecasts).map
+            = read₁ Kernels.budgetKernel s.budgetRef)
+    (hpb : read₂ Kernels.principalBudgetKernel s.principalBudgetRef
+            = read₁ Kernels.principalBudgetKernel s.principalBudgetRef) :
+    (Ffi.registryFor s now approvalEvents votes grants forecasts principal?).map
         (Registered.wiredAt read₁)
-      = (Ffi.registryFor s now approvalEvents votes grants forecasts).map
+      = (Ffi.registryFor s now approvalEvents votes grants forecasts principal?).map
         (Registered.wiredAt read₂) := by
-  rw [commitInstsFor_wiring s now approvalEvents votes grants forecasts
-        _ _ _ _ read₁ rfl rfl rfl rfl,
-      commitInstsFor_wiring s now approvalEvents votes grants forecasts
-        _ _ _ _ read₂ hs ht hl hb]
+  rw [commitInstsFor_wiring s now approvalEvents votes grants forecasts principal?
+        _ _ _ _ _ read₁ rfl rfl rfl rfl rfl,
+      commitInstsFor_wiring s now approvalEvents votes grants forecasts principal?
+        _ _ _ _ _ read₂ hs ht hl hb hpb]
 
 end Host
 

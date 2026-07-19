@@ -4,16 +4,16 @@ import Host.Commit
 import FfiSpec
 
 /-!
-# The 7-kernel deny composition — the commit discipline at the deployed registry
+# The 8-kernel deny composition — the commit discipline at the deployed registry
 
 `Host.Commit` proves the deny-side discipline over an abstract instance list.
-This module makes "over the full 7-kernel registry" literal: `commitInstsFor`
+This module makes "over the full 8-kernel registry" literal: `commitInstsFor`
 is the pure commit-model registry with EXACTLY the selection, order and
 per-kernel wiring of `Ffi.registryFor` (the list `stepImpl` dispatches), and
 `commitInstsFor_kernels` pins it to `Ffi.activeKernels` — the same spec, by
 the same proof script, that `registryFor_kernels` pins the deployed selection
 to. The flagship `registry_deny_ingest_only` is then one equation over all
-seven kernels: a combined deny commits ONLY the spec-allowed ingests.
+eight kernels: a combined deny commits ONLY the spec-allowed ingests.
 
 HONEST BOUNDARY: `commitInstsFor_kernels` pins the kernel SELECTION of the
 mirror to the deployed spec, and `commitInstsFor_wiring` pins the
@@ -34,7 +34,7 @@ open Kernels in
     evidence and pre-call session states explicit instead of `gather`/`IO.Ref`.
     S and T are unconditional; C activates on `some`, V on a non-empty
     section, K double-gated (`some cfg` AND `cfg.enabled`), L on `some`, B on
-    a non-empty section — `commitInstsFor_kernels` pins the selection to
+    a non-empty section, PB (V2.1, per-principal budget) on `some` — `commitInstsFor_kernels` pins the selection to
     `Ffi.activeKernels`, and `commitInstsFor_wiring` pins the full
     per-instance wiring against `registryFor`. -/
 def commitInstsFor (cfg : TrustedConfig) (now : Nat)
@@ -42,8 +42,10 @@ def commitInstsFor (cfg : TrustedConfig) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
-    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState) : List CommitInst :=
+    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState) : List CommitInst :=
   [⟨Kernels.safetyKernel, cfg.safety,
       ({ now := now, approvalEvents := approvalEvents } : Kernels.SafetyEvidence), sSt⟩,
    ⟨Kernels.temporalKernel, cfg.temporal, (), tSt⟩]
@@ -61,8 +63,11 @@ def commitInstsFor (cfg : TrustedConfig) (now : Nat)
       | none => [])
   ++ (if cfg.budget.isEmpty then []
       else [⟨Kernels.budgetKernel, cfg.budget, (), bSt⟩])
+  ++ (match cfg.principals with
+      | some c => [⟨Kernels.principalBudgetKernel, c, principal?, pbSt⟩]
+      | none => [])
 
-/-- The commit model ranges over EXACTLY the deployed 7-kernel selection:
+/-- The commit model ranges over EXACTLY the deployed 8-kernel selection:
     `commitInstsFor`'s kernels are `Ffi.activeKernels` — the same statement
     shape, against the same spec, as `Ffi.registryFor_kernels` for the
     deployed dispatch list. -/
@@ -71,15 +76,18 @@ theorem commitInstsFor_kernels (cfg : TrustedConfig) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
-    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState) :
+    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState) :
     (commitInstsFor cfg now approvalEvents votes grants forecasts
-        sSt tSt lSt bSt).map (·.kernel)
+        principal? sSt tSt lSt bSt pbSt).map (·.kernel)
       = Ffi.activeKernels cfg := by
   unfold commitInstsFor Ffi.activeKernels
   cases hc : cfg.consensus <;>
   cases hk : cfg.calibration <;>
   cases hl : cfg.linear <;>
+  cases hp : cfg.principals <;>
   simp [apply_ite (List.map (fun i : CommitInst => i.kernel))]
 
 /-! ### Wiring fidelity — the mirror equals the deployed registry, instance by instance
@@ -92,12 +100,13 @@ comparable by plain equality against `fun _ => pure evidence`) and the
 pre-call state slot. `IO.Ref` contents cannot be projected purely, so the
 state slot goes through a universally quantified pure reader `read`,
 constrained only to agree with the mirror's state arguments on the session's
-four refs (C, V and K share `unitRef` with `State = Unit` — their slot is
-`()` for any reader).
+five stateful refs (C, V and K share `unitRef` with `State = Unit` — their
+slot is `()` for any reader).
 
 COVERED by `commitInstsFor_wiring`: kernel identity and order, per-instance
 config section, evidence source, state-slot wiring (safetyRef→sSt,
-temporalRef→tSt, linearRef→lSt, budgetRef→bSt, unitRef→()) — and hence
+temporalRef→tSt, linearRef→lSt, budgetRef→bSt,
+principalBudgetRef→pbSt, unitRef→()) — and hence
 every gating decision (`commitInstsFor_gates`). NOT covered — the dispatch
 IO shell, unchanged by these theorems: that `stateRef.get` at dispatch time
 returns what `read` models, that executing `gather` returns its constant,
@@ -139,22 +148,26 @@ theorem commitInstsFor_wiring (s : Ffi.Session) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
     (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
     (read : (K : Kernel) → IO.Ref K.State → K.State)
     (hs : read Kernels.safetyKernel s.safetyRef = sSt)
     (ht : read Kernels.temporalKernel s.temporalRef = tSt)
     (hl : read Kernels.linearKernel s.linearRef = lSt)
-    (hb : read Kernels.budgetKernel s.budgetRef = bSt) :
-    (Ffi.registryFor s now approvalEvents votes grants forecasts).map
+    (hb : read Kernels.budgetKernel s.budgetRef = bSt)
+    (hpb : read Kernels.principalBudgetKernel s.principalBudgetRef = pbSt) :
+    (Ffi.registryFor s now approvalEvents votes grants forecasts principal?).map
         (Registered.wiredAt read)
       = (commitInstsFor s.config now approvalEvents votes grants forecasts
-          sSt tSt lSt bSt).map CommitInst.wired := by
-  subst hs ht hl hb
+          principal? sSt tSt lSt bSt pbSt).map CommitInst.wired := by
+  subst hs ht hl hb hpb
   unfold Ffi.registryFor commitInstsFor
   cases hc : s.config.consensus <;>
   cases hk : s.config.calibration <;>
   cases hlin : s.config.linear <;>
+  cases hpr : s.config.principals <;>
   simp [Registered.wiredAt, CommitInst.wired,
     apply_ite (List.map (Registered.wiredAt read)),
     apply_ite (List.map CommitInst.wired)] <;>
@@ -172,17 +185,20 @@ theorem commitInstsFor_gates (s : Ffi.Session) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
     (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
     (act : CanonicalAction) :
-    (Ffi.registryFor s now approvalEvents votes grants forecasts).map
+    (Ffi.registryFor s now approvalEvents votes grants forecasts principal?).map
         (fun r => r.kernel.gates r.config act)
       = (commitInstsFor s.config now approvalEvents votes grants forecasts
-          sSt tSt lSt bSt).map (fun i => i.kernel.gates i.config act) := by
+          principal? sSt tSt lSt bSt pbSt).map (fun i => i.kernel.gates i.config act) := by
   unfold Ffi.registryFor commitInstsFor
   cases hc : s.config.consensus <;>
   cases hk : s.config.calibration <;>
   cases hlin : s.config.linear <;>
+  cases hpr : s.config.principals <;>
   simp [apply_ite (List.map (fun r : Registered => r.kernel.gates r.config act)),
     apply_ite (List.map (fun i : CommitInst => i.kernel.gates i.config act))]
 
@@ -218,6 +234,8 @@ def linearIngested (cfg : TrustedConfig) (act : CanonicalAction)
     * **T**: trace byte-identical — no event appended, a denied call never
       executed;
     * **B**: counters byte-identical — no budget spend;
+    * **PB** (V2.1): per-principal counters byte-identical — no principal
+      budget spend, whoever the call authenticated as;
     * **C, V, K**: `State = Unit` — nothing to move.
 
     Registry vocabulary is literal: `commitInstsFor_kernels` maps this
@@ -228,23 +246,26 @@ theorem registry_deny_ingest_only (cfg : TrustedConfig) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
     (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
     (act : CanonicalAction)
     (hdeny : (pureCommit (commitInstsFor cfg now approvalEvents votes grants
-        forecasts sSt tSt lSt bSt) act).1 = .deny) :
+        forecasts principal? sSt tSt lSt bSt pbSt) act).1 = .deny) :
     (pureCommit (commitInstsFor cfg now approvalEvents votes grants
-        forecasts sSt tSt lSt bSt) act).2
-      = commitInstsFor cfg now approvalEvents votes grants forecasts
+        forecasts principal? sSt tSt lSt bSt pbSt) act).2
+      = commitInstsFor cfg now approvalEvents votes grants forecasts principal?
           (Kernels.safetyKernel.ingest
             ({ now := now, approvalEvents := approvalEvents } :
               Kernels.SafetyEvidence) sSt)
-          tSt (linearIngested cfg act grants lSt) bSt := by
+          tSt (linearIngested cfg act grants lSt) bSt pbSt := by
   rw [pureCommit_deny_no_decide_commit _ _ hdeny]
   unfold ingestAll commitInstsFor linearIngested
   cases hc : cfg.consensus <;>
   cases hk : cfg.calibration <;>
   cases hl : cfg.linear <;>
+  cases hp : cfg.principals <;>
   all_goals
     simp only [List.map_append,
       apply_ite (List.map (fun i : CommitInst => i.ingestPhase act)),
@@ -260,19 +281,47 @@ theorem registry_deny_no_budget_spend (cfg : TrustedConfig) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
     (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
     (act : CanonicalAction)
     (hdeny : (pureCommit (commitInstsFor cfg now approvalEvents votes grants
-        forecasts sSt tSt lSt bSt) act).1 = .deny)
+        forecasts principal? sSt tSt lSt bSt pbSt) act).1 = .deny)
     (hb : cfg.budget.isEmpty = false) :
     (⟨Kernels.budgetKernel, cfg.budget, (), bSt⟩ : CommitInst)
       ∈ (pureCommit (commitInstsFor cfg now approvalEvents votes grants
-          forecasts sSt tSt lSt bSt) act).2 := by
+          forecasts principal? sSt tSt lSt bSt pbSt) act).2 := by
   rw [registry_deny_ingest_only cfg now approvalEvents votes grants forecasts
-        sSt tSt lSt bSt act hdeny]
+        principal? sSt tSt lSt bSt pbSt act hdeny]
   unfold commitInstsFor
   simp [hb]
+
+/-- **NO PRINCIPAL-BUDGET SPEND on any-kernel deny** (V2.1): whenever the
+    principals section is configured (PB registered), the committed registry
+    contains the PB instance with state EXACTLY `pbSt` — every principal's
+    counters byte-identical. A denied call debits no one, whoever it
+    authenticated as. -/
+theorem registry_deny_no_principal_budget_spend (cfg : TrustedConfig) (now : Nat)
+    (approvalEvents : List SealCore.Event)
+    (votes : Consensus.Checker.Votes)
+    (grants : List LinearCore.LEvent)
+    (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
+    (sSt : SealCore.State) (tSt : Kernels.TemporalState)
+    (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
+    (act : CanonicalAction)
+    (hdeny : (pureCommit (commitInstsFor cfg now approvalEvents votes grants
+        forecasts principal? sSt tSt lSt bSt pbSt) act).1 = .deny)
+    (pcfg : Kernels.PrincipalsConfig) (hp : cfg.principals = some pcfg) :
+    (⟨Kernels.principalBudgetKernel, pcfg, principal?, pbSt⟩ : CommitInst)
+      ∈ (pureCommit (commitInstsFor cfg now approvalEvents votes grants
+          forecasts principal? sSt tSt lSt bSt pbSt) act).2 := by
+  rw [registry_deny_ingest_only cfg now approvalEvents votes grants forecasts
+        principal? sSt tSt lSt bSt pbSt act hdeny]
+  unfold commitInstsFor
+  simp [hp]
 
 /-- **NO TEMPORAL OBSERVATION on any-kernel deny**: T is always registered,
     and the committed registry contains the temporal instance with state
@@ -282,16 +331,18 @@ theorem registry_deny_temporal_frozen (cfg : TrustedConfig) (now : Nat)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
     (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
     (act : CanonicalAction)
     (hdeny : (pureCommit (commitInstsFor cfg now approvalEvents votes grants
-        forecasts sSt tSt lSt bSt) act).1 = .deny) :
+        forecasts principal? sSt tSt lSt bSt pbSt) act).1 = .deny) :
     (⟨Kernels.temporalKernel, cfg.temporal, (), tSt⟩ : CommitInst)
       ∈ (pureCommit (commitInstsFor cfg now approvalEvents votes grants
-          forecasts sSt tSt lSt bSt) act).2 := by
+          forecasts principal? sSt tSt lSt bSt pbSt) act).2 := by
   rw [registry_deny_ingest_only cfg now approvalEvents votes grants forecasts
-        sSt tSt lSt bSt act hdeny]
+        principal? sSt tSt lSt bSt pbSt act hdeny]
   unfold commitInstsFor
   simp
 
@@ -361,21 +412,23 @@ theorem registry_deny_no_capability_consumed (cfg : TrustedConfig) (now : Nat)
     (approvalEvents : List SealCore.Event)
     (votes : Consensus.Checker.Votes)
     (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option AuthenticatedPrincipal)
     (sSt : SealCore.State) (tSt : Kernels.TemporalState)
     (lSt : LinearCore.LState) (bSt : Kernels.BudgetState)
+    (pbSt : Kernels.PBState)
     (txt : String) (act : CanonicalAction)
     (lcfg : Kernels.LinearConfig) (hl : cfg.linear = some lcfg)
     (hdeny : (pureCommit (commitInstsFor cfg now approvalEvents votes
-        (Host.Evidence.parseGrantsText txt) forecasts sSt tSt lSt bSt) act).1 = .deny)
+        (Host.Evidence.parseGrantsText txt) forecasts principal? sSt tSt lSt bSt pbSt) act).1 = .deny)
     (cap : LinearCore.CapId) :
     ∃ stC,
       (⟨Kernels.linearKernel, lcfg, Host.Evidence.parseGrantsText txt, stC⟩ : CommitInst)
         ∈ (pureCommit (commitInstsFor cfg now approvalEvents votes
-            (Host.Evidence.parseGrantsText txt) forecasts sSt tSt lSt bSt) act).2
+            (Host.Evidence.parseGrantsText txt) forecasts principal? sSt tSt lSt bSt pbSt) act).2
       ∧ LinearCore.holds lSt cap ≤ LinearCore.holds stC cap := by
   refine ⟨linearIngested cfg act (Host.Evidence.parseGrantsText txt) lSt, ?_, ?_⟩
   · rw [registry_deny_ingest_only cfg now approvalEvents votes
-          (Host.Evidence.parseGrantsText txt) forecasts sSt tSt lSt bSt act hdeny]
+          (Host.Evidence.parseGrantsText txt) forecasts principal? sSt tSt lSt bSt pbSt act hdeny]
     unfold commitInstsFor
     simp [hl]
   · simp only [linearIngested, hl]
@@ -410,6 +463,8 @@ no `sorryAx`, no `Lean.ofReduceBool`. -/
 #guard_msgs in #print axioms Host.registry_deny_ingest_only
 /-- info: 'Host.registry_deny_no_budget_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.registry_deny_no_budget_spend
+/-- info: 'Host.registry_deny_no_principal_budget_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.registry_deny_no_principal_budget_spend
 /-- info: 'Host.registry_deny_temporal_frozen' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.registry_deny_temporal_frozen
 /-- info: 'Host.parseGrantsText_grant_only' depends on axioms: [propext, Classical.choice, Quot.sound] -/

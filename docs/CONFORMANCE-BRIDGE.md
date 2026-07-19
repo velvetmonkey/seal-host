@@ -157,12 +157,23 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Source: `mcp-seal-dev` `cc79c86` + seal-host `feat/dx-surface-7-kernels`
-  (the 7-kernel policy-v2 DX surface: `Seal.parsePolicyBundle` +
-  `Host.ofBundle`)
-- `seal.wasm` sha256: `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
+- Source: `mcp-seal-dev` `1d35669` + seal-host `feat/policy-codec-repin`
+  (the single-source policy codec + the V2.1 `principals` section — the sole
+  acceptance delta, proven by the re-closed `Seal/PolicyEquiv.lean` — plus
+  `Host.ofBundle` / `Host.verifyEnvelope` / Kernel PB)
+- `seal.wasm` sha256: `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546`
+- Supersedes `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
+  (checked in at `cdb9447` claiming source `1d35669`, but a clean rebuild of
+  `1d35669` yields `3d70637f` not `0d3536e5`; `3d70637f` is the authoritative
+  rebuild-from-source pin, clean-runner CI reproducibility judged of record),
+  which superseded `fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878`
+  (the codec-refactor build; parsers carried unchanged, principal section the
+  sole delta), which superseded
+  `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
+  (the 7-kernel DX-surface build; decision semantics carried forward
+  unchanged, parser equivalence PROVEN at the codec refactor), which superseded
+  `ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546`
   (the pathological-number fail-closed build, whose guard and decision
   semantics are carried forward unchanged), which superseded
   `d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66`
@@ -177,6 +188,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `a3790181…`). That repin is a separate, audited step gated to the
+build (sha256 `3d70637f…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

@@ -58,7 +58,12 @@ def sign_payload(payload_obj, private_key_hex: str | None = None) -> str:
         raise ValueError("SEAL_CONFIG_SIGNING_KEY_HEX is required")
     payload = json.dumps(payload_obj, separators=(",", ":"))
     sig = _private_key_from_hex(private_key_hex).sign(payload.encode("utf-8")).hex()
+    # "$schema" is OUTER-envelope metadata only (checkEnvelope reads just
+    # payload+signature, so extra keys are tolerated); the signature commits
+    # to the payload bytes, which carry no schema pointer and are never
+    # rewritten. The name is the authority's checked-in schema artifact.
     envelope = {
+        "$schema": "policy-bundle.schema.json",
         "payload": payload,
         "signature": sig,
     }

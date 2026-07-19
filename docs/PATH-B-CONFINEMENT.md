@@ -130,7 +130,7 @@ residual, and (C) fixes the hash.
   keys on `Hash` (audit `certHash`, `Std.HashMap Hash Nat` approval state,
   `Host/Record.lean` chain).
 * The deployed **wasm changes** → each pinned `seal.wasm` sha256 is invalidated.
-  The current private verified seal-host pin is `a3790181…` in
+  The current private verified seal-host pin is `3d70637f…` in
   `wasm-spike/verified/PROVENANCE.txt`; public/runtime repins remain separate,
   audited steps.
 * The JS `stableHashParts` mirror (receipt-format.js / seal-config.js /

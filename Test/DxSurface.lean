@@ -2,7 +2,7 @@
 
 import Ffi
 
-/-! # DX-surface teeth: JSON policy in → kernel verdict out, all 7 kernels
+/-! # DX-surface teeth: JSON policy in → kernel verdict out, all 8 kernels
 
 End-to-end tests through the policy-v2 DX path: a bundle payload string goes
 through `Ffi.modelInitFromTrustedPayload` (SealV2 canonicality →
@@ -18,12 +18,24 @@ gated anything cannot pass.
 Also here: the budget × linear characterization — runtime evidence for the
 PROVEN deny-side composition (`Host.registry_deny_ingest_only`,
 `Host.dispatch_plan`: denied calls commit no decide-phase state anywhere in
-the 7-kernel registry) and for the remaining caller-dimension feature gap
-(counters are global by design; a feature gap, not a proof gap). Proofs and
+the 8-kernel registry) and for the caller-dimension story: kernel B's
+counters are global by design (a feature gap V2.1 closes per principal —
+kernel PB, signed-envelope scenarios below). Proofs and
 tests are different tripwires — these run the compiled dispatch path the
 theorems' IO shell does not cover. -/
 
 open Lean
+
+/-! ## V2.1 un-constructibility pin
+
+`AuthenticatedPrincipal`'s constructor is private to `Host/Principal.lean`:
+the ONLY producer in the codebase is `Host.verifyEnvelope`. This compile-time
+pin fails the build if the constructor ever becomes reachable from outside
+the module (the anti-spoof story is exactly this inaccessibility). -/
+
+/-- error: Unknown constant `Host.AuthenticatedPrincipal.mk` -/
+#guard_msgs in
+#check Host.AuthenticatedPrincipal.mk
 
 private def fail (msg : String) : IO Unit :=
   throw <| IO.userError s!"FAIL: {msg}"
@@ -59,18 +71,23 @@ private def toolCallLine (id : Nat) (tool : String) (args : Json) : String :=
     ("params", Json.mkObj [("name", Json.str tool), ("arguments", args)])
   ]).compress
 
-/-- One mediation step; returns the parsed output object. -/
+/-- One mediation step; returns the parsed output object. `envelope` carries
+    the raw V2.1 principal-envelope fields (key_id/sig/nonce/issued_at), as
+    the Rust host would pass them — uninterpreted. -/
 private def step (label : String) (line : String) (now : Nat := 1000000)
-    (votes : String := "") (grants : String := "") (forecasts : String := "") :
+    (votes : String := "") (grants : String := "") (forecasts : String := "")
+    (envelope : Option Json := none) :
     IO Json := do
-  let input := (Json.mkObj [
+  let input := (Json.mkObj ([
     ("line", Json.str line),
     ("now", Json.num now),
     ("approvals", Json.arr #[]),
     ("votes", Json.str votes),
     ("grants", Json.str grants),
     ("forecasts", Json.str forecasts)
-  ]).compress
+  ] ++ (match envelope with
+        | some e => [("envelope", e)]
+        | none => []))).compress
   let out ← Ffi.modelStep input
   match Json.parse out with
   | .ok j => pure j
@@ -132,6 +149,109 @@ private def safetyAllowing (tools : List String) : String :=
 
 private def payload (sections : List String) : String :=
   "{\"epoch\":1," ++ String.intercalate "," sections ++ "}"
+
+private def pbScenarios : IO Unit := do
+  -- ===== PB: per-principal Budget (V2.1 signed envelope) ==================
+  -- Real Ed25519 fixtures (deterministic seeds; signatures over the EXACT
+  -- judged line via `Host.envelopeMessage` — the cross-language contract
+  -- pinned by the golden vector in Host/Principal.lean). This is the
+  -- operational NON-VACUITY discharge for the verify path: the opaque extern
+  -- cannot run in the interpreter, so `verifyEnvelope = some _` is exhibited
+  -- here, in the compiled lane, not by a Lean witness. NOTE: nonce freshness
+  -- is a RUST-side seam (A3 pattern) — the Lean kernel is deliberately
+  -- freshness-agnostic, which this test exploits by replaying one envelope
+  -- to drive repeated debits.
+  let alicePub := "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+  let bobPub := "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+  let principalsSection :=
+    "\"principals\":{\"keys\":[{\"id\":\"alice\",\"pubkey\":\"" ++ alicePub
+      ++ "\"},{\"id\":\"bob\",\"pubkey\":\"" ++ bobPub
+      ++ "\"}],\"budgets\":[{\"name\":\"pnotes\",\"cap\":2,\"tools\":[\"notes.add\"]}]}"
+  let mkEnv := fun (keyId sig nonce : String) => Json.mkObj [
+    ("key_id", Json.str keyId), ("sig", Json.str sig),
+    ("nonce", Json.str nonce), ("issued_at", Json.num 1000000)]
+  let aliceLine := "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.add\",\"arguments\":{}}}"
+  let aliceNonce := "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+  let aliceSig := "790b772b21fe4e8b7d15dd939cceb73d8fba0cdd9032dac500dc13d312007dff84368282096e2346c253d70a45e66aee683cf009120af029af66b04a0e6d0208"
+  let bobLine := "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.add\",\"arguments\":{}}}"
+  let bobNonce := "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+  let bobSig := "2f2b05e3a7bbe8aeb402c913fefc9b34423a0f5fbaab25179512102f1095a417fd95016748108af6f5facee1cf41c506a81ac1b60ecfbf44803cf5545c311f0e"
+  let principalOf := fun (j : Json) =>
+    ((j.getObjVal? "principal").toOption.bind (·.getStr?.toOption))
+  initCfg "PB" (payload [safetyAllowing ["notes.add"], principalsSection])
+  -- mixed-mode fail-closed: gated tool, no envelope ⇒ deny, no principal.
+  let pb0 ← step "PB deny unenveloped" (toolCallLine 1 "notes.add" (Json.mkObj []))
+  assertRoute "PB deny unenveloped" pb0 "block"
+  assertCert "PB deny unenveloped" pb0 "principal_budget" "deny"
+  check "PB deny unenveloped: no principal field" (principalOf pb0 == none)
+  -- alice authenticates; per-principal cap 2 admits two calls, vetoes the third.
+  let aliceEnv := mkEnv "alice" aliceSig aliceNonce
+  let pa1 ← step "PB alice 1/2" aliceLine (envelope := some aliceEnv)
+  assertRoute "PB alice 1/2" pa1 "forward"
+  assertCert "PB alice 1/2" pa1 "principal_budget" "allow"
+  check "PB alice 1/2: output names alice" (principalOf pa1 == some "alice")
+  let pa2 ← step "PB alice 2/2" aliceLine (envelope := some aliceEnv)
+  assertRoute "PB alice 2/2" pa2 "forward"
+  let pa3 ← step "PB alice over cap" aliceLine (envelope := some aliceEnv)
+  assertRoute "PB alice over cap" pa3 "block"
+  assertCert "PB alice over cap" pa3 "principal_budget" "deny"
+  check "PB deny still names alice" (principalOf pa3 == some "alice")
+  -- ISOLATION: alice's exhaustion does not starve bob (counters keyed
+  -- (principal, name) — `Kernels.principal_budget_isolation`, exhibited).
+  let pb1 ← step "PB bob isolated" bobLine (envelope := some (mkEnv "bob" bobSig bobNonce))
+  assertRoute "PB bob isolated" pb1 "forward"
+  check "PB bob isolated: output names bob" (principalOf pb1 == some "bob")
+  -- tampered signature ⇒ fail-closed none ⇒ deny, no principal.
+  let badSig := "00" ++ aliceSig.drop 2
+  let pbT ← step "PB tampered sig" aliceLine (envelope := some (mkEnv "alice" badSig aliceNonce))
+  assertRoute "PB tampered sig" pbT "block"
+  check "PB tampered sig: no principal field" (principalOf pbT == none)
+  -- unknown key id ⇒ fail-closed none ⇒ deny.
+  let pbU ← step "PB unknown key" aliceLine (envelope := some (mkEnv "carol" aliceSig aliceNonce))
+  assertRoute "PB unknown key" pbU "block"
+  check "PB unknown key: no principal field" (principalOf pbU == none)
+  -- signature bound to the judged line: alice's valid envelope over line 10
+  -- presented with a DIFFERENT line ⇒ verification fails ⇒ deny.
+  let pbL ← step "PB envelope wrong line" bobLine (envelope := some aliceEnv)
+  assertRoute "PB envelope wrong line" pbL "block"
+  check "PB wrong line: no principal field" (principalOf pbL == none)
+  -- MUTATION DRILL (model half): request body plants principal/caller_id
+  -- strings; the output principal is the KEY's registry id, immovably.
+  initCfg "PB drill" (payload [safetyAllowing ["notes.add"], principalsSection])
+  let drillLine := "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.add\",\"arguments\":{\"principal\":\"root\",\"caller_id\":\"mallory\"}}}"
+  let drillNonce := "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+  let drillSig := "82938304e5ba3c35badde89efc65e3bd42a7ee7f4680f6f3168463dcdbdeb99f391dfbd1403ccf330586eda5166d936214a31fb6e3b045de65aa7a108b2c8701"
+  let pbD ← step "PB mutation drill" drillLine (envelope := some (mkEnv "alice" drillSig drillNonce))
+  assertRoute "PB mutation drill" pbD "forward"
+  check "PB mutation drill: planted fields do not move the principal"
+    (principalOf pbD == some "alice")
+  -- config lints, fail-closed at load:
+  let eDup ← initRejected "PB dup id different pubkey" (payload [
+    safetyAllowing ["notes.add"],
+    "\"principals\":{\"keys\":[{\"id\":\"alice\",\"pubkey\":\"" ++ alicePub
+      ++ "\"},{\"id\":\"alice\",\"pubkey\":\"" ++ bobPub
+      ++ "\"}],\"budgets\":[]}"])
+  check "PB dup id rejected" ((eDup.splitOn "principals").length > 1)
+  let eEmpty ← initRejected "PB budgets with empty registry" (payload [
+    safetyAllowing ["notes.add"],
+    "\"principals\":{\"keys\":[],\"budgets\":[{\"name\":\"p\",\"cap\":1,\"tools\":[\"notes.add\"]}]}"])
+  check "PB empty registry rejected" ((eEmpty.splitOn "principals").length > 1)
+  let eCaps ← initRejected "PB conflicting caps" (payload [
+    safetyAllowing ["notes.add"],
+    "\"principals\":{\"keys\":[{\"id\":\"alice\",\"pubkey\":\"" ++ alicePub
+      ++ "\"}],\"budgets\":[{\"name\":\"p\",\"cap\":1,\"tools\":[\"notes.add\"]},{\"name\":\"p\",\"cap\":9,\"tools\":[\"notes.add\"]}]}"])
+  check "PB conflicting caps rejected" ((eCaps.splitOn "principals").length > 1)
+  -- enabled:false is deletion: no PB gate, unenveloped traffic flows.
+  initCfg "PB disabled" (payload [
+    safetyAllowing ["notes.add"],
+    "\"principals\":{\"enabled\":false,\"keys\":[{\"id\":\"alice\",\"pubkey\":\"" ++ alicePub
+      ++ "\"}],\"budgets\":[{\"name\":\"p\",\"cap\":0,\"tools\":[\"notes.add\"]}]}"])
+  let pbOff ← step "PB disabled not gating" (toolCallLine 1 "notes.add" (Json.mkObj []))
+  assertRoute "PB disabled not gating" pbOff "forward"
+  assertNoCert "PB disabled not gating" pbOff "principal_budget"
+  check "PB disabled: no principal field" (principalOf pbOff == none)
+
+
 
 def main : IO Unit := do
   -- ===== S: Safety ========================================================
@@ -303,4 +423,6 @@ def main : IO Unit := do
   assertRoute "BxL caller B starved (global counter)" y2 "block"
   assertCert "BxL caller B starved (global counter)" y2 "budget" "deny"
 
-  IO.println "DX-SURFACE TESTS PASS (7 kernels: deny+allow each, enable flags, strictness, budget×linear characterization)"
+  pbScenarios
+
+  IO.println "DX-SURFACE TESTS PASS (8 kernels: deny+allow each, enable flags, strictness, budget×linear characterization, V2.1 signed-envelope principal)"
