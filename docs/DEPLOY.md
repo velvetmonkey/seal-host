@@ -113,6 +113,10 @@ Minimal shape:
 `/var/lib/seal-host/replay.sqlite`); the durable store is what makes replay survive a
 host restart.
 
+For production mode, put the config, approval-token file, receipt directory,
+and replay database in a service-owned directory with mode `0700`; files must
+be mode `0600`. Do not place the replay database directly in `/tmp`.
+
 Key facts (from the schema reference, not invented here):
 - A tool **not listed** is blocked — the policy is a fail-closed allowlist for `tools/call`.
 - `mode: "guarded"` needs a live approval; `mode: "deny"` is always blocked.
@@ -149,6 +153,13 @@ rust/target/debug/seal-host-rs \
   `--channel ed25519` (see "Control-file channel" below for the exact swap and why).
 - `--token-file`: that file (match `control_file` in your policy).
 - everything after `--`: the child MCP server. seal-host spawns it and proxies to it.
+
+The walkthrough above is deliberately development mode. A production launch
+adds `--production`, switches to `--channel ed25519`, supplies separate config
+and approval public keys, names a durable replay database in the signed policy,
+and supplies an explicit `--receipt-dir`. Startup refuses if any one of those
+conditions or the ownership/mode checks is missing. Resource limits are always
+active in both modes.
 
 ## 6. Point your agent at the host
 

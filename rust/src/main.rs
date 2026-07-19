@@ -52,6 +52,7 @@ use seal_host_rs::route::{
     route_of_classify, route_of_step_output, ClassifyRoute, Route, RESOURCE_LIMIT_RESPONSE,
     SEAM_ERROR_RESPONSE,
 };
+use seal_host_rs::secure_fs;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -92,6 +93,7 @@ struct Args {
     token_file: Option<String>,
     approval_pubkey: Option<String>,
     receipt_dir: Option<String>,
+    production: bool,
     cmd: Vec<String>,
 }
 
@@ -103,6 +105,7 @@ fn parse_args() -> Result<Args, String> {
     let mut token_file = None;
     let mut approval_pubkey = None;
     let mut receipt_dir = None;
+    let mut production = false;
     let mut cmd = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -131,6 +134,10 @@ fn parse_args() -> Result<Args, String> {
                 receipt_dir = argv.get(i + 1).cloned();
                 i += 2
             }
+            "--production" => {
+                production = true;
+                i += 1
+            }
             "--" => {
                 cmd = argv[i + 1..].to_vec();
                 break;
@@ -145,6 +152,7 @@ fn parse_args() -> Result<Args, String> {
         token_file,
         approval_pubkey,
         receipt_dir,
+        production,
         cmd: if cmd.is_empty() {
             return Err("server command required after --".into());
         } else {
@@ -233,6 +241,46 @@ fn default_receipt_dir(config_path: &str) -> std::path::PathBuf {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("seal-receipts")
+}
+
+fn production_preflight(args: &Args, replay_store_path: Option<&str>) -> Result<(), String> {
+    if !args.production {
+        return Ok(());
+    }
+    if args.channel != "ed25519" {
+        return Err("production mode requires --channel ed25519".into());
+    }
+    let token_file = args
+        .token_file
+        .as_deref()
+        .ok_or("production mode requires --token-file")?;
+    let approval_pubkey = args
+        .approval_pubkey
+        .as_deref()
+        .ok_or("production mode requires --approval-pubkey")?;
+    if same_ed25519_key_hex(&args.pubkey, approval_pubkey) {
+        return Err("production mode requires separate config and approval keys".into());
+    }
+    let receipt_dir = args
+        .receipt_dir
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .ok_or("production mode requires explicit --receipt-dir")?;
+    let replay_path = replay_store_path
+        .filter(|path| !path.is_empty())
+        .ok_or("production mode requires a durable replay store")?;
+
+    secure_fs::validate_private_file(std::path::Path::new(&args.config), "trusted config")?;
+    secure_fs::validate_private_file(std::path::Path::new(token_file), "approval token file")?;
+    secure_fs::ensure_private_dir(std::path::Path::new(receipt_dir), "receipt directory")?;
+    secure_fs::validate_private_parent(
+        std::path::Path::new(replay_path),
+        "replay database directory",
+    )?;
+    if std::path::Path::new(replay_path).exists() {
+        secure_fs::validate_private_file(std::path::Path::new(replay_path), "replay database")?;
+    }
+    Ok(())
 }
 
 fn persist_decision(
@@ -714,6 +762,7 @@ fn run() -> i32 {
                 "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
                 [--approval-pubkey <hex>] [--receipt-dir <path>] \
+                [--production] \
                 -- <server-cmd> <args...>\nerror: {e}"
             );
             return 2;
@@ -778,6 +827,10 @@ fn run() -> i32 {
             return 3;
         }
     };
+    if let Err(error) = production_preflight(&args, replay_store_path.as_deref()) {
+        eprintln!("production startup refused: {error}");
+        return 3;
+    }
     let mut grants = GrantsCursor {
         path: summary["grants_file"].as_str().unwrap_or("").to_string(),
         seen: 0,
@@ -1344,6 +1397,39 @@ fn run() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn production_preflight_requires_complete_private_state() {
+        let root =
+            std::env::temp_dir().join(format!("seal-production-preflight-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        secure_fs::ensure_private_dir(&root, "test root").unwrap();
+        let config = root.join("trusted.json");
+        let token = root.join("tokens.ndjson");
+        let receipts = root.join("receipts");
+        secure_fs::ensure_private_file(&config, "test config").unwrap();
+        secure_fs::ensure_private_file(&token, "test token").unwrap();
+
+        let args = Args {
+            config: config.to_string_lossy().into_owned(),
+            pubkey: "00".repeat(32),
+            channel: "ed25519".into(),
+            token_file: Some(token.to_string_lossy().into_owned()),
+            approval_pubkey: Some("11".repeat(32)),
+            receipt_dir: Some(receipts.to_string_lossy().into_owned()),
+            production: true,
+            cmd: vec!["/bin/cat".into()],
+        };
+        let replay = root.join("replay.sqlite");
+        assert!(production_preflight(&args, replay.to_str()).is_ok());
+
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(production_preflight(&args, replay.to_str())
+            .unwrap_err()
+            .contains("required 0600"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON
     /// without a top-level `seal_env`, non-objects, non-JSON), every

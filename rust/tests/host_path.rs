@@ -23,6 +23,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -781,6 +782,15 @@ fn receipt_sink_failure_blocks_before_child_forward() {
         receipt_dir.is_dir(),
         "host did not initialize its receipt sink"
     );
+    assert_eq!(
+        std::fs::metadata(&receipt_dir).unwrap().mode() & 0o777,
+        0o700,
+        "receipt directory must be private"
+    );
+    for receipt in std::fs::read_dir(&receipt_dir).unwrap() {
+        let metadata = receipt.unwrap().metadata().unwrap();
+        assert_eq!(metadata.mode() & 0o777, 0o600, "receipt must be private");
+    }
     // `remove_dir_all`, not `remove_dir`: the warm-up above has already written
     // a decision receipt, so the directory is NOT empty and `remove_dir` would
     // fail ENOTEMPTY. Contents are irrelevant -- the scenario only needs the

@@ -11,3 +11,4 @@ pub mod providers;
 pub mod receipt;
 pub mod replay_store;
 pub mod route;
+pub mod secure_fs;
