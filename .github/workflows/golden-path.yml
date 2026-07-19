@@ -63,7 +63,7 @@ jobs:
             exit 0
           fi
           echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
-          test -d .lake/packages/mcp-seal || lake update
+          lake exe cache get
           bash .lake/packages/mcp-seal/c/build.sh
           lake build
           lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
