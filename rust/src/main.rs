@@ -155,6 +155,12 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Receipt-only identity for this stdio mediation session. It is recorded as
+/// runtime context and never crosses into Lean, signature verification, or A3.
+fn receipt_session_id(started_at_ms: u64) -> String {
+    format!("seal-host-rs/stdio:{}:{started_at_ms}", std::process::id())
+}
+
 fn extract_target_hex(s: &str) -> Option<String> {
     let target: String = s.chars().take(64).collect();
     if target.len() == 64
@@ -709,6 +715,7 @@ fn run() -> i32 {
             return 3;
         }
     };
+    let receipt_session = receipt_session_id(now_ms());
     let ttl_ms = summary["approval_ttl_ms"].as_u64().unwrap_or(0);
     let approval_file = summary["approval_file"].as_str().unwrap_or("").to_string();
     let votes_file = summary["votes_file"].as_str().unwrap_or("").to_string();
@@ -1033,6 +1040,7 @@ fn run() -> i32 {
                     &mut decision_receipts,
                     DecisionInput {
                         line,
+                        session: &receipt_session,
                         now,
                         emitted_bytes: &step_output,
                         kernel_config: &kernel_config,
@@ -1073,6 +1081,7 @@ fn run() -> i32 {
                     &mut decision_receipts,
                     DecisionInput {
                         line,
+                        session: &receipt_session,
                         now,
                         emitted_bytes: &step_output,
                         kernel_config: &kernel_config,
@@ -1177,6 +1186,7 @@ fn run() -> i32 {
                                         &mut decision_receipts,
                                         DecisionInput {
                                             line,
+                                            session: &receipt_session,
                                             now: retry_now,
                                             emitted_bytes: &retry_output,
                                             kernel_config: &kernel_config,
@@ -1208,6 +1218,7 @@ fn run() -> i32 {
                                         &mut decision_receipts,
                                         DecisionInput {
                                             line,
+                                            session: &receipt_session,
                                             now: retry_now,
                                             emitted_bytes: &retry_output,
                                             kernel_config: &kernel_config,

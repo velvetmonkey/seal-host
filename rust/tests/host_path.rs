@@ -498,6 +498,21 @@ fn mediation_obfuscation_and_one_shot_approval() {
         .find(|receipt| receipt["verdict"] == "ALLOW")
         .expect("forwarded decision persisted an ALLOW receipt");
     assert_eq!(allow["seal_receipt"], "v2");
+    let effect_view = &allow["effect_view"];
+    assert_eq!(effect_view["schema"], "seal.effect-view/v0");
+    assert_eq!(effect_view["authoritative"], false);
+    assert_eq!(effect_view["effect"]["resource"], "db.execute");
+    assert_eq!(effect_view["effect"]["action"], "call");
+    assert_eq!(effect_view["effect"]["arguments"], allow["arguments"]);
+    assert_eq!(effect_view["raw_preimage_sha256"], allow["request_sha256"]);
+    assert_eq!(effect_view["policy_hash"], allow["approval"]["policy_hash"]);
+    assert_eq!(effect_view["policy_version"], 1);
+    assert_eq!(effect_view["policy_version_enforced"], false);
+    assert!(effect_view["session"]
+        .as_str()
+        .unwrap()
+        .starts_with("seal-host-rs/stdio:"));
+    assert!(effect_view.get("principal").is_none());
     assert_eq!(allow["approval"]["approval_identity"]["channel"], "file");
     assert_eq!(allow["approval"]["policy_hash"].as_str().unwrap().len(), 64);
     assert_eq!(allow["host_identity"]["equivalence"], "not_proven");
@@ -910,6 +925,7 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
         "args_hash",
         "canonical_request",
         "canonical_request_sha256",
+        "effect_view",
     ] {
         assert!(
             allow.get(absent).is_none(),
