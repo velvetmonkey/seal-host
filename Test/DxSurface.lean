@@ -43,9 +43,12 @@ private def fail (msg : String) : IO Unit :=
 private def check (name : String) (b : Bool) : IO Unit :=
   unless b do fail name
 
-/-- Initialise the session from a bundle payload; hard-fails unless accepted. -/
-private def initCfg (label payload : String) : IO Unit := do
-  let out ← Ffi.modelInitFromTrustedPayload payload
+/-- Initialise the session from a bundle payload; hard-fails unless accepted.
+    `pubkey` is the V2.2 config-authority hex for signed-envelope scenarios
+    (the principal-envelope message commits to it); envelope-less scenarios
+    leave it empty. -/
+private def initCfg (label payload : String) (pubkey : String := "") : IO Unit := do
+  let out ← Ffi.modelInitFromTrustedPayload payload pubkey
   match Json.parse out with
   | .ok j =>
       unless (j.getObjVal? "ok").toOption == some (Json.bool true) do
@@ -153,18 +156,27 @@ private def payload (sections : List String) : String :=
 private def pbScenarios : IO Unit := do
   -- ===== PB: per-principal Budget (V2.1 signed envelope) ==================
   -- Real Ed25519 fixtures (deterministic seeds; signatures over the EXACT
-  -- judged line via `Host.envelopeMessage` — the cross-language contract
-  -- pinned by the golden vector in Host/Principal.lean). This is the
-  -- operational NON-VACUITY discharge for the verify path: the opaque extern
-  -- cannot run in the interpreter, so `verifyEnvelope = some _` is exhibited
-  -- here, in the compiled lane, not by a Lean witness. NOTE: nonce freshness
-  -- is a RUST-side seam (A3 pattern) — the Lean kernel is deliberately
+  -- judged line via `Host.envelopeMessage` — the V2.2 cross-language
+  -- contract pinned by the golden vector in Host/Principal.lean, now
+  -- committing to the config authority + keyId). This is the operational
+  -- NON-VACUITY discharge for the verify path: the opaque extern cannot run
+  -- in the interpreter, so `verifyEnvelope = some _` is exhibited here, in
+  -- the compiled lane, not by a Lean witness. NOTE: nonce freshness is a
+  -- RUST-side seam (A3 pattern) — the Lean kernel is deliberately
   -- freshness-agnostic, which this test exploits by replaying one envelope
   -- to drive repeated debits.
+  -- Config authority = pubkey of the [7u8;32]-seeded key (the same config
+  -- signer the Rust twin uses); every signature below embeds it.
+  let cfgPub := "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
   let alicePub := "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
   let bobPub := "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+  -- "alice-admin" shares alice's PUBKEY under a different id — legal registry
+  -- (the lint forbids same-id-different-pubkey, not the converse), here to
+  -- exhibit the V2.2 relabel closure: alice's signature commits to keyId
+  -- "alice" and must NOT verify presented as "alice-admin".
   let principalsSection :=
     "\"principals\":{\"keys\":[{\"id\":\"alice\",\"pubkey\":\"" ++ alicePub
+      ++ "\"},{\"id\":\"alice-admin\",\"pubkey\":\"" ++ alicePub
       ++ "\"},{\"id\":\"bob\",\"pubkey\":\"" ++ bobPub
       ++ "\"}],\"budgets\":[{\"name\":\"pnotes\",\"cap\":2,\"tools\":[\"notes.add\"]}]}"
   let mkEnv := fun (keyId sig nonce : String) => Json.mkObj [
@@ -172,13 +184,16 @@ private def pbScenarios : IO Unit := do
     ("nonce", Json.str nonce), ("issued_at", Json.num 1000000)]
   let aliceLine := "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.add\",\"arguments\":{}}}"
   let aliceNonce := "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
-  let aliceSig := "790b772b21fe4e8b7d15dd939cceb73d8fba0cdd9032dac500dc13d312007dff84368282096e2346c253d70a45e66aee683cf009120af029af66b04a0e6d0208"
+  let aliceSig := "1b5984249fc255f28904b9abf6917af947917e9e5953f4d32d3ccac172dde2e2dae08e064f58d6f312646cdfcb6b8048529df29a702673340cbd4ff04d42af0c"
   let bobLine := "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.add\",\"arguments\":{}}}"
   let bobNonce := "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
-  let bobSig := "2f2b05e3a7bbe8aeb402c913fefc9b34423a0f5fbaab25179512102f1095a417fd95016748108af6f5facee1cf41c506a81ac1b60ecfbf44803cf5545c311f0e"
+  let bobSig := "f5c6051e89f265a4fb3b1c6a57370e1f8c203f836ba4eb0b9ecd1fcb4435fc92a6944a3301170755910f98ad607e456635e819da3f818405f44358ba03c72908"
+  -- alice's key signing the SAME line/nonce shape but bound to an ATTACKER
+  -- authority (0x42 * 32) — the transplant drill's model half.
+  let wrongAuthSig := "34cc4e831c3d99341e70d87feb51b63fa3e0e761ee26cbc0457211fb885f897312e53660390363a48c329c99ea37506dfd12f30f544a31b11a903514e7c43b01"
   let principalOf := fun (j : Json) =>
     ((j.getObjVal? "principal").toOption.bind (·.getStr?.toOption))
-  initCfg "PB" (payload [safetyAllowing ["notes.add"], principalsSection])
+  initCfg "PB" (payload [safetyAllowing ["notes.add"], principalsSection]) cfgPub
   -- mixed-mode fail-closed: gated tool, no envelope ⇒ deny, no principal.
   let pb0 ← step "PB deny unenveloped" (toolCallLine 1 "notes.add" (Json.mkObj []))
   assertRoute "PB deny unenveloped" pb0 "block"
@@ -210,6 +225,21 @@ private def pbScenarios : IO Unit := do
   let pbU ← step "PB unknown key" aliceLine (envelope := some (mkEnv "carol" aliceSig aliceNonce))
   assertRoute "PB unknown key" pbU "block"
   check "PB unknown key: no principal field" (principalOf pbU == none)
+  -- V2.2 TRANSPLANT closure: alice's genuine key signing the message bound
+  -- to an ATTACKER authority (0x42*32) — presented to a session pinned to
+  -- the real cfgPub, the recomputed message differs ⇒ deny, no principal.
+  let pbX ← step "PB transplanted authority" aliceLine
+    (envelope := some (mkEnv "alice" wrongAuthSig
+      "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"))
+  assertRoute "PB transplanted authority" pbX "block"
+  check "PB transplanted authority: no principal field" (principalOf pbX == none)
+  -- V2.2 RELABEL closure: aliceSig commits to keyId "alice"; presented as
+  -- "alice-admin" (same registered pubkey, different id) the recomputed
+  -- message differs ⇒ deny — a signature names ONE registry id.
+  let pbR ← step "PB relabel to alice-admin" aliceLine
+    (envelope := some (mkEnv "alice-admin" aliceSig aliceNonce))
+  assertRoute "PB relabel to alice-admin" pbR "block"
+  check "PB relabel: no principal field" (principalOf pbR == none)
   -- signature bound to the judged line: alice's valid envelope over line 10
   -- presented with a DIFFERENT line ⇒ verification fails ⇒ deny.
   let pbL ← step "PB envelope wrong line" bobLine (envelope := some aliceEnv)
@@ -217,10 +247,10 @@ private def pbScenarios : IO Unit := do
   check "PB wrong line: no principal field" (principalOf pbL == none)
   -- MUTATION DRILL (model half): request body plants principal/caller_id
   -- strings; the output principal is the KEY's registry id, immovably.
-  initCfg "PB drill" (payload [safetyAllowing ["notes.add"], principalsSection])
+  initCfg "PB drill" (payload [safetyAllowing ["notes.add"], principalsSection]) cfgPub
   let drillLine := "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.add\",\"arguments\":{\"principal\":\"root\",\"caller_id\":\"mallory\"}}}"
   let drillNonce := "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
-  let drillSig := "82938304e5ba3c35badde89efc65e3bd42a7ee7f4680f6f3168463dcdbdeb99f391dfbd1403ccf330586eda5166d936214a31fb6e3b045de65aa7a108b2c8701"
+  let drillSig := "90f73ae7d311ed2e72b2196457eb24d3de9d11725c739bc2e0fab45270831340bdc105dc91e430ce1c31f7fbba48a9713ad0fa15cdd5ffbe9dbcebe2e7910f0e"
   let pbD ← step "PB mutation drill" drillLine (envelope := some (mkEnv "alice" drillSig drillNonce))
   assertRoute "PB mutation drill" pbD "forward"
   check "PB mutation drill: planted fields do not move the principal"
@@ -425,4 +455,4 @@ def main : IO Unit := do
 
   pbScenarios
 
-  IO.println "DX-SURFACE TESTS PASS (8 kernels: deny+allow each, enable flags, strictness, budget×linear characterization, V2.1 signed-envelope principal)"
+  IO.println "DX-SURFACE TESTS PASS (8 kernels: deny+allow each, enable flags, strictness, budget×linear characterization, V2.2 authority-bound signed-envelope principal)"

@@ -1027,13 +1027,30 @@ info: 'Host.registryFor_reader_invariance' depends on axioms: [propext, Classica
 /-- info: 'Ffi.stepImpl_spelled' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Ffi.stepImpl_spelled
 
--- V2.1 signed-envelope principal (Route 2): the opaque credential, the
--- per-principal Budget kernel, the commit-discipline twins and the receipt
--- model half. Same axiom baseline as everything above; the Ed25519 extern is
--- `opaque`, never an axiom, so no crypto assumption can appear here.
+-- V2.2 authority-bound signed-envelope principal (Route 2): the opaque
+-- credential, the per-principal Budget kernel, the commit-discipline twins
+-- and the receipt model half. Same axiom baseline as everything above; the
+-- Ed25519 extern is `opaque`, never an axiom, so no crypto assumption can
+-- appear here.
 
 /-- info: 'Host.verifyEnvelope' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.verifyEnvelope
+
+-- V2.2 bind + domain separation (council C1): the message encoding commits
+-- to the config authority and the keyId, and neither the v2.1 layout nor the
+-- config plane can collide with it. No sorryAx, no Lean.ofReduceBool.
+
+/-- info: 'Host.u64be_inj' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.u64be_inj
+
+/-- info: 'Host.envelope_message_binds_authority_and_keyId' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.envelope_message_binds_authority_and_keyId
+
+/-- info: 'Host.envelope_cross_version_separated' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.envelope_cross_version_separated
+
+/-- info: 'Host.envelope_cross_plane_separated' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.envelope_cross_plane_separated
 
 /-- info: 'Host.AuthenticatedPrincipal.ext_id' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.AuthenticatedPrincipal.ext_id

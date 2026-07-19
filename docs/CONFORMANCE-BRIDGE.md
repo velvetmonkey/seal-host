@@ -157,13 +157,17 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Source: `mcp-seal-dev` `1d35669` + seal-host `feat/policy-codec-repin`
-  (the single-source policy codec + the V2.1 `principals` section — the sole
-  acceptance delta, proven by the re-closed `Seal/PolicyEquiv.lean` — plus
-  `Host.ofBundle` / `Host.verifyEnvelope` / Kernel PB)
-- `seal.wasm` sha256: `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
+- Source: `mcp-seal-dev` `1d35669` + seal-host
+  `feat/principal-envelope-authority-binding` @ `11e9e8d` (the single-source
+  policy codec + the V2.2 authority-bound principal envelope: domain tag
+  `seal/v2.2/principal-envelope\0`, config authority, and length-prefixed key
+  id, plus the existing Kernel PB)
+- `seal.wasm` sha256: `c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
+- Supersedes `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
+  (the V2.1 principal-envelope build; the hash changes because V2.2 changes
+  the signed-message domain and layout), which superseded
+  `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
   (checked in at `cdb9447` claiming source `1d35669`, but a clean rebuild of
   `1d35669` yields `3d70637f` not `0d3536e5`; `3d70637f` is the authoritative
   rebuild-from-source pin, clean-runner CI reproducibility judged of record),
@@ -181,6 +185,14 @@ before the differential, and driving the fresh artifact:
   numeric literal), which in turn superseded the fleet pin
   `df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8`.
 
+For this neutral worktree rebuild, empty ignored object directories exposed two
+workstation assumptions in the checked-in build scripts: canonical-checkout
+absolute paths and a first closure scan whose empty glob needed shell nullglob.
+Those settings were adjusted only for the build and restored before the repin
+commit. The local hash identifies the artifact tested below; finite
+differential agreement is evidence, not a universal compile-equivalence proof.
+Clean-runner CI remains the reproducibility judge of record.
+
 The verified artifact + full provenance + reproduce recipe are staged at
 `wasm-spike/verified/{seal.wasm,seal.js,PROVENANCE.txt}`; the rebuild step that
 was missing from the vendored pipeline (project ir → `build-core/*.o`, including
@@ -188,6 +200,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `3d70637f…`). That repin is a separate, audited step gated to the
+build (sha256 `c9f32b00…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

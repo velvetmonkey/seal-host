@@ -36,6 +36,13 @@ open Lean Host
 
 structure Session where
   config : TrustedConfig
+  /-- V2.2: the decoded config-signing authority pubkey (raw 32 bytes) — the
+      SAME trust root the config signature was verified against at init,
+      threaded into `Host.verifyEnvelope` so the principal-envelope message
+      commits to it (council C1 authority bind). Never a request field; the
+      model-oracle lane may leave it empty, which fail-closes every envelope
+      (`verifyEnvelope` demands size 32). -/
+  configAuthority : ByteArray
   safetyRef : IO.Ref SealCore.State
   temporalRef : IO.Ref Kernels.TemporalState
   linearRef : IO.Ref LinearCore.LState
@@ -48,9 +55,11 @@ initialize sessionRef : IO.Ref (Option Session) ← IO.mkRef none
 private def errJson (msg : String) : String :=
   (Json.mkObj [("ok", Json.bool false), ("error", Json.str msg)]).compress
 
-private def initFromConfig (config : TrustedConfig) : IO String := do
+private def initFromConfig (config : TrustedConfig)
+    (configAuthority : ByteArray) : IO String := do
   let session : Session := {
     config
+    configAuthority
     safetyRef := ← IO.mkRef SealCore.State.empty
     temporalRef := ← IO.mkRef Kernels.temporalKernel.init
     linearRef := ← IO.mkRef LinearCore.LState.empty
@@ -75,7 +84,12 @@ private def initFromConfig (config : TrustedConfig) : IO String := do
 private def initImpl (envelopeText publicKey : String) : IO String := do
   match checkEnvelope envelopeText publicKey with
   | .error err => pure (errJson s!"trusted config rejected: {err}")
-  | .ok config => initFromConfig config
+  | .ok config =>
+      -- V2.2 authority bind: the session pins the DECODED trust-root pubkey
+      -- the config signature just verified against. `checkEnvelope` succeeded,
+      -- so `hexDecode? publicKey` is `some` (verification decoded it); the
+      -- `getD empty` default is unreachable and fail-closed if ever reached.
+      initFromConfig config ((SealV2.hexDecode? publicKey).getD ByteArray.empty)
 
 /-- Build the same registry `Host.Main` builds, with evidence injected from
     the step input instead of gathered from IO — `Host.dispatch` (two-phase
@@ -167,10 +181,11 @@ def principalOutField (principal? : Option Host.AuthenticatedPrincipal) :
     `{line, now, approvals: [{target, issuedAt?}], votes, grants, forecasts,
     envelope?: {key_id, sig, nonce, issued_at}}`
     (votes/grants/forecasts as raw file text; approvals already A3-filtered
-    by the Rust host; `envelope` carries the RAW V2.1 principal-envelope
+    by the Rust host; `envelope` carries the RAW V2.2 principal-envelope
     fields — nonce-freshness-filtered but NEVER verified or interpreted by
     Rust: `Host.verifyEnvelope` runs HERE, in the parse path, against the
-    signed config's principal registry and the exact judged `line`). Output
+    signed config's principal registry, the session-pinned config authority
+    and the exact judged `line`). Output
     JSON: `{route: "passthrough"|"forward"|"block", response?, audit?,
     principal?}` — `principal` present iff the envelope verified. -/
 private def stepImpl (inputText : String) : IO String := do
@@ -206,7 +221,7 @@ private def stepImpl (inputText : String) : IO String := do
       let principal? :=
         match (input.getObjVal? "envelope").toOption, session.config.principals with
         | some env, some pcfg =>
-            Host.verifyEnvelope pcfg.registry
+            Host.verifyEnvelope session.configAuthority pcfg.registry
               { keyId := getStrD env "key_id" ""
                 sigHex := getStrD env "sig" ""
                 nonceHex := getStrD env "nonce" ""
@@ -281,10 +296,17 @@ def modelInit (envelopeText publicKey : String) : IO String :=
     It is not `@[export]`, not called by `seal_host_init`, and is used only by
     `scripts/model_oracle.lean`; compiled native/WASM/deployed oracles still
     initialise through `initImpl` and verify real signatures. -/
-def modelInitFromTrustedPayload (payloadText : String) : IO String := do
+def modelInitFromTrustedPayload (payloadText : String)
+    (publicKey : String := "") : IO String := do
   match Host.parseCanonicalConfigPayload payloadText with
   | .error err => pure (errJson s!"trusted config rejected: {err}")
-  | .ok config => initFromConfig config
+  | .ok config =>
+      -- V2.2: the model lane takes the authority hex EXPLICITLY (there is no
+      -- signature to verify against). Defaults to "" → empty ByteArray →
+      -- every envelope fail-closes (`verifyEnvelope` demands 32 bytes), so
+      -- envelope-less oracle traffic is unaffected and enveloped scenarios
+      -- must state their trust root.
+      initFromConfig config ((SealV2.hexDecode? publicKey).getD ByteArray.empty)
 
 def modelStep (inputText : String) : IO String :=
   stepImpl inputText
@@ -400,7 +422,7 @@ def stepInputsOf (session : Session) (input : Json) : StepInputs :=
     principal? :=
       match (input.getObjVal? "envelope").toOption, session.config.principals with
       | some env, some pcfg =>
-          Host.verifyEnvelope pcfg.registry
+          Host.verifyEnvelope session.configAuthority pcfg.registry
             { keyId := getStrD env "key_id" ""
               sigHex := getStrD env "sig" ""
               nonceHex := getStrD env "nonce" ""
@@ -577,14 +599,17 @@ theorem faithful_principal_authenticated (written : Option String)
     Ed25519 unforgeability + extern faithfulness — that a VERIFYING envelope
     was really signed by the registered key — and the R-PRINC hypothesis
     itself, test-discharged.) -/
-theorem receipt_principal_authenticated (reg : Host.PrincipalRegistry)
+theorem receipt_principal_authenticated (authority : ByteArray)
+    (reg : Host.PrincipalRegistry)
     (env : Host.Envelope) (line : String) (written : Option String)
     (pid : String)
-    (hfaith : PrincipalFaithful written (Host.verifyEnvelope reg env line))
+    (hfaith : PrincipalFaithful written
+      (Host.verifyEnvelope authority reg env line))
     (h : written = some pid) :
     ∃ k ∈ reg, k.id = pid := by
   obtain ⟨p, hp, hid⟩ := faithful_principal_authenticated written _ pid hfaith h
-  obtain ⟨k, hk, hkid⟩ := Host.verifyEnvelope_id_registered reg env line p hp
+  obtain ⟨k, hk, hkid⟩ :=
+    Host.verifyEnvelope_id_registered authority reg env line p hp
   exact ⟨k, hk, hkid.trans hid⟩
 
 end Ffi

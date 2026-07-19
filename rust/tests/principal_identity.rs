@@ -7,8 +7,11 @@
 //! model half is `Ffi.receipt_principal_authenticated`; this file pins the
 //! Rust assembler half against receipts written by the REAL binary.
 //!
-//! Also pinned here: the cross-language signed-message contract
-//! (`Host.envelopeMessage` golden vector, byte-twinned), the V2.1 T3 story
+//! Also pinned here: the cross-language V2.2 signed-message contract
+//! (`Host.envelopeMessage` golden vector, byte-twinned — tag ‖ authority(32)
+//! ‖ u64be(|key_id|) ‖ key_id ‖ nonce(32) ‖ u64be(issued_at) ‖ line; the
+//! authority is the config-signing pubkey, so the transplant and relabel
+//! drills below are the operational half of council C1), the V2.1 T3 story
 //! (an enveloped allow forwards EXACTLY the inner judged bytes + one
 //! canonical `\n`; wrapper bytes never reach the child; line smuggling
 //! refuses), envelope nonce replay (second A3 instance), and per-principal
@@ -29,6 +32,8 @@ use std::time::Duration;
 
 const ALICE_SEED: [u8; 32] = [1u8; 32];
 const BOB_SEED: [u8; 32] = [2u8; 32];
+/// The config-signing key seed — its PUBKEY is the V2.2 envelope authority.
+const CONFIG_SEED: [u8; 32] = [7u8; 32];
 
 const SEAM_ERROR_LINE: &str = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"seal-host: mediation seam failure; request blocked\"}}";
 
@@ -43,10 +48,32 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// The canonical signed message — MUST byte-match `Host.envelopeMessage`
-/// (Host/Principal.lean): tag ‖ nonce(32) ‖ u64be(issued_at) ‖ line bytes.
-fn envelope_message(nonce: &[u8; 32], issued_at: u64, line: &str) -> Vec<u8> {
-    let mut m = b"seal/v2.1/principal-envelope\0".to_vec();
+/// The raw 32-byte config authority pubkey the V2.2 message commits to.
+fn config_authority() -> [u8; 32] {
+    SigningKey::from_bytes(&CONFIG_SEED)
+        .verifying_key()
+        .to_bytes()
+}
+
+/// The canonical V2.2 signed message — MUST byte-match `Host.envelopeMessage`
+/// (Host/Principal.lean):
+///   tag ‖ authority(32) ‖ u64be(|key_id|) ‖ key_id ‖ nonce(32)
+///       ‖ u64be(issued_at) ‖ line bytes.
+/// `authority` is the raw config-signing pubkey (the trust root); `key_id`
+/// is the wire-claimed registry id, length-prefixed. The bind is what makes
+/// a signature non-transplantable (across config authorities) and
+/// non-relabelable (across registry ids).
+fn envelope_message(
+    authority: &[u8; 32],
+    key_id: &str,
+    nonce: &[u8; 32],
+    issued_at: u64,
+    line: &str,
+) -> Vec<u8> {
+    let mut m = b"seal/v2.2/principal-envelope\0".to_vec();
+    m.extend_from_slice(authority);
+    m.extend_from_slice(&(key_id.len() as u64).to_be_bytes());
+    m.extend_from_slice(key_id.as_bytes());
     m.extend_from_slice(nonce);
     m.extend_from_slice(&issued_at.to_be_bytes());
     m.extend_from_slice(line.as_bytes());
@@ -54,8 +81,9 @@ fn envelope_message(nonce: &[u8; 32], issued_at: u64, line: &str) -> Vec<u8> {
 }
 
 /// Wrap `request` in a signed principal envelope wire line (the client-side
-/// signer this MVP asks callers to run).
-fn signed_envelope(
+/// signer this MVP asks callers to run), bound to `authority`.
+fn signed_envelope_for_authority(
+    authority: &[u8; 32],
     seed: [u8; 32],
     key_id: &str,
     request: &str,
@@ -64,8 +92,10 @@ fn signed_envelope(
 ) -> String {
     let sk = SigningKey::from_bytes(&seed);
     let sig = hex::encode(
-        sk.sign(&envelope_message(nonce, issued_at, request))
-            .to_bytes(),
+        sk.sign(&envelope_message(
+            authority, key_id, nonce, issued_at, request,
+        ))
+        .to_bytes(),
     );
     serde_json::json!({
         "seal_env": {
@@ -77,6 +107,17 @@ fn signed_envelope(
         "request": request,
     })
     .to_string()
+}
+
+/// The common case: an envelope bound to the REAL config authority.
+fn signed_envelope(
+    seed: [u8; 32],
+    key_id: &str,
+    request: &str,
+    nonce: &[u8; 32],
+    issued_at: u64,
+) -> String {
+    signed_envelope_for_authority(&config_authority(), seed, key_id, request, nonce, issued_at)
 }
 
 struct Host {
@@ -101,7 +142,7 @@ impl Host {
         let approvals = dir.join("approvals.ndjson");
         std::fs::write(&approvals, b"").unwrap();
 
-        let config_sk = SigningKey::from_bytes(&[7u8; 32]);
+        let config_sk = SigningKey::from_bytes(&CONFIG_SEED);
         let pk = hex::encode(config_sk.verifying_key().to_bytes());
         let payload = serde_json::json!({
             "epoch": 1,
@@ -115,8 +156,12 @@ impl Host {
                 ]
             },
             "principals": {
+                // "alice-admin" shares alice's PUBKEY under a different id —
+                // legal registry, here so the V2.2 relabel drill can show a
+                // signature names ONE id even when two ids share a key.
                 "keys": [
                     {"id": "alice", "pubkey": pubkey_hex(ALICE_SEED)},
+                    {"id": "alice-admin", "pubkey": pubkey_hex(ALICE_SEED)},
                     {"id": "bob", "pubkey": pubkey_hex(BOB_SEED)}
                 ],
                 "budgets": [
@@ -252,17 +297,31 @@ fn assert_no_principal_key(receipt: &serde_json::Value, label: &str) {
 
 const PLAIN_CALL: &str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"notes.add","arguments":{"text":"hello"}}}"#;
 
-/// The cross-language signed-message contract, byte-for-byte: the Lean
-/// `#guard_msgs` golden vector in Host/Principal.lean pins the SAME hex.
+/// The cross-language V2.2 signed-message contract, byte-for-byte: the Lean
+/// `#guard_msgs` golden vector in Host/Principal.lean pins the SAME hex
+/// (authority 0xa0..0xbf, key_id "alice", nonce 0x00..0x1f, issued_at 1234).
 #[test]
 fn envelope_message_golden_vector_matches_lean() {
+    let mut authority = [0u8; 32];
+    for (i, b) in authority.iter_mut().enumerate() {
+        *b = 0xa0 + i as u8;
+    }
     let mut nonce = [0u8; 32];
     for (i, b) in nonce.iter_mut().enumerate() {
         *b = i as u8;
     }
     assert_eq!(
-        hex::encode(envelope_message(&nonce, 1234, "{\"m\":1}")),
-        "7365616c2f76322e312f7072696e636970616c2d656e76656c6f706500\
+        hex::encode(envelope_message(
+            &authority,
+            "alice",
+            &nonce,
+            1234,
+            "{\"m\":1}"
+        )),
+        "7365616c2f76322e322f7072696e636970616c2d656e76656c6f706500\
+         a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf\
+         0000000000000005\
+         616c696365\
          000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
          00000000000004d2\
          7b226d223a317d"
@@ -371,6 +430,47 @@ fn tampered_unknown_wrongline_and_replayed_envelopes_fail_closed() {
     let out = host.expect_line();
     assert!(out.contains("principal envelope required"), "{out}");
     assert_no_principal_key(&host.last_receipt(), "wrong line");
+
+    // V2.2 TRANSPLANT drill: alice's GENUINE key, but the message is bound
+    // to an attacker authority (a self-signed config's pubkey, 0x42*32).
+    // Presented to the host — whose session pins the REAL trust root — the
+    // recomputed message differs, Ed25519 rejects, fail-closed deny.
+    let transplanted = signed_envelope_for_authority(
+        &[0x42; 32],
+        ALICE_SEED,
+        "alice",
+        PLAIN_CALL,
+        &[0x55; 32],
+        iss,
+    );
+    host.send(&transplanted);
+    let out = host.expect_line();
+    assert!(
+        out.contains("principal envelope required"),
+        "an envelope bound to a foreign authority must deny: {out}"
+    );
+    assert_no_principal_key(&host.last_receipt(), "transplanted authority");
+
+    // V2.2 RELABEL drill: a genuine alice signature (bound to key_id
+    // "alice") presented as "alice-admin" — an id registered with the SAME
+    // pubkey. The message commits to the claimed key_id, so verification
+    // fails: one signature names ONE registry id.
+    let mut relabeled: serde_json::Value = serde_json::from_str(&signed_envelope(
+        ALICE_SEED,
+        "alice",
+        PLAIN_CALL,
+        &[0x66; 32],
+        iss,
+    ))
+    .unwrap();
+    relabeled["seal_env"]["key_id"] = serde_json::Value::String("alice-admin".into());
+    host.send(&relabeled.to_string());
+    let out = host.expect_line();
+    assert!(
+        out.contains("principal envelope required"),
+        "a relabeled key_id must deny even when the pubkey matches: {out}"
+    );
+    assert_no_principal_key(&host.last_receipt(), "relabeled key_id");
 
     // replayed nonce: first use forwards, byte-identical resend is dropped by
     // the envelope A3 filter and downgrades to no-envelope ⇒ deny.
