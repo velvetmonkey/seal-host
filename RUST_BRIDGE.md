@@ -25,10 +25,9 @@ its protocol strictly; this is a named assumption, not a theorem.
 
 ## Path inventory (source → sink → mediated?)
 
-Effect sinks enumerated by grep over `rust/src/`
-(`write_all|writeln|eprintln|Command::new|spawn|fs::write|TcpStream|UdpSocket`):
-exactly 3 child-write sites, 1 spawn, 2 stdout writers, stderr, zero
-fs/socket writes.
+Effect sinks enumerated by review over `rust/src/`: one child-write helper,
+one child spawn, one stdout-owner queue, private receipt/audit-state writes,
+SQLite replay state, stderr telemetry, and zero network sockets.
 
 | # | Source | Sink | Mediated? |
 |---|--------|------|-----------|
@@ -41,6 +40,12 @@ fs/socket writes.
 | P7 | audit / A3 drops / errors | stderr | telemetry only, no effect |
 | P8 | approval/token/tty evidence | (feeds Lean via A3 only) | parse failure drops the record ⇒ deny (fail-closed direction) |
 | P9 | votes/grants/forecasts files | (raw text to Lean) | Lean parses; the grants cursor's line-split is drop-only |
+
+Client stdout has one owner: child responses and host-authored refusals enter
+the same bounded queue as complete newline-terminated frames. A frame is
+written and flushed before the next begins. Write/flush failure is terminal;
+child stdin write/flush and child stdout framing failures stop the session
+fail-closed rather than being ignored.
 
 Enforced invariant: **bytes reach the child ⇔ the Lean kernel returned
 classify == 0 or step route == forward for the byte-identical line.** Every

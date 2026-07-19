@@ -213,7 +213,9 @@ policy's ttl. Malformed lines are skipped fail-closed.
 Re-issue the same call. It now passes to the child server, and the host records the
 decision on **its stderr** — two lines per decision: the raw audit line, then a
 tamper-evident chain record as a single JSON line
-(`{"seal_record":"v1","entry":N,"commitment":"...","head":"..."}`). To keep them, redirect
+(`{"seal_record":"v1","entry":N,"session":"...","prev_head":"...","head":"..."}`).
+The first record of a process also names the prior process session, and its
+`prev_head` is the safely persisted prior head. To keep the stream, redirect
 stderr when you start the host (e.g. append `2>>/tmp/seal-audit.log` to the command in
 step 5).
 
@@ -228,8 +230,8 @@ check the log two ways, and they prove different things:
   deployed host's own audit trail; nothing external is needed to check its integrity.
 - **A single decision is correct.** That is the schema-v2 *decision* receipt, where you
   re-derive the verdict from the request bytes and check it with `seal-check` / `seal verify`.
-  It is shown end-to-end in [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo).
-  The compatible-profile host emits the audit chain above, not this v2 receipt.
+  The compatible-profile host writes this receipt in `--receipt-dir` **and** emits the
+  distinct audit/chain pair on stderr. Do not present either artifact as the other.
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
 once, and every decision written to a tamper-evident audit chain you can verify yourself.
