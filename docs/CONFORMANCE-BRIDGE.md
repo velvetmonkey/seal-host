@@ -183,7 +183,7 @@ before the differential, and driving the fresh artifact:
   `d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66`
   (correct on corpus C, but diverged from the native `.so` on a pathological
   numeric literal), which in turn superseded the fleet pin
-  `df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8`.
+  the superseded pre-migration fleet pin.
 
 For this neutral worktree rebuild, empty ignored object directories exposed two
 workstation assumptions in the checked-in build scripts: canonical-checkout

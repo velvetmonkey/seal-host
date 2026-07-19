@@ -662,7 +662,7 @@ node ../seal-assurance-kit/bin/seal verify "$RECEIPT"
 For CI:
 
 ```yaml
-- uses: velvetmonkey/seal-verify-action@main
+- uses: velvetmonkey/seal-verify-action@v1
   with:
     receipts: '.seal/receipts/*.json'
 ```

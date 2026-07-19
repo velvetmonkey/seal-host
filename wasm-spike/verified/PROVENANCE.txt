@@ -39,7 +39,7 @@ That build superseded
   the principal section is the sole delta). That build superseded a3790181
 (7-kernel DX surface), which superseded ff1bfd68 (pathological-number
 fail-closed), which superseded d3067bc0 (Lane C divergence, closed), which
-superseded the fleet pin df42cbad.
+superseded the prior fleet pin.
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh

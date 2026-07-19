@@ -42,7 +42,7 @@ else:
     CONFIG_SK, PUBKEY = generate_keypair()
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 MOCK = ROOT / "test" / "integration" / "mock_mcp_server.py"
-CANARY = Path(os.environ.get("CANARY_ROOT", "/home/monkey/src/canary"))
+CANARY = Path(os.environ.get("CANARY_ROOT", Path(__file__).resolve().parents[2] / "canary"))
 
 REPORT: list[str] = []
 AUDIT: list[str] = []

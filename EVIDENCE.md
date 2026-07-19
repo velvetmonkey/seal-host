@@ -2,7 +2,7 @@
 
 `scripts/evidence.sh` is the local Phase 0 re-checkable evidence chain for the
 private Seal product-family repos. It assumes sibling checkouts under
-`/home/monkey/src`:
+the common source-workspace parent:
 
 - `mcp-seal-dev`
 - `seal-host`

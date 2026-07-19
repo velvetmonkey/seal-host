@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "kernel_sha256": "a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af",
+  "repositories": {
+    "seal-check": {
+      "url": "https://github.com/velvetmonkey/seal-check.git",
+      "commit": "bb5d572735ad0aad5f12c5d5d00260e5673c6f9b",
+      "wasm": ["wasm/seal.wasm"]
+    },
+    "seal-assurance-kit": {
+      "url": "https://github.com/velvetmonkey/seal-assurance-kit.git",
+      "commit": "dc44c578cbdddb620d389d5201b465e658692b47",
+      "wasm": ["kernel/wasm/seal.wasm"]
+    },
+    "seal-verify-action": {
+      "url": "https://github.com/velvetmonkey/seal-verify-action.git",
+      "commit": "81077e5ee2c042c17ff73de2c00670d4857d7cee",
+      "wasm": ["vendor/seal-assurance-kit/kernel/wasm/seal.wasm"]
+    },
+    "seal-demo": {
+      "url": "https://github.com/velvetmonkey/seal-demo.git",
+      "commit": "01da76923c36b82f83cfffafcb9bac3b81946c2a",
+      "wasm": ["public/wasm/seal.wasm"]
+    },
+    "seal-live-demo": {
+      "url": "https://github.com/velvetmonkey/seal-live-demo.git",
+      "commit": "b184d3d20241f8b5f7753d5bdc16c2e8905697f6",
+      "wasm": ["seal-gateway/wasm/seal.wasm", "pwa/wasm/seal.wasm"]
+    }
+  }
+}
