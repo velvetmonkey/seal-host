@@ -351,6 +351,13 @@ each directory mode `0700`, make configuration and approval files mode `0600`, a
 them to UID/GID 65532. The host intentionally refuses the example if those ownership or
 mode requirements are not satisfied.
 
+The source-publication path is `scripts/export_public.sh EMPTY_DIRECTORY`. It
+assembles the same Git revision twice, scrubs identity and leak patterns, runs
+source-only tests, rebuilds and tests the exported tree, asserts the verifier pin,
+generates a CycloneDX SBOM, signs every output with Sigstore, and only then compares
+the two deterministic archives. Drift or any missing prerequisite leaves the
+requested output directory empty.
+
 ---
 
 <details>

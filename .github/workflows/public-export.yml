@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Signed public source export
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with: { fetch-depth: 0 }
+      - name: Require private build dependency access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - name: Configure private build dependency access
+        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - uses: leanprover/lean-action@v1.5.0
+        with: { use-github-cache: false, build: false }
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+        with: { toolchain: "1.96.0", cache: false }
+      - uses: actions/setup-node@v6.4.0
+        with: { node-version: "22" }
+      - uses: sigstore/cosign-installer@v4.1.2
+        with: { cosign-release: v3.0.6 }
+      - run: cargo install cargo-cyclonedx --locked
+      - run: scripts/export_public.sh "$RUNNER_TEMP/public-export"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-public-export-${{ github.sha }}
+          path: ${{ runner.temp }}/public-export
