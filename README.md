@@ -149,6 +149,7 @@ _All Seal-family repositories are currently private; these links resolve only fo
 ## Documentation
 
 - **[Deploy: stand the gate up in front of your own agent](docs/DEPLOY.md)** — clone → build → first blocked call → approve → receipt
+- **[Operate the V1 core](docs/OPERATIONS.md)** — authenticated health/readiness, retention, rotation, secrets, and replay recovery
 - [What Seal is NOT](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/WHAT-SEAL-IS-NOT.md) — read this first (private kit repo)
 - [Family claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md) · [family architecture map](https://github.com/velvetmonkey/seal/blob/main/docs/ARCHITECTURE.md) (private umbrella)
 - [Receipt-evidence deployment (assurance kit): install to first PASS/FAIL](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/DEPLOYMENT.md) (private kit repo)

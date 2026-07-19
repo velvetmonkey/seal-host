@@ -19,6 +19,7 @@
 //! | P7| audit / A3 drops / errors | stderr                                 | telemetry only, no effect |
 //! | P8| approval evidence         | (feeds Lean via A3 only)               | parse failure drops the record ⇒ deny |
 //! | P9| votes/grants/forecasts    | (raw text to Lean)                     | Lean parses; grants cursor line-split is drop-only |
+//! | P10| authenticated health HTTP| fixed health/readiness response         | N/A — operational status only; no MCP or mutation surface |
 //!
 //! Enforced invariant: bytes reach the child ⇔ the Lean kernel returned
 //! classify == 0 or step route == forward for the byte-identical JUDGED
@@ -40,6 +41,7 @@ use seal_host_rs::a3;
 use seal_host_rs::decision_receipt::{
     request_parts, sha256_hex, ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
 };
+use seal_host_rs::health::HealthServer;
 use seal_host_rs::lean;
 use seal_host_rs::limits::{
     check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus,
@@ -96,6 +98,9 @@ struct Args {
     approval_pubkey: Option<String>,
     receipt_dir: Option<String>,
     production: bool,
+    health: bool,
+    health_listen: String,
+    health_token_file: Option<String>,
     cmd: Vec<String>,
 }
 
@@ -108,6 +113,9 @@ fn parse_args() -> Result<Args, String> {
     let mut approval_pubkey = None;
     let mut receipt_dir = None;
     let mut production = false;
+    let mut health = false;
+    let mut health_listen = "127.0.0.1:9464".to_string();
+    let mut health_token_file = None;
     let mut cmd = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -140,6 +148,19 @@ fn parse_args() -> Result<Args, String> {
                 production = true;
                 i += 1
             }
+            "--health" => {
+                health = true;
+                i += 1
+            }
+            "--health-listen" => {
+                health = true;
+                health_listen = argv.get(i + 1).cloned().unwrap_or_default();
+                i += 2
+            }
+            "--health-token-file" => {
+                health_token_file = argv.get(i + 1).cloned();
+                i += 2
+            }
             "--" => {
                 cmd = argv[i + 1..].to_vec();
                 break;
@@ -155,6 +176,9 @@ fn parse_args() -> Result<Args, String> {
         approval_pubkey,
         receipt_dir,
         production,
+        health,
+        health_listen,
+        health_token_file,
         cmd: if cmd.is_empty() {
             return Err("server command required after --".into());
         } else {
@@ -377,11 +401,12 @@ fn write_frame(output: &OutputSender, line: &str) -> Result<(), ()> {
     })
 }
 
-fn write_child(child: &mut impl Write, bytes: &[u8]) -> Result<(), ()> {
+fn write_child(child: &mut impl Write, bytes: &[u8], ready: &AtomicBool) -> Result<(), ()> {
     child
         .write_all(bytes)
         .and_then(|_| child.flush())
         .map_err(|error| {
+            ready.store(false, Ordering::Release);
             eprintln!(
                 "{}",
                 json!({"error": format!("downstream child transport failed: {error}")})
@@ -788,6 +813,7 @@ fn run() -> i32 {
                 [--channel file|ed25519|interactive] [--token-file <path>] \
                 [--approval-pubkey <hex>] [--receipt-dir <path>] \
                 [--production] \
+                [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
                 -- <server-cmd> <args...>\nerror: {e}"
             );
             return 2;
@@ -987,6 +1013,36 @@ fn run() -> i32 {
             return 2;
         }
     };
+    let readiness = Arc::new(AtomicBool::new(false));
+    let _health_server = if args.health {
+        let Some(token_file) = args.health_token_file.as_deref() else {
+            eprintln!("health listener refused: --health-token-file is required");
+            let _ = child.kill();
+            let _ = child.wait();
+            return 2;
+        };
+        match HealthServer::start(
+            &args.health_listen,
+            std::path::Path::new(token_file),
+            readiness.clone(),
+        ) {
+            Ok(server) => {
+                eprintln!(
+                    "{}",
+                    json!({"health_listener": server.local_addr().to_string(), "authenticated": true})
+                );
+                Some(server)
+            }
+            Err(error) => {
+                eprintln!("health listener refused: {error}");
+                let _ = child.kill();
+                let _ = child.wait();
+                return 2;
+            }
+        }
+    } else {
+        None
+    };
     let mut child_in = child.stdin.take().expect("child stdin");
     let child_out = child.stdout.take().expect("child stdout");
 
@@ -995,6 +1051,7 @@ fn run() -> i32 {
     let relay_output = output.clone();
     let downstream_dead = Arc::new(AtomicBool::new(false));
     let relay_dead = downstream_dead.clone();
+    let relay_ready = readiness.clone();
     let relay = std::thread::spawn(move || {
         let mut reader = BufReader::new(child_out);
         let mut frame = Vec::new();
@@ -1004,11 +1061,13 @@ fn run() -> i32 {
                     if let Err(error) = relay_output.send_frame(&frame) {
                         eprintln!("{}", json!({"error": error}));
                         relay_dead.store(true, Ordering::Release);
+                        relay_ready.store(false, Ordering::Release);
                         break;
                     }
                 }
                 Ok(FrameStatus::Eof) => {
                     relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
                     break;
                 }
                 Ok(FrameStatus::Unterminated) => {
@@ -1017,11 +1076,13 @@ fn run() -> i32 {
                         json!({"error": "downstream child emitted an unterminated frame"})
                     );
                     relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
                     break;
                 }
                 Ok(FrameStatus::Oversized) => {
                     emit_resource_limit("downstream_wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
                     relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
                     break;
                 }
                 Err(error) => {
@@ -1030,6 +1091,7 @@ fn run() -> i32 {
                         json!({"error": format!("downstream child read failed: {error}")})
                     );
                     relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
                     break;
                 }
             }
@@ -1043,6 +1105,7 @@ fn run() -> i32 {
     // BURST (the griefing pattern) is distinguishable from an occasional
     // legitimate unparseable call. Passive — never gates the forward.
     let mut reduced_scope_forwards: u64 = 0;
+    readiness.store(true, Ordering::Release);
     loop {
         wire.clear();
         match read_bounded_frame(&mut reader, &mut wire, MAX_WIRE_MESSAGE_BYTES) {
@@ -1062,10 +1125,12 @@ fn run() -> i32 {
         }
 
         if output.has_failed() {
+            readiness.store(false, Ordering::Release);
             break;
         }
         if downstream_dead.load(Ordering::Acquire) {
             let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+            readiness.store(false, Ordering::Release);
             break;
         }
 
@@ -1146,7 +1211,7 @@ fn run() -> i32 {
                 // framing: no verification, no nonce burn (freshness gates
                 // decisions; passthrough lines carry none) — the INNER bytes
                 // flow to the child.
-                if write_child(&mut child_in, &forward).is_err() {
+                if write_child(&mut child_in, &forward, &readiness).is_err() {
                     let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                     break;
                 }
@@ -1286,7 +1351,7 @@ fn run() -> i32 {
                     reduced_scope_forwards += 1;
                     eprintln!("{signal}");
                 }
-                if write_child(&mut child_in, &forward).is_err() {
+                if write_child(&mut child_in, &forward, &readiness).is_err() {
                     let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                     break;
                 }
@@ -1459,7 +1524,7 @@ fn run() -> i32 {
                                         }
                                     };
                                     consume_pending_approval(&mut pending_approvals, consumed);
-                                    if write_child(&mut child_in, &forward).is_err() {
+                                    if write_child(&mut child_in, &forward, &readiness).is_err() {
                                         let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                                         break;
                                     }
@@ -1521,6 +1586,7 @@ fn run() -> i32 {
         }
     }
 
+    readiness.store(false, Ordering::Release);
     let _ = child.kill();
     let code = child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(0);
     let _ = relay.join();
@@ -1553,6 +1619,9 @@ mod tests {
             approval_pubkey: Some("11".repeat(32)),
             receipt_dir: Some(receipts.to_string_lossy().into_owned()),
             production: true,
+            health: false,
+            health_listen: "127.0.0.1:9464".into(),
+            health_token_file: None,
             cmd: vec!["/bin/cat".into()],
         };
         let replay = root.join("replay.sqlite");

@@ -27,7 +27,8 @@ its protocol strictly; this is a named assumption, not a theorem.
 
 Effect sinks enumerated by review over `rust/src/`: one child-write helper,
 one child spawn, one stdout-owner queue, private receipt/audit-state writes,
-SQLite replay state, stderr telemetry, and zero network sockets.
+SQLite replay state, stderr telemetry, and one optional authenticated health
+listener implemented in `health.rs`.
 
 | # | Source | Sink | Mediated? |
 |---|--------|------|-----------|
@@ -40,6 +41,7 @@ SQLite replay state, stderr telemetry, and zero network sockets.
 | P7 | audit / A3 drops / errors | stderr | telemetry only, no effect |
 | P8 | approval/token/tty evidence | (feeds Lean via A3 only) | parse failure drops the record ⇒ deny (fail-closed direction) |
 | P9 | votes/grants/forecasts files | (raw text to Lean) | Lean parses; the grants cursor's line-split is drop-only |
+| P10 | authenticated HTTP `GET /healthz` or `/readyz` | constant health response | N/A — operational status only; no MCP bytes, policy, approvals, receipts, child data, or mutation API |
 
 Client stdout has one owner: child responses and host-authored refusals enter
 the same bounded queue as complete newline-terminated frames. A frame is

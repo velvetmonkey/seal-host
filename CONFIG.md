@@ -726,6 +726,9 @@ Rollback is structural: replace the Seal command with the original server
 command and remove Seal’s prefixed arguments. Do not delete unrelated client
 configuration while rolling back one server.
 
+Production health/readiness, retention, key rotation, secret storage, and
+replay backup/recovery are specified in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ## Honesty rails
 
 - The v2 decision receipt and audit chain are distinct artifacts.

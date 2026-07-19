@@ -20,6 +20,12 @@ config / approval keys / control files (that is the OS-permission origin
 assumption below), and an attacker who bypasses MCP entirely (the
 MCP-boundary-only assumption below).
 
+The opt-in health/readiness listener is separately treated as hostile network
+input. It defaults to loopback, requires bearer authentication before the
+socket is opened, accepts at most 8 KiB, and exposes fixed status responses
+only. Its Rust implementation is tested, not covered by the Lean mediation
+proof.
+
 ## What the host enforces (the seven invariants)
 
 Each is a kernel grounded in a sorry-free, axiom-clean Lean theorem; the host

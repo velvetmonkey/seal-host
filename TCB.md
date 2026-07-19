@@ -62,6 +62,10 @@ for deployability.** Everything in Shape 1, plus:
   The audit head state and decision receipts rely on file `fsync`, atomic
   rename, parent-directory `fsync`, Unix ownership, and exact modes behaving
   as checked by the host.
+- the opt-in health listener (`health.rs`): tested Rust, outside the Lean
+  mediation proof. It defaults to loopback, requires a private bearer-token
+  file before bind, caps requests, exposes only liveness/readiness, and has no
+  policy, receipt, approval, child-data, or mutation endpoint.
 - the differential conformance harness (`rust/tests/differential.rs`) pins
   the residual wire-parser gap: property-based agreement between the Rust
   serde_json wire view and the Lean canonical parser on what gets mediated
