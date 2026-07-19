@@ -45,6 +45,9 @@ pub struct SignedConfig {
 #[derive(Debug)]
 pub struct DecisionInput<'a> {
     pub line: &'a str,
+    /// Boot-scoped host runtime context. Receipt-only: this is not supplied
+    /// to Lean and has no role in authorization or freshness.
+    pub session: &'a str,
     pub now: u64,
     pub emitted_bytes: &'a str,
     pub kernel_config: &'a Value,
@@ -100,6 +103,72 @@ fn canonical_request(tool: &str, arguments: &Value) -> Value {
     request.insert("method".into(), Value::String("tools/call".into()));
     request.insert("params".into(), Value::Object(params));
     Value::Object(request)
+}
+
+/// Build the receipt-only MCP projection. Every value here is either a
+/// constant descriptor, boot/request context already held by the host, or a
+/// by-value projection of the line `request_parts` parsed. It is deliberately
+/// not an input to Lean, signature verification, routing, or A3 freshness.
+fn effect_view(
+    input: &DecisionInput<'_>,
+    step: &Value,
+    tool: &str,
+    arguments: &Value,
+    request_sha256: &str,
+    policy_hash: &str,
+) -> Value {
+    let mut view = Map::new();
+    view.insert("schema".into(), Value::String("seal.effect-view/v0".into()));
+    view.insert(
+        "source".into(),
+        Value::String("mcp-jsonrpc/tools-call@1".into()),
+    );
+    view.insert(
+        "adapter".into(),
+        serde_json::json!({
+            "type": "mcp-jsonrpc/tools-call",
+            "version": "1"
+        }),
+    );
+    // Preserve the receipt's honesty rule: never mint a `principal` key when
+    // the kernel authenticated none. When present, the id comes only from the
+    // authoritative step output and is paired with passive session context.
+    if let Some(id) = step.get("principal").and_then(Value::as_str) {
+        view.insert(
+            "principal".into(),
+            serde_json::json!({"id": id, "session": input.session}),
+        );
+    }
+    view.insert("session".into(), Value::String(input.session.to_owned()));
+    view.insert(
+        "effect".into(),
+        serde_json::json!({
+            "resource": tool,
+            "action": "call",
+            "arguments": arguments,
+        }),
+    );
+    view.insert(
+        "raw_preimage_sha256".into(),
+        Value::String(request_sha256.to_owned()),
+    );
+    view.insert("policy_hash".into(), Value::String(policy_hash.to_owned()));
+    // Content-addressed within one runtime session. This reuses the existing
+    // kernel-cross-checked request hash; it does not canonicalize or re-hash
+    // the authenticated line. Durable collision/replay enforcement is a
+    // documented follow-up, not a verdict gate in this release.
+    view.insert(
+        "idempotency_key".into(),
+        Value::String(format!("{}:{request_sha256}", input.session)),
+    );
+    // `epoch` is a required field of the successfully verified config. Keep
+    // this best-effort so receipt enrichment can never veto a kernel verdict.
+    if let Some(policy_version) = input.kernel_config.get("epoch") {
+        view.insert("policy_version".into(), policy_version.clone());
+        view.insert("policy_version_enforced".into(), Value::Bool(false));
+    }
+    view.insert("authoritative".into(), Value::Bool(false));
+    Value::Object(view)
 }
 
 /// Best-effort structured view of the wire line for the receipt's derived
@@ -220,6 +289,7 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         None
     };
 
+    let policy_hash = canonical_json_sha256(input.kernel_config)?;
     let mut receipt = Map::new();
     receipt.insert("seal_receipt".into(), Value::String("v2".into()));
     if let Ok((tool, arguments)) = &request_material {
@@ -228,6 +298,17 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         receipt.insert(
             "args_hash".into(),
             Value::String(canonical_json_sha256(arguments)?),
+        );
+        receipt.insert(
+            "effect_view".into(),
+            effect_view(
+                input,
+                &step,
+                tool,
+                arguments,
+                &host_request_sha256,
+                &policy_hash,
+            ),
         );
     }
     receipt.insert("now".into(), Value::from(input.now));
@@ -302,10 +383,7 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
                 Value::from(issued_at.saturating_add(input.approval_ttl_ms)),
             );
         }
-        approval.insert(
-            "policy_hash".into(),
-            Value::String(canonical_json_sha256(input.kernel_config)?),
-        );
+        approval.insert("policy_hash".into(), Value::String(policy_hash));
         receipt.insert("approval".into(), Value::Object(approval));
     }
 
@@ -534,6 +612,7 @@ mod tests {
         };
         receipt_from_step(&DecisionInput {
             line,
+            session: "test-session",
             now: 1000,
             emitted_bytes: step,
             kernel_config: &kernel_config,
@@ -567,6 +646,7 @@ mod tests {
             "args_hash",
             "canonical_request",
             "canonical_request_sha256",
+            "effect_view",
         ] {
             assert!(receipt.get(absent).is_none(), "{absent} must be absent");
         }
@@ -588,6 +668,38 @@ mod tests {
             Value::String(sha256_hex(line.as_bytes()))
         );
         assert!(receipt.get("request_parse_error").is_none());
+    }
+
+    #[test]
+    fn effect_view_is_non_authoritative_by_value_and_receipt_only() {
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"notes.add","arguments":{"z":1,"a":2,"effect":{"resource":"forged","action":"allow"}}}}"#;
+        let mut step: Value = serde_json::from_str(&allow_step_output(line)).unwrap();
+        step["principal"] = Value::String("alice".into());
+        let receipt = build(line, &step.to_string()).expect("receipt");
+        let view = &receipt["effect_view"];
+
+        assert_eq!(view["schema"], "seal.effect-view/v0");
+        assert_eq!(view["source"], "mcp-jsonrpc/tools-call@1");
+        assert_eq!(view["adapter"]["type"], "mcp-jsonrpc/tools-call");
+        assert_eq!(view["adapter"]["version"], "1");
+        assert_eq!(view["authoritative"], false);
+        assert_eq!(view["principal"]["id"], "alice");
+        assert_eq!(view["principal"]["session"], "test-session");
+        assert_eq!(view["effect"]["resource"], "notes.add");
+        assert_eq!(view["effect"]["action"], "call");
+        assert_eq!(view["effect"]["arguments"], receipt["arguments"]);
+        assert_eq!(view["raw_preimage_sha256"], receipt["request_sha256"]);
+        assert_eq!(view["policy_hash"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            view["idempotency_key"],
+            Value::String(format!(
+                "test-session:{}",
+                receipt["request_sha256"].as_str().unwrap()
+            ))
+        );
+        assert_eq!(view["policy_version"], 1);
+        assert_eq!(view["policy_version_enforced"], false);
+        assert_eq!(receipt["verdict"], "ALLOW");
     }
 
     /// RED (the security property of the kernel request commitment):
