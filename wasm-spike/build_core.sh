@@ -56,8 +56,8 @@ fi
 SEAL_IR="$SEAL_ROOT/.lake/build/ir"
 SEAL_MODULES=(
   SealCore SealCore/Automaton SealCore/Event SealCore/Safety SealCore/Sha256
-  Seal/Block Seal/Channel Seal/Classify Seal/Hash Seal/JsonUtil Seal/Policy
-  Seal/PolicyBundle
+  Seal/Block Seal/Channel Seal/Classify Seal/Hash Seal/JsonUtil
+  Seal/PolicyWire Seal/Policy Seal/PolicyBundle
   SealV2/Canonical SealV2/Crypto SealV2/Decide SealV2/Escape SealV2/Parser
   SealV2/Serialization SealV2/Validation
 )
