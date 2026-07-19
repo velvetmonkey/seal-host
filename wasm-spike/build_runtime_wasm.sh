@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/monkey/src/seal-host/wasm-spike
+cd "$(dirname "${BASH_SOURCE[0]}")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 SRC=lean4-src/src
 OUT=build-wasm-rt

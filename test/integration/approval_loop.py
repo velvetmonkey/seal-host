@@ -39,7 +39,8 @@ def env_with_ld():
         e = os.environ.copy()
     except Exception:
         pass
-    lean = "/home/monkey/.elan/toolchains/leanprover--lean4---v4.28.0/lib/lean"
+    lean_prefix = subprocess.check_output(["lean", "--print-prefix"], text=True).strip()
+    lean = str(Path(lean_prefix) / "lib" / "lean")
     lake = str(ROOT / ".lake/build/lib")
     old = e.get("LD_LIBRARY_PATH", "")
     e["LD_LIBRARY_PATH"] = f"{lean}:{lake}:{old}".rstrip(":")

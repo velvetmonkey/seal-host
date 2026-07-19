@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 
-ROOT=/home/monkey/src/seal-host
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
 if [ "$MCP_TYPE" = "path" ]; then

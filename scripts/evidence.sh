@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Local Phase 0 evidence wrapper. Assumes the private Seal repos are siblings
-# under /home/monkey/src (or under the parent directory of this repo).
+# under the parent directory of this repo.
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
