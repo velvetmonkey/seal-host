@@ -1,25 +1,31 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the V2.1 principal fold on the single-source policy codec:
-`principals` is a codec section (registry + per-principal budgets; the ONLY
-acceptance-set delta over the codec base, proven by the re-closed
-`Seal/PolicyEquiv.lean` theorems against the lockstep-updated spec), and the
-host side adds `Host.verifyEnvelope` + Kernel PB (`Kernels/PrincipalBudget`)
-with the parse-path-authenticated principal as its evidence. Non-principal
-decision semantics unchanged.
+Built from the V2.2 authority-bound principal-envelope kernel on the
+single-source policy codec. The signed-message domain is bumped to
+`seal/v2.2/principal-envelope\0` and commits to the 32-byte config authority,
+the length-prefixed registry key id, nonce, issue time, and exact judged line.
+This intentionally rejects V2.1 envelopes and closes the V2.1 authority-
+transplant and same-pubkey registry-relabel gaps. Non-principal decision
+semantics are unchanged.
 
 Kernel source    : mcp-seal-dev 1d3566947196fb688f7eff87c4edda2a0ac015fd
                    (feat/policy-codec-single-source — codec + V2.1 principals)
-Host source      : seal-host feat/policy-codec-repin (V2.1 principal fold)
+Host source      : seal-host feat/principal-envelope-authority-binding
+                   11e9e8d0ad0e4c2df38a04fe4c7ac7874be790b5
+                   (V2.2 authority + key-id envelope binding)
 Build date       : 2026-07-19
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01  (3964760 bytes)
-  seal.js    c93a96b21c1186d112b945f70ae9ed4dbc08e059edff761d772aa65ae53c357e
+  seal.wasm  c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda  (3966879 bytes)
+  seal.js    071d7a3d4504d9e6024554e7fc6be68d3849a77c4585a4c40422fee9f63ed245
 
 Supersedes the previously checked-in conformance artifact sha256
+  3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01
+  (the V2.1 principal-envelope build). The new hash is expected: V2.2 changes
+  the signed-message domain and layout and therefore changes the kernel binary.
+That build superseded
   0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130
   (committed at cdb9447 with provenance claiming source mcp-seal-dev 1d35669;
   a clean rebuild of 1d35669 yields 3d70637f, NOT 0d3536e5, so 3d70637f is the
@@ -38,10 +44,23 @@ superseded the fleet pin df42cbad.
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
+  ./build_runtime_wasm.sh        # rebuild Lean runtime archive
   ./build_core.sh               # ir -> build-core/*.o (incl Seal/PolicyWire + Kernels/PrincipalBudget)
+  ./build_base.sh               # package/stdlib/specialization objects
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
   # then: cp build-core/seal.{wasm,js} verified/
+
+Neutral-rebuild note: this artifact was rebuilt from empty ignored object
+directories in the feat/principal-envelope-authority-binding worktree. The
+checked-in build scripts contain canonical-checkout paths, so for this worktree
+run those path constants were temporarily pointed at the reviewed worktree;
+`build_closure.sh` also needed shell nullglob enabled to bootstrap its first
+scan from an empty closure directory. Those temporary script changes were
+restored before commit. This local hash identifies the checked-in artifact and
+the finite differential gauntlet tests its behavior; it is not a proof of
+Lean-to-WASM equivalence or deterministic code generation. Clean-runner CI is
+the reproducibility judge of record.
 
 Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
   seal_init(envelope, pubkey) -> {ok,...}

@@ -50,7 +50,9 @@ fn now_ms() -> u64 {
 
 /// The raw 32-byte config authority pubkey the V2.2 message commits to.
 fn config_authority() -> [u8; 32] {
-    SigningKey::from_bytes(&CONFIG_SEED).verifying_key().to_bytes()
+    SigningKey::from_bytes(&CONFIG_SEED)
+        .verifying_key()
+        .to_bytes()
 }
 
 /// The canonical V2.2 signed message — MUST byte-match `Host.envelopeMessage`
@@ -90,8 +92,10 @@ fn signed_envelope_for_authority(
 ) -> String {
     let sk = SigningKey::from_bytes(&seed);
     let sig = hex::encode(
-        sk.sign(&envelope_message(authority, key_id, nonce, issued_at, request))
-            .to_bytes(),
+        sk.sign(&envelope_message(
+            authority, key_id, nonce, issued_at, request,
+        ))
+        .to_bytes(),
     );
     serde_json::json!({
         "seal_env": {
@@ -307,7 +311,13 @@ fn envelope_message_golden_vector_matches_lean() {
         *b = i as u8;
     }
     assert_eq!(
-        hex::encode(envelope_message(&authority, "alice", &nonce, 1234, "{\"m\":1}")),
+        hex::encode(envelope_message(
+            &authority,
+            "alice",
+            &nonce,
+            1234,
+            "{\"m\":1}"
+        )),
         "7365616c2f76322e322f7072696e636970616c2d656e76656c6f706500\
          a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf\
          0000000000000005\
