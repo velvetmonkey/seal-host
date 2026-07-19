@@ -256,6 +256,50 @@ def sealHostClassify (line : String) : UInt32 :=
   | .act _ => 1
   | .refuse => 2
 
+/-! ### Policy schema/validate exports — `seal schema` / `seal validate`
+
+Thin projections of the SAME `Seal.policyBundleCodec` the init path parses
+with: the schema is the codec's schema projection, the validator runs the
+codec's parse projection plus the host `ofBundle` mapping (so host-layer
+rejects such as duplicate-Budget-cap conflicts — which the authoring signer
+does NOT check — surface here too). Pure functions; no session state. -/
+
+/-- The policy-bundle JSON Schema, straight from the repinned authority. -/
+@[export seal_policy_schema]
+def sealPolicySchema (_ : Unit) : String :=
+  Seal.policyBundleSchema.pretty
+
+/-- Validate raw policy-bundle payload text. Stages mirror the init path:
+    the pathological-number guard (fail closed), JSON parse, the verified
+    `parsePolicyBundle`, then `Host.ofBundle`. `canonical` reports whether
+    the bytes are in SealV2 canonical form (required for SIGNED payloads;
+    reported, not enforced, so the validator can also judge authoring-time
+    pretty-printed drafts). -/
+@[export seal_policy_validate]
+def sealPolicyValidate (payloadText : String) : String :=
+  let canonical := (SealV2.parse payloadText).isSome
+  let result : List (String × Json) :=
+    if !Seal.JsonUtil.wireNumbersSafe payloadText then
+      [("ok", Json.bool false), ("stage", Json.str "number-guard"),
+       ("error", Json.str "pathological JSON number exponent (fail closed)")]
+    else
+      match Json.parse payloadText with
+      | .error e =>
+          [("ok", Json.bool false), ("stage", Json.str "json"),
+           ("error", Json.str e)]
+      | .ok j =>
+          match Seal.parsePolicyBundle j with
+          | .error e =>
+              [("ok", Json.bool false), ("stage", Json.str "parse"),
+               ("error", Json.str e)]
+          | .ok bundle =>
+              match Host.ofBundle bundle with
+              | .error e =>
+                  [("ok", Json.bool false), ("stage", Json.str "host"),
+                   ("error", Json.str e)]
+              | .ok _ => [("ok", Json.bool true)]
+  (Json.mkObj (("canonical", Json.bool canonical) :: result)).compress
+
 /-! ### The step plan, spelled — `stepImpl`'s marshalling as a pure function
 
 SPEC ONLY (dispatch IO shell wrap-up): nothing below is called by the

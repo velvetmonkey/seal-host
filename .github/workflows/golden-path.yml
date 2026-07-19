@@ -90,6 +90,11 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
 
+      # Runs after C1 because golden_path.py's named-target build is what
+      # produces rust/target/debug/seal-host-rs on the runner.
+      - name: Policy schema anti-drift gate (codec single source)
+        run: ./scripts/policy_schema_gate.sh
+
       - name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
         run: |
           C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"

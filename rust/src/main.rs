@@ -409,10 +409,152 @@ fn main() {
             println!("SURVIVED {v}");
             std::process::exit(0);
         }
+        Some("schema") => {
+            std::process::exit(run_schema());
+        }
+        Some("validate") => {
+            let files: Vec<String> = std::env::args().skip(2).collect();
+            std::process::exit(run_validate(&files));
+        }
         _ => {}
     }
 
     std::process::exit(run());
+}
+
+/// `seal-host-rs schema` — print the policy-bundle JSON Schema straight from
+/// the Lean authority (the schema projection of the SAME codec the init path
+/// parses with). The anti-drift gate byte-compares this output against the
+/// artifact checked into the pinned authority
+/// (`.lake/packages/mcp-seal/docs/policy-bundle.schema.json`).
+fn run_schema() -> i32 {
+    let host = lean::LeanHost::new();
+    match host.policy_schema() {
+        Ok(s) => {
+            println!("{s}");
+            0
+        }
+        Err(e) => {
+            eprintln!("schema export failed: {e}");
+            3
+        }
+    }
+}
+
+/// `seal-host-rs validate <payload.json>...` — one invocation, BOTH legs:
+/// the Lean parser chain (number guard → JSON → parsePolicyBundle →
+/// ofBundle) via FFI, and the emitted-schema validator (jsonschema crate)
+/// against the schema projection of the same codec. Envelope files
+/// (`{"payload": "...", "signature": ...}`) are unwrapped to their signed
+/// payload bytes first — NOTHING is stripped from signed policy bytes.
+///
+/// Exit is nonzero iff any file shows `schema_rejects_parsed_policy` (the
+/// schema rejecting what the Lean parser accepts — real drift) or a seam
+/// error. The converse disagreement (`parser_refinement`: Lean rejects,
+/// schema accepts) is expected for parser-only refinements (server
+/// conflict, calibration delta bound, number guard, host-layer
+/// duplicate-cap) and is reported per file for the gate script to assert.
+fn run_validate(files: &[String]) -> i32 {
+    if files.is_empty() {
+        eprintln!("usage: seal-host-rs validate <payload-or-envelope.json>...");
+        return 2;
+    }
+    let host = lean::LeanHost::new();
+    let schema_text = match host.policy_schema() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("schema export failed: {e}");
+            return 3;
+        }
+    };
+    let schema_json: serde_json::Value = match serde_json::from_str(&schema_text) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("emitted schema is not JSON: {e}");
+            return 3;
+        }
+    };
+    let validator = match jsonschema::validator_for(&schema_json) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("emitted schema failed to compile: {e}");
+            return 3;
+        }
+    };
+
+    let mut hard_failures = 0i32;
+    for path in files {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("{path}: cannot read: {e}");
+                hard_failures += 1;
+                continue;
+            }
+        };
+        // Envelope unwrap: validate the exact signed payload bytes.
+        let (payload_text, from_envelope) = match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(v) => match v.get("payload").and_then(|p| p.as_str()) {
+                Some(p) if v.get("signature").is_some() => (p.to_string(), true),
+                _ => (raw.clone(), false),
+            },
+            Err(_) => (raw.clone(), false),
+        };
+
+        let lean_verdict: serde_json::Value = match host.policy_validate(&payload_text) {
+            Ok(s) => serde_json::from_str(&s).unwrap_or_else(
+                |e| serde_json::json!({"ok": false, "stage": "seam", "error": format!("unparseable verdict: {e}")}),
+            ),
+            Err(e) => {
+                eprintln!("{path}: ffi seam error: {e}");
+                hard_failures += 1;
+                continue;
+            }
+        };
+        let lean_ok = lean_verdict
+            .get("ok")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+        let lean_stage = lean_verdict
+            .get("stage")
+            .and_then(|s| s.as_str())
+            .unwrap_or("ok");
+
+        let (schema_ok, schema_error) =
+            match serde_json::from_str::<serde_json::Value>(&payload_text) {
+                Ok(instance) => match validator.validate(&instance) {
+                    Ok(()) => (true, serde_json::Value::Null),
+                    Err(e) => (false, serde_json::Value::String(e.to_string())),
+                },
+                Err(e) => (false, serde_json::Value::String(format!("not JSON: {e}"))),
+            };
+
+        let agreement = match (lean_ok, schema_ok) {
+            (true, true) => "agree_accept",
+            (false, false) => "agree_reject",
+            (false, true) => "parser_refinement",
+            (true, false) => "schema_rejects_parsed_policy",
+        };
+        if agreement == "schema_rejects_parsed_policy" {
+            hard_failures += 1;
+        }
+        let line = serde_json::json!({
+            "file": path,
+            "envelope": from_envelope,
+            "lean": lean_verdict,
+            "schema_ok": schema_ok,
+            "schema_error": schema_error,
+            "agreement": agreement,
+            "lean_stage": lean_stage,
+        });
+        println!("{line}");
+    }
+    if hard_failures > 0 {
+        eprintln!("validate: {hard_failures} hard failure(s) — schema/parser drift or seam error");
+        1
+    } else {
+        0
+    }
 }
 
 fn run() -> i32 {

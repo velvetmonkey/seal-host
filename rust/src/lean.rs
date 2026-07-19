@@ -69,6 +69,8 @@ extern "C" {
     fn seal_host_init(envelope: LeanObj, pubkey: LeanObj) -> LeanObj;
     fn seal_host_step(input: LeanObj) -> LeanObj;
     fn seal_host_classify(line: LeanObj) -> c_uint;
+    fn seal_policy_schema(unit: LeanObj) -> LeanObj;
+    fn seal_policy_validate(payload: LeanObj) -> LeanObj;
 }
 
 /// Any failure of the FFI seam. Callers MUST treat every variant as Block;
@@ -201,6 +203,19 @@ impl LeanHost {
 
     pub fn step(&self, input: &str) -> Result<String, SeamError> {
         self.call_string(|| unsafe { seal_host_step(to_lean_string(input)) })
+    }
+
+    /// The policy-bundle JSON Schema — the schema projection of the SAME
+    /// Lean codec whose parse projection the init path runs.
+    pub fn policy_schema(&self) -> Result<String, SeamError> {
+        self.call_string(|| unsafe { seal_policy_schema(lean_world()) })
+    }
+
+    /// Validate raw policy-bundle payload text through the Lean authority
+    /// (number guard → JSON → parsePolicyBundle → ofBundle); returns the
+    /// verdict JSON emitted by `seal_policy_validate`.
+    pub fn policy_validate(&self, payload: &str) -> Result<String, SeamError> {
+        self.call_string(|| unsafe { seal_policy_validate(to_lean_string(payload)) })
     }
 
     pub fn classify(&self, line: &str) -> Result<u32, SeamError> {
