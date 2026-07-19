@@ -1,0 +1,22 @@
+[package]
+name = "seal-host-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+seal-host-rs = { path = ".." }
+
+[[bin]]
+name = "hostile_ingress"
+path = "fuzz_targets/hostile_ingress.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

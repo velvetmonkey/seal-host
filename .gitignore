@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 /rust/target
+/rust/fuzz/target
+/rust/fuzz/artifacts
+/rust/fuzz/corpus
+/fuzz
 /demo/out/
 
 
