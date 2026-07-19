@@ -57,6 +57,11 @@ for deployability.** Everything in Shape 1, plus:
   properties *given* the `now` and the evidence the host hands them — A3 is
   exactly the host-side state and clock the proofs assume. The legacy
   control-file/interactive demo channels keep in-memory replay state only.
+- the bounded stdout frame queue (`output.rs`) and private filesystem helpers
+  (`secure_fs.rs`): these are tested Rust transport controls, not Lean proofs.
+  The audit head state and decision receipts rely on file `fsync`, atomic
+  rename, parent-directory `fsync`, Unix ownership, and exact modes behaving
+  as checked by the host.
 - the differential conformance harness (`rust/tests/differential.rs`) pins
   the residual wire-parser gap: property-based agreement between the Rust
   serde_json wire view and the Lean canonical parser on what gets mediated

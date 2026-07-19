@@ -7,6 +7,7 @@ pub mod a3;
 pub mod decision_receipt;
 pub mod lean;
 pub mod limits;
+pub mod output;
 pub mod providers;
 pub mod receipt;
 pub mod replay_store;

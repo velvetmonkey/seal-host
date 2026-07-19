@@ -17,6 +17,7 @@ pub const MAX_AUXILIARY_FILE_BYTES: usize = 4 * 1024 * 1024;
 pub enum FrameStatus {
     Eof,
     Complete,
+    Unterminated,
     Oversized,
 }
 
@@ -39,7 +40,7 @@ pub fn read_bounded_frame<R: BufRead>(
             } else if oversized {
                 FrameStatus::Oversized
             } else {
-                FrameStatus::Complete
+                FrameStatus::Unterminated
             });
         }
         saw_any = true;
@@ -185,6 +186,17 @@ mod tests {
             FrameStatus::Complete
         );
         assert_eq!(frame, b"ok\n");
+    }
+
+    #[test]
+    fn eof_distinguishes_partial_frame() {
+        let mut reader = Cursor::new(b"partial".to_vec());
+        let mut frame = Vec::new();
+        assert_eq!(
+            read_bounded_frame(&mut reader, &mut frame, 16).unwrap(),
+            FrameStatus::Unterminated
+        );
+        assert_eq!(frame, b"partial");
     }
 
     #[test]

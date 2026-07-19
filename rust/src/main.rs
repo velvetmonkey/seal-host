@@ -45,6 +45,7 @@ use seal_host_rs::limits::{
     check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus,
     MAX_AUXILIARY_FILE_BYTES, MAX_PENDING_APPROVALS, MAX_WIRE_MESSAGE_BYTES,
 };
+use seal_host_rs::output::{OutputQueue, OutputSender};
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
 use seal_host_rs::replay_store::SqliteReplayStore;
@@ -82,9 +83,10 @@ impl Channel {
         }
     }
 }
-use std::io::{Read, Write};
+use std::io::{BufReader, Write};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 struct Args {
     config: String,
@@ -369,16 +371,39 @@ impl GrantsCursor {
     }
 }
 
-fn write_locked(lock: &Mutex<()>, line: &str) {
-    let _g = lock.lock().unwrap();
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(line.as_bytes());
-    let _ = out.flush();
+fn write_frame(output: &OutputSender, line: &str) -> Result<(), ()> {
+    output.send_frame(line.as_bytes()).map_err(|error| {
+        eprintln!("{}", json!({"error": error}));
+    })
 }
 
-fn emit_audit(receipts: &mut ReceiptChain, audit: &str) {
+fn write_child(child: &mut impl Write, bytes: &[u8]) -> Result<(), ()> {
+    child
+        .write_all(bytes)
+        .and_then(|_| child.flush())
+        .map_err(|error| {
+            eprintln!(
+                "{}",
+                json!({"error": format!("downstream child transport failed: {error}")})
+            );
+        })
+}
+
+fn emit_audit(receipts: &mut ReceiptChain, audit: &str) -> Result<(), ()> {
     eprintln!("{audit}");
-    eprintln!("{}", receipts.observe(audit).to_json_line());
+    match receipts.observe(audit) {
+        Ok(record) => {
+            eprintln!("{}", record.to_json_line());
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"error": "audit head persistence failure", "detail": error})
+            );
+            Err(())
+        }
+    }
 }
 
 /// Render one dropped-approval warning as a single audit line. The reason holds
@@ -939,7 +964,13 @@ fn run() -> i32 {
     // reuses the approval TTL from the signed config.
     let mut a3_env = a3::A3Filter::new(ttl_ms);
     let mut envelope_drops: u64 = 0;
-    let mut receipts = ReceiptChain::new();
+    let mut receipts = match ReceiptChain::open(&receipt_dir, &receipt_session) {
+        Ok(chain) => chain,
+        Err(error) => {
+            eprintln!("audit state rejected: {error}");
+            return 4;
+        }
+    };
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
     let interactive = args.channel == "interactive";
 
@@ -957,20 +988,49 @@ fn run() -> i32 {
         }
     };
     let mut child_in = child.stdin.take().expect("child stdin");
-    let mut child_out = child.stdout.take().expect("child stdout");
+    let child_out = child.stdout.take().expect("child stdout");
 
-    let stdout_lock = Arc::new(Mutex::new(()));
-    let relay_lock = stdout_lock.clone();
+    let output_queue = OutputQueue::stdout();
+    let output = output_queue.sender();
+    let relay_output = output.clone();
+    let downstream_dead = Arc::new(AtomicBool::new(false));
+    let relay_dead = downstream_dead.clone();
     let relay = std::thread::spawn(move || {
-        let mut buf = [0u8; 65536];
+        let mut reader = BufReader::new(child_out);
+        let mut frame = Vec::new();
         loop {
-            match child_out.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let _g = relay_lock.lock().unwrap();
-                    let mut out = std::io::stdout().lock();
-                    let _ = out.write_all(&buf[..n]);
-                    let _ = out.flush();
+            match read_bounded_frame(&mut reader, &mut frame, MAX_WIRE_MESSAGE_BYTES) {
+                Ok(FrameStatus::Complete) => {
+                    if let Err(error) = relay_output.send_frame(&frame) {
+                        eprintln!("{}", json!({"error": error}));
+                        relay_dead.store(true, Ordering::Release);
+                        break;
+                    }
+                }
+                Ok(FrameStatus::Eof) => {
+                    relay_dead.store(true, Ordering::Release);
+                    break;
+                }
+                Ok(FrameStatus::Unterminated) => {
+                    eprintln!(
+                        "{}",
+                        json!({"error": "downstream child emitted an unterminated frame"})
+                    );
+                    relay_dead.store(true, Ordering::Release);
+                    break;
+                }
+                Ok(FrameStatus::Oversized) => {
+                    emit_resource_limit("downstream_wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
+                    relay_dead.store(true, Ordering::Release);
+                    break;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        json!({"error": format!("downstream child read failed: {error}")})
+                    );
+                    relay_dead.store(true, Ordering::Release);
+                    break;
                 }
             }
         }
@@ -987,10 +1047,12 @@ fn run() -> i32 {
         wire.clear();
         match read_bounded_frame(&mut reader, &mut wire, MAX_WIRE_MESSAGE_BYTES) {
             Ok(FrameStatus::Eof) => break,
-            Ok(FrameStatus::Complete) => {}
+            Ok(FrameStatus::Complete | FrameStatus::Unterminated) => {}
             Ok(FrameStatus::Oversized) => {
                 emit_resource_limit("wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
-                write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+                if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
             Err(e) => {
@@ -999,17 +1061,29 @@ fn run() -> i32 {
             }
         }
 
+        if output.has_failed() {
+            break;
+        }
+        if downstream_dead.load(Ordering::Acquire) {
+            let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+            break;
+        }
+
         // The Lean view must be valid UTF-8 (Lean strings are UTF-8). A
         // non-UTF-8 line cannot be judged, so it cannot be forwarded:
         // refuse it and keep the session alive.
         let Ok(line) = std::str::from_utf8(lean_view(&wire)) else {
             eprintln!("{}", json!({"error": "non-utf8 line refused"}));
-            write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                break;
+            }
             continue;
         };
         if let Err(limit) = check_json_limits(line.as_bytes()) {
             emit_resource_limit(limit.name(), limit.maximum());
-            write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+            if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                break;
+            }
             continue;
         }
         // V2.1 envelope extraction — ONCE, BEFORE classify (a wrapper line
@@ -1027,7 +1101,9 @@ fn run() -> i32 {
                     "{}",
                     json!({"error": format!("malformed principal envelope refused: {reason}")})
                 );
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         };
@@ -1035,7 +1111,9 @@ fn run() -> i32 {
         if inner.is_some() {
             if let Err(limit) = check_json_limits(line.as_bytes()) {
                 emit_resource_limit(limit.name(), limit.maximum());
-                write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+                if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         }
@@ -1068,8 +1146,10 @@ fn run() -> i32 {
                 // framing: no verification, no nonce burn (freshness gates
                 // decisions; passthrough lines carry none) — the INNER bytes
                 // flow to the child.
-                let _ = child_in.write_all(&forward);
-                let _ = child_in.flush();
+                if write_child(&mut child_in, &forward).is_err() {
+                    let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                    break;
+                }
                 continue;
             }
             ClassifyRoute::Mediate => {}
@@ -1078,7 +1158,9 @@ fn run() -> i32 {
                     "{}",
                     json!({"error": "classify seam failure; line refused"})
                 );
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         }
@@ -1089,7 +1171,9 @@ fn run() -> i32 {
         if !admit_pending_approvals(&mut pending_approvals, &records, now, ttl_ms) {
             warnings.extend(a3_warnings);
             emit_approval_drop_warnings(&warnings);
-            write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+            if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                break;
+            }
             continue;
         }
         warnings.extend(a3_warnings);
@@ -1153,14 +1237,21 @@ fn run() -> i32 {
             Ok(output) => output,
             Err(error) => {
                 eprintln!("{}", json!({"error": format!("seam error: {error}")}));
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         };
         match route_of_step_output(Ok(step_output.clone())) {
             Route::Forward { audit } => {
                 if let Some(a) = audit {
-                    emit_audit(&mut receipts, &a);
+                    if emit_audit(&mut receipts, &a).is_err() {
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
                 }
                 let consumed = match persist_decision(
                     &mut decision_receipts,
@@ -1178,7 +1269,9 @@ fn run() -> i32 {
                 ) {
                     Ok(consumed) => consumed,
                     Err(()) => {
-                        write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
                         continue;
                     }
                 };
@@ -1193,15 +1286,22 @@ fn run() -> i32 {
                     reduced_scope_forwards += 1;
                     eprintln!("{signal}");
                 }
-                let _ = child_in.write_all(&forward);
-                let _ = child_in.flush();
+                if write_child(&mut child_in, &forward).is_err() {
+                    let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                    break;
+                }
             }
             Route::Block {
                 mut response,
                 audit,
             } => {
                 if let Some(a) = audit {
-                    emit_audit(&mut receipts, &a);
+                    if emit_audit(&mut receipts, &a).is_err() {
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
                 }
                 if persist_decision(
                     &mut decision_receipts,
@@ -1219,7 +1319,9 @@ fn run() -> i32 {
                 )
                 .is_err()
                 {
-                    write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                        break;
+                    }
                     continue;
                 }
 
@@ -1237,12 +1339,19 @@ fn run() -> i32 {
                     if declines.iter().any(|d| d.target == target) {
                         let refused_audit =
                             format!("approval refused: {} (explicit signed decline)", target);
-                        emit_audit(&mut receipts, &refused_audit);
+                        if emit_audit(&mut receipts, &refused_audit).is_err() {
+                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                         let refused = format!(
                             "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",
                             target
                         );
-                        write_locked(&stdout_lock, &refused);
+                        if write_frame(&output, &refused).is_err() {
+                            break;
+                        }
                         continue;
                     }
                 }
@@ -1274,7 +1383,9 @@ fn run() -> i32 {
                         ) {
                             warnings.extend(a3_warnings);
                             emit_approval_drop_warnings(&warnings);
-                            write_locked(&stdout_lock, RESOURCE_LIMIT_RESPONSE);
+                            if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                                break;
+                            }
                             continue;
                         }
                         warnings.extend(a3_warnings);
@@ -1309,14 +1420,21 @@ fn run() -> i32 {
                                         "{}",
                                         json!({"error": format!("seam error: {error}")})
                                     );
-                                    write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                        break;
+                                    }
                                     continue;
                                 }
                             };
                             match route_of_step_output(Ok(retry_output.clone())) {
                                 Route::Forward { audit } => {
                                     if let Some(a) = audit {
-                                        emit_audit(&mut receipts, &a);
+                                        if emit_audit(&mut receipts, &a).is_err() {
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
                                     }
                                     let consumed = match persist_decision(
                                         &mut decision_receipts,
@@ -1334,13 +1452,17 @@ fn run() -> i32 {
                                     ) {
                                         Ok(consumed) => consumed,
                                         Err(()) => {
-                                            write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
                                             continue;
                                         }
                                     };
                                     consume_pending_approval(&mut pending_approvals, consumed);
-                                    let _ = child_in.write_all(&forward);
-                                    let _ = child_in.flush();
+                                    if write_child(&mut child_in, &forward).is_err() {
+                                        let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                                        break;
+                                    }
                                     continue;
                                 }
                                 Route::Block {
@@ -1348,7 +1470,12 @@ fn run() -> i32 {
                                     audit,
                                 } => {
                                     if let Some(a) = audit {
-                                        emit_audit(&mut receipts, &a);
+                                        if emit_audit(&mut receipts, &a).is_err() {
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
                                     }
                                     if persist_decision(
                                         &mut decision_receipts,
@@ -1366,7 +1493,9 @@ fn run() -> i32 {
                                     )
                                     .is_err()
                                     {
-                                        write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                            break;
+                                        }
                                         continue;
                                     }
                                     response = r2;
@@ -1379,11 +1508,15 @@ fn run() -> i32 {
                         }
                     }
                 }
-                write_locked(&stdout_lock, &response);
+                if write_frame(&output, &response).is_err() {
+                    break;
+                }
             }
             Route::SeamFailure { reason } => {
                 eprintln!("{}", json!({"error": reason}));
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
             }
         }
     }
@@ -1391,6 +1524,7 @@ fn run() -> i32 {
     let _ = child.kill();
     let code = child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(0);
     let _ = relay.join();
+    output_queue.shutdown();
     code
 }
 

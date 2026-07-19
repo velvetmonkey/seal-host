@@ -736,6 +736,15 @@ fn pinned_defect_denied_call_retires_valid_approval() {
         "D's deny must be unrelated to T's approval"
     );
 
+    let before_restart = o.drain_stderr(Duration::from_millis(200));
+    let prior_record = before_restart
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value["seal_record"] == "v1")
+        .last()
+        .expect("pre-restart audit record")
+        .clone();
+
     // Host restarts (the sqlite replay store is the state that survives).
     o.restart();
 
@@ -752,6 +761,17 @@ fn pinned_defect_denied_call_retires_valid_approval() {
          if this forwards, the defect was fixed — update this pin: {resp}"
     );
     let stderr = o.drain_stderr(Duration::from_millis(200));
+    let restarted_record = stderr
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["seal_record"] == "v1")
+        .expect("post-restart audit record");
+    assert_eq!(restarted_record["prev_head"], prior_record["head"]);
+    assert_eq!(
+        restarted_record["prior_session"], prior_record["session"],
+        "first record after restart must cross-link the prior process session"
+    );
+    assert_ne!(restarted_record["session"], prior_record["session"]);
     assert!(
         stderr.iter().any(|l| l.contains("replayed_nonce")),
         "the resubmitted token dies as a nonce replay: {stderr:?}"
@@ -807,9 +827,10 @@ fn receipt_sink_failure_blocks_before_child_forward() {
     );
     let stderr = o.drain_stderr(Duration::from_millis(100));
     assert!(
-        stderr
-            .iter()
-            .any(|line| line.contains("receipt persistence failure")),
+        stderr.iter().any(|line| {
+            line.contains("receipt persistence failure")
+                || line.contains("audit head persistence failure")
+        }),
         "operator must see the availability failure: {stderr:?}"
     );
 }
