@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A1 — the 32-topology capability matrix, generated and asserted against
+//! A1 — the 64-topology capability matrix, generated and asserted against
 //! the deployed binary.
 //!
 //! `Ffi.registryFor_kernels` (FfiSpec.lean) already PROVES the registry
 //! registers exactly `activeKernels s.config` — Safety and Temporal always,
 //! consensus/convergence/calibration/linear/budget iff the config selects
-//! them, calibration double-gated. This suite does NOT re-assert registry
-//! construction; it asserts the layer the theorem cannot reach: the shipped
-//! `seal-host-rs` process, at each of the 32 deployable configs, actually
+//! them, calibration double-gated, principal-budget (V2.1) iff `principals`
+//! is present+enabled. This suite does NOT re-assert registry construction;
+//! it asserts the layer the theorem cannot reach: the shipped
+//! `seal-host-rs` process, at each of the 64 deployable configs, actually
 //! ENFORCES what that registry implies.
 //!
-//! For every config (5-bit mask over {C,V,K,L,B}; S+T unconditional):
+//! For every config (6-bit mask over {C,V,K,L,B,PB}; S+T unconditional):
 //!
 //!   - every ACTIVE kernel is shown DENYING a real call through the real
 //!     host, with a persisted receipt naming it in `deny_kernel`;
@@ -48,12 +49,16 @@ const BIT_CONVERGENCE: u8 = 2;
 const BIT_CALIBRATION: u8 = 4;
 const BIT_LINEAR: u8 = 8;
 const BIT_BUDGET: u8 = 16;
+const BIT_PRINCIPAL_BUDGET: u8 = 32;
 
-/// The five optional kernels in registry order, each with its dedicated
+/// The six optional kernels in registry order, each with its dedicated
 /// probe tool and the reason substring its deny cert must carry. Probe tools
 /// are pairwise disjoint and disjoint from the safety/temporal probes, so at
 /// most one optional kernel gates any call and `deny_kernel` is unambiguous.
-const PROBES: [(u8, &str, &str, &str); 5] = [
+/// Kernel PB's probe is envelope-LESS on a PB-gated tool: mixed-mode
+/// fail-closed denies it outright ("principal envelope required"), so the
+/// probe needs no signed principal envelope.
+const PROBES: [(u8, &str, &str, &str); 6] = [
     (
         BIT_CONSENSUS,
         "consensus",
@@ -74,6 +79,12 @@ const PROBES: [(u8, &str, &str, &str); 5] = [
     ),
     (BIT_LINEAR, "linear", "key.use", "capability exhausted"),
     (BIT_BUDGET, "budget", "notes.add", "over budget"),
+    (
+        BIT_PRINCIPAL_BUDGET,
+        "principal_budget",
+        "ledger.post",
+        "principal envelope required",
+    ),
 ];
 
 /// Calibration's three config states. `Disabled` is the double gate's
@@ -156,6 +167,7 @@ fn write_config(mask: u8, cal: CalVariant, dir: &Path) -> (PathBuf, String) {
         "model.act",
         "key.use",
         "notes.add",
+        "ledger.post",
     ] {
         tools.push(json!({
             "name": tool,
@@ -234,6 +246,18 @@ fn write_config(mask: u8, cal: CalVariant, dir: &Path) -> (PathBuf, String) {
         obj.insert(
             "budget".into(),
             json!({"budgets": [{"name": "notes", "cap": 0, "tools": ["notes.add"]}]}),
+        );
+    }
+    if mask & BIT_PRINCIPAL_BUDGET != 0 {
+        obj.insert(
+            "principals".into(),
+            json!({
+                "keys": [{
+                    "id": "alice",
+                    "pubkey": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                }],
+                "budgets": [{"name": "prin", "cap": 0, "tools": ["ledger.post"]}]
+            }),
         );
     }
 
@@ -390,9 +414,9 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
     host.send(init);
     assert_eq!(host.expect_line(&ctx), init, "[{ctx}] passthrough echo");
 
-    // Calls 1..5: one probe per optional kernel, registry order. 6: safety
-    // deny. 7: temporal trigger (forwarded — the only state-advancing call,
-    // so it precedes only the call that needs it). 8: temporal deny.
+    // Calls 1..6: one probe per optional kernel, registry order. 7: safety
+    // deny. 8: temporal trigger (forwarded — the only state-advancing call,
+    // so it precedes only the call that needs it). 9: temporal deny.
     let sequence: Vec<(&str, bool)> = PROBES
         .iter()
         .map(|&(bit, _, tool, _)| (tool, mask & bit != 0))
@@ -419,10 +443,10 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
         responses.push(response);
     }
 
-    // Every receipt is persisted before its response line, so after eight
-    // responses the eight receipts are on disk.
+    // Every receipt is persisted before its response line, so after nine
+    // responses the nine receipts are on disk.
     let receipts = host.receipts();
-    assert_eq!(receipts.len(), 8, "[{ctx}] one receipt per mediated call");
+    assert_eq!(receipts.len(), 9, "[{ctx}] one receipt per mediated call");
 
     let st: BTreeSet<String> = ["safety", "temporal"]
         .iter()
@@ -479,7 +503,7 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
 
     // Safety and Temporal shown DENYING at every topology — their presence
     // is a theorem; their teeth are what these three receipts pin.
-    let safety = &receipts[5];
+    let safety = &receipts[6];
     assert_eq!(safety["verdict"], "BLOCK", "[{ctx}] safety probe");
     assert_eq!(safety["deny_kernel"], "safety", "[{ctx}] safety probe");
     assert_eq!(cert_kernels(safety), st, "[{ctx}] safety probe certs");
@@ -489,11 +513,11 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
         "[{ctx}] guarded deny reason must be the 64-hex target, got {target:?}"
     );
 
-    let trigger = &receipts[6];
+    let trigger = &receipts[7];
     assert_eq!(trigger["verdict"], "ALLOW", "[{ctx}] trigger forwards");
     assert_eq!(cert_kernels(trigger), st, "[{ctx}] trigger certs");
 
-    let temporal = &receipts[7];
+    let temporal = &receipts[8];
     assert_eq!(temporal["verdict"], "BLOCK", "[{ctx}] temporal probe");
     assert_eq!(
         temporal["deny_kernel"], "temporal",
@@ -509,37 +533,37 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
     receipts.iter().map(outcome_of).collect()
 }
 
-/// The generated mask space partitions exactly: 16 calibration-active + 16
-/// calibration-inactive = the 32 deployable topologies, disjoint. Pure
-/// arithmetic pin for the two spawning tests below.
+/// The generated mask space partitions exactly: 32 calibration-active + 32
+/// calibration-inactive = the 64 deployable topologies (V2.1 adds the PB
+/// bit), disjoint. Pure arithmetic pin for the two spawning tests below.
 #[test]
 fn topology_masks_partition() {
-    let k_set: Vec<u8> = (0u8..32).filter(|m| m & BIT_CALIBRATION != 0).collect();
-    let k_clear: Vec<u8> = (0u8..32).filter(|m| m & BIT_CALIBRATION == 0).collect();
-    assert_eq!(k_set.len(), 16);
-    assert_eq!(k_clear.len(), 16);
+    let k_set: Vec<u8> = (0u8..64).filter(|m| m & BIT_CALIBRATION != 0).collect();
+    let k_clear: Vec<u8> = (0u8..64).filter(|m| m & BIT_CALIBRATION == 0).collect();
+    assert_eq!(k_set.len(), 32);
+    assert_eq!(k_clear.len(), 32);
     let union: BTreeSet<u8> = k_set.iter().chain(k_clear.iter()).copied().collect();
-    assert_eq!(union, (0u8..32).collect::<BTreeSet<u8>>());
+    assert_eq!(union, (0u8..64).collect::<BTreeSet<u8>>());
 }
 
-/// The 16 topologies with calibration active.
+/// The 32 topologies with calibration active.
 #[test]
 fn topology_matrix_calibration_enabled() {
-    let masks: Vec<u8> = (0u8..32).filter(|m| m & BIT_CALIBRATION != 0).collect();
-    assert_eq!(masks.len(), 16);
+    let masks: Vec<u8> = (0u8..64).filter(|m| m & BIT_CALIBRATION != 0).collect();
+    assert_eq!(masks.len(), 32);
     for mask in masks {
         run_config(mask, CalVariant::Active, "act");
     }
 }
 
-/// The 16 topologies with calibration inactive, each run TWICE: section
+/// The 32 topologies with calibration inactive, each run TWICE: section
 /// absent, and section present with `enabled: false`. Both must be inactive
 /// and neither may weaken any other kernel — the two runs must be
 /// behaviourally identical, call for call.
 #[test]
 fn topology_matrix_calibration_absent_vs_disabled() {
-    let masks: Vec<u8> = (0u8..32).filter(|m| m & BIT_CALIBRATION == 0).collect();
-    assert_eq!(masks.len(), 16);
+    let masks: Vec<u8> = (0u8..64).filter(|m| m & BIT_CALIBRATION == 0).collect();
+    assert_eq!(masks.len(), 32);
     for mask in masks {
         let absent = run_config(mask, CalVariant::Absent, "abs");
         let disabled = run_config(mask, CalVariant::Disabled, "dis");

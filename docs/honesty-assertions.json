@@ -65,6 +65,14 @@
       "assertedBy": "Monkey",
       "date": "2026-07-16",
       "rationale": "Re-established 2026-07-16 against the CLI as well as the docs: nothing in CONFIG.md or the config parser (Host/Config.lean) names this kernel, the kit's validator knows only the seven sections (src/trusted-config.cjs), and `seal add-kernel` accepts only S/T/C/V/K/L/B — there is no letter and no JSON key a user could write that selects it. Consistent with the proof (Ffi.byteConsensus_never_registered) but asserted separately: absence from the DX surface is a human reading, not a theorem."
+    },
+    {
+      "kernel": "principal_budget",
+      "column": "reachable",
+      "value": "no — hand-authored `principals` JSON only; no `seal add-kernel` support (V2.1, DX pending)",
+      "assertedBy": "Fable (builder — PENDING operator countersign at frisk)",
+      "date": "2026-07-19",
+      "rationale": "The shipped policy DX (seal-assurance-kit, frozen pin) predates V2.1: `seal add-kernel` has no PB letter and no recipe emits a `principals` section, so the only authoring path is hand-writing the section per the schema/CONFIG (id + 64-hex pubkey registry, per-principal budgets — `seal validate` lints it). Asserted from the kit pin's vocabulary, not by running new DX; re-assert when the kit gains PB authoring."
     }
   ]
 }

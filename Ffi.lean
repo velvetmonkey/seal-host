@@ -40,6 +40,7 @@ structure Session where
   temporalRef : IO.Ref Kernels.TemporalState
   linearRef : IO.Ref LinearCore.LState
   budgetRef : IO.Ref Kernels.BudgetState
+  principalBudgetRef : IO.Ref Kernels.PBState
   unitRef : IO.Ref Unit
 
 initialize sessionRef : IO.Ref (Option Session) ← IO.mkRef none
@@ -54,6 +55,7 @@ private def initFromConfig (config : TrustedConfig) : IO String := do
     temporalRef := ← IO.mkRef Kernels.temporalKernel.init
     linearRef := ← IO.mkRef LinearCore.LState.empty
     budgetRef := ← IO.mkRef []
+    principalBudgetRef := ← IO.mkRef []
     unitRef := ← IO.mkRef ()
   }
   sessionRef.set (some session)
@@ -87,7 +89,8 @@ def registryFor (s : Session) (now : Nat)
     (approvalEvents : List SealCore.Event)
     (votes : Consensus.Checker.Votes)
     (grants : List LinearCore.LEvent)
-    (forecasts : List Kernels.ForecastRecord) : Registry :=
+    (forecasts : List Kernels.ForecastRecord)
+    (principal? : Option Host.AuthenticatedPrincipal) : Registry :=
   [ { kernel := Kernels.safetyKernel
       config := s.config.safety
       stateRef := s.safetyRef
@@ -121,6 +124,16 @@ def registryFor (s : Session) (now : Nat)
       else
         [{ kernel := Kernels.budgetKernel, config := s.config.budget,
            stateRef := s.budgetRef, gather := fun _ => pure () }])
+  ++ (match s.config.principals with
+      | some cfg =>
+          -- Kernel PB (V2.1). Its evidence is the parse-path-verified
+          -- principal — a constant-pure gather (`registryFor_gather_pure`
+          -- extends over it): the value was produced by `Host.verifyEnvelope`
+          -- in `stepImpl`'s marshalling, never by this IO closure and never
+          -- by the Rust host.
+          [{ kernel := Kernels.principalBudgetKernel, config := cfg,
+             stateRef := s.principalBudgetRef, gather := fun _ => pure principal? }]
+      | none => [])
 
 private def getStrD (j : Json) (key : String) (d : String) : String :=
   ((j.getObjVal? key).toOption.bind (·.getStr?.toOption)).getD d
@@ -139,11 +152,27 @@ private def refuseResponseLine : String :=
     ])
   ]).compress ++ "\n"
 
+/-- The V2.1 `principal` output member: `[("principal", <id>)]` when the
+    parse path authenticated a principal, `[]` otherwise. Public for
+    SPECIFICATION only (the receipt model half below and R-PRINC); the
+    runtime callers are `stepImpl` and `stepRender`, which share this one
+    definition — the output field has exactly one producer. -/
+def principalOutField (principal? : Option Host.AuthenticatedPrincipal) :
+    List (String × Json) :=
+  match principal? with
+  | some p => [("principal", Json.str p.id)]
+  | none => []
+
 /-- One mediation step. Input JSON:
-    `{line, now, approvals: [{target, issuedAt?}], votes, grants, forecasts}`
+    `{line, now, approvals: [{target, issuedAt?}], votes, grants, forecasts,
+    envelope?: {key_id, sig, nonce, issued_at}}`
     (votes/grants/forecasts as raw file text; approvals already A3-filtered
-    by the Rust host). Output JSON:
-    `{route: "passthrough"|"forward"|"block", response?, audit?}`. -/
+    by the Rust host; `envelope` carries the RAW V2.1 principal-envelope
+    fields — nonce-freshness-filtered but NEVER verified or interpreted by
+    Rust: `Host.verifyEnvelope` runs HERE, in the parse path, against the
+    signed config's principal registry and the exact judged `line`). Output
+    JSON: `{route: "passthrough"|"forward"|"block", response?, audit?,
+    principal?}` — `principal` present iff the envelope verified. -/
 private def stepImpl (inputText : String) : IO String := do
   let some session ← sessionRef.get
     | pure (errJson "session not initialised")
@@ -167,6 +196,24 @@ private def stepImpl (inputText : String) : IO String := do
       let votes := Host.Evidence.parseVotesText (getStrD input "votes" "")
       let grants := Host.Evidence.parseGrantsText (getStrD input "grants" "")
       let forecasts := Host.Evidence.parseForecastsText (getStrD input "forecasts" "")
+      -- V2.1 principal derivation — IN THE PARSE PATH. The extern is reached
+      -- only when an `envelope` object is present AND the config carries a
+      -- principals section, so envelope-less traffic (the whole existing
+      -- corpus, and every interpreter lane) never touches the Ed25519 leaf.
+      -- The line verified is the SAME `line` binding `classifyLine` judges
+      -- and `auditLine` commits to — the signature covers the exact judged
+      -- bytes.
+      let principal? :=
+        match (input.getObjVal? "envelope").toOption, session.config.principals with
+        | some env, some pcfg =>
+            Host.verifyEnvelope pcfg.registry
+              { keyId := getStrD env "key_id" ""
+                sigHex := getStrD env "sig" ""
+                nonceHex := getStrD env "nonce" ""
+                issuedAt := ((env.getObjVal? "issued_at").toOption.bind
+                  (·.getNat?.toOption)).getD 0 }
+              line
+        | _, _ => none
       let lc := classifyLine line
       match lc with
       | .passthrough =>
@@ -182,6 +229,7 @@ private def stepImpl (inputText : String) : IO String := do
           ]).compress
       | .act act => do
           let registry := registryFor session now approvals votes grants forecasts
+            principal?
           let (combined, verdicts) ← dispatch registry act
           -- `line` is the SAME binding `classifyLine` judged above — one
           -- binding, no rewrites (mirrors rust/src/main.rs). The kernel's
@@ -193,24 +241,31 @@ private def stepImpl (inputText : String) : IO String := do
           -- = .allow` (`stepRoute_act_forward_iff`), and `dispatch` returns
           -- `combined = combineVerdicts verdicts`, so this is byte-identical to
           -- routing on `combined` directly.
+          -- The V2.1 `principal` output field: the parse-path-verified
+          -- principal's id, or absent — NEVER a request-derived string
+          -- (`stepOutFields_principal` pins the model; R-PRINC discharges the
+          -- Rust assembler side). Emitted on both routes so a denied call's
+          -- receipt still names who was debited/denied.
+          let principalField := principalOutField principal?
           match Host.stepRoute lc verdicts with
           | .forward =>
-              pure (Json.mkObj [
-                ("route", Json.str "forward"), ("audit", Json.str audit)]).compress
+              pure (Json.mkObj ([
+                ("route", Json.str "forward"), ("audit", Json.str audit)]
+                ++ principalField)).compress
           | .block =>
-              pure (Json.mkObj [
+              pure (Json.mkObj ([
                 ("route", Json.str "block"),
                 ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
                 ("audit", Json.str audit)
-              ]).compress
+              ] ++ principalField)).compress
           | .passthrough =>
               -- Unreachable: `stepRoute (.act _)` is `.forward`/`.block` only.
               -- Fail-closed to block if ever reached.
-              pure (Json.mkObj [
+              pure (Json.mkObj ([
                 ("route", Json.str "block"),
                 ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
                 ("audit", Json.str audit)
-              ]).compress
+              ] ++ principalField)).compress
 
 /-- Conformance-bridge model oracle. These call the SAME private `initImpl` /
     `stepImpl` the FFI exports below wrap, but WITHOUT the `unsafe`/`unsafeBaseIO`
@@ -326,6 +381,10 @@ structure StepInputs where
   votes : Consensus.Checker.Votes
   grants : List LinearCore.LEvent
   forecasts : List Kernels.ForecastRecord
+  /-- V2.1: the parse-path-verified principal — `Host.verifyEnvelope` over
+      the exact judged `line`, or `none` (no envelope / no principals config /
+      verification failure — fail-closed). -/
+  principal? : Option Host.AuthenticatedPrincipal
 
 /-- The marshalling, purely. -/
 def stepInputsOf (session : Session) (input : Json) : StepInputs :=
@@ -337,7 +396,18 @@ def stepInputsOf (session : Session) (input : Json) : StepInputs :=
       now session.config.safety.approvalTtlMs
     votes := Host.Evidence.parseVotesText (getStrD input "votes" "")
     grants := Host.Evidence.parseGrantsText (getStrD input "grants" "")
-    forecasts := Host.Evidence.parseForecastsText (getStrD input "forecasts" "") }
+    forecasts := Host.Evidence.parseForecastsText (getStrD input "forecasts" "")
+    principal? :=
+      match (input.getObjVal? "envelope").toOption, session.config.principals with
+      | some env, some pcfg =>
+          Host.verifyEnvelope pcfg.registry
+            { keyId := getStrD env "key_id" ""
+              sigHex := getStrD env "sig" ""
+              nonceHex := getStrD env "nonce" ""
+              issuedAt := ((env.getObjVal? "issued_at").toOption.bind
+                (·.getNat?.toOption)).getD 0 }
+            (getStrD input "line" "")
+      | _, _ => none }
 
 /-- What one mediation step does, purely: either a fixed response line
     (fail-closed guard, parse failure, passthrough, refuse) or a mediated
@@ -373,21 +443,23 @@ def stepRender (session : Session) (inputs : StepInputs)
     (act : CanonicalAction) (combined : VerdictKind)
     (verdicts : List Verdict) : String :=
   let audit := auditLine session.config.epoch act.tool combined verdicts inputs.line
+  let principalField := principalOutField inputs.principal?
   match Host.stepRoute (classifyLine inputs.line) verdicts with
   | .forward =>
-      (Json.mkObj [("route", Json.str "forward"), ("audit", Json.str audit)]).compress
+      (Json.mkObj ([("route", Json.str "forward"), ("audit", Json.str audit)]
+        ++ principalField)).compress
   | .block =>
-      (Json.mkObj [
+      (Json.mkObj ([
         ("route", Json.str "block"),
         ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
         ("audit", Json.str audit)
-      ]).compress
+      ] ++ principalField)).compress
   | .passthrough =>
-      (Json.mkObj [
+      (Json.mkObj ([
         ("route", Json.str "block"),
         ("response", Json.str (Seal.blockResponseLine act.requestId (denyReason verdicts))),
         ("audit", Json.str audit)
-      ]).compress
+      ] ++ principalField)).compress
 
 /-- **THE STEP IS ITS PLAN.** `stepImpl` equals the pure `stepPlanFor`
     wrapped around its two IO leaves: read the session, run the plan; a
@@ -405,7 +477,7 @@ theorem stepImpl_spelled (inputText : String) :
         | .mediate inputs act => do
             let (combined, verdicts) ← dispatch
               (registryFor session inputs.now inputs.approvals inputs.votes
-                inputs.grants inputs.forecasts) act
+                inputs.grants inputs.forecasts inputs.principal?) act
             pure (stepRender session inputs act combined verdicts)) := by
   unfold stepImpl stepPlanFor stepRender stepInputsOf
   refine congrArg (sessionRef.get >>= ·) (funext fun s? => ?_)
@@ -429,6 +501,92 @@ theorem stepImpl_spelled (inputText : String) :
             cases Host.stepRoute (LineClass.act act) p.2 <;> rfl
     · simp only [hw, Bool.not_false, if_true]
 
+/-! ### The receipt principal, modelled — `receipt_principal_authenticated`
+
+The step-output `principal` member has exactly one producer
+(`principalOutField`, shared by `stepImpl` and `stepRender`), and its value
+is `stepPrincipalField` of the parse-path principal. The Lean half of the
+obligation is below; the Rust half — "the receipt assembler wrote what the
+step output says" — is the **R-PRINC seam** (`PrincipalFaithful`), the
+`Host.ReceiptIdentity.IdentityFaithful` idiom: an explicit hypothesis, NEVER
+an axiom, discharged operationally by
+`rust/tests/principal_identity.rs` including the
+plant-a-request-supplied-principal mutation drill. -/
+
+/-- The model value of the step-output/receipt `principal` field: the
+    parse-path-verified principal's id, or absent. -/
+def stepPrincipalField (principal? : Option Host.AuthenticatedPrincipal) :
+    Option String :=
+  principal?.map (·.id)
+
+/-- The output member IS the model value: `principalOutField` emits exactly
+    the `stepPrincipalField` entry when present and nothing otherwise. -/
+theorem principalOutField_lookup (principal? : Option Host.AuthenticatedPrincipal) :
+    (principalOutField principal?).lookup "principal"
+      = (stepPrincipalField principal?).map Json.str := by
+  cases principal? <;> simp [principalOutField, stepPrincipalField]
+
+/-- No principal, no field: unauthenticated steps emit byte-identical output
+    to pre-V2.1 (the member list is empty, not null-valued). -/
+theorem principalOutField_none :
+    principalOutField none = [] := rfl
+
+/-- If the output carries a principal entry, it is the id of the parse-path
+    `AuthenticatedPrincipal` — never any other string. -/
+theorem principalOutField_authenticated
+    (principal? : Option Host.AuthenticatedPrincipal) (v : Json)
+    (h : ("principal", v) ∈ principalOutField principal?) :
+    ∃ p, principal? = some p ∧ v = Json.str p.id := by
+  cases principal? with
+  | none => cases h
+  | some p =>
+      simp only [principalOutField, List.mem_cons, List.not_mem_nil,
+        or_false, Prod.mk.injEq] at h
+      exact ⟨p, rfl, h.2⟩
+
+/-- **R-PRINC (the TCB seam, made visible).** What the Rust receipt
+    assembler wrote equals the model value of the step output. Explicit
+    hypothesis, never an axiom; discharged by the differential test against
+    the real binary (`rust/tests/principal_identity.rs`), including the
+    mutation drill that plants a request-supplied principal and watches the
+    test refuse it. -/
+def PrincipalFaithful (written : Option String)
+    (principal? : Option Host.AuthenticatedPrincipal) : Prop :=
+  written = stepPrincipalField principal?
+
+/-- A faithful receipt principal came from the parse-path verification:
+    if the assembler wrote `some pid` under R-PRINC, there IS an
+    `AuthenticatedPrincipal` with that id. -/
+theorem faithful_principal_authenticated (written : Option String)
+    (principal? : Option Host.AuthenticatedPrincipal) (pid : String)
+    (hfaith : PrincipalFaithful written principal?)
+    (h : written = some pid) :
+    ∃ p, principal? = some p ∧ p.id = pid := by
+  rw [hfaith] at h
+  cases hp : principal? with
+  | none => rw [hp] at h; cases h
+  | some p =>
+      rw [hp] at h
+      simp only [stepPrincipalField, Option.map_some, Option.some.injEq] at h
+      exact ⟨p, rfl, h⟩
+
+/-- **`receipt_principal_authenticated` (Lean half, end to end).** Under the
+    R-PRINC seam, a receipt that asserts principal `pid` for a step whose
+    parse path ran `Host.verifyEnvelope` names a REGISTERED key's id whose
+    envelope verified — never a request-derived string. (What stays TCB:
+    Ed25519 unforgeability + extern faithfulness — that a VERIFYING envelope
+    was really signed by the registered key — and the R-PRINC hypothesis
+    itself, test-discharged.) -/
+theorem receipt_principal_authenticated (reg : Host.PrincipalRegistry)
+    (env : Host.Envelope) (line : String) (written : Option String)
+    (pid : String)
+    (hfaith : PrincipalFaithful written (Host.verifyEnvelope reg env line))
+    (h : written = some pid) :
+    ∃ k ∈ reg, k.id = pid := by
+  obtain ⟨p, hp, hid⟩ := faithful_principal_authenticated written _ pid hfaith h
+  obtain ⟨k, hk, hkid⟩ := Host.verifyEnvelope_id_registered reg env line p hp
+  exact ⟨k, hk, hkid.trans hid⟩
+
 end Ffi
 
 /-! ## Axiom pins — enforced at module build
@@ -446,3 +604,11 @@ plan. Drift fails the build here and again in `Test/Axioms.lean`. -/
 #guard_msgs in #print axioms Ffi.stepRender
 /-- info: 'Ffi.stepImpl_spelled' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Ffi.stepImpl_spelled
+/-- info: 'Ffi.principalOutField_lookup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.principalOutField_lookup
+/-- info: 'Ffi.principalOutField_authenticated' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.principalOutField_authenticated
+/-- info: 'Ffi.faithful_principal_authenticated' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Ffi.faithful_principal_authenticated
+/-- info: 'Ffi.receipt_principal_authenticated' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.receipt_principal_authenticated

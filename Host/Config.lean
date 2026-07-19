@@ -12,6 +12,7 @@ import Kernels.Convergence
 import Kernels.Calibration
 import Kernels.Linear
 import Kernels.Budget
+import Kernels.PrincipalBudget
 
 namespace Host
 
@@ -30,9 +31,36 @@ structure TrustedConfig where
   calibration : Option Kernels.CalibrationConfig
   linear : Option Kernels.LinearConfig
   budget : Kernels.BudgetConfig
+  /-- V2.1: the signed principal key registry + per-principal budgets
+      (kernel PB). Defaulted so existing config literals stay valid; the
+      `ofBundle_principals` tripwire pins that the mapping is not forgotten. -/
+  principals : Option Kernels.PrincipalsConfig := none
+
+/-- Config lints for the `principals` section, fail-closed in `ofBundle`:
+    1. duplicate principal ids with DIFFERENT pubkeys — an ambiguous registry
+       (`verifyEnvelope` reads the FIRST match; a second key under the same id
+       would be silently dead, or worse, order-dependent);
+    2. same-name per-principal budgets with conflicting caps — each
+       (principal, name) pair shares one counter, the `budgetCapsConsistent`
+       lint verbatim;
+    3. per-principal budgets with an EMPTY key registry — every covered call
+       would deny unconditionally (the mixed-mode footgun, refused at load
+       instead of surprising the operator at runtime). -/
+def principalsConsistent (cfg : Kernels.PrincipalsConfig) : Bool :=
+  (cfg.registry.all fun k => cfg.registry.all fun k' =>
+      k'.id != k.id || k'.pubkey == k.pubkey)
+  && Kernels.budgetCapsConsistent cfg.budgets
+  && (cfg.budgets.isEmpty || !cfg.registry.isEmpty)
+
+/-- The principals bundle section mapped onto the kernel config type. -/
+def principalsOfBundle (b : Seal.PolicyBundle) : Option Kernels.PrincipalsConfig :=
+  b.effectivePrincipals.map fun s =>
+    { registry := s.keys.map fun k => { id := k.id, pubkey := k.pubkey }
+      budgets := s.budgets.map fun r =>
+        { name := r.name, cap := r.cap, tools := r.tools, costArg := r.costArg } }
 
 /-- Map the parsed policy-v2 bundle (`Seal.parsePolicyBundle` — the verified
-    7-kernel config vocabulary) onto the kernel config types. Field-by-field
+    8-section config vocabulary) onto the kernel config types. Field-by-field
     and total up to the budget lint: the `Kernels.*` types and `TrustedConfig`
     are unchanged, so `registryFor` / `activeKernels` / the A0 tripwires
     attach exactly as before; the `ofBundle_*` lemmas below pin that this
@@ -48,24 +76,30 @@ def ofBundle (b : Seal.PolicyBundle) : Except String TrustedConfig :=
   -- `Kernels.budgetCapsConsistent`). Equal-cap duplicates stay legal.
   if Kernels.budgetCapsConsistent (b.effectiveBudget.map fun r =>
       { name := r.name, cap := r.cap, tools := r.tools, costArg := r.costArg }) then
-    .ok { epoch := b.epoch
-          safety := b.safety
-          temporal := b.effectiveTemporal.map fun r =>
-            { name := r.name, trigger := r.trigger, forbidden := r.forbidden }
-          consensus := b.effectiveConsensus.map fun s =>
-            { roster := s.roster, votesFile := System.FilePath.mk s.votesFile
-              highStakes := s.highStakes }
-          convergence := b.effectiveConvergence.map fun t =>
-            { tool := t.tool, opArg := t.opArg }
-          calibration := b.calibration.map fun s =>
-            { enabled := s.enabled, deltaNum := s.deltaNum, deltaDen := s.deltaDen
-              minSamples := s.minSamples, gatedTools := s.gatedTools
-              recordsFile := System.FilePath.mk s.recordsFile }
-          linear := b.effectiveLinear.map fun s =>
-            { grantsFile := System.FilePath.mk s.grantsFile
-              tools := s.tools.map fun t => { tool := t.tool, capArg := t.capArg } }
-          budget := b.effectiveBudget.map fun r =>
-            { name := r.name, cap := r.cap, tools := r.tools, costArg := r.costArg } }
+    -- Fail closed on the principals lints (`principalsConsistent`): ambiguous
+    -- registry, conflicting per-principal caps, or budgets with no keys.
+    if (principalsOfBundle b).all principalsConsistent then
+      .ok { epoch := b.epoch
+            safety := b.safety
+            temporal := b.effectiveTemporal.map fun r =>
+              { name := r.name, trigger := r.trigger, forbidden := r.forbidden }
+            consensus := b.effectiveConsensus.map fun s =>
+              { roster := s.roster, votesFile := System.FilePath.mk s.votesFile
+                highStakes := s.highStakes }
+            convergence := b.effectiveConvergence.map fun t =>
+              { tool := t.tool, opArg := t.opArg }
+            calibration := b.calibration.map fun s =>
+              { enabled := s.enabled, deltaNum := s.deltaNum, deltaDen := s.deltaDen
+                minSamples := s.minSamples, gatedTools := s.gatedTools
+                recordsFile := System.FilePath.mk s.recordsFile }
+            linear := b.effectiveLinear.map fun s =>
+              { grantsFile := System.FilePath.mk s.grantsFile
+                tools := s.tools.map fun t => { tool := t.tool, capArg := t.capArg } }
+            budget := b.effectiveBudget.map fun r =>
+              { name := r.name, cap := r.cap, tools := r.tools, costArg := r.costArg }
+            principals := principalsOfBundle b }
+    else
+      .error "inconsistent principals section (duplicate id, conflicting caps, or empty key registry)"
   else
     .error "duplicate budget name with conflicting caps"
 
@@ -79,18 +113,22 @@ theorem ofBundle_epoch {b : Seal.PolicyBundle} {cfg : TrustedConfig}
     (h : ofBundle b = .ok cfg) : cfg.epoch = b.epoch := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    rfl
+  · split at h
+    · injection h with h
+      subst h
+      rfl
+    · simp at h
   · simp at h
 
 theorem ofBundle_safety {b : Seal.PolicyBundle} {cfg : TrustedConfig}
     (h : ofBundle b = .ok cfg) : cfg.safety = b.safety := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    rfl
+  · split at h
+    · injection h with h
+      subst h
+      rfl
+    · simp at h
   · simp at h
 
 theorem ofBundle_consensus {b : Seal.PolicyBundle} {cfg : TrustedConfig}
@@ -98,9 +136,11 @@ theorem ofBundle_consensus {b : Seal.PolicyBundle} {cfg : TrustedConfig}
     cfg.consensus.isSome = b.effectiveConsensus.isSome := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    cases b.effectiveConsensus <;> rfl
+  · split at h
+    · injection h with h
+      subst h
+      cases b.effectiveConsensus <;> rfl
+    · simp at h
   · simp at h
 
 theorem ofBundle_convergence {b : Seal.PolicyBundle} {cfg : TrustedConfig}
@@ -108,9 +148,11 @@ theorem ofBundle_convergence {b : Seal.PolicyBundle} {cfg : TrustedConfig}
     cfg.convergence.isEmpty = b.effectiveConvergence.isEmpty := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    cases b.effectiveConvergence <;> rfl
+  · split at h
+    · injection h with h
+      subst h
+      cases b.effectiveConvergence <;> rfl
+    · simp at h
   · simp at h
 
 theorem ofBundle_calibration {b : Seal.PolicyBundle} {cfg : TrustedConfig}
@@ -119,9 +161,11 @@ theorem ofBundle_calibration {b : Seal.PolicyBundle} {cfg : TrustedConfig}
       ↔ (∃ s, b.calibration = some s ∧ s.enabled = true) := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    cases b.calibration <;> simp
+  · split at h
+    · injection h with h
+      subst h
+      cases b.calibration <;> simp
+    · simp at h
   · simp at h
 
 theorem ofBundle_linear {b : Seal.PolicyBundle} {cfg : TrustedConfig}
@@ -129,9 +173,11 @@ theorem ofBundle_linear {b : Seal.PolicyBundle} {cfg : TrustedConfig}
     cfg.linear.isSome = b.effectiveLinear.isSome := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    cases b.effectiveLinear <;> rfl
+  · split at h
+    · injection h with h
+      subst h
+      cases b.effectiveLinear <;> rfl
+    · simp at h
   · simp at h
 
 theorem ofBundle_budget {b : Seal.PolicyBundle} {cfg : TrustedConfig}
@@ -139,9 +185,11 @@ theorem ofBundle_budget {b : Seal.PolicyBundle} {cfg : TrustedConfig}
     cfg.budget.isEmpty = b.effectiveBudget.isEmpty := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    cases b.effectiveBudget <;> rfl
+  · split at h
+    · injection h with h
+      subst h
+      cases b.effectiveBudget <;> rfl
+    · simp at h
   · simp at h
 
 theorem ofBundle_temporal {b : Seal.PolicyBundle} {cfg : TrustedConfig}
@@ -150,9 +198,49 @@ theorem ofBundle_temporal {b : Seal.PolicyBundle} {cfg : TrustedConfig}
       { name := r.name, trigger := r.trigger, forbidden := r.forbidden } := by
   unfold ofBundle at h
   split at h
-  · injection h with h
-    subst h
-    rfl
+  · split at h
+    · injection h with h
+      subst h
+      rfl
+    · simp at h
+  · simp at h
+
+/-- V2.1: the principals section's activation survives `ofBundle` — the
+    tripwire against a forgotten mapping (the `principals` field is defaulted
+    on `TrustedConfig`, so without this lemma a dropped `principals :=` line
+    would compile silently). -/
+theorem ofBundle_principals {b : Seal.PolicyBundle} {cfg : TrustedConfig}
+    (h : ofBundle b = .ok cfg) :
+    cfg.principals.isSome = b.effectivePrincipals.isSome := by
+  unfold ofBundle at h
+  split at h
+  · split at h
+    · injection h with h
+      subst h
+      cases hb : b.effectivePrincipals <;> simp [principalsOfBundle, hb]
+    · simp at h
+  · simp at h
+
+/-- The lint holds of every loaded config — the `hconsist` discharge hook for
+    `principal_budget_committed_trace_within_cap_of_consistent`
+    (`Host/PrincipalCommit.lean`): any config `ofBundle` accepts carries
+    consistent per-principal caps. -/
+theorem ofBundle_principals_consistent {b : Seal.PolicyBundle}
+    {cfg : TrustedConfig} (h : ofBundle b = .ok cfg)
+    (pc : Kernels.PrincipalsConfig) (hp : cfg.principals = some pc) :
+    Kernels.budgetCapsConsistent pc.budgets = true := by
+  unfold ofBundle at h
+  split at h
+  · split at h
+    · next hall =>
+        injection h with h
+        subst h
+        simp only at hp
+        rw [hp] at hall
+        have hc : principalsConsistent pc = true := by simpa using hall
+        simp only [principalsConsistent, Bool.and_eq_true] at hc
+        exact hc.1.2
+    · simp at h
   · simp at h
 
 /-- Real Ed25519 verification for the trusted config envelope. The config
@@ -170,7 +258,7 @@ def verifyConfigSignature (publicKey payload signature : String) : Bool :=
     so the conformance model oracle can initialise from a harness-trusted
     payload without executing the `@[extern]` Ed25519 leaf in the interpreter.
 
-    The vocabulary is `Seal.parsePolicyBundle` — the policy-v2 7-kernel
+    The vocabulary is `Seal.parsePolicyBundle` — the policy-v2 8-section
     bundle, one parser across the native, wasm, and model lanes, with hard
     errors on unknown keys at the payload, section, and entry levels. -/
 def parseCanonicalConfigPayload (payload : String) :

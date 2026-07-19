@@ -157,16 +157,17 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Source: `mcp-seal-dev` `ba2c05a` + seal-host `feat/policy-codec-repin`
-  (the single-source policy codec: `Seal.parsePolicyBundle` /
-  `policyBundleSchema` as projections of one `WireCodec`, parsers PROVEN
-  equal to the previous pin's — `Seal/PolicyEquiv.lean` — plus
-  `Host.ofBundle`)
-- `seal.wasm` sha256: `fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878`
+- Source: `mcp-seal-dev` `1d35669` + seal-host `feat/policy-codec-repin`
+  (the single-source policy codec + the V2.1 `principals` section — the sole
+  acceptance delta, proven by the re-closed `Seal/PolicyEquiv.lean` — plus
+  `Host.ofBundle` / `Host.verifyEnvelope` / Kernel PB)
+- `seal.wasm` sha256: `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
+- Supersedes `fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878`
+  (the codec-refactor build, parsers carried unchanged), which superseded
+  `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
   (the 7-kernel DX-surface build; decision semantics carried forward
-  unchanged, parser equivalence PROVEN this time), which superseded
+  unchanged, parser equivalence PROVEN at the codec refactor), which superseded
   `ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546`
   (the pathological-number fail-closed build, whose guard and decision
   semantics are carried forward unchanged), which superseded
@@ -182,6 +183,6 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
-build (sha256 `fab75d9d…`). That repin is a separate, audited step gated to the
+build (sha256 `0d3536e5…`). That repin is a separate, audited step gated to the
 public flip — it is **not** performed here; this repo stays the private source of
 truth and the public mirror is untouched.

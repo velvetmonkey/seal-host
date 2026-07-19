@@ -21,13 +21,20 @@
 //! | P9| votes/grants/forecasts    | (raw text to Lean)                     | Lean parses; grants cursor line-split is drop-only |
 //!
 //! Enforced invariant: bytes reach the child ⇔ the Lean kernel returned
-//! classify == 0 or step route == forward for the
-//! byte-identical line. Every seam error, panic, or ambiguity refuses the
-//! line and answers the client with `SEAM_ERROR_RESPONSE` — the only
-//! host-authored egress bytes.
+//! classify == 0 or step route == forward for the byte-identical JUDGED
+//! line. For a plain line the judged line is the terminator-stripped wire
+//! and the child receives the original wire verbatim. For a V2.1 principal
+//! envelope (strict `envelope_view` predicate) the judged line is the EXACT
+//! inner request string and the child receives exactly those bytes plus one
+//! host-authored `\n` — the inner string is verifiably newline-free, so the
+//! child line and the kernel's `request_sha256` commitment differ only by
+//! that canonical terminator. Every seam error, panic, malformed envelope,
+//! or ambiguity refuses the line and answers the client with
+//! `SEAM_ERROR_RESPONSE` — the only host-authored egress bytes.
 //!
-//! The wire bytes the client sent are forwarded VERBATIM on allow — the host
-//! never reconstructs, re-encodes, or trims what the child receives.
+//! The wire bytes the client sent are forwarded VERBATIM on allow (enveloped
+//! lines: the inner bytes verbatim + `\n`) — the host never reconstructs,
+//! re-encodes, or trims what the child receives.
 
 use seal_host_rs::a3;
 use seal_host_rs::decision_receipt::{
@@ -378,9 +385,101 @@ fn reduced_scope_forward_line(line: &str, count: u64) -> Option<String> {
 /// `\r\n`) stripped. This framing strip is the ONLY transformation between
 /// the client's bytes and what Lean judges; the bytes forwarded to the child
 /// on allow are the client's original, terminator included.
+///
+/// V2.1 exception, deliberately narrow: a line that IS a well-formed
+/// principal envelope (`envelope_view` returns `Enveloped`) is judged and
+/// forwarded as its INNER request string — see `envelope_view` for the
+/// strict predicate and the terminator-canonicalization story.
 fn lean_view(wire: &[u8]) -> &[u8] {
     let s = wire.strip_suffix(b"\n").unwrap_or(wire);
     s.strip_suffix(b"\r").unwrap_or(s)
+}
+
+/// Raw V2.1 principal-envelope fields as extracted off the wire — passed to
+/// Lean UNINTERPRETED (never a principal string): `Host.verifyEnvelope`
+/// verifies the Ed25519 signature against the signed config's registry over
+/// the exact judged line, inside the kernel.
+#[derive(Clone, Debug, PartialEq)]
+struct EnvFields {
+    key_id: String,
+    sig: String,
+    nonce: String,
+    issued_at: u64,
+}
+
+/// One wire line, classified for the V2.1 principal envelope.
+#[derive(Debug, PartialEq)]
+enum EnvelopeView {
+    /// No top-level `seal_env` key (or not a JSON object at all): the line
+    /// is judged and forwarded byte-identically to the pre-V2.1 host.
+    Plain,
+    /// A well-formed envelope: `request` is the exact inner judged line.
+    Enveloped { request: String, env: EnvFields },
+    /// The line CLAIMS to be an envelope (top-level `seal_env` present) but
+    /// fails the strict predicate — an ambiguity channel, refused outright.
+    Malformed(String),
+}
+
+/// STRICT envelope predicate, fail-closed. `Enveloped` requires EXACTLY:
+/// top-level keys `{seal_env, request}`; `seal_env` an object with exactly
+/// `{key_id: string, sig: string, nonce: string, issued_at: u64}`; `request`
+/// a non-empty string free of `\n`, `\r` and NUL. The newline-freedom rule
+/// closes line smuggling (one Lean allow must never forward two protocol
+/// lines), and makes the enveloped path CANONICALIZE the terminator: the
+/// child receives exactly `request + "\n"` whatever terminator the wrapper
+/// arrived with. A nested `seal_env` inside a normal call's arguments never
+/// triggers (top-level key only).
+fn envelope_view(line: &str) -> EnvelopeView {
+    let Ok(v) = serde_json::from_str::<Value>(line) else {
+        return EnvelopeView::Plain;
+    };
+    let Some(obj) = v.as_object() else {
+        return EnvelopeView::Plain;
+    };
+    if !obj.contains_key("seal_env") {
+        return EnvelopeView::Plain;
+    }
+    if obj.len() != 2 || !obj.contains_key("request") {
+        return EnvelopeView::Malformed("envelope must carry exactly {seal_env, request}".into());
+    }
+    let Some(env) = obj["seal_env"].as_object() else {
+        return EnvelopeView::Malformed("seal_env must be an object".into());
+    };
+    if env.len() != 4 {
+        return EnvelopeView::Malformed(
+            "seal_env must carry exactly {key_id, sig, nonce, issued_at}".into(),
+        );
+    }
+    let (Some(key_id), Some(sig), Some(nonce), Some(issued_at)) = (
+        env.get("key_id").and_then(Value::as_str),
+        env.get("sig").and_then(Value::as_str),
+        env.get("nonce").and_then(Value::as_str),
+        env.get("issued_at").and_then(Value::as_u64),
+    ) else {
+        return EnvelopeView::Malformed(
+            "seal_env fields must be {key_id: str, sig: str, nonce: str, issued_at: u64}".into(),
+        );
+    };
+    let Some(request) = obj["request"].as_str() else {
+        return EnvelopeView::Malformed("request must be a string".into());
+    };
+    if request.is_empty() {
+        return EnvelopeView::Malformed("request must be non-empty".into());
+    }
+    if request.contains('\n') || request.contains('\r') || request.contains('\0') {
+        return EnvelopeView::Malformed(
+            "request must not contain newline, CR, or NUL (line smuggling refused)".into(),
+        );
+    }
+    EnvelopeView::Enveloped {
+        request: request.to_owned(),
+        env: EnvFields {
+            key_id: key_id.to_owned(),
+            sig: sig.to_owned(),
+            nonce: nonce.to_owned(),
+            issued_at,
+        },
+    }
 }
 
 fn main() {
@@ -720,6 +819,15 @@ fn run() -> i32 {
     } else {
         a3::A3Filter::new(ttl_ms)
     };
+    // V2.1 envelope freshness: a SECOND A3 instance for request-envelope
+    // nonces — the same TTL/skew/replay machinery, a separate namespace so
+    // envelope nonces and approval nonces can never pre-burn each other.
+    // MVP: in-memory store (session-scoped replay protection; a host restart
+    // forgets envelope nonces within the TTL window — named in the TCB, a
+    // sqlite twin of the approval store is the production follow-up). TTL
+    // reuses the approval TTL from the signed config.
+    let mut a3_env = a3::A3Filter::new(ttl_ms);
+    let mut envelope_drops: u64 = 0;
     let mut receipts = ReceiptChain::new();
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
     let interactive = args.channel == "interactive";
@@ -783,6 +891,39 @@ fn run() -> i32 {
             write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
             continue;
         };
+        // V2.1 envelope extraction — ONCE, BEFORE classify (a wrapper line
+        // is not a tools/call, so classifying the wrapper would passthrough
+        // the wrapper bytes unjudged). From here on `line` is the JUDGED
+        // line: the inner request string for a well-formed envelope, the
+        // wire view otherwise — one binding, no rewrites, exactly as before.
+        // A malformed envelope (has `seal_env` but fails the strict
+        // predicate) is an ambiguity channel and refuses outright.
+        let (inner, envelope): (Option<String>, Option<EnvFields>) = match envelope_view(line) {
+            EnvelopeView::Plain => (None, None),
+            EnvelopeView::Enveloped { request, env } => (Some(request), Some(env)),
+            EnvelopeView::Malformed(reason) => {
+                eprintln!(
+                    "{}",
+                    json!({"error": format!("malformed principal envelope refused: {reason}")})
+                );
+                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                continue;
+            }
+        };
+        let line: &str = inner.as_deref().unwrap_or(line);
+        // Bytes the child receives on allow: the original wire verbatim for
+        // a plain line; for an enveloped line, exactly the judged inner
+        // string plus ONE host-authored `\n` (the inner string is verifiably
+        // newline-free, so child line and judged commitment differ only by
+        // that canonical terminator — the sharpened T3 story).
+        let forward: Vec<u8> = match &inner {
+            Some(request) => {
+                let mut bytes = request.clone().into_bytes();
+                bytes.push(b'\n');
+                bytes
+            }
+            None => wire.clone(),
+        };
         let now = now_ms();
 
         // Pass non-mediated lines (initialize, tools/list, notifications)
@@ -795,7 +936,11 @@ fn run() -> i32 {
         // field handed to `step` below — one binding, no rewrites.
         match route_of_classify(host.classify(line)) {
             ClassifyRoute::Passthrough => {
-                let _ = child_in.write_all(&wire);
+                // For an enveloped non-mediated line the envelope is inert
+                // framing: no verification, no nonce burn (freshness gates
+                // decisions; passthrough lines carry none) — the INNER bytes
+                // flow to the child.
+                let _ = child_in.write_all(&forward);
                 let _ = child_in.flush();
                 continue;
             }
@@ -822,7 +967,38 @@ fn run() -> i32 {
             .map(|r| json!({"target": r.target, "issuedAt": r.issued_at}))
             .collect();
 
-        let input = json!({
+        // V2.1 envelope freshness (second A3 instance): the nonce is checked
+        // ONCE per wire arrival; a dropped (replayed/stale/future) envelope
+        // downgrades to no-envelope — fail-closed deny for principal-gated
+        // tools, and a passive stderr counter so an operator can see a
+        // downgrade burst (the reduced-scope observability idiom).
+        let envelope = match envelope {
+            Some(env) => {
+                let rec = providers::ApprovalRecord {
+                    target: sha256_hex(line.as_bytes()),
+                    issued_at: Some(env.issued_at),
+                    nonce: Some(env.nonce.clone()),
+                };
+                let (ok, env_warnings) = a3_env.filter(vec![rec], now);
+                emit_approval_drop_warnings(&env_warnings);
+                if ok.is_empty() {
+                    envelope_drops += 1;
+                    eprintln!(
+                        "{}",
+                        json!({
+                            "seal_host_event": "principal_envelope_dropped",
+                            "count": envelope_drops,
+                        })
+                    );
+                    None
+                } else {
+                    Some(env)
+                }
+            }
+            None => None,
+        };
+
+        let mut input = json!({
             "line": line,
             "now": now,
             "approvals": approvals,
@@ -830,6 +1006,16 @@ fn run() -> i32 {
             "grants": grants.fresh(),
             "forecasts": read_or_empty(&forecasts_file),
         });
+        if let Some(env) = &envelope {
+            // RAW fields only — Rust never passes a principal string; the
+            // kernel verifies and derives the principal in its parse path.
+            input["envelope"] = json!({
+                "key_id": env.key_id,
+                "sig": env.sig,
+                "nonce": env.nonce,
+                "issued_at": env.issued_at,
+            });
+        }
         let step_output = match host.step(&input.to_string()) {
             Ok(output) => output,
             Err(error) => {
@@ -873,7 +1059,7 @@ fn run() -> i32 {
                     reduced_scope_forwards += 1;
                     eprintln!("{signal}");
                 }
-                let _ = child_in.write_all(&wire);
+                let _ = child_in.write_all(&forward);
                 let _ = child_in.flush();
             }
             Route::Block {
@@ -953,12 +1139,23 @@ fn run() -> i32 {
                                 .iter()
                                 .map(|r| json!({"target": r.target, "issuedAt": r.issued_at}))
                                 .collect();
-                            let retry = json!({
+                            let mut retry = json!({
                                 "line": line, "now": now_ms(), "approvals": approvals,
                                 "votes": read_or_empty(&votes_file),
                                 "grants": grants.fresh(),
                                 "forecasts": read_or_empty(&forecasts_file),
                             });
+                            // Same wire arrival, same envelope: the nonce was
+                            // consumed once above and is NOT re-filtered —
+                            // freshness is per wire line, not per step call.
+                            if let Some(env) = &envelope {
+                                retry["envelope"] = json!({
+                                    "key_id": env.key_id,
+                                    "sig": env.sig,
+                                    "nonce": env.nonce,
+                                    "issued_at": env.issued_at,
+                                });
+                            }
                             let retry_now = retry["now"].as_u64().unwrap_or(0);
                             let retry_output = match host.step(&retry.to_string()) {
                                 Ok(output) => output,
@@ -996,7 +1193,7 @@ fn run() -> i32 {
                                         }
                                     };
                                     consume_pending_approval(&mut pending_approvals, consumed);
-                                    let _ = child_in.write_all(&wire);
+                                    let _ = child_in.write_all(&forward);
                                     let _ = child_in.flush();
                                     continue;
                                 }
@@ -1053,6 +1250,61 @@ fn run() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON
+    /// without a top-level `seal_env`, non-objects, non-JSON), every
+    /// malformed-envelope shape refuses, the line-smuggling rule holds, and
+    /// a nested `seal_env` inside a normal call's arguments is inert.
+    #[test]
+    fn envelope_view_strict_predicate() {
+        // plain: non-JSON, non-object, and objects without seal_env
+        for plain in [
+            "not json at all",
+            "[1,2,3]",
+            "42",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#,
+            r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"t","arguments":{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":1}}}}"#,
+        ] {
+            assert_eq!(envelope_view(plain), EnvelopeView::Plain, "{plain}");
+        }
+        // well-formed
+        let good = r#"{"seal_env":{"key_id":"alice","sig":"aa","nonce":"bb","issued_at":5},"request":"{\"m\":1}"}"#;
+        match envelope_view(good) {
+            EnvelopeView::Enveloped { request, env } => {
+                assert_eq!(request, "{\"m\":1}");
+                assert_eq!(env.key_id, "alice");
+                assert_eq!(env.issued_at, 5);
+            }
+            other => panic!("expected Enveloped, got {other:?}"),
+        }
+        // every malformed shape refuses
+        for bad in [
+            // extra top-level key
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":1},"request":"r","x":1}"#,
+            // missing request
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":1}}"#,
+            // seal_env not an object
+            r#"{"seal_env":"x","request":"r"}"#,
+            // missing / extra seal_env field
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c"},"request":"r"}"#,
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":1,"z":2},"request":"r"}"#,
+            // wrong field types
+            r#"{"seal_env":{"key_id":1,"sig":"b","nonce":"c","issued_at":1},"request":"r"}"#,
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":"1"},"request":"r"}"#,
+            // request not a string / empty
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":1},"request":{}}"#,
+            r#"{"seal_env":{"key_id":"a","sig":"b","nonce":"c","issued_at":1},"request":""}"#,
+            // line smuggling: escaped newline / CR / NUL inside the string
+            "{\"seal_env\":{\"key_id\":\"a\",\"sig\":\"b\",\"nonce\":\"c\",\"issued_at\":1},\"request\":\"one\\ntwo\"}",
+            "{\"seal_env\":{\"key_id\":\"a\",\"sig\":\"b\",\"nonce\":\"c\",\"issued_at\":1},\"request\":\"one\\rtwo\"}",
+            "{\"seal_env\":{\"key_id\":\"a\",\"sig\":\"b\",\"nonce\":\"c\",\"issued_at\":1},\"request\":\"one\\u0000two\"}",
+        ] {
+            assert!(
+                matches!(envelope_view(bad), EnvelopeView::Malformed(_)),
+                "should refuse: {bad}"
+            );
+        }
+    }
 
     /// T4 (audit-stream injection): a dropped-approval warning carries up to 64
     /// attacker-chosen chars from an unauthenticated channel. `json!()` escaping

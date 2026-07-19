@@ -517,7 +517,7 @@ theorem step_forward_non_bypass
       Float mirror; see `composed_calibration_bound`).
 
     Each conjunct is guarded by that kernel's verdict membership, so this one
-    theorem covers ANY subset of the seven kernels — including none
+    theorem covers ANY subset of the wired kernels — including none
     (vacuously): compose any subset under the fail-closed AND-gate and every
     present kernel's proven safety invariant holds. Instantiating
     `vs := pureVerdicts insts act₀` (with `pureVerdicts_mem` discharging the

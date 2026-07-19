@@ -1,39 +1,36 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the single-source policy codec refactor: `Seal.parsePolicyJson` /
-`Seal.parsePolicyBundle` (mcp-seal-dev) are now the parse projections of
-schema-carrying WireCodecs (`Seal/PolicyWire.lean`), with the JSON Schema
-derived from the SAME specs. This is a BEHAVIOR-PRESERVING rebuild: the
-codec parsers are PROVEN equal (full function equality — verdict, value,
-error text; `Seal/PolicyEquiv.lean`, axiom-pinned) to the pre-codec parsers
-this pin previously carried, and a 98+9-case differential plus the repo
-payload corpus re-verify it executably. Decision semantics are unchanged;
-`Seal/PolicyWire.lean` joins the module allow-list because the parser now
-composes through it.
+Built from the V2.1 principal fold on the single-source policy codec:
+`principals` is a codec section (registry + per-principal budgets; the ONLY
+acceptance-set delta over the codec base, proven by the re-closed
+`Seal/PolicyEquiv.lean` theorems against the lockstep-updated spec), and the
+host side adds `Host.verifyEnvelope` + Kernel PB (`Kernels/PrincipalBudget`)
+with the parse-path-authenticated principal as its evidence. Non-principal
+decision semantics unchanged.
 
-Kernel source    : mcp-seal-dev ba2c05ad4fdd2a2e2d8265acfaaa75d3ca8b5f2f
-                   (feat/policy-codec-single-source — Seal.PolicyWire codec)
-Host source      : seal-host feat/policy-codec-repin
-                   (seal_policy_schema/seal_policy_validate FFI exports)
+Kernel source    : mcp-seal-dev 1d3566947196fb688f7eff87c4edda2a0ac015fd
+                   (feat/policy-codec-single-source — codec + V2.1 principals)
+Host source      : seal-host feat/policy-codec-repin (V2.1 principal fold)
 Build date       : 2026-07-19
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878  (3823737 bytes)
-  seal.js    f11189c114a45103177e6464e3b9a500e565ff35a716568f955cdb07828a1b5e
+  seal.wasm  0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130  (3964808 bytes)
+  seal.js    c93a96b21c1186d112b945f70ae9ed4dbc08e059edff761d772aa65ae53c357e
 
 Supersedes the previous conformance pin sha256
-  a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
-(the 7-kernel DX-surface build at mcp-seal cc79c866; all decision semantics
-carried forward unchanged, parser equivalence PROVEN this time). That build
-superseded ff1bfd68 (pathological-number fail-closed), which superseded
-d3067bc0 (Lane C divergence, closed), which superseded the fleet pin df42cbad.
+  fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878
+(the codec-refactor build; its parsers carry into this build unchanged and
+the principal section is the sole delta). That build superseded a3790181
+(7-kernel DX surface), which superseded ff1bfd68 (pathological-number
+fail-closed), which superseded d3067bc0 (Lane C divergence, closed), which
+superseded the fleet pin df42cbad.
 
 Reproduce (from wasm-spike/):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
-  ./build_core.sh               # ir -> build-core/*.o (incl Seal/PolicyWire + Seal/PolicyBundle)
+  ./build_core.sh               # ir -> build-core/*.o (incl Seal/PolicyWire + Kernels/PrincipalBudget)
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
   # then: cp build-core/seal.{wasm,js} verified/

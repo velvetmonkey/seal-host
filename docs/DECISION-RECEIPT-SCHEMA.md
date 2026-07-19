@@ -172,7 +172,7 @@ invalid (`validateReceipt` rejects it). Their only v1 home is the separate
 Legacy `v0-live` receipts with the merged block are grandfathered: verifiers
 accept them as v0-live and base nothing on those fields either way.
 
-The current private verified wasm pin (`a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`)
+The current private verified wasm pin (`2d9ef8e0b0b977bde9b9a95832493aee24771c727fb954bae693faa9bf730ba0`)
 is not changed by this receipt schema; the pending audited public repin
 (`docs/CONFORMANCE-BRIDGE.md`) is a separate step.
 
@@ -334,6 +334,7 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | `request_parse_error` | string | yes iff the producer could not parse the wire line | names why the structured request material is absent |
 | `action` | string | optional | the SealV2 `params.action` binding when the producer parsed one; absent under the `compatible` profile, which does not parse it |
 | `host_identity` | object | optional; required for the native Rust host | `{native_executable_sha256, lean_ffi_sha256, equivalence:"not_proven"}`. Identifies the native artifacts that executed the decision. It does **not** prove them equivalent to `kernel_identity.wasm_sha256`; that remains the Lane C gap. |
+| `principal` | string | yes iff the kernel authenticated a V2.1 signed envelope; ABSENT otherwise (fail-closed) | the id of the signed-config `principals` registry key whose Ed25519 envelope verified in the Lean parse path over the exact judged line. Copied ONLY from the authoritative Lean step output — kernel-attested, never request-derived (the one carve-out from the descriptive-only rule; see the authority frontier below) |
 | `amount` | number or string | yes iff payment-class (11.4) | copied **verbatim** from the argument field the policy's payment binding names |
 | `merchant` | string | yes iff payment-class | ditto |
 | `currency` | string | yes iff payment-class | ditto |
@@ -392,6 +393,35 @@ can send what, an authenticator exists —
 theorems already filter on (`Host/Provenance.lean`,
 `replayNamespace_trusted_plane`). Until then the honest receipt binds the
 approver and refuses to name the caller.
+
+**The V2.1 `principal` field (Route 2, signed envelope) — the ONE carve-out
+from the descriptive-only rule above.** An optional top-level `principal`
+field (string) is the id of a key from the signed config's `principals`
+registry whose Ed25519 envelope VERIFIED, in the Lean parse path
+(`Host.verifyEnvelope`), over the exact judged line — it is exactly the
+credentialed instantiation the previous paragraph describes, not a
+request-derived field. Semantics:
+
+- present **iff** the kernel authenticated a signed envelope; absence means
+  "no authenticated principal" (fail-closed `none`), never an error;
+- the value is copied by the assembler ONLY from the authoritative Lean
+  step output (one producer; `Ffi.principalOutField` /
+  `Ffi.receipt_principal_authenticated`), and its request-independence is
+  the presence/value split (`Host.envelope_gates_presence_not_value`:
+  request bytes gate only WHETHER the field appears, never WHICH id);
+- the assembler-faithfulness half is the **R-PRINC** seam
+  (`Ffi.PrincipalFaithful`) — an explicit hypothesis discharged by
+  `rust/tests/principal_identity.rs` including the mutation drill;
+- what stays trusted: Ed25519 unforgeability + extern faithfulness at the
+  request-path call site, and the Rust-side nonce-freshness window.
+
+Verifiers MUST treat `principal` as authenticated (kernel-attested) and
+MUST continue to treat every OTHER identity-shaped occurrence
+(`caller_id`, `program_origin`, `agent`, a `principal` string inside
+`arguments`, …) as descriptive request material. The caller no-go on bare
+stdio is untouched: `principal` exists only when a cryptographic envelope
+restricted the send relation — "authenticated principal when the envelope
+verifies," never "caller authentication on stdio."
 
 ### 11.2 Requiredness matrix
 

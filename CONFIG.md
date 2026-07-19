@@ -233,6 +233,42 @@ section is present but vacuous when no budget covers any tool.
 **Guarantee:** a composed allow for a B-gated call implies every covering
 budget resolved its cost and admitted it without exceeding its cap.
 
+### Principals (PB) — optional, V2.1
+
+```json
+{
+  "principals": {
+    "keys": [
+      {
+        "id": "alice",
+        "pubkey": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+      }
+    ],
+    "budgets": [
+      { "name": "alice-writes", "cap": 10, "tools": ["write_item"] }
+    ]
+  }
+}
+```
+
+The V2.1 signed-envelope principal registry plus per-principal budget specs
+(the same budget-spec shape as B; state is keyed per (principal id, budget
+name)). `keys` and `budgets` are required when the section is present.
+Every key entry requires a non-empty string `id` and a 64-hex-char Ed25519
+verifying key `pubkey` — both linted at parse/signing time (the schema
+states the same bounds). The key→principal binding is operator-pinned
+INSIDE the signed config; a principal is never a request-supplied identity
+field. A PB-gated call without a verified principal envelope is denied
+outright ("principal envelope required" — mixed-mode fail-closed); optional
+`enabled: false` collapses the section to absent. Authoring is hand-written
+JSON for now (`seal validate` lints it); the assurance-kit DX has no PB
+recipe yet.
+
+**Guarantee:** a composed allow for a PB-gated call implies the request
+carried a fresh envelope verified against the registry key of the named
+principal, and that principal's own covering budgets all admitted the
+call's cost.
+
 ### Budget × Linear: composition proven; IO shell and caller dimension pinned
 
 PROVEN (`Host/Commit.lean`, `Host/CommitRegistry.lean`), over the full
