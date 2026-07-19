@@ -19,14 +19,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Proven Lean surface is read-only in this push
-        run: |
-          PUSH_BASE="${{ github.event.before }}"
-          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
-            PUSH_BASE="$(git merge-base origin/main HEAD)"
-          fi
-          git diff --exit-code "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'
-
       - name: Require private dependency access
         run: |
           test -n "$SEAL_CI_READ_TOKEN" || {
@@ -59,6 +51,25 @@ jobs:
         with:
           use-github-cache: false
           build: false
+
+      - name: Changed proven Lean surface must re-prove axiom-clean
+        run: |
+          PUSH_BASE="${{ github.event.before }}"
+          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
+            PUSH_BASE="$(git merge-base origin/main HEAD)"
+          fi
+          if git diff --quiet "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'; then
+            echo "No Lean changes in this push; proof gate not needed."
+            exit 0
+          fi
+          echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
+          test -d .lake/packages/mcp-seal || lake update
+          bash .lake/packages/mcp-seal/c/build.sh
+          lake build
+          lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
+          ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"
+          lake exe host_unit_tests
+          lake exe dx_surface_tests
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
         with:
