@@ -89,6 +89,35 @@ for f in unknown-top unknown-section-key unknown-entry-key missing-epoch epoch-z
   expect_class "$TMP/$f.json" agree_reject
 done
 
+# island not/const:true + needles-typing regression pins (council bae27e33, 2026-07-19).
+# These agree_reject TODAY. They exist to FREEZE the two fragile hand-schema
+# constructs so a future silent weakening breaks THIS gate instead of shipping:
+#   - full_arguments schema uses `const:true` (NOT `type:boolean`). Weaken it to
+#     type:boolean and {full_arguments:false} becomes schema-accept / parser-reject
+#     = parser_refinement, so the expected class flips agree_reject -> and this pin
+#     FAILS. That is the point: the const:true logic can no longer drift silently.
+#   - contains_any_ci needles items:{type:string}. Drop the item type and a
+#     non-string needle becomes schema-accept / parser-reject (parser: mapM getStr?),
+#     again flipping the expected class and failing the pin.
+mk full-args-false.json      '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","target":[{"full_arguments":false}]}]}}'
+mk full-args-nonbool.json    '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","target":[{"full_arguments":"true"}]}]}}'
+mk needle-nonstring.json     '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","match":{"type":"contains_any_ci","arg":"s","needles":[1]}}]}}'
+for f in full-args-false full-args-nonbool needle-nonstring; do
+  expect_class "$TMP/$f.json" agree_reject
+done
+
+# NOTE — serde recursion asymmetry (council bae27e33 / Grok, 2026-07-19).
+# There is deliberately NO deep-nested all/any case here. At match nesting
+# depth ~65+, serde_json's default value-recursion limit (~128 nests, ~2 per
+# match level) rejects the payload in the schema/validate lane BEFORE the
+# jsonschema $ref body is ever consulted, while the Lean parser accepts it.
+# That is a serde_json infrastructure limit, NOT hand-schema island drift.
+# Adding a deep-nest case now would hard-fail CI for the wrong reason and
+# misread as island drift. Follow-up before any deep-nest case is added:
+# raise/disable the recursion limit on the validate-path parse (rust/src, the
+# serde_json::from_str feeding the schema instance), THEN pin a deep nest as
+# agree_accept. Fail-closed, not a signing bypass: schema rejects, never blesses.
+
 # agree_accept: aliases, defaults, permissive interior, every match variant
 mk alias-guarded.json        '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"a","mode":"guard"},{"name":"b","mode":"guarded"}]}}'
 mk defaults.json             '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"allow"}]}}'

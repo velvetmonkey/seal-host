@@ -70,9 +70,9 @@
       "kernel": "principal_budget",
       "column": "reachable",
       "value": "no — hand-authored `principals` JSON only; no `seal add-kernel` support (V2.1, DX pending)",
-      "assertedBy": "Fable (builder — PENDING operator countersign at frisk)",
+      "assertedBy": "Fable (builder), countersigned Monkey 2026-07-19 at frisk",
       "date": "2026-07-19",
-      "rationale": "The shipped policy DX (seal-assurance-kit, frozen pin) predates V2.1: `seal add-kernel` has no PB letter and no recipe emits a `principals` section, so the only authoring path is hand-writing the section per the schema/CONFIG (id + 64-hex pubkey registry, per-principal budgets — `seal validate` lints it). Asserted from the kit pin's vocabulary, not by running new DX; re-assert when the kit gains PB authoring."
+      "rationale": "Operator countersign COMPLETE (Monkey, 2026-07-19, council bae27e33 frisk): PrincipalBudget IS operationally reachable end-to-end — the 64-topology matrix activates it at exactly 32/64 masks, and a separate authenticated test drives principal Alice to her cap so PB denies while NAMING Alice, with Bob's independent budget still usable. The caveat is a DX gap, NOT a correctness gap: the shipped policy DX (seal-assurance-kit, frozen pin) predates V2.1, so `seal add-kernel` has no PB letter and no recipe emits a `principals` section — the only authoring path is hand-writing the section per the schema/CONFIG (id + 64-hex pubkey registry, per-principal budgets — `seal validate` lints it). Reachability asserted from the kit pin's vocabulary + the frisk's authenticated run, not from new packaged DX; re-assert when the kit gains PB authoring."
     }
   ]
 }
