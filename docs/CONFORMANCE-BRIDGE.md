@@ -163,9 +163,13 @@ before the differential, and driving the fresh artifact:
   `Host.ofBundle` / `Host.verifyEnvelope` / Kernel PB)
 - `seal.wasm` sha256: `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`,
+- Supersedes `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
+  (checked in at `cdb9447` claiming source `1d35669`, but a clean rebuild of
+  `1d35669` yields `3d70637f` not `0d3536e5`; `3d70637f` is the authoritative
+  rebuild-from-source pin, clean-runner CI reproducibility judged of record),
   which superseded `fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878`
-  (the stale pre-refactor pin), which superseded
+  (the codec-refactor build; parsers carried unchanged, principal section the
+  sole delta), which superseded
   `a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af`
   (the 7-kernel DX-surface build; decision semantics carried forward
   unchanged, parser equivalence PROVEN at the codec refactor), which superseded
