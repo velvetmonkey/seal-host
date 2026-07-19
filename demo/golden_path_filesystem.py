@@ -637,7 +637,9 @@ def execute(deterministic: bool,receipt_output: Path|None=None)->int:
 
 
 def main()->int:
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--deterministic",action="store_true"); parser.add_argument("--receipt-output"); args=parser.parse_args()
+    # --color is accepted for parity with the golden_path.py dispatcher, which appends it to every
+    # sub-demo command; this demo emits no DemoTrace, so there is no rendering for it to drive.
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--deterministic",action="store_true"); parser.add_argument("--receipt-output"); parser.add_argument("--color",choices=["auto","always","never"],default="auto"); args=parser.parse_args()
     try: return execute(args.deterministic,Path(args.receipt_output).resolve() if args.receipt_output else None)
     except gp.DemoSkip as error: check("demo","SKIP",str(error)); return 2
     except Exception as error: check("demo","FAIL",str(error)); return 1
