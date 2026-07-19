@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with: { fetch-depth: 0 }
+      - name: Require an exact release tag and private build access
+        run: |
+          test "${GITHUB_REF_NAME}" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml | head -1)"
+          test -n "$SEAL_CI_READ_TOKEN"
+      - name: Configure private build dependency access
+        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - uses: leanprover/lean-action@v1.5.0
+        with: { use-github-cache: false, build: false }
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+        with: { toolchain: "1.96.0", cache: false }
+      - name: Install release tooling
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+      - run: test -d .lake/packages/mcp-seal || lake update
+      - run: bash .lake/packages/mcp-seal/c/build.sh
+      - run: lake build +Ffi:c.o.export
+      - run: scripts/build_ffi_so.sh
+      - run: cargo build --locked --release --bins
+        working-directory: rust
+      - run: python3 scripts/release_policy_gate.py
+      - name: Package the complete runtime closure
+        run: scripts/package_release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"
+      - name: Build and smoke-test the non-root container
+        run: |
+          stage="$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
+          docker build -f deploy/container/Dockerfile.release -t "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}" "$stage"
+          test "$(docker image inspect --format '{{.Config.User}}' "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}")" = "65532:65532"
+      - name: Generate CycloneDX SBOM
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --override-filename seal-host-rust.cdx
+          cp seal-host-rust.cdx.json "$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}.cdx.json"
+        working-directory: rust
+      - name: Attest package and SBOM provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release/*.tar.gz
+            ${{ runner.temp }}/release/*.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seal-host-${{ github.ref_name }}-linux-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/release/*.tar.gz
+            ${{ runner.temp }}/release/*.sha256
+            ${{ runner.temp }}/release/*.cdx.json
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Require the promoted moving v1 Action tag
+        run: |
+          actual=$(git ls-remote https://github.com/velvetmonkey/seal-verify-action.git refs/tags/v1 | awk '{print $1}')
+          test "$actual" = "81077e5ee2c042c17ff73de2c00670d4857d7cee"
+      - uses: actions/download-artifact@v4
+        with: { path: release, merge-multiple: true }
+      - name: Consolidate SHA-256 checksums
+        run: cd release && sha256sum *.tar.gz *.cdx.json > SHA256SUMS
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

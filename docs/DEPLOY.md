@@ -335,6 +335,22 @@ No unqualified "verified", "proven", or "trustless" is used for the channel orig
 See also `demo/approve_cli.py`, `demo/approve_telegram.py`, `demo/see_the_loop.py` (and the
 Rust provider tests) for the honest labels and TCB statements.
 
+## Release container profile
+
+Tag releases build native x86-64 and ARM64 archives. Each archive contains the Rust host,
+the FFI and Lean shared-library runtime closure, licences, a SHA-256 checksum, a CycloneDX
+SBOM, and GitHub build-provenance attestations. `scripts/runtime_dependency_gate.sh`
+rejects build-workspace paths, missing libraries, and private-repository runtime
+dependencies before an archive can be uploaded.
+
+`deploy/container/Dockerfile.release` consumes the unpacked archive and runs as UID/GID
+65532 with no root fallback. `deploy/container/compose.yaml` is the hardened example:
+read-only root filesystem, no capabilities, no network, and production-mode startup.
+Before starting it, create `deploy/container/{secrets,state/receipts,state/replay}`, make
+each directory mode `0700`, make configuration and approval files mode `0600`, and assign
+them to UID/GID 65532. The host intentionally refuses the example if those ownership or
+mode requirements are not satisfied.
+
 ---
 
 <details>

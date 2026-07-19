@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+FROM ubuntu:24.04
+
+RUN groupadd --system --gid 65532 seal \
+    && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin seal \
+    && mkdir -p /var/lib/seal/receipts /var/lib/seal/replay \
+    && chown -R 65532:65532 /var/lib/seal \
+    && chmod 0700 /var/lib/seal/receipts /var/lib/seal/replay
+COPY bin/seal-host-rs /usr/local/bin/seal-host-rs
+COPY lib/ /usr/local/lib/seal/
+COPY licenses/ /usr/share/doc/seal-host/
+
+ENV LD_LIBRARY_PATH=/usr/local/lib/seal
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/seal-host-rs"]

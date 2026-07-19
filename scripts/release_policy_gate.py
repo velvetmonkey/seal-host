@@ -33,18 +33,20 @@ def main() -> None:
             failures.append(f"missing tracked {required}")
     for path in files:
         data = path.read_bytes()
+        is_gate = path.relative_to(ROOT) == Path("scripts/release_policy_gate.py")
         if path.relative_to(ROOT) == Path("receipt-verifier/wasm/seal.wasm"):
             actual = hashlib.sha256(data).hexdigest()
             if actual != EXPECTED_KERNEL:
                 failures.append(f"{path.relative_to(ROOT)} has kernel {actual}")
         if path.suffix in TEXT_SUFFIXES or path.name in {"Dockerfile", "Dockerfile.release"}:
-            for stale in STALE_KERNELS:
-                if stale.encode() in data:
-                    failures.append(f"{path.relative_to(ROOT)} mentions stale kernel {stale}")
+            if not is_gate:
+                for stale in STALE_KERNELS:
+                    if stale.encode() in data:
+                        failures.append(f"{path.relative_to(ROOT)} mentions stale kernel {stale}")
             for label, pattern in SECRET_PATTERNS.items():
                 if pattern.search(data):
                     failures.append(f"{path.relative_to(ROOT)} contains a possible {label}")
-            if path.suffix != ".lean" and b"/home/monkey/" in data:
+            if not is_gate and path.suffix != ".lean" and b"/home/monkey/" in data:
                 failures.append(f"{path.relative_to(ROOT)} contains a workstation identity path")
     if failures:
         raise SystemExit("release policy gate failed:\n  " + "\n  ".join(failures))
