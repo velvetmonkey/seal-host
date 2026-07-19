@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Security scanning
+
+on:
+  pull_request:
+  push:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions/dependency-review-action@v5
+
+  cargo-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+        with: { toolchain: "1.96.0", cache: false }
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit --deny warnings
+        working-directory: rust
+
+  fuzz-hostile-ingress:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+        with: { toolchain: nightly, cache: false }
+      - run: cargo install cargo-fuzz --locked
+      - run: cargo +nightly fuzz run hostile_ingress -- -max_total_time=60 -timeout=5
+        working-directory: rust
