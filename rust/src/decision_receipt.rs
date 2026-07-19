@@ -6,11 +6,10 @@
 //! config and approval records the host supplied to Lean, then persists the
 //! result before any ALLOW is forwarded.
 
-use crate::lean;
 use crate::providers::ApprovalRecord;
+use crate::{lean, secure_fs};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -429,15 +428,14 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
 impl ReceiptWriter {
     pub fn new(dir: impl Into<PathBuf>) -> Result<Self, String> {
         let dir = dir.into();
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create receipt directory {}: {e}", dir.display()))?;
+        secure_fs::ensure_private_dir(&dir, "receipt directory")?;
         let probe = dir.join(format!(".seal-receipt-probe-{}", std::process::id()));
-        File::create(&probe)
-            .and_then(|mut f| {
-                f.write_all(b"probe")?;
-                f.sync_all()
-            })
+        let mut probe_file = secure_fs::open_private_new(&probe, "receipt probe")?;
+        probe_file
+            .write_all(b"probe")
+            .and_then(|_| probe_file.sync_all())
             .map_err(|e| format!("receipt directory {} is not writable: {e}", dir.display()))?;
+        drop(probe_file);
         std::fs::remove_file(&probe)
             .map_err(|e| format!("cannot clean receipt probe {}: {e}", probe.display()))?;
 
@@ -500,13 +498,15 @@ impl ReceiptWriter {
                 continue;
             }
             let write_result = (|| -> std::io::Result<()> {
-                let mut file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&tmp_path)?;
+                let mut file = secure_fs::open_private_new(&tmp_path, "receipt temp")
+                    .map_err(std::io::Error::other)?;
                 file.write_all(bytes.as_bytes())?;
                 file.sync_all()?;
                 std::fs::rename(&tmp_path, &final_path)?;
+                secure_fs::validate_private_file(&final_path, "receipt")
+                    .map_err(std::io::Error::other)?;
+                secure_fs::sync_dir(&self.dir, "receipt directory")
+                    .map_err(std::io::Error::other)?;
                 Ok(())
             })();
             if let Err(e) = write_result {
