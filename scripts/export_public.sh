@@ -38,13 +38,14 @@ python3 "$BUILD/scripts/public_scrub.py" "$BUILD"
 echo "==> test source-only gates"
 (cd "$BUILD" && node scripts/claims-drift.mjs)
 cargo fmt --manifest-path "$BUILD/rust/Cargo.toml" --check
-python3 -m unittest discover -s "$BUILD/demo/tests" -v
+bash -n "$BUILD/scripts"/*.sh
 
 echo "==> rebuild and test the exported tree"
 (cd "$BUILD" && { test -d .lake/packages/mcp-seal || lake update; })
 (cd "$BUILD/.lake/packages/mcp-seal" && bash c/build.sh)
 (cd "$BUILD" && lake build +Ffi:c.o.export && scripts/build_ffi_so.sh)
 (cd "$BUILD/rust" && cargo test --locked --no-fail-fast && cargo build --locked --release --bins)
+(cd "$BUILD" && python3 -m unittest discover -s demo/tests -v)
 
 echo "==> assert pins and public topology"
 python3 "$SOURCE_A/scripts/public_scrub.py" "$SOURCE_A"
