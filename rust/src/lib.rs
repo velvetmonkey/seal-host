@@ -5,6 +5,7 @@
 
 pub mod a3;
 pub mod decision_receipt;
+pub mod envelope_v23;
 pub mod health;
 pub mod lean;
 pub mod limits;
