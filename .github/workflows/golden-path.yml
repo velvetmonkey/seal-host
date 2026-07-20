@@ -71,7 +71,7 @@ jobs:
           lake exe host_unit_tests
           lake exe dx_surface_tests
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false

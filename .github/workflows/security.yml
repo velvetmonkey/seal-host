@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: "1.96.0", cache: false }
       - run: cargo install cargo-audit --locked
       - run: cargo audit --deny warnings
@@ -49,7 +49,7 @@ jobs:
       - run: bash .lake/packages/mcp-seal/c/build.sh
       - run: lake build +Ffi:c.o.export
       - run: scripts/build_ffi_so.sh
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: nightly, cache: false }
       - run: cargo install cargo-fuzz --locked
       - run: cargo +nightly fuzz run hostile_ingress -- -max_total_time=60 -timeout=5
