@@ -1866,6 +1866,14 @@ mod tests {
         assert!(INSECURE_MODE_WARNING.contains("WARNING: INSECURE DEVELOPMENT MODE ENABLED"));
     }
 
+    #[test]
+    fn envelope_v23_flag_does_not_weaken_production_default() {
+        let args = parse_args_from(mode_args(&["--envelope-v23"])).unwrap();
+        assert!(args.envelope_v23);
+        assert!(args.production);
+        assert_eq!(startup_mode_warning(&args), None);
+    }
+
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON
     /// without a top-level `seal_env`, non-objects, non-JSON), every
     /// malformed-envelope shape refuses, the line-smuggling rule holds, and

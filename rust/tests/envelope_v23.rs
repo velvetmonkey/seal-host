@@ -267,6 +267,7 @@ fn spawn_v23_host() -> (RunningHost, SigningKey, serde_json::Value) {
             &hex::encode(authority_key.verifying_key().to_bytes()),
             "--channel",
             "file",
+            "--insecure-development-mode",
             "--envelope-v23",
             "--",
             "/bin/cat",
