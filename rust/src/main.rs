@@ -593,7 +593,7 @@ struct EnvFields {
 #[derive(Clone, Debug, PartialEq)]
 enum PrincipalEnvelope {
     V22(EnvFields),
-    V23(EnvelopeV23),
+    V23(Box<EnvelopeV23>),
 }
 
 impl PrincipalEnvelope {

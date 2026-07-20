@@ -100,7 +100,7 @@ pub enum WireView {
     Plain,
     Enveloped {
         request: String,
-        envelope: EnvelopeV23,
+        envelope: Box<EnvelopeV23>,
     },
     Malformed(String),
 }
@@ -150,7 +150,7 @@ pub fn wire_view(line: &str) -> WireView {
     };
     WireView::Enveloped {
         request: request.into(),
-        envelope,
+        envelope: Box::new(envelope),
     }
 }
 
