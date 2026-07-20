@@ -34,6 +34,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
@@ -72,11 +73,36 @@ jobs:
           cp seal-host-rust.cdx.json "$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}.cdx.json"
         working-directory: rust
       - name: Attest package and SBOM provenance
+        id: attest
         uses: actions/attest@v4
         with:
           subject-path: |
             ${{ runner.temp }}/release/*.tar.gz
             ${{ runner.temp }}/release/*.cdx.json
+      - name: Verify emitted attestations and reject a tampered subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          artifacts=("$RUNNER_TEMP"/release/*.tar.gz "$RUNNER_TEMP"/release/*.cdx.json)
+          test "${#artifacts[@]}" -ge 2
+          for artifact in "${artifacts[@]}"; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "${{ steps.attest.outputs.bundle-path }}" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          done
+          tampered="$RUNNER_TEMP/tampered-attestation-subject-${{ matrix.arch }}"
+          cp "${artifacts[0]}" "$tampered"
+          printf '\0tampered' >> "$tampered"
+          if gh attestation verify "$tampered" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "${{ steps.attest.outputs.bundle-path }}" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"; then
+            echo "tampered subject unexpectedly verified" >&2
+            exit 1
+          fi
+          echo "PASS tampered attestation subject rejected"
       - uses: actions/upload-artifact@v4
         with:
           name: seal-host-${{ github.ref_name }}-linux-${{ matrix.arch }}

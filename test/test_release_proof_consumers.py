@@ -20,6 +20,16 @@ class ReleaseProofConsumerTests(unittest.TestCase):
         verifier = (ROOT / "scripts/verify_public_export.sh").read_text(encoding="utf-8")
         self.assertIn("tampered blob unexpectedly verified", verifier)
 
+    def test_release_verifies_emitted_attestation_bundle(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("id: attest", workflow)
+        self.assertIn("gh attestation verify", workflow)
+        self.assertIn("steps.attest.outputs.bundle-path", workflow)
+
+    def test_release_rejects_tampered_attestation_subject(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("tampered subject unexpectedly verified", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
