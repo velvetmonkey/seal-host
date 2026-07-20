@@ -29,8 +29,13 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# 62f5fe5d carries kernel a3790181 (f95ac81 was its parent; 0aeb35a carried ff1bfd68,
-# 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+# Full pairs below mirror the machine-readable authority at
+# wasm-spike/verified/pin-history.json and are cross-checked by a regression:
+# 62f5fe5d2f3f9d1d700b524aa1d415db449799fc -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+# f95ac81265982b443e04fba2692f412721d68769 -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+# 0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
+# 6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
+# 0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
 PHASE_B_KIT_REV = "62f5fe5d2f3f9d1d700b524aa1d415db449799fc"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)

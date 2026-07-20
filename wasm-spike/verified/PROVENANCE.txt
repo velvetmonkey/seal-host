@@ -21,6 +21,14 @@ Artifact sha256:
   seal.wasm  c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda  (3966879 bytes)
   seal.js    071d7a3d4504d9e6024554e7fc6be68d3849a77c4585a4c40422fee9f63ed245
 
+Golden Path assurance-kit/kernel history
+(machine-readable authority: wasm-spike/verified/pin-history.json):
+  62f5fe5d2f3f9d1d700b524aa1d415db449799fc -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+  f95ac81265982b443e04fba2692f412721d68769 -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+  0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
+  6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
+  0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
+
 Supersedes the previously checked-in conformance artifact sha256
   3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01
   (the V2.1 principal-envelope build). The new hash is expected: V2.2 changes

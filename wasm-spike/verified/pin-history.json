@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "golden_path_assurance_kit": [
+    {
+      "kit_commit": "62f5fe5d2f3f9d1d700b524aa1d415db449799fc",
+      "kernel_sha256": "a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af",
+      "status": "active"
+    },
+    {
+      "kit_commit": "f95ac81265982b443e04fba2692f412721d68769",
+      "kernel_sha256": "a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af",
+      "status": "parent-same-kernel"
+    },
+    {
+      "kit_commit": "0aeb35a60adfa4c50b6bfcf761967b1c6280fde7",
+      "kernel_sha256": "ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546",
+      "status": "superseded"
+    },
+    {
+      "kit_commit": "6d0d6eb1512983ed9a1d09146476f806dd89d828",
+      "kernel_sha256": "d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66",
+      "status": "superseded"
+    },
+    {
+      "kit_commit": "0db03efd27fc3775988d5e4bd527d8e6206b6c47",
+      "kernel_sha256": "df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8",
+      "status": "superseded"
+    }
+  ]
+}
