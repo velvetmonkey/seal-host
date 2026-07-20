@@ -194,9 +194,6 @@ fn live_lean_diff_over_shared_corpus() {
     let rust_lines = rust_hex_lines();
     assert_eq!(lean_lines.len(), rust_lines.len(), "vector count mismatch");
     for ((name, rust_hex), lean_hex) in rust_lines.iter().zip(&lean_lines) {
-        assert_eq!(
-            rust_hex, lean_hex,
-            "LIVE byte-twin break on vector {name}"
-        );
+        assert_eq!(rust_hex, lean_hex, "LIVE byte-twin break on vector {name}");
     }
 }
