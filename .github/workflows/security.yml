@@ -30,8 +30,25 @@ jobs:
 
   fuzz-hostile-ingress:
     runs-on: ubuntu-24.04
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.3
+      - name: Require private build access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - name: Configure private Lake dependency auth
+        run: |
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+      - uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+      - run: test -d .lake/packages/mcp-seal || lake update
+      - run: bash .lake/packages/mcp-seal/c/build.sh
+      - run: lake build +Ffi:c.o.export
+      - run: scripts/build_ffi_so.sh
       - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
         with: { toolchain: nightly, cache: false }
       - run: cargo install cargo-fuzz --locked

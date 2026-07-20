@@ -740,9 +740,12 @@ fn pinned_defect_denied_call_retires_valid_approval() {
     let before_restart = o.drain_stderr(Duration::from_millis(200));
     let prior_record = before_restart
         .iter()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|value| value["seal_record"] == "v1")
-        .last()
+        .filter_map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .filter(|value| value["seal_record"] == "v1")
+        })
+        .next_back()
         .expect("pre-restart audit record")
         .clone();
 
