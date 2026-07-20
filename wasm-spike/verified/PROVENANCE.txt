@@ -1,24 +1,24 @@
 seal.wasm — verified conformance build provenance
 ==================================================
-Built from the V2.2 authority-bound principal-envelope kernel on the
-single-source policy codec. The signed-message domain is bumped to
+Built from the current P6 byte-carrier kernel with the V2.2 authority-bound
+principal-envelope host on the single-source policy codec. The signed-message domain is
 `seal/v2.2/principal-envelope\0` and commits to the 32-byte config authority,
 the length-prefixed registry key id, nonce, issue time, and exact judged line.
 This intentionally rejects V2.1 envelopes and closes the V2.1 authority-
 transplant and same-pubkey registry-relabel gaps. Non-principal decision
 semantics are unchanged.
 
-Kernel source    : mcp-seal-dev 1d3566947196fb688f7eff87c4edda2a0ac015fd
-                   (feat/policy-codec-single-source — codec + V2.1 principals)
-Host source      : seal-host feat/principal-envelope-authority-binding
-                   11e9e8d0ad0e4c2df38a04fe4c7ac7874be790b5
-                   (V2.2 authority + key-id envelope binding)
-Build date       : 2026-07-19
+Kernel source    : mcp-seal-dev c3bea29a9982616d3ed1dd0d953f105eac7522bf
+                   (main — current P6 byte-carrier kernel)
+Host source      : seal-host feat/repin-c3bea29-with-v21-principal
+                   df6684d8766497ee683d88396bb4ed202cdb8789
+                   (kernel pin plus the mainline V2.1 fold and V2.2 hardening)
+Build date       : 2026-07-20
 Lean toolchain   : leanprover/lean4:v4.28.0
 Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
 
 Artifact sha256:
-  seal.wasm  c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda  (3966879 bytes)
+  seal.wasm  d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be  (3966876 bytes)
   seal.js    071d7a3d4504d9e6024554e7fc6be68d3849a77c4585a4c40422fee9f63ed245
 
 Golden Path assurance-kit/kernel history
@@ -30,6 +30,10 @@ Golden Path assurance-kit/kernel history
   0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
 
 Supersedes the previously checked-in conformance artifact sha256
+  c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda
+  (the V2.2 authority-bound build against mcp-seal-dev 1d356694). The new
+  hash is expected: the kernel advances to c3bea29 and carries P6 byte frames.
+That build superseded
   3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01
   (the V2.1 principal-envelope build). The new hash is expected: V2.2 changes
   the signed-message domain and layout and therefore changes the kernel binary.
@@ -49,7 +53,9 @@ That build superseded
 fail-closed), which superseded d3067bc0 (Lane C divergence, closed), which
 superseded the fleet pin df42cbad.
 
-Reproduce (from wasm-spike/):
+Reproduce (from wasm-spike/, after provisioning the ignored Emscripten,
+Lean-source, runtime, package, stdlib, specialization and closure directories
+described in RESUME.md):
   source ./emsdk/emsdk_env.sh
   (cd .. && lake build Ffi)      # emit HEAD project C -> .lake/build/ir/*.c
   ./build_runtime_wasm.sh        # rebuild Lean runtime archive
@@ -59,16 +65,15 @@ Reproduce (from wasm-spike/):
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
   # then: cp build-core/seal.{wasm,js} verified/
 
-Neutral-rebuild note: this artifact was rebuilt from empty ignored object
-directories in the feat/principal-envelope-authority-binding worktree. The
-checked-in build scripts contain canonical-checkout paths, so for this worktree
-run those path constants were temporarily pointed at the reviewed worktree;
-`build_closure.sh` also needed shell nullglob enabled to bootstrap its first
-scan from an empty closure directory. Those temporary script changes were
-restored before commit. This local hash identifies the checked-in artifact and
-the finite differential gauntlet tests its behavior; it is not a proof of
-Lean-to-WASM equivalence or deterministic code generation. Clean-runner CI is
-the reproducibility judge of record.
+Local-rebuild note: the ignored Emscripten and Lean source directories were
+read through symlinks to the canonical seal-host worktree; the ignored runtime/
+package/stdlib/specialization/closure object directories were copied from that
+canonical worktree. Every project and mcp-seal object was freshly
+compiled by `build_core.sh` from this worktree's current Lean IR and pinned
+mcp-seal checkout. `build_core.sh` plus the strict link were then run a second
+time and reproduced both artifact hashes byte-for-byte. This is a same-machine
+reproduction, not a clean-runner reproduction; independent clean-runner minting
+remains the judge of record.
 
 Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
   seal_init(envelope, pubkey) -> {ok,...}
