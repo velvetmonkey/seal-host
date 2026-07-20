@@ -29,10 +29,17 @@ jobs:
       - uses: sigstore/cosign-installer@v4.1.2
         with: { cosign-release: v3.0.6 }
       - run: cargo install cargo-cyclonedx --locked
-      - run: scripts/export_public.sh "$RUNNER_TEMP/public-export"
-      - name: Verify every signature and reject a tampered blob
-        run: scripts/verify_public_export.sh "$RUNNER_TEMP/public-export"
+      - name: Run and verify first export
+        run: |
+          scripts/export_public.sh "$RUNNER_TEMP/public-export-a"
+          scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-a"
+      - name: Run and verify independent second export
+        run: |
+          scripts/export_public.sh "$RUNNER_TEMP/public-export-b"
+          scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-b"
+      - name: Compare deterministic payloads across separate runs
+        run: scripts/compare_public_exports.sh "$RUNNER_TEMP/public-export-a" "$RUNNER_TEMP/public-export-b"
       - uses: actions/upload-artifact@v4
         with:
           name: signed-public-export-${{ github.sha }}
-          path: ${{ runner.temp }}/public-export
+          path: ${{ runner.temp }}/public-export-a

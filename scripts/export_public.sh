@@ -19,20 +19,17 @@ REVISION=$(git -C "$ROOT" rev-parse HEAD)
 EPOCH=$(git -C "$ROOT" show -s --format=%ct "$REVISION")
 WORK=$(mktemp -d)
 trap 'rm -rf -- "$WORK"' EXIT
-SOURCE_A="$WORK/source-a"
-SOURCE_B="$WORK/source-b"
+SOURCE="$WORK/source"
 BUILD="$WORK/build"
 SIGNED="$WORK/signed"
-mkdir -p "$SOURCE_A" "$SOURCE_B" "$SIGNED"
+mkdir -p "$SOURCE" "$SIGNED"
 
-echo "==> assemble $REVISION twice"
-git -C "$ROOT" archive "$REVISION" | tar -xf - -C "$SOURCE_A"
-git -C "$ROOT" archive "$REVISION" | tar -xf - -C "$SOURCE_B"
-cp -a "$SOURCE_A" "$BUILD"
+echo "==> assemble $REVISION"
+git -C "$ROOT" archive "$REVISION" | tar -xf - -C "$SOURCE"
+cp -a "$SOURCE" "$BUILD"
 
 echo "==> scrub"
-python3 "$SOURCE_A/scripts/public_scrub.py" "$SOURCE_A"
-python3 "$SOURCE_B/scripts/public_scrub.py" "$SOURCE_B"
+python3 "$SOURCE/scripts/public_scrub.py" "$SOURCE"
 python3 "$BUILD/scripts/public_scrub.py" "$BUILD"
 
 echo "==> test source-only gates"
@@ -48,8 +45,7 @@ echo "==> rebuild and test the exported tree"
 (cd "$BUILD" && python3 -m unittest discover -s demo/tests -v)
 
 echo "==> assert pins and public topology"
-python3 "$SOURCE_A/scripts/public_scrub.py" "$SOURCE_A"
-python3 "$SOURCE_B/scripts/public_scrub.py" "$SOURCE_B"
+python3 "$SOURCE/scripts/public_scrub.py" "$SOURCE"
 
 echo "==> generate CycloneDX SBOM"
 (cd "$BUILD/rust" && cargo cyclonedx --format json --override-filename seal-host-rust.cdx)
@@ -60,9 +56,8 @@ archive() {
   tar --sort=name --mtime="@$EPOCH" --owner=0 --group=0 --numeric-owner \
     -C "$source" -cf - . | gzip -n > "$destination"
 }
-archive "$SOURCE_A" "$SIGNED/seal-host-${REVISION}-source.tar.gz"
-archive "$SOURCE_B" "$WORK/source-b.tar.gz"
-sha256sum "$SIGNED"/*.tar.gz "$SIGNED"/*.cdx.json > "$SIGNED/SHA256SUMS"
+archive "$SOURCE" "$SIGNED/seal-host-${REVISION}-source.tar.gz"
+(cd "$SIGNED" && sha256sum *.tar.gz *.cdx.json > SHA256SUMS)
 
 echo "==> sign source, SBOM, and checksum manifest"
 SIGN_ARGS=(--yes)
@@ -70,9 +65,6 @@ if [ -n "${SEAL_EXPORT_SIGNING_KEY:-}" ]; then SIGN_ARGS+=(--key "$SEAL_EXPORT_S
 for artifact in "$SIGNED"/*.tar.gz "$SIGNED"/*.cdx.json "$SIGNED/SHA256SUMS"; do
   cosign sign-blob "${SIGN_ARGS[@]}" --bundle "$artifact.sigstore.json" "$artifact"
 done
-
-echo "==> fail on assembly or scrub drift"
-cmp "$SIGNED/seal-host-${REVISION}-source.tar.gz" "$WORK/source-b.tar.gz"
 
 cp -a "$SIGNED"/. "$OUTPUT"/
 echo "PASS signed deterministic public export: $OUTPUT"
