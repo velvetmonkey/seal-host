@@ -19,11 +19,11 @@
 //! The protocol is strictly lockstep (each input line produces exactly one
 //! output line), so a forwarded line can never be mistaken for a block.
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -88,8 +88,14 @@ impl Oracle {
         let dir =
             std::env::temp_dir().join(format!("seal-host-oracle-{}-{}", std::process::id(), tag));
         std::fs::create_dir_all(&dir).unwrap();
+        if signed {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let approvals = dir.join("approvals.ndjson");
         std::fs::write(&approvals, b"").unwrap();
+        if signed {
+            std::fs::set_permissions(&approvals, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
 
         let config_sk = SigningKey::from_bytes(&[7u8; 32]);
         let pk = hex::encode(config_sk.verifying_key().to_bytes());
@@ -129,17 +135,27 @@ impl Oracle {
         .to_string();
         let config = dir.join("trusted.json");
         std::fs::write(&config, envelope).unwrap();
+        if signed {
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
 
-        let mut args = vec![
-            "--insecure-development-mode".to_string(),
+        let mut args = Vec::new();
+        if !signed {
+            args.push("--insecure-development-mode".to_string());
+        }
+        args.extend([
             "--config".to_string(),
             config.to_str().unwrap().to_string(),
             "--pubkey".to_string(),
             pk,
-        ];
+        ]);
         if signed {
             let token_file = dir.join("tokens.ndjson");
             std::fs::write(&token_file, b"").unwrap();
+            std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let receipt_dir = dir.join("production-receipts");
+            std::fs::create_dir(&receipt_dir).unwrap();
+            std::fs::set_permissions(&receipt_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
             let approval_pk = hex::encode(approval_signing_key().verifying_key().to_bytes());
             args.extend([
                 "--channel".to_string(),
@@ -148,6 +164,8 @@ impl Oracle {
                 token_file.to_str().unwrap().to_string(),
                 "--approval-pubkey".to_string(),
                 approval_pk,
+                "--receipt-dir".to_string(),
+                receipt_dir.to_str().unwrap().to_string(),
             ]);
         }
         args.extend(["--".to_string(), "/bin/cat".to_string()]);
@@ -259,7 +277,11 @@ impl Oracle {
     }
 
     fn receipt_dir(&self) -> PathBuf {
-        self.dir.join("seal-receipts")
+        self.args
+            .windows(2)
+            .find(|pair| pair[0] == "--receipt-dir")
+            .map(|pair| PathBuf::from(&pair[1]))
+            .unwrap_or_else(|| self.dir.join("seal-receipts"))
     }
 
     fn receipts(&self) -> Vec<serde_json::Value> {
@@ -633,6 +655,27 @@ fn terminator_shares_commitment_but_child_sees_original_bytes() {
 fn ed25519_signed_approval_forwards_end_to_end() {
     let mut o = Oracle::spawn_signed("ed25519-blue");
 
+    assert!(
+        !o.args
+            .iter()
+            .any(|arg| arg == "--insecure-development-mode"),
+        "production-path coverage must not opt out of production preflight: {:?}",
+        o.args
+    );
+    assert!(o.args.windows(2).any(|pair| pair[0] == "--receipt-dir"));
+    assert_eq!(std::fs::metadata(&o.dir).unwrap().mode() & 0o777, 0o700);
+    for private_file in ["trusted.json", "tokens.ndjson", "approvals.ndjson"] {
+        assert_eq!(
+            std::fs::metadata(o.dir.join(private_file)).unwrap().mode() & 0o777,
+            0o600,
+            "{private_file} must be private"
+        );
+    }
+    assert_eq!(
+        std::fs::metadata(o.receipt_dir()).unwrap().mode() & 0o777,
+        0o700
+    );
+
     // Passthrough sanity on the signed channel.
     let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
     o.send(init);
@@ -646,16 +689,17 @@ fn ed25519_signed_approval_forwards_end_to_end() {
     let target = block_target(&blocked).expect("block names its approval target");
 
     // Signed approval for the target: the call now forwards.
-    o.append_token_line(&signed_token(&target, wall_now_ms(), "n-blue-1", None));
-    let approved = guarded_call(3, "drop table accounts");
-    o.send(&approved);
+    let token = signed_token(&target, wall_now_ms(), "n-blue-1", None);
+    o.append_token_line(&token);
+    o.send(&call);
     assert_eq!(
         o.expect_line(),
-        approved,
+        call,
         "signed approval must forward the call"
     );
 
-    // The ALLOW receipt names the production channel and the approval key.
+    // The explicit production sink contains a private ALLOW receipt. Verify
+    // its signed config cryptographically and its byte-identical kernel view.
     let allow = o
         .receipts()
         .into_iter()
@@ -664,27 +708,70 @@ fn ed25519_signed_approval_forwards_end_to_end() {
         .expect("forwarded decision persisted an ALLOW receipt");
     assert_eq!(allow["approval"]["approval_identity"]["channel"], "ed25519");
     assert!(allow["approval"]["approval_identity"]["key_id"].is_string());
-
-    // One-shot: the same call blocks again.
-    let replay = guarded_call(4, "drop table accounts");
-    o.send(&replay);
-    assert!(
-        is_block(&o.expect_line()),
-        "approval must be one-shot on the signed channel"
+    let signed = &allow["signed_config"];
+    let signed_payload = signed["payload"].as_str().unwrap();
+    let signed_pubkey: [u8; 32] = hex::decode(signed["pubkey"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let signed_signature: [u8; 64] = hex::decode(signed["signature"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    VerifyingKey::from_bytes(&signed_pubkey)
+        .unwrap()
+        .verify_strict(
+            signed_payload.as_bytes(),
+            &Signature::from_bytes(&signed_signature),
+        )
+        .expect("receipt's embedded config signature must verify");
+    assert_eq!(
+        serde_json::to_string(&allow["kernel_config"]).unwrap(),
+        signed_payload,
+        "receipt kernel view must be the exact signed payload"
     );
+    for receipt in std::fs::read_dir(o.receipt_dir()).unwrap() {
+        let receipt = receipt.unwrap();
+        if receipt.path().extension().and_then(|value| value.to_str()) == Some("json") {
+            assert_eq!(receipt.metadata().unwrap().mode() & 0o777, 0o600);
+        }
+    }
 
-    // Replaying the very same signed token is dead: the nonce is burned.
-    o.append_token_line(&signed_token(&target, wall_now_ms(), "n-blue-1", None));
-    let replay2 = guarded_call(5, "drop table accounts");
-    o.send(&replay2);
+    // Restart on the same sqlite store, then replay the byte-identical token.
+    // The in-memory state is gone, so only the durable nonce record can deny it.
+    o.restart();
+    o.append_token_line(&token);
+    o.send(&call);
     assert!(
         is_block(&o.expect_line()),
-        "replayed token must not re-approve"
+        "replayed token must not re-approve after restart"
     );
     let stderr = o.drain_stderr(Duration::from_millis(100));
     assert!(
         stderr.iter().any(|l| l.contains("replayed_nonce")),
         "operator must see the replay drop: {stderr:?}"
+    );
+
+    // A permission regression is rejected by production preflight before the
+    // guarded child starts.
+    let _ = o.child.kill();
+    let _ = o.child.wait();
+    std::fs::set_permissions(
+        o.dir.join("tokens.ndjson"),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let refused = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+        .args(&o.args)
+        .output()
+        .expect("run production startup with unsafe token permissions");
+    assert_eq!(refused.status.code(), Some(3));
+    let refused_stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        refused_stderr.contains("production startup refused")
+            && refused_stderr.contains("approval token file")
+            && refused_stderr.contains("required 0600"),
+        "unexpected production refusal: {refused_stderr}"
     );
 }
 
