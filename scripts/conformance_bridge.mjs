@@ -263,7 +263,9 @@ else
 console.log("\n[3] DEPLOYED binary — seal-host-rs record chain vs model");
 const wireSeq = ["drop table customers", "delete from ledger", "truncate audit"];
 const wireInput = wireSeq.map((sql, i) => wireCall(300 + i, sql)).join("\n") + "\n";
-const hostRun = spawnSync(HOST, ["--config", ENV_FILE, "--pubkey", PK, "--", "/bin/cat"], { input: wireInput, encoding: "utf8" });
+// This finite-corpus harness intentionally uses the ephemeral file approval
+// channel, so opt out explicitly while keeping the deployed default fail-closed.
+const hostRun = spawnSync(HOST, ["--insecure-development-mode", "--config", ENV_FILE, "--pubkey", PK, "--", "/bin/cat"], { input: wireInput, encoding: "utf8" });
 const hostStderr = (hostRun.stderr || "").split("\n").filter(Boolean);
 const hostAudits = hostStderr.filter((l) => l.includes('"certs":[') && l.includes('"verdict":'));
 const hostRecords = hostStderr
