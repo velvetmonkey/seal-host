@@ -41,6 +41,9 @@ use seal_host_rs::a3;
 use seal_host_rs::decision_receipt::{
     request_parts, sha256_hex, ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
 };
+use seal_host_rs::envelope_v23::{
+    self, AdapterClaim, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
+};
 use seal_host_rs::health::HealthServer;
 use seal_host_rs::lean;
 use seal_host_rs::limits::{
@@ -98,6 +101,7 @@ struct Args {
     approval_pubkey: Option<String>,
     receipt_dir: Option<String>,
     production: bool,
+    envelope_v23: bool,
     health: bool,
     health_listen: String,
     health_token_file: Option<String>,
@@ -119,6 +123,7 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     let mut production = true;
     let mut production_requested = false;
     let mut insecure_development_mode = false;
+    let mut envelope_v23 = false;
     let mut health = false;
     let mut health_listen = "127.0.0.1:9464".to_string();
     let mut health_token_file = None;
@@ -160,6 +165,10 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
                 production = false;
                 i += 1
             }
+            "--envelope-v23" => {
+                envelope_v23 = true;
+                i += 1
+            }
             "--health" => {
                 health = true;
                 i += 1
@@ -191,6 +200,7 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
         approval_pubkey,
         receipt_dir,
         production,
+        envelope_v23,
         health,
         health_listen,
         health_token_file,
@@ -577,6 +587,42 @@ struct EnvFields {
     issued_at: u64,
 }
 
+/// The currently pinned V2.2 envelope, or the staged V2.3 host-side shape.
+/// V2.3 is selected explicitly at boot and remains fail-closed until the Lean
+/// adapter is reviewed and repinned in a separate, authorized change.
+#[derive(Clone, Debug, PartialEq)]
+enum PrincipalEnvelope {
+    V22(EnvFields),
+    V23(EnvelopeV23),
+}
+
+impl PrincipalEnvelope {
+    fn nonce_and_issued_at(&self) -> (&str, u64) {
+        match self {
+            Self::V22(envelope) => (&envelope.nonce, envelope.issued_at),
+            Self::V23(envelope) => (&envelope.nonce, envelope.issued_at),
+        }
+    }
+
+    fn lean_value(&self) -> Value {
+        match self {
+            Self::V22(envelope) => json!({
+                "key_id": envelope.key_id,
+                "sig": envelope.sig,
+                "nonce": envelope.nonce,
+                "issued_at": envelope.issued_at,
+            }),
+            Self::V23(envelope) => {
+                // The pinned Lean FFI sees the familiar four fields and
+                // therefore rejects the V2.3 signature. The remaining fields
+                // stage the full future adapter input; the host principal
+                // cross-check below prevents any pre-repin forward.
+                serde_json::to_value(envelope).expect("V2.3 envelope is serializable")
+            }
+        }
+    }
+}
+
 /// One wire line, classified for the V2.1 principal envelope.
 #[derive(Debug, PartialEq)]
 enum EnvelopeView {
@@ -841,7 +887,7 @@ fn run() -> i32 {
                 "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
                 [--approval-pubkey <hex>] [--receipt-dir <path>] \
-                [--production|--insecure-development-mode] \
+                [--production|--insecure-development-mode] [--envelope-v23] \
                 [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
                 -- <server-cmd> <args...>\nerror: {e}"
             );
@@ -897,6 +943,17 @@ fn run() -> i32 {
             eprintln!("trusted config rejected: {e}");
             return 3;
         }
+    };
+    let v23_session = if args.envelope_v23 {
+        match envelope_v23::issue_session_id() {
+            Ok(session) => Some(session),
+            Err(error) => {
+                eprintln!("V2.3 startup refused: {error}");
+                return 3;
+            }
+        }
+    } else {
+        None
     };
     let receipt_session = receipt_session_id(now_ms());
     let ttl_ms = summary["approval_ttl_ms"].as_u64().unwrap_or(0);
@@ -1080,6 +1137,31 @@ fn run() -> i32 {
 
     let output_queue = OutputQueue::stdout();
     let output = output_queue.sender();
+    // V2.3 clients must learn the boot-stable SESSION PLANE before they can
+    // sign a call. Publish it before the relay thread starts, so no child
+    // frame can race ahead of this issuance frame. This is deliberately not
+    // the receipt-only PID session.
+    if let Some(session) = &v23_session {
+        let notification = format!(
+            "{}\n",
+            json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/seal/session",
+                "params": {
+                    "schema": "seal.session/v1",
+                    "envelope": "seal.effect/v1",
+                    "session": session,
+                }
+            })
+        );
+        if let Err(error) = output.send_frame(notification.as_bytes()) {
+            eprintln!("V2.3 startup refused: cannot publish session: {error}");
+            let _ = child.kill();
+            let _ = child.wait();
+            output_queue.shutdown();
+            return 2;
+        }
+    }
     let relay_output = output.clone();
     let downstream_dead = Arc::new(AtomicBool::new(false));
     let relay_dead = downstream_dead.clone();
@@ -1190,10 +1272,27 @@ fn run() -> i32 {
         // wire view otherwise — one binding, no rewrites, exactly as before.
         // A malformed envelope (has `seal_env` but fails the strict
         // predicate) is an ambiguity channel and refuses outright.
-        let (inner, envelope): (Option<String>, Option<EnvFields>) = match envelope_view(line) {
-            EnvelopeView::Plain => (None, None),
-            EnvelopeView::Enveloped { request, env } => (Some(request), Some(env)),
-            EnvelopeView::Malformed(reason) => {
+        let parsed_envelope: Result<(Option<String>, Option<PrincipalEnvelope>), String> =
+            if args.envelope_v23 {
+                match envelope_v23::wire_view(line) {
+                    envelope_v23::WireView::Plain => Ok((None, None)),
+                    envelope_v23::WireView::Enveloped { request, envelope } => {
+                        Ok((Some(request), Some(PrincipalEnvelope::V23(envelope))))
+                    }
+                    envelope_v23::WireView::Malformed(reason) => Err(reason),
+                }
+            } else {
+                match envelope_view(line) {
+                    EnvelopeView::Plain => Ok((None, None)),
+                    EnvelopeView::Enveloped { request, env } => {
+                        Ok((Some(request), Some(PrincipalEnvelope::V22(env))))
+                    }
+                    EnvelopeView::Malformed(reason) => Err(reason),
+                }
+            };
+        let (inner, envelope) = match parsed_envelope {
+            Ok(parsed) => parsed,
+            Err(reason) => {
                 eprintln!(
                     "{}",
                     json!({"error": format!("malformed principal envelope refused: {reason}")})
@@ -1262,6 +1361,47 @@ fn run() -> i32 {
             }
         }
 
+        // V2.3 independently reconstructs and verifies the full tuple in
+        // Rust, including equality to host-owned adapter/session/effect
+        // facts. This is additive defense at the future Lean adapter seam,
+        // never an authorization oracle: Lean must still return the same
+        // authenticated principal before any route can be enacted.
+        let mut verified_v23: Option<VerifiedEnvelope> = match &envelope {
+            Some(PrincipalEnvelope::V23(envelope)) => {
+                let Some(session) = v23_session.as_deref() else {
+                    eprintln!("{}", json!({"error": "V2.3 session was not issued"}));
+                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                        break;
+                    }
+                    continue;
+                };
+                let deployed_adapter = AdapterClaim::deployed_mcp();
+                match envelope_v23::verify(
+                    envelope,
+                    line,
+                    &EnvelopeHostContext {
+                        authority_hex: &args.pubkey,
+                        session,
+                        adapter: &deployed_adapter,
+                        kernel_config: &kernel_config,
+                    },
+                ) {
+                    Ok(verified) => Some(verified),
+                    Err(error) => {
+                        eprintln!(
+                            "{}",
+                            json!({"error": format!("V2.3 envelope refused: {error}")})
+                        );
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+            _ => None,
+        };
+
         let poll = provider.poll();
         let mut warnings = poll.warnings;
         let (records, a3_warnings) = a3.filter(poll.records, now);
@@ -1288,10 +1428,11 @@ fn run() -> i32 {
         // downgrade burst (the reduced-scope observability idiom).
         let envelope = match envelope {
             Some(env) => {
+                let (nonce, issued_at) = env.nonce_and_issued_at();
                 let rec = providers::ApprovalRecord {
                     target: sha256_hex(line.as_bytes()),
-                    issued_at: Some(env.issued_at),
-                    nonce: Some(env.nonce.clone()),
+                    issued_at: Some(issued_at),
+                    nonce: Some(nonce.to_owned()),
                 };
                 let (ok, env_warnings) = a3_env.filter(vec![rec], now);
                 emit_approval_drop_warnings(&env_warnings);
@@ -1304,6 +1445,7 @@ fn run() -> i32 {
                             "count": envelope_drops,
                         })
                     );
+                    verified_v23 = None;
                     None
                 } else {
                     Some(env)
@@ -1323,12 +1465,7 @@ fn run() -> i32 {
         if let Some(env) = &envelope {
             // RAW fields only — Rust never passes a principal string; the
             // kernel verifies and derives the principal in its parse path.
-            input["envelope"] = json!({
-                "key_id": env.key_id,
-                "sig": env.sig,
-                "nonce": env.nonce,
-                "issued_at": env.issued_at,
-            });
+            input["envelope"] = env.lean_value();
         }
         let step_output = match host.step(&input.to_string()) {
             Ok(output) => output,
@@ -1340,6 +1477,18 @@ fn run() -> i32 {
                 continue;
             }
         };
+        if let Some(verified) = &verified_v23 {
+            if let Err(error) = envelope_v23::verify_kernel_principal(&step_output, verified) {
+                eprintln!(
+                    "{}",
+                    json!({"error": format!("V2.3 kernel cross-check refused: {error}")})
+                );
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
+                continue;
+            }
+        }
         match route_of_step_output(Ok(step_output.clone())) {
             Route::Forward { audit } => {
                 if let Some(a) = audit {
@@ -1502,12 +1651,7 @@ fn run() -> i32 {
                             // consumed once above and is NOT re-filtered —
                             // freshness is per wire line, not per step call.
                             if let Some(env) = &envelope {
-                                retry["envelope"] = json!({
-                                    "key_id": env.key_id,
-                                    "sig": env.sig,
-                                    "nonce": env.nonce,
-                                    "issued_at": env.issued_at,
-                                });
+                                retry["envelope"] = env.lean_value();
                             }
                             let retry_now = retry["now"].as_u64().unwrap_or(0);
                             let retry_output = match host.step(&retry.to_string()) {
@@ -1523,6 +1667,22 @@ fn run() -> i32 {
                                     continue;
                                 }
                             };
+                            if let Some(verified) = &verified_v23 {
+                                if let Err(error) =
+                                    envelope_v23::verify_kernel_principal(&retry_output, verified)
+                                {
+                                    eprintln!(
+                                        "{}",
+                                        json!({"error": format!(
+                                            "V2.3 kernel cross-check refused: {error}"
+                                        )})
+                                    );
+                                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
                             match route_of_step_output(Ok(retry_output.clone())) {
                                 Route::Forward { audit } => {
                                     if let Some(a) = audit {
@@ -1651,6 +1811,7 @@ mod tests {
             approval_pubkey: Some("11".repeat(32)),
             receipt_dir: Some(receipts.to_string_lossy().into_owned()),
             production: true,
+            envelope_v23: false,
             health: false,
             health_listen: "127.0.0.1:9464".into(),
             health_token_file: None,
