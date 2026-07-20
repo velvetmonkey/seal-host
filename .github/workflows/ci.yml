@@ -149,7 +149,7 @@ jobs:
           mkdir -p target/sbom
           mv seal-host-rust.cdx.json target/sbom/seal-host-rust.cdx.json
         working-directory: rust
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: seal-host-rust-sbom
           path: rust/target/sbom/seal-host-rust.cdx.json

@@ -300,7 +300,7 @@ jobs:
 
       - name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: doctrine-c1-c2-c3-c4-c5-c6-${{ github.sha }}
           path: |

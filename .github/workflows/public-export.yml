@@ -39,7 +39,7 @@ jobs:
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-b"
       - name: Compare deterministic payloads across separate runs
         run: scripts/compare_public_exports.sh "$RUNNER_TEMP/public-export-a" "$RUNNER_TEMP/public-export-b"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: signed-public-export-${{ github.sha }}
           path: ${{ runner.temp }}/public-export-a
