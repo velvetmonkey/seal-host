@@ -731,8 +731,15 @@ fn run_validate(files: &[String]) -> i32 {
 
     let mut hard_failures = 0i32;
     for path in files {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(t) => t,
+        let raw = match read_file_bounded(std::path::Path::new(path), MAX_WIRE_MESSAGE_BYTES) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("{path}: cannot read: input is not UTF-8: {error}");
+                    hard_failures += 1;
+                    continue;
+                }
+            },
             Err(e) => {
                 eprintln!("{path}: cannot read: {e}");
                 hard_failures += 1;
@@ -1632,6 +1639,16 @@ mod tests {
             .unwrap_err()
             .contains("required 0600"));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn validate_refuses_oversized_input_file() {
+        let path =
+            std::env::temp_dir().join(format!("seal-validate-oversized-{}", std::process::id()));
+        std::fs::write(&path, vec![b' '; MAX_WIRE_MESSAGE_BYTES + 1]).unwrap();
+        let result = run_validate(&[path.to_string_lossy().into_owned()]);
+        std::fs::remove_file(path).unwrap();
+        assert_ne!(result, 0);
     }
 
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON

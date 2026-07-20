@@ -5,7 +5,8 @@
 //! (nonce/replay/TTL) before reaching Lean.
 
 use crate::limits::{
-    check_json_limits, read_file_bounded, MAX_APPROVAL_LINE_BYTES, MAX_TOKEN_FILE_BYTES,
+    check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus, MAX_APPROVAL_LINE_BYTES,
+    MAX_TOKEN_FILE_BYTES,
 };
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Deserializer};
@@ -538,8 +539,29 @@ impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, 
         };
         let _ = writeln!(self.output, "seal-host: approve target {target}? [y/N] ");
         let _ = self.output.flush();
-        let mut answer = String::new();
-        if self.input.read_line(&mut answer).is_ok() && answer.trim() == "y" {
+        let mut answer = Vec::new();
+        let approved =
+            match read_bounded_frame(&mut self.input, &mut answer, MAX_APPROVAL_LINE_BYTES) {
+                Ok(FrameStatus::Complete | FrameStatus::Unterminated) => {
+                    std::str::from_utf8(&answer).is_ok_and(|text| text.trim() == "y")
+                }
+                Ok(FrameStatus::Oversized) => {
+                    let _ = writeln!(
+                    self.output,
+                    "seal-host: oversized response rejected (limit {MAX_APPROVAL_LINE_BYTES} bytes)"
+                );
+                    false
+                }
+                Ok(FrameStatus::Eof) => false,
+                Err(error) => {
+                    let _ = writeln!(
+                        self.output,
+                        "seal-host: approval response read failed: {error}"
+                    );
+                    false
+                }
+            };
+        if approved {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -837,5 +859,16 @@ mod tests {
         let p2 = p.poll();
         assert!(p2.records.is_empty());
         assert!(p2.declines.is_empty());
+    }
+
+    #[test]
+    fn interactive_provider_rejects_oversized_response() {
+        let input = format!("{}\n", "y".repeat(MAX_APPROVAL_LINE_BYTES + 1));
+        let mut p = InteractiveProvider::new(std::io::Cursor::new(input.into_bytes()), Vec::new());
+        p.queue("00".repeat(32));
+        let poll = p.poll();
+        assert!(poll.records.is_empty());
+        let output = String::from_utf8(p.output).unwrap();
+        assert!(output.contains("oversized response rejected"), "{output}");
     }
 }
