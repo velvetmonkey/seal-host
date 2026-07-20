@@ -9,6 +9,10 @@ use seal_host_rs::envelope_v23::{
     EffectClaim, EnvelopeV23, HostContext, PrincipalClaim, VerifiedEnvelope, WireView,
 };
 use serde_json::json;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{channel, Receiver};
+use std::time::Duration;
 
 const PRINCIPAL_SEED: [u8; 32] = [1; 32];
 
@@ -187,4 +191,191 @@ fn strict_wire_shape_accepts_omitted_empty_seats() {
         }
         other => panic!("unexpected wire view: {other:?}"),
     }
+}
+
+struct RunningHost {
+    child: Child,
+    stdin: ChildStdin,
+    lines: Receiver<String>,
+    directory: std::path::PathBuf,
+}
+
+impl RunningHost {
+    fn send(&mut self, line: &str) {
+        writeln!(self.stdin, "{line}").unwrap();
+        self.stdin.flush().unwrap();
+    }
+
+    fn receive(&self) -> String {
+        self.lines
+            .recv_timeout(Duration::from_secs(20))
+            .expect("host produced no output frame")
+    }
+}
+
+impl Drop for RunningHost {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn spawn_v23_host() -> (RunningHost, SigningKey, serde_json::Value) {
+    let directory = std::env::temp_dir().join(format!(
+        "seal-v23-host-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let approvals = directory.join("approvals.ndjson");
+    std::fs::write(&approvals, b"").unwrap();
+
+    let authority_key = SigningKey::from_bytes(&[7; 32]);
+    let principal_key = SigningKey::from_bytes(&PRINCIPAL_SEED);
+    let payload = json!({
+        "epoch": 1,
+        "safety": {
+            "approval": {
+                "control_file": approvals.to_str().unwrap(),
+                "ttl_seconds": 120
+            },
+            "tools": [{"name": "db.execute", "mode": "allow"}]
+        },
+        "principals": {
+            "keys": [{
+                "id": "alice",
+                "pubkey": hex::encode(principal_key.verifying_key().to_bytes())
+            }],
+            "budgets": [{"name": "db-budget", "cap": 2, "tools": ["db.execute"]}]
+        }
+    });
+    let payload_text = payload.to_string();
+    let trusted = json!({
+        "payload": payload_text,
+        "signature": hex::encode(authority_key.sign(payload_text.as_bytes()).to_bytes())
+    });
+    let config = directory.join("trusted.json");
+    std::fs::write(&config, trusted.to_string()).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "--pubkey",
+            &hex::encode(authority_key.verifying_key().to_bytes()),
+            "--channel",
+            "file",
+            "--envelope-v23",
+            "--",
+            "/bin/cat",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            if line.is_err() {
+                break;
+            }
+        }
+    });
+    let (sender, lines) = channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    (
+        RunningHost {
+            child,
+            stdin,
+            lines,
+            directory,
+        },
+        authority_key,
+        payload,
+    )
+}
+
+#[test]
+fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
+    let (mut host, authority_key, kernel_config) = spawn_v23_host();
+    let issuance: serde_json::Value = serde_json::from_str(&host.receive()).unwrap();
+    assert_eq!(issuance["method"], "notifications/seal/session");
+    assert_eq!(issuance["params"]["schema"], "seal.session/v1");
+    assert_eq!(issuance["params"]["envelope"], "seal.effect/v1");
+    let session = issuance["params"]["session"].as_str().unwrap();
+    assert!(session.starts_with("seal-session-v1:"));
+    assert!(!session.starts_with("seal-host-rs/stdio:"));
+
+    let initialize = r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#;
+    host.send(initialize);
+    assert_eq!(host.receive(), initialize);
+
+    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","action":"call","arguments":{"q":1}}}"#;
+    let principal_key = SigningKey::from_bytes(&PRINCIPAL_SEED);
+    let authority = authority_key.verifying_key().to_bytes();
+    let mut envelope = EnvelopeV23 {
+        key_id: "alice".into(),
+        sig: String::new(),
+        nonce: "22".repeat(32),
+        issued_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+        adapter: AdapterClaim::deployed_mcp(),
+        principal: PrincipalClaim {
+            session: session.into(),
+        },
+        effect: Some(EffectClaim {
+            resource: "db.execute".into(),
+            action: "call".into(),
+            args: r#"{"q":1}"#.into(),
+        }),
+        idempotency_key: "idem-runtime-1".into(),
+        policy_version: "different-from-epoch".into(),
+        delegation: DelegationSeats::default(),
+        revocation_subject: String::new(),
+        audience: String::new(),
+        causality_token: String::new(),
+        expires_at: 0,
+    };
+    envelope.sig = hex::encode(
+        principal_key
+            .sign(&effect_message(&authority, &envelope, line).unwrap())
+            .to_bytes(),
+    );
+    // Prove the Rust side accepts this exact tuple before exercising the
+    // runtime's independent-kernel-principal cross-check.
+    assert!(verify(
+        &envelope,
+        line,
+        &HostContext {
+            authority_hex: &hex::encode(authority),
+            session,
+            adapter: &AdapterClaim::deployed_mcp(),
+            kernel_config: &kernel_config,
+        }
+    )
+    .is_ok());
+    host.send(&json!({"seal_env": envelope, "request": line}).to_string());
+    assert_eq!(
+        host.receive(),
+        r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"seal-host: mediation seam failure; request blocked"}}"#
+    );
+
+    // A blocked staged call does not kill or desynchronize the stdio session.
+    let initialize_again = r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{}}"#;
+    host.send(initialize_again);
+    assert_eq!(host.receive(), initialize_again);
 }
