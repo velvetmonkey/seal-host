@@ -29,8 +29,9 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# f95ac81 carries kernel a3790181 (0aeb35a carried ff1bfd68, 6d0d6eb carried d3067bc0, 0db03ef carried df42).
-PHASE_B_KIT_REV = "f95ac81265982b443e04fba2692f412721d68769"
+# 62f5fe5d carries kernel a3790181 (f95ac81 was its parent; 0aeb35a carried ff1bfd68,
+# 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+PHASE_B_KIT_REV = "62f5fe5d2f3f9d1d700b524aa1d415db449799fc"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
 
