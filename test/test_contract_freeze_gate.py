@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -38,15 +40,26 @@ class ContractFreezeGateTests(unittest.TestCase):
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
         return root
 
-    def run_gate(self, root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    def run_gate(
+        self, root: Path, *extra: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        process_env = os.environ.copy()
+        process_env.pop("CI", None)
+        process_env.pop("GITHUB_ACTIONS", None)
+        process_env.pop("CONTRACT_FREEZE_CI", None)
+        if env:
+            process_env.update(env)
         return subprocess.run(
             [sys.executable, str(root / "scripts" / "contract_freeze_gate.py"), *extra],
             cwd=root,
             text=True,
             capture_output=True,
             timeout=30,
+            env=process_env,
         )
 
     def test_clean_tree_passes(self) -> None:
@@ -60,7 +73,7 @@ class ContractFreezeGateTests(unittest.TestCase):
         doc.write_text(doc.read_text(encoding="utf-8") + "\nan extra clause\n", encoding="utf-8")
         result = self.run_gate(root)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("re-freeze", result.stderr)
+        self.assertIn("--refreeze cannot approve", result.stderr)
         self.assertIn("EFFECT-ENVELOPE-V23.md", result.stderr)
 
     def test_corpus_edit_without_refreeze_fails(self) -> None:
@@ -71,14 +84,60 @@ class ContractFreezeGateTests(unittest.TestCase):
         corpus.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         result = self.run_gate(root)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("re-freeze", result.stderr)
+        self.assertIn("--refreeze cannot approve", result.stderr)
 
-    def test_refreeze_after_doc_edit_then_passes(self) -> None:
+    def test_refreeze_cannot_approve_doc_edit(self) -> None:
         root = self.make_repo_copy()
         doc = root / "docs" / "EFFECT-ENVELOPE-V23.md"
+        manifest = root / MANIFEST
+        before_manifest = manifest.read_bytes()
         doc.write_text(doc.read_text(encoding="utf-8") + "\nan extra clause\n", encoding="utf-8")
         refreeze = self.run_gate(root, "--refreeze")
+        self.assertNotEqual(refreeze.returncode, 0, refreeze.stdout + refreeze.stderr)
+        self.assertIn("--refreeze cannot approve", refreeze.stderr)
+        self.assertEqual(manifest.read_bytes(), before_manifest)
+        result = self.run_gate(root)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_manual_review_baseline_update_allows_legible_refreeze(self) -> None:
+        root = self.make_repo_copy()
+        doc = root / "docs" / "EFFECT-ENVELOPE-V23.md"
+        script = root / "scripts" / "contract_freeze_gate.py"
+        old_hash = hashlib.sha256(doc.read_bytes()).hexdigest()
+        doc.write_text(doc.read_text(encoding="utf-8") + "\na reviewed clause\n", encoding="utf-8")
+        new_hash = hashlib.sha256(doc.read_bytes()).hexdigest()
+        source = script.read_text(encoding="utf-8")
+        self.assertEqual(source.count(old_hash), 1)
+        script.write_text(source.replace(old_hash, new_hash), encoding="utf-8")
+
+        refreeze = self.run_gate(root, "--refreeze")
         self.assertEqual(refreeze.returncode, 0, refreeze.stdout + refreeze.stderr)
+        self.assertIn("REFREEZE UPDATE docs/EFFECT-ENVELOPE-V23.md", refreeze.stdout)
+        self.assertIn(f"old={old_hash}", refreeze.stdout)
+        self.assertIn(f"new={new_hash}", refreeze.stdout)
+        result = self.run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_refreeze_is_forbidden_in_ci(self) -> None:
+        root = self.make_repo_copy()
+        result = self.run_gate(root, "--refreeze", env={"CONTRACT_FREEZE_CI": "1"})
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("forbidden on a CI runner", result.stderr)
+
+    def test_tracked_file_added_to_frozen_directory_fails(self) -> None:
+        root = self.make_repo_copy()
+        added = root / "rust" / "tests" / "vectors" / "effect_envelope_v23_added.txt"
+        added.write_text("adversarial extra vector\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", str(added)], check=True)
+        result = self.run_gate(root)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("effect_envelope_v23_added.txt", result.stderr)
+        self.assertIn("independent review baseline", result.stderr)
+
+    def test_untracked_file_in_frozen_directory_is_ignored(self) -> None:
+        root = self.make_repo_copy()
+        added = root / "rust" / "tests" / "vectors" / "editor-scratch.tmp"
+        added.write_text("untracked junk\n", encoding="utf-8")
         result = self.run_gate(root)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -140,6 +199,19 @@ class ContractFreezeGateTests(unittest.TestCase):
             "the freeze gate must run without the private dependency token",
         )
         self.assertNotIn("if:", job, "the freeze gate step must be unconditional")
+        self.assertNotIn(
+            "continue-on-error:", job, "freeze failures must fail the CI job"
+        )
+        self.assertIn(
+            'CONTRACT_FREEZE_CI: "1"',
+            job,
+            "the CI job must explicitly disable the refreeze path",
+        )
+
+        workflow_header = workflow.split("\njobs:", maxsplit=1)[0]
+        self.assertRegex(workflow_header, r"(?m)^on:\s*$")
+        self.assertRegex(workflow_header, r"(?m)^  push:\s*$")
+        self.assertRegex(workflow_header, r"(?m)^  pull_request:\s*$")
 
 
 if __name__ == "__main__":
