@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+services:
+  seal-host:
+    image: ghcr.io/velvetmonkey/seal-host:v0.1.0
+    user: "65532:65532"
+    read_only: true
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+      - ./secrets:/run/seal:ro
+      - ./state/receipts:/var/lib/seal/receipts
+      - ./state/replay:/var/lib/seal/replay
+    command:
+      - --production
+      - --config
+      - /run/seal/config.json
+      - --pubkey
+      - ${SEAL_CONFIG_PUBKEY:?set SEAL_CONFIG_PUBKEY}
+      - --channel
+      - ed25519
+      - --token-file
+      - /run/seal/approvals.ndjson
+      - --approval-pubkey
+      - ${SEAL_APPROVAL_PUBKEY:?set SEAL_APPROVAL_PUBKEY}
+      - --receipt-dir
+      - /var/lib/seal/receipts
+      - --
+      - /run/seal/mcp-server

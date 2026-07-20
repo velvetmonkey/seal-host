@@ -40,7 +40,7 @@ def leg2_tampered() -> bool:
         trusted = write_config(work, work / "dummy.ndjson")
         priv, pub = generate_approval_keypair()
         proc = subprocess.Popen(
-            [str(BIN), "--config", str(trusted), "--pubkey", CONFIG_PUB,
+            [str(BIN), "--insecure-development-mode", "--config", str(trusted), "--pubkey", CONFIG_PUB,
              "--channel", "ed25519", "--token-file", str(tokens),
              "--approval-pubkey", pub, "--",
              "python3", str(ROOT / "test" / "integration" / "synthetic_ledger.py")],

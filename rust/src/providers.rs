@@ -4,6 +4,10 @@
 //! active provider before each mediated call; records then pass A3
 //! (nonce/replay/TTL) before reaching Lean.
 
+use crate::limits::{
+    check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus, MAX_APPROVAL_LINE_BYTES,
+    MAX_TOKEN_FILE_BYTES,
+};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
@@ -123,6 +127,7 @@ pub struct ControlFileProvider {
     path: std::path::PathBuf,
     seen: usize,
     drop_counter: u64,
+    oversize_reported: bool,
 }
 
 impl ControlFileProvider {
@@ -131,14 +136,45 @@ impl ControlFileProvider {
             path: path.into(),
             seen: 0,
             drop_counter: 0,
+            oversize_reported: false,
         }
     }
 }
 
 impl ApprovalProvider for ControlFileProvider {
     fn poll(&mut self) -> ApprovalPoll {
-        let Ok(text) = std::fs::read_to_string(&self.path) else {
-            return ApprovalPoll::default();
+        let bytes = match read_file_bounded(&self.path, MAX_TOKEN_FILE_BYTES) {
+            Ok(bytes) => {
+                self.oversize_reported = false;
+                bytes
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+                if self.oversize_reported {
+                    return ApprovalPoll::default();
+                }
+                self.oversize_reported = true;
+                return ApprovalPoll {
+                    warnings: vec![ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        "control-file",
+                        "token_file_bytes_exceeded",
+                        b"oversized-control-file",
+                    )],
+                    ..ApprovalPoll::default()
+                };
+            }
+            Err(_) => return ApprovalPoll::default(),
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return ApprovalPoll {
+                warnings: vec![ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    "control-file",
+                    "token_file_not_utf8",
+                    b"non-utf8-control-file",
+                )],
+                ..ApprovalPoll::default()
+            };
         };
         let lines: Vec<&str> = text
             .lines()
@@ -150,6 +186,24 @@ impl ApprovalProvider for ControlFileProvider {
         let source = self.name();
         let mut poll = ApprovalPoll::default();
         for line in fresh {
+            if line.len() > MAX_APPROVAL_LINE_BYTES {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    "approval_line_bytes_exceeded",
+                    &line.as_bytes()[..MAX_APPROVAL_LINE_BYTES.min(line.len())],
+                ));
+                continue;
+            }
+            if let Err(limit) = check_json_limits(line.as_bytes()) {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    format!("approval_{}_exceeded", limit.name()),
+                    line.as_bytes(),
+                ));
+                continue;
+            }
             // Support dev unauth declines via "decision":"deny" (still unauthenticated).
             // IMPORTANT: `decision` is an ALLOWLIST — absent/null or "allow" is an
             // approval, exactly "deny" is a decline, and ANY other value drops the
@@ -240,6 +294,7 @@ pub struct Ed25519TokenProvider {
     key: VerifyingKey,
     seen: usize,
     drop_counter: u64,
+    oversize_reported: bool,
 }
 
 impl Ed25519TokenProvider {
@@ -255,14 +310,45 @@ impl Ed25519TokenProvider {
             key,
             seen: 0,
             drop_counter: 0,
+            oversize_reported: false,
         })
     }
 }
 
 impl ApprovalProvider for Ed25519TokenProvider {
     fn poll(&mut self) -> ApprovalPoll {
-        let Ok(text) = std::fs::read_to_string(&self.path) else {
-            return ApprovalPoll::default();
+        let bytes = match read_file_bounded(&self.path, MAX_TOKEN_FILE_BYTES) {
+            Ok(bytes) => {
+                self.oversize_reported = false;
+                bytes
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+                if self.oversize_reported {
+                    return ApprovalPoll::default();
+                }
+                self.oversize_reported = true;
+                return ApprovalPoll {
+                    warnings: vec![ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        "ed25519-token",
+                        "token_file_bytes_exceeded",
+                        b"oversized-ed25519-token-file",
+                    )],
+                    ..ApprovalPoll::default()
+                };
+            }
+            Err(_) => return ApprovalPoll::default(),
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return ApprovalPoll {
+                warnings: vec![ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    "ed25519-token",
+                    "token_file_not_utf8",
+                    b"non-utf8-ed25519-token-file",
+                )],
+                ..ApprovalPoll::default()
+            };
         };
         let lines: Vec<&str> = text
             .lines()
@@ -274,6 +360,24 @@ impl ApprovalProvider for Ed25519TokenProvider {
         let source = self.name();
         let mut poll = ApprovalPoll::default();
         for line in fresh {
+            if line.len() > MAX_APPROVAL_LINE_BYTES {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    "approval_line_bytes_exceeded",
+                    &line.as_bytes()[..MAX_APPROVAL_LINE_BYTES.min(line.len())],
+                ));
+                continue;
+            }
+            if let Err(limit) = check_json_limits(line.as_bytes()) {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    format!("approval_{}_exceeded", limit.name()),
+                    line.as_bytes(),
+                ));
+                continue;
+            }
             let token: SignedToken = match serde_json::from_str(line) {
                 Ok(token) => token,
                 Err(_) => {
@@ -316,6 +420,24 @@ impl ApprovalProvider for Ed25519TokenProvider {
                     source,
                     "bad_signature",
                     line.as_bytes(),
+                ));
+                continue;
+            }
+            if token.payload.len() > MAX_APPROVAL_LINE_BYTES {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    "approval_payload_bytes_exceeded",
+                    &token.payload.as_bytes()[..MAX_APPROVAL_LINE_BYTES],
+                ));
+                continue;
+            }
+            if let Err(limit) = check_json_limits(token.payload.as_bytes()) {
+                poll.warnings.push(ApprovalDropWarning::new(
+                    &mut self.drop_counter,
+                    source,
+                    format!("approval_payload_{}_exceeded", limit.name()),
+                    token.payload.as_bytes(),
                 ));
                 continue;
             }
@@ -417,8 +539,29 @@ impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, 
         };
         let _ = writeln!(self.output, "seal-host: approve target {target}? [y/N] ");
         let _ = self.output.flush();
-        let mut answer = String::new();
-        if self.input.read_line(&mut answer).is_ok() && answer.trim() == "y" {
+        let mut answer = Vec::new();
+        let approved =
+            match read_bounded_frame(&mut self.input, &mut answer, MAX_APPROVAL_LINE_BYTES) {
+                Ok(FrameStatus::Complete | FrameStatus::Unterminated) => {
+                    std::str::from_utf8(&answer).is_ok_and(|text| text.trim() == "y")
+                }
+                Ok(FrameStatus::Oversized) => {
+                    let _ = writeln!(
+                    self.output,
+                    "seal-host: oversized response rejected (limit {MAX_APPROVAL_LINE_BYTES} bytes)"
+                );
+                    false
+                }
+                Ok(FrameStatus::Eof) => false,
+                Err(error) => {
+                    let _ = writeln!(
+                        self.output,
+                        "seal-host: approval response read failed: {error}"
+                    );
+                    false
+                }
+            };
+        if approved {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -446,6 +589,38 @@ impl<R: BufRead, W: std::io::Write> ApprovalProvider for InteractiveProvider<R, 
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn control_file_refuses_oversized_line_with_named_bounded_warning() {
+        let path = std::env::temp_dir().join(format!("seal-oversized-line-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            format!("{}\n", "x".repeat(MAX_APPROVAL_LINE_BYTES + 1)),
+        )
+        .unwrap();
+        let mut provider = ControlFileProvider::new(&path);
+        let poll = provider.poll();
+        std::fs::remove_file(&path).ok();
+        assert!(poll.records.is_empty());
+        assert_eq!(poll.warnings.len(), 1);
+        assert_eq!(poll.warnings[0].reason, "approval_line_bytes_exceeded");
+        assert!(poll.warnings[0].record_id.starts_with("sha256:"));
+        assert_eq!(poll.warnings[0].record_id.len(), 23);
+    }
+
+    #[test]
+    fn token_file_size_warning_is_emitted_only_once_while_oversized() {
+        let path = std::env::temp_dir().join(format!("seal-oversized-file-{}", std::process::id()));
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len((MAX_TOKEN_FILE_BYTES + 1) as u64).unwrap();
+        let mut provider = ControlFileProvider::new(&path);
+        let first = provider.poll();
+        let second = provider.poll();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(first.warnings.len(), 1);
+        assert_eq!(first.warnings[0].reason, "token_file_bytes_exceeded");
+        assert!(second.warnings.is_empty());
+    }
 
     #[test]
     fn ed25519_provider_accepts_valid_rejects_tampered() {
@@ -684,5 +859,16 @@ mod tests {
         let p2 = p.poll();
         assert!(p2.records.is_empty());
         assert!(p2.declines.is_empty());
+    }
+
+    #[test]
+    fn interactive_provider_rejects_oversized_response() {
+        let input = format!("{}\n", "y".repeat(MAX_APPROVAL_LINE_BYTES + 1));
+        let mut p = InteractiveProvider::new(std::io::Cursor::new(input.into_bytes()), Vec::new());
+        p.queue("00".repeat(32));
+        let poll = p.poll();
+        assert!(poll.records.is_empty());
+        let output = String::from_utf8(p.output).unwrap();
+        assert!(output.contains("oversized response rejected"), "{output}");
     }
 }

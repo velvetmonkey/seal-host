@@ -42,7 +42,7 @@ else:
     CONFIG_SK, PUBKEY = generate_keypair()
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 MOCK = ROOT / "test" / "integration" / "mock_mcp_server.py"
-CANARY = Path(os.environ.get("CANARY_ROOT", "/home/monkey/src/canary"))
+CANARY = Path(os.environ.get("CANARY_ROOT", Path(__file__).resolve().parents[2] / "canary"))
 
 REPORT: list[str] = []
 AUDIT: list[str] = []
@@ -98,7 +98,7 @@ class Host:
         config.write_text(sign_payload(config_payload(tmp), CONFIG_SK), encoding="utf-8")
         (tmp / "approvals.ndjson").touch()
         self.proc = subprocess.Popen(
-            [str(BIN), "--config", str(config), "--pubkey", PUBKEY, *channel_args,
+            [str(BIN), "--insecure-development-mode", "--config", str(config), "--pubkey", PUBKEY, *channel_args,
              "--", "python3", str(MOCK)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,

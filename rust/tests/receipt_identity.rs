@@ -88,6 +88,7 @@ impl Host {
                 .to_bytes(),
         );
         let args = vec![
+            "--insecure-development-mode".to_string(),
             "--config".to_string(),
             config.to_str().unwrap().to_string(),
             "--pubkey".to_string(),

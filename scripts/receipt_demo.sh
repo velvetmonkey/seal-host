@@ -68,7 +68,7 @@ echo "==============================================================="
 echo "  agent → 3 destructive db.execute calls (drop / delete / truncate on prod)"
 
 # Drive the real gate. stdout = client-facing responses; stderr = audit certs.
-"$HOST" --config "$WORK/trusted.json" --pubkey "$PK" -- /bin/cat \
+"$HOST" --insecure-development-mode --config "$WORK/trusted.json" --pubkey "$PK" -- /bin/cat \
   < "$WORK/agent.jsonl" > "$WORK/response.jsonl" 2> "$WORK/audit.raw" || true
 
 BLOCKS="$(grep -c 'approval required' "$WORK/response.jsonl" || true)"
@@ -99,6 +99,17 @@ echo "==============================================================="
 echo " STEP 3 — seal the decision into the tamper-evident record"
 echo "==============================================================="
 node "$SEAL" seal "$WORK/audit.lines" "$WORK/sealed.json"
+SEALED_HEAD="$(node -e '
+const fs=require("fs"), sealed=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+process.stdout.write(sealed.entries.length
+  ? sealed.entries[sealed.entries.length-1].head
+  : sealed.genesis);
+' "$WORK/sealed.json")"
+if [ "$HOST_HEAD" != "$SEALED_HEAD" ]; then
+  echo "DEMO FAIL: deployed head $HOST_HEAD != independently sealed head $SEALED_HEAD"
+  exit 1
+fi
+echo "  head equality: deployed host == independent sealer ($HOST_HEAD)"
 echo
 echo "  verify the record (one command):"
 echo "  \$ node scripts/seal_log.mjs verify sealed.json"
@@ -149,4 +160,5 @@ echo "   • destructive delete BLOCKED by the Lean-verified gate"
 echo "   • decision sealed into a hash-chain (machine-checked structure:"
 echo "     Host.Record.tamper_evident, H = SHA-256)"
 echo "   • intact log VERIFIES; any mutation is REJECTED"
+echo "   • deployed and independently reconstructed heads are EQUAL"
 echo "==============================================================="

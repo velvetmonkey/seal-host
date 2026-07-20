@@ -5,6 +5,7 @@
 //! The SQLite implementation is the production channel; the in-memory
 //! implementation keeps legacy/demo/tests lightweight.
 
+use crate::secure_fs;
 use rusqlite::{params, Connection, ErrorCode};
 use std::collections::HashMap;
 use std::fmt;
@@ -62,6 +63,8 @@ pub struct SqliteReplayStore {
 
 impl SqliteReplayStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ReplayStoreError> {
+        let path = path.as_ref();
+        secure_fs::ensure_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
@@ -72,6 +75,7 @@ impl SqliteReplayStore {
                 expiry_at INTEGER NOT NULL
             );",
         )?;
+        secure_fs::validate_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
         Ok(Self { conn })
     }
 }

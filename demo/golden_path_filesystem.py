@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import sys
@@ -29,8 +30,13 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# 62f5fe5d carries kernel a3790181 (f95ac81 was its parent; 0aeb35a carried ff1bfd68,
-# 6d0d6eb carried d3067bc0, 0db03ef carried df42).
+# Full pairs below mirror the machine-readable authority at
+# wasm-spike/verified/pin-history.json and are cross-checked by a regression:
+# 62f5fe5d2f3f9d1d700b524aa1d415db449799fc -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+# f95ac81265982b443e04fba2692f412721d68769 -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
+# 0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
+# 6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
+# 0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
 PHASE_B_KIT_REV = "62f5fe5d2f3f9d1d700b524aa1d415db449799fc"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
@@ -327,7 +333,51 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
 
 
 def host_command(name: str, trusted: Path, config_pub: str, approval_pub: str, tokens: Path, receipts: Path) -> list[str]:
-    return [str(HOST),"--config",str(trusted),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*server_command(name)]
+    return [str(HOST),"--insecure-development-mode","--config",str(trusted),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*server_command(name)]
+
+
+def secure_default_preflight_leg(trusted: Path, config_pub: str, approval_pub: str, work: Path) -> None:
+    """Prove the default mode accepts the signed config and rejects its tamper."""
+    secure=work/"secure-default-preflight"; secure.mkdir(mode=0o700)
+    os.chmod(secure,0o700)
+    signed=secure/"trusted.json"; shutil.copyfile(trusted,signed); os.chmod(signed,0o600)
+    tokens=secure/"tokens.ndjson"; tokens.write_text("",encoding="utf-8"); os.chmod(tokens,0o600)
+    marker="SEAL_SECURE_DEFAULT_CHILD_STARTED"
+    child_response=gp.compact({"jsonrpc":"2.0","id":0,"result":{"marker":marker}})
+    child=[sys.executable,"-c",f"import sys\nfor line in sys.stdin:\n print({child_response!r},flush=True)"]
+    probe=gp.compact(gp.request(0,"initialize"))+"\n"
+    insecure_warning="WARNING: INSECURE DEVELOPMENT MODE ENABLED"
+
+    def invoke(config: Path, receipts: Path) -> tuple[subprocess.CompletedProcess[str],list[str]]:
+        command=[str(HOST),"--config",str(config),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*child]
+        if "--production" in command or "--insecure-development-mode" in command: raise gp.DemoFailure("secure-default leg supplied an explicit mode flag")
+        process=subprocess.Popen(command,cwd=ROOT,text=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        assert process.stdin is not None and process.stdout is not None
+        try:
+            process.stdin.write(probe); process.stdin.flush()
+        except BrokenPipeError:
+            pass
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout,selectors.EVENT_READ)
+            first=process.stdout.readline() if ready.select(timeout=15) else ""
+        try: process.stdin.close()
+        except BrokenPipeError: pass
+        process.stdin=None
+        tail,error=process.communicate(timeout=15)
+        return subprocess.CompletedProcess(command,process.returncode,first+tail,error),command
+
+    accepted,command=invoke(signed,secure/"accepted-receipts")
+    if accepted.returncode!=0 or marker not in accepted.stdout: raise gp.DemoFailure(f"secure-default signed config did not start the child: exit={accepted.returncode} stdout={accepted.stdout!r} stderr={accepted.stderr!r}")
+    if insecure_warning in accepted.stderr: raise gp.DemoFailure("secure-default signed config emitted the insecure-mode warning")
+    check("secure-default signed config","PASS",f"no mode flag in {Path(command[0]).name} argv; signed config passed preflight; child marker observed")
+
+    envelope=json.loads(signed.read_text(encoding="utf-8")); signature=envelope["signature"]
+    envelope["signature"]=("0" if signature[0]!="0" else "1")+signature[1:]
+    tampered=secure/"trusted.tampered.json"; tampered.write_text(gp.compact(envelope)+"\n",encoding="utf-8"); os.chmod(tampered,0o600)
+    denied,_=invoke(tampered,secure/"tampered-receipts")
+    if denied.returncode!=3 or "trusted config rejected" not in denied.stderr or marker in denied.stdout: raise gp.DemoFailure(f"secure-default tamper did not fail closed before child start: exit={denied.returncode} stdout={denied.stdout!r} stderr={denied.stderr!r}")
+    if insecure_warning in denied.stderr: raise gp.DemoFailure("secure-default tamper emitted the insecure-mode warning")
+    check("secure-default tamper denial","PASS",f"exit={denied.returncode}; trusted config rejected; child marker absent")
 
 
 class HostSession:
@@ -628,6 +678,7 @@ def execute(deterministic: bool,receipt_output: Path|None=None)->int:
         work=Path(td); name=start_container()
         try:
             seal=gp.temporary_install(work); manifest=capture_manifest(name,work); policy,trusted,config_pub,key,approval_pub=prepare_policy(seal,manifest,work,deterministic)
+            secure_default_preflight_leg(trusted,config_pub,approval_pub,work)
             if deterministic:
                 read_leg(name,seal,trusted,config_pub,approval_pub,work); policy_tamper(name,trusted,config_pub,approval_pub,work); approval_tamper(name,seal,trusted,config_pub,key,approval_pub,work); path_escape_leg(name,trusted,config_pub,key,approval_pub,work); one_shot(name,seal,trusted,config_pub,key,approval_pub,work); budget_leg(name,trusted,config_pub,key,approval_pub,work); check("live authenticated Claude","SKIP","not invoked by deterministic/CI mode; operator-verified remains NO")
             else: live_claude(name,trusted,config_pub,key,approval_pub,work)

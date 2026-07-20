@@ -39,7 +39,7 @@ def main() -> int:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(sign_payload(payload, CONFIG_SK))
 
-    os.execv(BIN, [BIN, "--config", config_path, "--pubkey", PUBKEY,
+    os.execv(BIN, [BIN, "--insecure-development-mode", "--config", config_path, "--pubkey", PUBKEY,
                    "--channel", "file", "--", *server_cmd])
 
 

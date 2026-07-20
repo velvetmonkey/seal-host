@@ -286,6 +286,7 @@ impl Topo {
         let (config, pubkey) = write_config(mask, cal, &dir);
         let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
             .args([
+                "--insecure-development-mode",
                 "--config",
                 config.to_str().unwrap(),
                 "--pubkey",

@@ -447,6 +447,7 @@ From the `seal-host` checkout:
 ```bash
 bash scripts/build_all.sh
 export SEAL_HOST_ROOT="$PWD"
+umask 077
 mkdir -p "$PWD/.seal/receipts"
 touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
 ```
@@ -454,7 +455,6 @@ touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
 Generate separate config-signing and approval-signing keys:
 
 ```bash
-umask 077
 read CONFIG_PRIVATE CONFIG_PUBLIC <<EOF
 $(python3 -c 'from test.tools.sign_config import generate_keypair; print(*generate_keypair())')
 EOF
@@ -520,6 +520,7 @@ After Seal, the real command moves behind `--`:
         "--token-file", "/ABS/PATH/.seal/approval-tokens.ndjson",
         "--approval-pubkey", "APPROVAL_PUBLIC_KEY_HEX",
         "--receipt-dir", "/ABS/PATH/.seal/receipts",
+        "--production",
         "--", "python3", "/ABS/PATH/demo/sqlite_mcp_server.py",
         "--database", "/ABS/PATH/.seal/sandbox.sqlite"
       ]
@@ -661,7 +662,7 @@ node ../seal-assurance-kit/bin/seal verify "$RECEIPT"
 For CI:
 
 ```yaml
-- uses: velvetmonkey/seal-verify-action@main
+- uses: velvetmonkey/seal-verify-action@v1
   with:
     receipts: '.seal/receipts/*.json'
 ```
@@ -698,6 +699,20 @@ Operators must monitor free space and writeability and define receipt
 retention. “The agent stopped working” may correctly mean “Seal could not
 persist evidence, so it refused to act.”
 
+Receipt directories must be owned by the service user with mode `0700`;
+receipt files and the SQLite replay database must be owned by that user with
+mode `0600`. Existing unsafe modes, foreign ownership, and symlinks are
+rejected rather than repaired. After each receipt is written and file-fsynced,
+the host atomically renames it and fsyncs the receipt directory.
+
+The exact crash-consistency claim is deliberately narrow: after `persist`
+returns success, the complete receipt bytes and its directory entry have been
+submitted through file `fsync`, atomic rename, and parent-directory `fsync`.
+They are expected to survive an ordinary process or OS crash on a local
+filesystem that honors those calls. This is not a claim against faulty storage,
+filesystems that ignore `fsync`, administrator deletion, or every power-loss
+failure mode; backups and off-host retention remain operator responsibilities.
+
 ## 7. Other stdio MCP clients
 
 - Cursor: project `.cursor/mcp.json` or user `~/.cursor/mcp.json`; starter
@@ -710,6 +725,9 @@ persist evidence, so it refused to act.”
 Rollback is structural: replace the Seal command with the original server
 command and remove Seal’s prefixed arguments. Do not delete unrelated client
 configuration while rolling back one server.
+
+Production health/readiness, retention, key rotation, secret storage, and
+replay backup/recovery are specified in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Honesty rails
 

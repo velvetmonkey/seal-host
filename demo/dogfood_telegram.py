@@ -64,7 +64,7 @@ def main() -> int:
         priv, pub = generate_approval_keypair()
 
         host = subprocess.Popen(
-            [str(BIN), "--config", str(trusted), "--pubkey", CONFIG_PUB,
+            [str(BIN), "--insecure-development-mode", "--config", str(trusted), "--pubkey", CONFIG_PUB,
              "--channel", "ed25519", "--token-file", str(tokens),
              "--approval-pubkey", pub, "--",
              "python3", str(ROOT / "test" / "integration" / "synthetic_ledger.py")],

@@ -113,6 +113,10 @@ Minimal shape:
 `/var/lib/seal-host/replay.sqlite`); the durable store is what makes replay survive a
 host restart.
 
+For production mode, put the config, approval-token file, receipt directory,
+and replay database in a service-owned directory with mode `0700`; files must
+be mode `0600`. Do not place the replay database directly in `/tmp`.
+
 Key facts (from the schema reference, not invented here):
 - A tool **not listed** is blocked — the policy is a fail-closed allowlist for `tools/call`.
 - `mode: "guarded"` needs a live approval; `mode: "deny"` is always blocked.
@@ -135,6 +139,7 @@ signature does not verify against `--pubkey`.
 
 ```sh
 rust/target/debug/seal-host-rs \
+  --insecure-development-mode \
   --config trusted.json \
   --pubkey <config-pubkey-hex> \
   --channel file \
@@ -149,6 +154,15 @@ rust/target/debug/seal-host-rs \
   `--channel ed25519` (see "Control-file channel" below for the exact swap and why).
 - `--token-file`: that file (match `control_file` in your policy).
 - everything after `--`: the child MCP server. seal-host spawns it and proxies to it.
+
+The walkthrough above explicitly opts into insecure development mode, which
+prints an uppercase warning on startup. Production preflight is the default; a
+production launch omits `--insecure-development-mode`, switches to `--channel
+ed25519`, supplies separate config and approval public keys, names a durable
+replay database in the signed policy, and supplies an explicit `--receipt-dir`.
+The legacy `--production` spelling remains accepted as a redundant declaration.
+Startup refuses if any one of those conditions or the ownership/mode checks is
+missing. Resource limits are always active in both modes.
 
 ## 6. Point your agent at the host
 
@@ -202,7 +216,9 @@ policy's ttl. Malformed lines are skipped fail-closed.
 Re-issue the same call. It now passes to the child server, and the host records the
 decision on **its stderr** — two lines per decision: the raw audit line, then a
 tamper-evident chain record as a single JSON line
-(`{"seal_record":"v1","entry":N,"commitment":"...","head":"..."}`). To keep them, redirect
+(`{"seal_record":"v1","entry":N,"session":"...","prev_head":"...","head":"..."}`).
+The first record of a process also names the prior process session, and its
+`prev_head` is the safely persisted prior head. To keep the stream, redirect
 stderr when you start the host (e.g. append `2>>/tmp/seal-audit.log` to the command in
 step 5).
 
@@ -217,8 +233,8 @@ check the log two ways, and they prove different things:
   deployed host's own audit trail; nothing external is needed to check its integrity.
 - **A single decision is correct.** That is the schema-v2 *decision* receipt, where you
   re-derive the verdict from the request bytes and check it with `seal-check` / `seal verify`.
-  It is shown end-to-end in [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo).
-  The compatible-profile host emits the audit chain above, not this v2 receipt.
+  The compatible-profile host writes this receipt in `--receipt-dir` **and** emits the
+  distinct audit/chain pair on stderr. Do not present either artifact as the other.
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
 once, and every decision written to a tamper-evident audit chain you can verify yourself.
@@ -321,6 +337,30 @@ No unqualified "verified", "proven", or "trustless" is used for the channel orig
 
 See also `demo/approve_cli.py`, `demo/approve_telegram.py`, `demo/see_the_loop.py` (and the
 Rust provider tests) for the honest labels and TCB statements.
+
+## Release container profile
+
+Tag releases build native x86-64 and ARM64 archives. Each archive contains the Rust host,
+the FFI and Lean shared-library runtime closure, licences, a SHA-256 checksum, a CycloneDX
+SBOM, and GitHub build-provenance attestations. `scripts/runtime_dependency_gate.sh`
+rejects build-workspace paths, missing libraries, and private-repository runtime
+dependencies before an archive can be uploaded.
+
+`deploy/container/Dockerfile.release` consumes the unpacked archive and runs as UID/GID
+65532 with no root fallback. `deploy/container/compose.yaml` is the hardened example:
+read-only root filesystem, no capabilities, no network, and production-mode startup.
+Before starting it, create `deploy/container/{secrets,state/receipts,state/replay}`, make
+each directory mode `0700`, make configuration and approval files mode `0600`, and assign
+them to UID/GID 65532. The host intentionally refuses the example if those ownership or
+mode requirements are not satisfied.
+
+The source-publication path is `scripts/export_public.sh EMPTY_DIRECTORY`. It
+assembles a Git revision, scrubs identity and leak patterns, runs source-only
+tests, rebuilds and tests the exported tree, asserts the verifier pin, generates
+a CycloneDX SBOM, and signs every output with Sigstore. CI invokes the exporter
+in two separate runs and byte-compares their source archives, SBOMs, and
+relative-path checksum manifests. Drift or any missing prerequisite fails the
+workflow.
 
 ---
 

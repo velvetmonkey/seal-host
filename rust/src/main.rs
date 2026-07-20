@@ -19,6 +19,7 @@
 //! | P7| audit / A3 drops / errors | stderr                                 | telemetry only, no effect |
 //! | P8| approval evidence         | (feeds Lean via A3 only)               | parse failure drops the record ⇒ deny |
 //! | P9| votes/grants/forecasts    | (raw text to Lean)                     | Lean parses; grants cursor line-split is drop-only |
+//! | P10| authenticated health HTTP| fixed health/readiness response         | N/A — operational status only; no MCP or mutation surface |
 //!
 //! Enforced invariant: bytes reach the child ⇔ the Lean kernel returned
 //! classify == 0 or step route == forward for the byte-identical JUDGED
@@ -40,13 +41,21 @@ use seal_host_rs::a3;
 use seal_host_rs::decision_receipt::{
     request_parts, sha256_hex, ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
 };
+use seal_host_rs::health::HealthServer;
 use seal_host_rs::lean;
+use seal_host_rs::limits::{
+    check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus,
+    MAX_AUXILIARY_FILE_BYTES, MAX_PENDING_APPROVALS, MAX_WIRE_MESSAGE_BYTES,
+};
+use seal_host_rs::output::{OutputQueue, OutputSender};
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
 use seal_host_rs::replay_store::SqliteReplayStore;
 use seal_host_rs::route::{
-    route_of_classify, route_of_step_output, ClassifyRoute, Route, SEAM_ERROR_RESPONSE,
+    route_of_classify, route_of_step_output, ClassifyRoute, Route, RESOURCE_LIMIT_RESPONSE,
+    SEAM_ERROR_RESPONSE,
 };
+use seal_host_rs::secure_fs;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -76,9 +85,10 @@ impl Channel {
         }
     }
 }
-use std::io::{BufRead, Read, Write};
+use std::io::{BufReader, Write};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 struct Args {
     config: String,
@@ -87,17 +97,31 @@ struct Args {
     token_file: Option<String>,
     approval_pubkey: Option<String>,
     receipt_dir: Option<String>,
+    production: bool,
+    health: bool,
+    health_listen: String,
+    health_token_file: Option<String>,
     cmd: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    parse_args_from(argv)
+}
+
+fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     let mut config = None;
     let mut pubkey = None;
     let mut channel = "file".to_string();
     let mut token_file = None;
     let mut approval_pubkey = None;
     let mut receipt_dir = None;
+    let mut production = true;
+    let mut production_requested = false;
+    let mut insecure_development_mode = false;
+    let mut health = false;
+    let mut health_listen = "127.0.0.1:9464".to_string();
+    let mut health_token_file = None;
     let mut cmd = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -126,12 +150,38 @@ fn parse_args() -> Result<Args, String> {
                 receipt_dir = argv.get(i + 1).cloned();
                 i += 2
             }
+            "--production" => {
+                production_requested = true;
+                production = true;
+                i += 1
+            }
+            "--insecure-development-mode" => {
+                insecure_development_mode = true;
+                production = false;
+                i += 1
+            }
+            "--health" => {
+                health = true;
+                i += 1
+            }
+            "--health-listen" => {
+                health = true;
+                health_listen = argv.get(i + 1).cloned().unwrap_or_default();
+                i += 2
+            }
+            "--health-token-file" => {
+                health_token_file = argv.get(i + 1).cloned();
+                i += 2
+            }
             "--" => {
                 cmd = argv[i + 1..].to_vec();
                 break;
             }
             other => return Err(format!("unknown arg: {other}")),
         }
+    }
+    if production_requested && insecure_development_mode {
+        return Err("--production conflicts with --insecure-development-mode".into());
     }
     Ok(Args {
         config: config.ok_or("--config required")?,
@@ -140,12 +190,23 @@ fn parse_args() -> Result<Args, String> {
         token_file,
         approval_pubkey,
         receipt_dir,
+        production,
+        health,
+        health_listen,
+        health_token_file,
         cmd: if cmd.is_empty() {
             return Err("server command required after --".into());
         } else {
             cmd
         },
     })
+}
+
+const INSECURE_MODE_WARNING: &str =
+    "WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled";
+
+fn startup_mode_warning(args: &Args) -> Option<&'static str> {
+    (!args.production).then_some(INSECURE_MODE_WARNING)
 }
 
 fn now_ms() -> u64 {
@@ -178,7 +239,10 @@ fn read_or_empty(path: &str) -> String {
     if path.is_empty() {
         String::new()
     } else {
-        std::fs::read_to_string(path).unwrap_or_default()
+        read_file_bounded(std::path::Path::new(path), MAX_AUXILIARY_FILE_BYTES)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
     }
 }
 
@@ -225,6 +289,46 @@ fn default_receipt_dir(config_path: &str) -> std::path::PathBuf {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("seal-receipts")
+}
+
+fn production_preflight(args: &Args, replay_store_path: Option<&str>) -> Result<(), String> {
+    if !args.production {
+        return Ok(());
+    }
+    if args.channel != "ed25519" {
+        return Err("production mode requires --channel ed25519".into());
+    }
+    let token_file = args
+        .token_file
+        .as_deref()
+        .ok_or("production mode requires --token-file")?;
+    let approval_pubkey = args
+        .approval_pubkey
+        .as_deref()
+        .ok_or("production mode requires --approval-pubkey")?;
+    if same_ed25519_key_hex(&args.pubkey, approval_pubkey) {
+        return Err("production mode requires separate config and approval keys".into());
+    }
+    let receipt_dir = args
+        .receipt_dir
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .ok_or("production mode requires explicit --receipt-dir")?;
+    let replay_path = replay_store_path
+        .filter(|path| !path.is_empty())
+        .ok_or("production mode requires a durable replay store")?;
+
+    secure_fs::validate_private_file(std::path::Path::new(&args.config), "trusted config")?;
+    secure_fs::validate_private_file(std::path::Path::new(token_file), "approval token file")?;
+    secure_fs::ensure_private_dir(std::path::Path::new(receipt_dir), "receipt directory")?;
+    secure_fs::validate_private_parent(
+        std::path::Path::new(replay_path),
+        "replay database directory",
+    )?;
+    if std::path::Path::new(replay_path).exists() {
+        secure_fs::validate_private_file(std::path::Path::new(replay_path), "replay database")?;
+    }
+    Ok(())
 }
 
 fn persist_decision(
@@ -294,7 +398,12 @@ impl GrantsCursor {
         if self.path.is_empty() {
             return String::new();
         }
-        let Ok(text) = std::fs::read_to_string(&self.path) else {
+        let Ok(bytes) =
+            read_file_bounded(std::path::Path::new(&self.path), MAX_AUXILIARY_FILE_BYTES)
+        else {
+            return String::new();
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
             return String::new();
         };
         let lines: Vec<&str> = text
@@ -308,16 +417,40 @@ impl GrantsCursor {
     }
 }
 
-fn write_locked(lock: &Mutex<()>, line: &str) {
-    let _g = lock.lock().unwrap();
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(line.as_bytes());
-    let _ = out.flush();
+fn write_frame(output: &OutputSender, line: &str) -> Result<(), ()> {
+    output.send_frame(line.as_bytes()).map_err(|error| {
+        eprintln!("{}", json!({"error": error}));
+    })
 }
 
-fn emit_audit(receipts: &mut ReceiptChain, audit: &str) {
+fn write_child(child: &mut impl Write, bytes: &[u8], ready: &AtomicBool) -> Result<(), ()> {
+    child
+        .write_all(bytes)
+        .and_then(|_| child.flush())
+        .map_err(|error| {
+            ready.store(false, Ordering::Release);
+            eprintln!(
+                "{}",
+                json!({"error": format!("downstream child transport failed: {error}")})
+            );
+        })
+}
+
+fn emit_audit(receipts: &mut ReceiptChain, audit: &str) -> Result<(), ()> {
     eprintln!("{audit}");
-    eprintln!("{}", receipts.observe(audit).to_json_line());
+    match receipts.observe(audit) {
+        Ok(record) => {
+            eprintln!("{}", record.to_json_line());
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"error": "audit head persistence failure", "detail": error})
+            );
+            Err(())
+        }
+    }
 }
 
 /// Render one dropped-approval warning as a single audit line. The reason holds
@@ -342,6 +475,37 @@ fn emit_approval_drop_warnings(warnings: &[providers::ApprovalDropWarning]) {
     for w in warnings {
         eprintln!("{}", approval_drop_line(w));
     }
+}
+
+fn emit_resource_limit(limit: &str, maximum: usize) {
+    eprintln!(
+        "{}",
+        json!({
+            "seal_host_event": "resource_limit_refusal",
+            "limit": limit,
+            "maximum": maximum,
+        })
+    );
+}
+
+fn admit_pending_approvals(
+    pending: &mut Vec<providers::ApprovalRecord>,
+    records: &[providers::ApprovalRecord],
+    now: u64,
+    ttl_ms: u64,
+) -> bool {
+    pending.retain(|record| {
+        record
+            .issued_at
+            .map(|issued| issued.saturating_add(ttl_ms) >= now)
+            .unwrap_or(true)
+    });
+    if records.len() > MAX_PENDING_APPROVALS.saturating_sub(pending.len()) {
+        emit_resource_limit("pending_approval_records", MAX_PENDING_APPROVALS);
+        return false;
+    }
+    pending.extend(records.iter().cloned());
+    true
 }
 
 /// The P2-c observability signal for a FORCED reduced-scope forward: an ALLOW
@@ -589,8 +753,15 @@ fn run_validate(files: &[String]) -> i32 {
 
     let mut hard_failures = 0i32;
     for path in files {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(t) => t,
+        let raw = match read_file_bounded(std::path::Path::new(path), MAX_WIRE_MESSAGE_BYTES) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("{path}: cannot read: input is not UTF-8: {error}");
+                    hard_failures += 1;
+                    continue;
+                }
+            },
             Err(e) => {
                 eprintln!("{path}: cannot read: {e}");
                 hard_failures += 1;
@@ -670,22 +841,34 @@ fn run() -> i32 {
                 "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
                 [--approval-pubkey <hex>] [--receipt-dir <path>] \
+                [--production|--insecure-development-mode] \
+                [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
                 -- <server-cmd> <args...>\nerror: {e}"
             );
             return 2;
         }
     };
+    if let Some(warning) = startup_mode_warning(&args) {
+        eprintln!("{warning}");
+    }
 
     let host = lean::LeanHost::new();
 
     // Fail-closed: a rejected config aborts before any stdio is mediated.
-    let envelope = match std::fs::read_to_string(&args.config) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("trusted config rejected: cannot read {}: {e}", args.config);
-            return 3;
-        }
-    };
+    let envelope =
+        match read_file_bounded(std::path::Path::new(&args.config), MAX_WIRE_MESSAGE_BYTES) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(_) => {
+                    eprintln!("trusted config rejected: config is not UTF-8");
+                    return 3;
+                }
+            },
+            Err(e) => {
+                eprintln!("trusted config rejected: cannot read {}: {e}", args.config);
+                return 3;
+            }
+        };
     let init_out = match host.init(&envelope, &args.pubkey) {
         Ok(t) => t,
         Err(e) => {
@@ -727,6 +910,10 @@ fn run() -> i32 {
             return 3;
         }
     };
+    if let Err(error) = production_preflight(&args, replay_store_path.as_deref()) {
+        eprintln!("production startup refused: {error}");
+        return 3;
+    }
     let mut grants = GrantsCursor {
         path: summary["grants_file"].as_str().unwrap_or("").to_string(),
         seen: 0,
@@ -835,7 +1022,13 @@ fn run() -> i32 {
     // reuses the approval TTL from the signed config.
     let mut a3_env = a3::A3Filter::new(ttl_ms);
     let mut envelope_drops: u64 = 0;
-    let mut receipts = ReceiptChain::new();
+    let mut receipts = match ReceiptChain::open(&receipt_dir, &receipt_session) {
+        Ok(chain) => chain,
+        Err(error) => {
+            eprintln!("audit state rejected: {error}");
+            return 4;
+        }
+    };
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
     let interactive = args.channel == "interactive";
 
@@ -852,21 +1045,86 @@ fn run() -> i32 {
             return 2;
         }
     };
+    let readiness = Arc::new(AtomicBool::new(false));
+    let _health_server = if args.health {
+        let Some(token_file) = args.health_token_file.as_deref() else {
+            eprintln!("health listener refused: --health-token-file is required");
+            let _ = child.kill();
+            let _ = child.wait();
+            return 2;
+        };
+        match HealthServer::start(
+            &args.health_listen,
+            std::path::Path::new(token_file),
+            readiness.clone(),
+        ) {
+            Ok(server) => {
+                eprintln!(
+                    "{}",
+                    json!({"health_listener": server.local_addr().to_string(), "authenticated": true})
+                );
+                Some(server)
+            }
+            Err(error) => {
+                eprintln!("health listener refused: {error}");
+                let _ = child.kill();
+                let _ = child.wait();
+                return 2;
+            }
+        }
+    } else {
+        None
+    };
     let mut child_in = child.stdin.take().expect("child stdin");
-    let mut child_out = child.stdout.take().expect("child stdout");
+    let child_out = child.stdout.take().expect("child stdout");
 
-    let stdout_lock = Arc::new(Mutex::new(()));
-    let relay_lock = stdout_lock.clone();
+    let output_queue = OutputQueue::stdout();
+    let output = output_queue.sender();
+    let relay_output = output.clone();
+    let downstream_dead = Arc::new(AtomicBool::new(false));
+    let relay_dead = downstream_dead.clone();
+    let relay_ready = readiness.clone();
     let relay = std::thread::spawn(move || {
-        let mut buf = [0u8; 65536];
+        let mut reader = BufReader::new(child_out);
+        let mut frame = Vec::new();
         loop {
-            match child_out.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let _g = relay_lock.lock().unwrap();
-                    let mut out = std::io::stdout().lock();
-                    let _ = out.write_all(&buf[..n]);
-                    let _ = out.flush();
+            match read_bounded_frame(&mut reader, &mut frame, MAX_WIRE_MESSAGE_BYTES) {
+                Ok(FrameStatus::Complete) => {
+                    if let Err(error) = relay_output.send_frame(&frame) {
+                        eprintln!("{}", json!({"error": error}));
+                        relay_dead.store(true, Ordering::Release);
+                        relay_ready.store(false, Ordering::Release);
+                        break;
+                    }
+                }
+                Ok(FrameStatus::Eof) => {
+                    relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
+                    break;
+                }
+                Ok(FrameStatus::Unterminated) => {
+                    eprintln!(
+                        "{}",
+                        json!({"error": "downstream child emitted an unterminated frame"})
+                    );
+                    relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
+                    break;
+                }
+                Ok(FrameStatus::Oversized) => {
+                    emit_resource_limit("downstream_wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
+                    relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
+                    break;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        json!({"error": format!("downstream child read failed: {error}")})
+                    );
+                    relay_dead.store(true, Ordering::Release);
+                    relay_ready.store(false, Ordering::Release);
+                    break;
                 }
             }
         }
@@ -879,15 +1137,33 @@ fn run() -> i32 {
     // BURST (the griefing pattern) is distinguishable from an occasional
     // legitimate unparseable call. Passive — never gates the forward.
     let mut reduced_scope_forwards: u64 = 0;
+    readiness.store(true, Ordering::Release);
     loop {
         wire.clear();
-        match reader.read_until(b'\n', &mut wire) {
-            Ok(0) => break, // EOF: session over
-            Ok(_) => {}
+        match read_bounded_frame(&mut reader, &mut wire, MAX_WIRE_MESSAGE_BYTES) {
+            Ok(FrameStatus::Eof) => break,
+            Ok(FrameStatus::Complete | FrameStatus::Unterminated) => {}
+            Ok(FrameStatus::Oversized) => {
+                emit_resource_limit("wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
+                if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                    break;
+                }
+                continue;
+            }
             Err(e) => {
                 eprintln!("{}", json!({"error": format!("stdin read error: {e}")}));
                 break; // transport dead: stop mediating, kill child
             }
+        }
+
+        if output.has_failed() {
+            readiness.store(false, Ordering::Release);
+            break;
+        }
+        if downstream_dead.load(Ordering::Acquire) {
+            let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+            readiness.store(false, Ordering::Release);
+            break;
         }
 
         // The Lean view must be valid UTF-8 (Lean strings are UTF-8). A
@@ -895,9 +1171,18 @@ fn run() -> i32 {
         // refuse it and keep the session alive.
         let Ok(line) = std::str::from_utf8(lean_view(&wire)) else {
             eprintln!("{}", json!({"error": "non-utf8 line refused"}));
-            write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                break;
+            }
             continue;
         };
+        if let Err(limit) = check_json_limits(line.as_bytes()) {
+            emit_resource_limit(limit.name(), limit.maximum());
+            if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                break;
+            }
+            continue;
+        }
         // V2.1 envelope extraction — ONCE, BEFORE classify (a wrapper line
         // is not a tools/call, so classifying the wrapper would passthrough
         // the wrapper bytes unjudged). From here on `line` is the JUDGED
@@ -913,11 +1198,22 @@ fn run() -> i32 {
                     "{}",
                     json!({"error": format!("malformed principal envelope refused: {reason}")})
                 );
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         };
         let line: &str = inner.as_deref().unwrap_or(line);
+        if inner.is_some() {
+            if let Err(limit) = check_json_limits(line.as_bytes()) {
+                emit_resource_limit(limit.name(), limit.maximum());
+                if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                    break;
+                }
+                continue;
+            }
+        }
         // Bytes the child receives on allow: the original wire verbatim for
         // a plain line; for an enveloped line, exactly the judged inner
         // string plus ONE host-authored `\n` (the inner string is verifiably
@@ -947,8 +1243,10 @@ fn run() -> i32 {
                 // framing: no verification, no nonce burn (freshness gates
                 // decisions; passthrough lines carry none) — the INNER bytes
                 // flow to the child.
-                let _ = child_in.write_all(&forward);
-                let _ = child_in.flush();
+                if write_child(&mut child_in, &forward, &readiness).is_err() {
+                    let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                    break;
+                }
                 continue;
             }
             ClassifyRoute::Mediate => {}
@@ -957,7 +1255,9 @@ fn run() -> i32 {
                     "{}",
                     json!({"error": "classify seam failure; line refused"})
                 );
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         }
@@ -965,7 +1265,14 @@ fn run() -> i32 {
         let poll = provider.poll();
         let mut warnings = poll.warnings;
         let (records, a3_warnings) = a3.filter(poll.records, now);
-        pending_approvals.extend(records.iter().cloned());
+        if !admit_pending_approvals(&mut pending_approvals, &records, now, ttl_ms) {
+            warnings.extend(a3_warnings);
+            emit_approval_drop_warnings(&warnings);
+            if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                break;
+            }
+            continue;
+        }
         warnings.extend(a3_warnings);
         emit_approval_drop_warnings(&warnings);
         let declines = poll.declines;
@@ -1027,14 +1334,21 @@ fn run() -> i32 {
             Ok(output) => output,
             Err(error) => {
                 eprintln!("{}", json!({"error": format!("seam error: {error}")}));
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
                 continue;
             }
         };
         match route_of_step_output(Ok(step_output.clone())) {
             Route::Forward { audit } => {
                 if let Some(a) = audit {
-                    emit_audit(&mut receipts, &a);
+                    if emit_audit(&mut receipts, &a).is_err() {
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
                 }
                 let consumed = match persist_decision(
                     &mut decision_receipts,
@@ -1052,7 +1366,9 @@ fn run() -> i32 {
                 ) {
                     Ok(consumed) => consumed,
                     Err(()) => {
-                        write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
                         continue;
                     }
                 };
@@ -1067,15 +1383,22 @@ fn run() -> i32 {
                     reduced_scope_forwards += 1;
                     eprintln!("{signal}");
                 }
-                let _ = child_in.write_all(&forward);
-                let _ = child_in.flush();
+                if write_child(&mut child_in, &forward, &readiness).is_err() {
+                    let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                    break;
+                }
             }
             Route::Block {
                 mut response,
                 audit,
             } => {
                 if let Some(a) = audit {
-                    emit_audit(&mut receipts, &a);
+                    if emit_audit(&mut receipts, &a).is_err() {
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
                 }
                 if persist_decision(
                     &mut decision_receipts,
@@ -1093,7 +1416,9 @@ fn run() -> i32 {
                 )
                 .is_err()
                 {
-                    write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                        break;
+                    }
                     continue;
                 }
 
@@ -1111,12 +1436,19 @@ fn run() -> i32 {
                     if declines.iter().any(|d| d.target == target) {
                         let refused_audit =
                             format!("approval refused: {} (explicit signed decline)", target);
-                        emit_audit(&mut receipts, &refused_audit);
+                        if emit_audit(&mut receipts, &refused_audit).is_err() {
+                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                         let refused = format!(
                             "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32000,\"message\":\"seal-host: approval refused (signed decline for target {})\"}}}}\n",
                             target
                         );
-                        write_locked(&stdout_lock, &refused);
+                        if write_frame(&output, &refused).is_err() {
+                            break;
+                        }
                         continue;
                     }
                 }
@@ -1140,7 +1472,19 @@ fn run() -> i32 {
                         // captured at line arrival dropped any approval minted >5s
                         // (MAX_FUTURE_SKEW_MS) after the line arrived as future_issued_at.
                         let (records, a3_warnings) = a3.filter(poll.records, now_ms());
-                        pending_approvals.extend(records.iter().cloned());
+                        if !admit_pending_approvals(
+                            &mut pending_approvals,
+                            &records,
+                            now_ms(),
+                            ttl_ms,
+                        ) {
+                            warnings.extend(a3_warnings);
+                            emit_approval_drop_warnings(&warnings);
+                            if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                         warnings.extend(a3_warnings);
                         emit_approval_drop_warnings(&warnings);
                         if !records.is_empty() {
@@ -1173,14 +1517,21 @@ fn run() -> i32 {
                                         "{}",
                                         json!({"error": format!("seam error: {error}")})
                                     );
-                                    write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                        break;
+                                    }
                                     continue;
                                 }
                             };
                             match route_of_step_output(Ok(retry_output.clone())) {
                                 Route::Forward { audit } => {
                                     if let Some(a) = audit {
-                                        emit_audit(&mut receipts, &a);
+                                        if emit_audit(&mut receipts, &a).is_err() {
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
                                     }
                                     let consumed = match persist_decision(
                                         &mut decision_receipts,
@@ -1198,13 +1549,17 @@ fn run() -> i32 {
                                     ) {
                                         Ok(consumed) => consumed,
                                         Err(()) => {
-                                            write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
                                             continue;
                                         }
                                     };
                                     consume_pending_approval(&mut pending_approvals, consumed);
-                                    let _ = child_in.write_all(&forward);
-                                    let _ = child_in.flush();
+                                    if write_child(&mut child_in, &forward, &readiness).is_err() {
+                                        let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                                        break;
+                                    }
                                     continue;
                                 }
                                 Route::Block {
@@ -1212,7 +1567,12 @@ fn run() -> i32 {
                                     audit,
                                 } => {
                                     if let Some(a) = audit {
-                                        emit_audit(&mut receipts, &a);
+                                        if emit_audit(&mut receipts, &a).is_err() {
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
                                     }
                                     if persist_decision(
                                         &mut decision_receipts,
@@ -1230,7 +1590,9 @@ fn run() -> i32 {
                                     )
                                     .is_err()
                                     {
-                                        write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                            break;
+                                        }
                                         continue;
                                     }
                                     response = r2;
@@ -1243,24 +1605,105 @@ fn run() -> i32 {
                         }
                     }
                 }
-                write_locked(&stdout_lock, &response);
+                if write_frame(&output, &response).is_err() {
+                    break;
+                }
             }
             Route::SeamFailure { reason } => {
                 eprintln!("{}", json!({"error": reason}));
-                write_locked(&stdout_lock, SEAM_ERROR_RESPONSE);
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
             }
         }
     }
 
+    readiness.store(false, Ordering::Release);
     let _ = child.kill();
     let code = child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(0);
     let _ = relay.join();
+    output_queue.shutdown();
     code
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn production_preflight_requires_complete_private_state() {
+        let root =
+            std::env::temp_dir().join(format!("seal-production-preflight-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        secure_fs::ensure_private_dir(&root, "test root").unwrap();
+        let config = root.join("trusted.json");
+        let token = root.join("tokens.ndjson");
+        let receipts = root.join("receipts");
+        secure_fs::ensure_private_file(&config, "test config").unwrap();
+        secure_fs::ensure_private_file(&token, "test token").unwrap();
+
+        let args = Args {
+            config: config.to_string_lossy().into_owned(),
+            pubkey: "00".repeat(32),
+            channel: "ed25519".into(),
+            token_file: Some(token.to_string_lossy().into_owned()),
+            approval_pubkey: Some("11".repeat(32)),
+            receipt_dir: Some(receipts.to_string_lossy().into_owned()),
+            production: true,
+            health: false,
+            health_listen: "127.0.0.1:9464".into(),
+            health_token_file: None,
+            cmd: vec!["/bin/cat".into()],
+        };
+        let replay = root.join("replay.sqlite");
+        assert!(production_preflight(&args, replay.to_str()).is_ok());
+
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(production_preflight(&args, replay.to_str())
+            .unwrap_err()
+            .contains("required 0600"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn validate_refuses_oversized_input_file() {
+        let path =
+            std::env::temp_dir().join(format!("seal-validate-oversized-{}", std::process::id()));
+        std::fs::write(&path, vec![b' '; MAX_WIRE_MESSAGE_BYTES + 1]).unwrap();
+        let result = run_validate(&[path.to_string_lossy().into_owned()]);
+        std::fs::remove_file(path).unwrap();
+        assert_ne!(result, 0);
+    }
+
+    fn mode_args(extra: &[&str]) -> Vec<String> {
+        [
+            vec![
+                "--config".to_string(),
+                "config.json".to_string(),
+                "--pubkey".to_string(),
+                "00".repeat(32),
+            ],
+            extra.iter().map(|value| (*value).to_string()).collect(),
+            vec!["--".to_string(), "/bin/cat".to_string()],
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn production_preflight_is_the_default_mode() {
+        let args = parse_args_from(mode_args(&[])).unwrap();
+        assert!(args.production);
+        assert_eq!(startup_mode_warning(&args), None);
+    }
+
+    #[test]
+    fn insecure_development_mode_requires_explicit_opt_out() {
+        let args = parse_args_from(mode_args(&["--insecure-development-mode"])).unwrap();
+        assert!(!args.production);
+        assert_eq!(startup_mode_warning(&args), Some(INSECURE_MODE_WARNING));
+        assert!(INSECURE_MODE_WARNING.contains("WARNING: INSECURE DEVELOPMENT MODE ENABLED"));
+    }
 
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON
     /// without a top-level `seal_env`, non-objects, non-JSON), every

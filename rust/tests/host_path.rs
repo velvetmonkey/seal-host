@@ -23,6 +23,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -130,6 +131,7 @@ impl Oracle {
         std::fs::write(&config, envelope).unwrap();
 
         let mut args = vec![
+            "--insecure-development-mode".to_string(),
             "--config".to_string(),
             config.to_str().unwrap().to_string(),
             "--pubkey".to_string(),
@@ -735,6 +737,15 @@ fn pinned_defect_denied_call_retires_valid_approval() {
         "D's deny must be unrelated to T's approval"
     );
 
+    let before_restart = o.drain_stderr(Duration::from_millis(200));
+    let prior_record = before_restart
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value["seal_record"] == "v1")
+        .last()
+        .expect("pre-restart audit record")
+        .clone();
+
     // Host restarts (the sqlite replay store is the state that survives).
     o.restart();
 
@@ -751,6 +762,17 @@ fn pinned_defect_denied_call_retires_valid_approval() {
          if this forwards, the defect was fixed — update this pin: {resp}"
     );
     let stderr = o.drain_stderr(Duration::from_millis(200));
+    let restarted_record = stderr
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["seal_record"] == "v1")
+        .expect("post-restart audit record");
+    assert_eq!(restarted_record["prev_head"], prior_record["head"]);
+    assert_eq!(
+        restarted_record["prior_session"], prior_record["session"],
+        "first record after restart must cross-link the prior process session"
+    );
+    assert_ne!(restarted_record["session"], prior_record["session"]);
     assert!(
         stderr.iter().any(|l| l.contains("replayed_nonce")),
         "the resubmitted token dies as a nonce replay: {stderr:?}"
@@ -781,6 +803,15 @@ fn receipt_sink_failure_blocks_before_child_forward() {
         receipt_dir.is_dir(),
         "host did not initialize its receipt sink"
     );
+    assert_eq!(
+        std::fs::metadata(&receipt_dir).unwrap().mode() & 0o777,
+        0o700,
+        "receipt directory must be private"
+    );
+    for receipt in std::fs::read_dir(&receipt_dir).unwrap() {
+        let metadata = receipt.unwrap().metadata().unwrap();
+        assert_eq!(metadata.mode() & 0o777, 0o600, "receipt must be private");
+    }
     // `remove_dir_all`, not `remove_dir`: the warm-up above has already written
     // a decision receipt, so the directory is NOT empty and `remove_dir` would
     // fail ENOTEMPTY. Contents are irrelevant -- the scenario only needs the
@@ -797,9 +828,10 @@ fn receipt_sink_failure_blocks_before_child_forward() {
     );
     let stderr = o.drain_stderr(Duration::from_millis(100));
     assert!(
-        stderr
-            .iter()
-            .any(|line| line.contains("receipt persistence failure")),
+        stderr.iter().any(|line| {
+            line.contains("receipt persistence failure")
+                || line.contains("audit head persistence failure")
+        }),
         "operator must see the availability failure: {stderr:?}"
     );
 }
