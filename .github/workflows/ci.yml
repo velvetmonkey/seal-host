@@ -110,6 +110,9 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: node scripts/conformance_bridge.mjs --wasm
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - name: Exercise deployed production startup and record emission
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: node scripts/production_startup_conformance.mjs
       # Three-way differential at CI volume: native .so ≡ pinned seal.wasm ≡
       # interpreted Lean model, byte-for-byte per step input (the default-256
       # smoke already ran inside `cargo test` above). 25000 fuzz cases + the
