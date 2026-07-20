@@ -29,7 +29,5 @@ services:
       - ${SEAL_APPROVAL_PUBKEY:?set SEAL_APPROVAL_PUBKEY}
       - --receipt-dir
       - /var/lib/seal/receipts
-      - --replay-db
-      - /var/lib/seal/replay/replay.sqlite3
       - --
       - /run/seal/mcp-server
