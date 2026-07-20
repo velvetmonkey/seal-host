@@ -278,6 +278,10 @@ jobs:
           grep -F "only /workspace writable" /tmp/golden-path-filesystem.txt
           grep -F "init + add-kernel B policy" /tmp/golden-path-filesystem.txt
           grep -F "ACTIVE {S,B}" /tmp/golden-path-filesystem.txt
+          grep -F "secure-default signed config" /tmp/golden-path-filesystem.txt
+          grep -F "no mode flag in seal-host-rs argv; signed config passed preflight; child marker observed" /tmp/golden-path-filesystem.txt
+          grep -F "secure-default tamper denial" /tmp/golden-path-filesystem.txt
+          grep -F "trusted config rejected; child marker absent" /tmp/golden-path-filesystem.txt
           grep -F "benign read flows" /tmp/golden-path-filesystem.txt
           grep -F "policy tamper fail-closed" /tmp/golden-path-filesystem.txt
           grep -F "approval tamper fail-closed" /tmp/golden-path-filesystem.txt

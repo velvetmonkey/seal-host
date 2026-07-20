@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import sys
@@ -335,6 +336,50 @@ def host_command(name: str, trusted: Path, config_pub: str, approval_pub: str, t
     return [str(HOST),"--insecure-development-mode","--config",str(trusted),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*server_command(name)]
 
 
+def secure_default_preflight_leg(trusted: Path, config_pub: str, approval_pub: str, work: Path) -> None:
+    """Prove the default mode accepts the signed config and rejects its tamper."""
+    secure=work/"secure-default-preflight"; secure.mkdir(mode=0o700)
+    os.chmod(secure,0o700)
+    signed=secure/"trusted.json"; shutil.copyfile(trusted,signed); os.chmod(signed,0o600)
+    tokens=secure/"tokens.ndjson"; tokens.write_text("",encoding="utf-8"); os.chmod(tokens,0o600)
+    marker="SEAL_SECURE_DEFAULT_CHILD_STARTED"
+    child_response=gp.compact({"jsonrpc":"2.0","id":0,"result":{"marker":marker}})
+    child=[sys.executable,"-c",f"import sys\nfor line in sys.stdin:\n print({child_response!r},flush=True)"]
+    probe=gp.compact(gp.request(0,"initialize"))+"\n"
+    insecure_warning="WARNING: INSECURE DEVELOPMENT MODE ENABLED"
+
+    def invoke(config: Path, receipts: Path) -> tuple[subprocess.CompletedProcess[str],list[str]]:
+        command=[str(HOST),"--config",str(config),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*child]
+        if "--production" in command or "--insecure-development-mode" in command: raise gp.DemoFailure("secure-default leg supplied an explicit mode flag")
+        process=subprocess.Popen(command,cwd=ROOT,text=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        assert process.stdin is not None and process.stdout is not None
+        try:
+            process.stdin.write(probe); process.stdin.flush()
+        except BrokenPipeError:
+            pass
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout,selectors.EVENT_READ)
+            first=process.stdout.readline() if ready.select(timeout=15) else ""
+        try: process.stdin.close()
+        except BrokenPipeError: pass
+        process.stdin=None
+        tail,error=process.communicate(timeout=15)
+        return subprocess.CompletedProcess(command,process.returncode,first+tail,error),command
+
+    accepted,command=invoke(signed,secure/"accepted-receipts")
+    if accepted.returncode!=0 or marker not in accepted.stdout: raise gp.DemoFailure(f"secure-default signed config did not start the child: exit={accepted.returncode} stdout={accepted.stdout!r} stderr={accepted.stderr!r}")
+    if insecure_warning in accepted.stderr: raise gp.DemoFailure("secure-default signed config emitted the insecure-mode warning")
+    check("secure-default signed config","PASS",f"no mode flag in {Path(command[0]).name} argv; signed config passed preflight; child marker observed")
+
+    envelope=json.loads(signed.read_text(encoding="utf-8")); signature=envelope["signature"]
+    envelope["signature"]=("0" if signature[0]!="0" else "1")+signature[1:]
+    tampered=secure/"trusted.tampered.json"; tampered.write_text(gp.compact(envelope)+"\n",encoding="utf-8"); os.chmod(tampered,0o600)
+    denied,_=invoke(tampered,secure/"tampered-receipts")
+    if denied.returncode!=3 or "trusted config rejected" not in denied.stderr or marker in denied.stdout: raise gp.DemoFailure(f"secure-default tamper did not fail closed before child start: exit={denied.returncode} stdout={denied.stdout!r} stderr={denied.stderr!r}")
+    if insecure_warning in denied.stderr: raise gp.DemoFailure("secure-default tamper emitted the insecure-mode warning")
+    check("secure-default tamper denial","PASS",f"exit={denied.returncode}; trusted config rejected; child marker absent")
+
+
 class HostSession:
     def __init__(self,label: str,name: str,trusted: Path,config_pub: str,approval_pub: str,work: Path):
         self.label=label; self.tokens=work/f"{label}-tokens.ndjson"; self.tokens.write_text("",encoding="utf-8"); self.receipts=work/f"{label}-receipts"
@@ -633,6 +678,7 @@ def execute(deterministic: bool,receipt_output: Path|None=None)->int:
         work=Path(td); name=start_container()
         try:
             seal=gp.temporary_install(work); manifest=capture_manifest(name,work); policy,trusted,config_pub,key,approval_pub=prepare_policy(seal,manifest,work,deterministic)
+            secure_default_preflight_leg(trusted,config_pub,approval_pub,work)
             if deterministic:
                 read_leg(name,seal,trusted,config_pub,approval_pub,work); policy_tamper(name,trusted,config_pub,approval_pub,work); approval_tamper(name,seal,trusted,config_pub,key,approval_pub,work); path_escape_leg(name,trusted,config_pub,key,approval_pub,work); one_shot(name,seal,trusted,config_pub,key,approval_pub,work); budget_leg(name,trusted,config_pub,key,approval_pub,work); check("live authenticated Claude","SKIP","not invoked by deterministic/CI mode; operator-verified remains NO")
             else: live_claude(name,trusted,config_pub,key,approval_pub,work)
