@@ -76,7 +76,7 @@ def main() -> int:
     trusted.write_text(sign_payload(payload, VECTOR1_SEED), encoding="utf-8")
 
     proc = subprocess.Popen(
-        [str(HOST), "--config", str(trusted), "--pubkey", VECTOR1_PUB,
+        [str(HOST), "--insecure-development-mode", "--config", str(trusted), "--pubkey", VECTOR1_PUB,
          "--receipt-dir", str(receipts), "--", "/bin/cat"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True,

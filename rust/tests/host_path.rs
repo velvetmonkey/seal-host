@@ -131,6 +131,7 @@ impl Oracle {
         std::fs::write(&config, envelope).unwrap();
 
         let mut args = vec![
+            "--insecure-development-mode".to_string(),
             "--config".to_string(),
             config.to_str().unwrap().to_string(),
             "--pubkey".to_string(),

@@ -69,7 +69,7 @@ def spawn(config: Path, extra_args=(), child=None):
     if child is None:
         child = ["python3", str(ROOT / "test" / "integration" / "mock_mcp_server.py")]
     return subprocess.Popen(
-        [str(BIN), "--config", str(config), "--pubkey", PUBKEY, *extra_args,
+        [str(BIN), "--insecure-development-mode", "--config", str(config), "--pubkey", PUBKEY, *extra_args,
          "--", *child],
         cwd=ROOT,
         stdin=subprocess.PIPE,

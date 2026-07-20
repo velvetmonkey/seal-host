@@ -53,7 +53,7 @@ def main() -> int:
         keyfile = work / "approval.key"
         keyfile.write_text(priv, encoding="utf-8")
 
-        cmd = [str(BIN), "--config", str(trusted), "--pubkey", CONFIG_PUB,
+        cmd = [str(BIN), "--insecure-development-mode", "--config", str(trusted), "--pubkey", CONFIG_PUB,
                "--channel", "ed25519", "--token-file", str(tokens),
                "--approval-pubkey", pub, "--",
                "python3", str(ROOT / "test" / "integration" / "synthetic_ledger.py")]

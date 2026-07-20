@@ -254,7 +254,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
 def host_command(trusted: Path, config_pub: str, approval_pub: str, tokens: Path,
                  receipts: Path, adapter: Path) -> list[str]:
     return [
-        str(HOST), "--config", str(trusted), "--pubkey", config_pub,
+        str(HOST), "--insecure-development-mode", "--config", str(trusted), "--pubkey", config_pub,
         "--channel", "ed25519", "--token-file", str(tokens),
         "--approval-pubkey", approval_pub, "--receipt-dir", str(receipts),
         "--", *adapter_command(adapter),

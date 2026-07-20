@@ -68,7 +68,7 @@ echo "==============================================================="
 echo "  agent → 3 destructive db.execute calls (drop / delete / truncate on prod)"
 
 # Drive the real gate. stdout = client-facing responses; stderr = audit certs.
-"$HOST" --config "$WORK/trusted.json" --pubkey "$PK" -- /bin/cat \
+"$HOST" --insecure-development-mode --config "$WORK/trusted.json" --pubkey "$PK" -- /bin/cat \
   < "$WORK/agent.jsonl" > "$WORK/response.jsonl" 2> "$WORK/audit.raw" || true
 
 BLOCKS="$(grep -c 'approval required' "$WORK/response.jsonl" || true)"

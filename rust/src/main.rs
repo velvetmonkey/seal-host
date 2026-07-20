@@ -106,13 +106,19 @@ struct Args {
 
 fn parse_args() -> Result<Args, String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    parse_args_from(argv)
+}
+
+fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     let mut config = None;
     let mut pubkey = None;
     let mut channel = "file".to_string();
     let mut token_file = None;
     let mut approval_pubkey = None;
     let mut receipt_dir = None;
-    let mut production = false;
+    let mut production = true;
+    let mut production_requested = false;
+    let mut insecure_development_mode = false;
     let mut health = false;
     let mut health_listen = "127.0.0.1:9464".to_string();
     let mut health_token_file = None;
@@ -145,7 +151,13 @@ fn parse_args() -> Result<Args, String> {
                 i += 2
             }
             "--production" => {
+                production_requested = true;
                 production = true;
+                i += 1
+            }
+            "--insecure-development-mode" => {
+                insecure_development_mode = true;
+                production = false;
                 i += 1
             }
             "--health" => {
@@ -168,6 +180,9 @@ fn parse_args() -> Result<Args, String> {
             other => return Err(format!("unknown arg: {other}")),
         }
     }
+    if production_requested && insecure_development_mode {
+        return Err("--production conflicts with --insecure-development-mode".into());
+    }
     Ok(Args {
         config: config.ok_or("--config required")?,
         pubkey: pubkey.ok_or("--pubkey required")?,
@@ -185,6 +200,13 @@ fn parse_args() -> Result<Args, String> {
             cmd
         },
     })
+}
+
+const INSECURE_MODE_WARNING: &str =
+    "WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled";
+
+fn startup_mode_warning(args: &Args) -> Option<&'static str> {
+    (!args.production).then_some(INSECURE_MODE_WARNING)
 }
 
 fn now_ms() -> u64 {
@@ -819,13 +841,16 @@ fn run() -> i32 {
                 "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
                 [--channel file|ed25519|interactive] [--token-file <path>] \
                 [--approval-pubkey <hex>] [--receipt-dir <path>] \
-                [--production] \
+                [--production|--insecure-development-mode] \
                 [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
                 -- <server-cmd> <args...>\nerror: {e}"
             );
             return 2;
         }
     };
+    if let Some(warning) = startup_mode_warning(&args) {
+        eprintln!("{warning}");
+    }
 
     let host = lean::LeanHost::new();
 
@@ -1649,6 +1674,35 @@ mod tests {
         let result = run_validate(&[path.to_string_lossy().into_owned()]);
         std::fs::remove_file(path).unwrap();
         assert_ne!(result, 0);
+    }
+
+    fn mode_args(extra: &[&str]) -> Vec<String> {
+        [
+            vec![
+                "--config".to_string(),
+                "config.json".to_string(),
+                "--pubkey".to_string(),
+                "00".repeat(32),
+            ],
+            extra.iter().map(|value| (*value).to_string()).collect(),
+            vec!["--".to_string(), "/bin/cat".to_string()],
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn production_preflight_is_the_default_mode() {
+        let args = parse_args_from(mode_args(&[])).unwrap();
+        assert!(args.production);
+        assert_eq!(startup_mode_warning(&args), None);
+    }
+
+    #[test]
+    fn insecure_development_mode_requires_explicit_opt_out() {
+        let args = parse_args_from(mode_args(&["--insecure-development-mode"])).unwrap();
+        assert!(!args.production);
+        assert_eq!(startup_mode_warning(&args), Some(INSECURE_MODE_WARNING));
+        assert!(INSECURE_MODE_WARNING.contains("WARNING: INSECURE DEVELOPMENT MODE ENABLED"));
     }
 
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON

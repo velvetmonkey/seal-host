@@ -139,6 +139,7 @@ signature does not verify against `--pubkey`.
 
 ```sh
 rust/target/debug/seal-host-rs \
+  --insecure-development-mode \
   --config trusted.json \
   --pubkey <config-pubkey-hex> \
   --channel file \
@@ -154,12 +155,14 @@ rust/target/debug/seal-host-rs \
 - `--token-file`: that file (match `control_file` in your policy).
 - everything after `--`: the child MCP server. seal-host spawns it and proxies to it.
 
-The walkthrough above is deliberately development mode. A production launch
-adds `--production`, switches to `--channel ed25519`, supplies separate config
-and approval public keys, names a durable replay database in the signed policy,
-and supplies an explicit `--receipt-dir`. Startup refuses if any one of those
-conditions or the ownership/mode checks is missing. Resource limits are always
-active in both modes.
+The walkthrough above explicitly opts into insecure development mode, which
+prints an uppercase warning on startup. Production preflight is the default; a
+production launch omits `--insecure-development-mode`, switches to `--channel
+ed25519`, supplies separate config and approval public keys, names a durable
+replay database in the signed policy, and supplies an explicit `--receipt-dir`.
+The legacy `--production` spelling remains accepted as a redundant declaration.
+Startup refuses if any one of those conditions or the ownership/mode checks is
+missing. Resource limits are always active in both modes.
 
 ## 6. Point your agent at the host
 

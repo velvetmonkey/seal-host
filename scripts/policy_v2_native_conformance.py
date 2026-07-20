@@ -82,7 +82,7 @@ def main() -> int:
 
         proc = subprocess.Popen(
             [
-                str(HOST), "--config", str(trusted), "--pubkey", public,
+                str(HOST), "--insecure-development-mode", "--config", str(trusted), "--pubkey", public,
                 "--receipt-dir", str(receipts), "--", "/bin/cat",
             ],
             stdin=subprocess.PIPE,

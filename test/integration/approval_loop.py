@@ -62,7 +62,7 @@ def spawn_with_child(config_path: Path, extra_args=(), child=None):
     # Here we just spawn.
     env = env_with_ld()
     return subprocess.Popen(
-        [str(BIN), "--config", str(config_path)] + list(extra_args) + ["--"] + list(child),
+        [str(BIN), "--insecure-development-mode", "--config", str(config_path)] + list(extra_args) + ["--"] + list(child),
         cwd=ROOT,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -204,6 +204,7 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
 
     cmd = [
         str(BIN),
+        "--insecure-development-mode",
         "--config", str(trusted),
         "--pubkey", CONFIG_PUB,
         "--channel", "ed25519",

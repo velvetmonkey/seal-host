@@ -90,6 +90,7 @@ impl InteractiveHost {
 
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"));
         cmd.args([
+            "--insecure-development-mode",
             "--config",
             config.to_str().unwrap(),
             "--pubkey",

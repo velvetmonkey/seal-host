@@ -327,7 +327,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
 
 
 def host_command(name: str, trusted: Path, config_pub: str, approval_pub: str, tokens: Path, receipts: Path) -> list[str]:
-    return [str(HOST),"--config",str(trusted),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*server_command(name)]
+    return [str(HOST),"--insecure-development-mode","--config",str(trusted),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*server_command(name)]
 
 
 class HostSession:

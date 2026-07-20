@@ -74,7 +74,7 @@ def main():
         trusted.write_text(sign_payload(payload, config_key), encoding="utf-8")
 
         proc = subprocess.Popen(
-            [str(HOST), "--config", str(trusted), "--pubkey", config_pub,
+            [str(HOST), "--insecure-development-mode", "--config", str(trusted), "--pubkey", config_pub,
              "--receipt-dir", str(receipts), "--", "/bin/cat"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,

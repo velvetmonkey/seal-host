@@ -98,7 +98,7 @@ class Host:
         config.write_text(sign_payload(config_payload(tmp), CONFIG_SK), encoding="utf-8")
         (tmp / "approvals.ndjson").touch()
         self.proc = subprocess.Popen(
-            [str(BIN), "--config", str(config), "--pubkey", PUBKEY, *channel_args,
+            [str(BIN), "--insecure-development-mode", "--config", str(config), "--pubkey", PUBKEY, *channel_args,
              "--", "python3", str(MOCK)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
