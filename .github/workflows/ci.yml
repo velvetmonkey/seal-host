@@ -136,6 +136,21 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
 
+  # Runs on EVERY push and pull request, with no dependency token and no
+  # Lean/cargo toolchain: the `cargo test --test envelope_v23_twin` step above
+  # is skipped whenever SEAL_CI_READ_TOKEN is unset, so this job is the only
+  # freeze enforcement on the tokenless path. It hashes the checked-in V2.3
+  # contract surface against docs/effect-envelope-v23.freeze.json and
+  # cross-checks the golden #guard_msgs literals without compiling anything.
+  contract-freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: V2.3 contract surface must match its freeze manifest
+        run: python3 scripts/contract_freeze_gate.py
+      - name: Freeze gate fail-closed self-tests
+        run: python3 -m unittest discover -s test -p 'test_contract_freeze_gate.py' -v
+
   cargo-audit:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,13 @@
+{
+  "schema": "seal-effect-envelope-v23-freeze/v1",
+  "comment": "SHA-256 freeze of the staged V2.3 effect-envelope contract surface. Verified unconditionally in CI by scripts/contract_freeze_gate.py; a deliberate contract change must rerun it with --refreeze and commit this file in the same change.",
+  "frozen": {
+    "docs/EFFECT-ENVELOPE-V23.md": "2257776a0acf5d0b53e44e87d77af27eccdbb9bdc481ae49ea66ff51e9674e01",
+    "rust/src/envelope_v23.rs": "e38f42940d4b587705ccd6c3dee4a24ae53bc60487d9fcce352336f8a39d3a34",
+    "rust/tests/envelope_v23.rs": "d17c37db02cb82ac329c05d55db09fccc4bafc96e1ca461082467ed18bed9b33",
+    "rust/tests/envelope_v23_twin.rs": "99152c78b98a3e81b5dadf3fefbbee10ee246d32df620614c4e82573e26679e2",
+    "rust/tests/vectors/envelope_v23_twin_corpus.json": "d177022f1ba2a7aea9ce4913684c3b827858692387cbae72aaef47a027668fe7",
+    "rust/tests/vectors/envelope_v23_twin_expected.hex": "762756a6a6368a9a024886763d9aad96dcb0e58536bff793d50ac030ca4649fc",
+    "scripts/envelope_v23_twin_lane.lean": "b28149576feffbf84e7922d0f2948f1ab425285ade9b0033277e17752e853e03"
+  }
+}
