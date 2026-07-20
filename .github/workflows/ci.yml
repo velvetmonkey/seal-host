@@ -121,6 +121,17 @@ jobs:
         working-directory: rust
       - run: bash scripts/receipt_demo.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # V2.3 byte-twin guard, named so nobody has to trust that the generic
+      # `cargo test` above covered it: the Rust encoder must reproduce the
+      # Lean-spec-generated expectation over the shared corpus
+      # (rust/tests/vectors/envelope_v23_twin_corpus.json), and the corpus
+      # golden line must equal the #guard_msgs literal frozen in
+      # mcp-seal-dev's SealV2/EffectEnvelope.lean. The live dual-encoder diff
+      # in the same file stays #[ignore]d until the mcp-seal pin carries
+      # SealV2.EffectEnvelope (mcp-seal-dev 9452f32 or later).
+      - run: cargo test --test envelope_v23_twin
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        working-directory: rust
 
   cargo-audit:
     runs-on: ubuntu-latest
