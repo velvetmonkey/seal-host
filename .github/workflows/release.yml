@@ -9,7 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  fleet-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions/setup-node@v6.4.0
+        with: { node-version: "22" }
+      - name: Gate the locked verifier fleet
+        run: python3 scripts/fleet_release_gate.py
+
   build:
+    needs: fleet-gate
     name: linux-${{ matrix.arch }}
     strategy:
       fail-fast: false
