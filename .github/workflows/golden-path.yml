@@ -31,13 +31,13 @@ jobs:
       # verifies today's receipts against yesterday's kernel and fails
       # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
-      # by hand. 62f5fe5 carries kernel a3790181 plus the current 7-kernel
-      # policy bundle (f95ac81 carried the same kernel before that merge).
+      # by hand. d5e14d1 carries kernel d7d81e27 and descends from the current
+      # 7-kernel policy bundle lineage.
       - name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: 62f5fe5d2f3f9d1d700b524aa1d415db449799fc
+          ref: d5e14d173bd8b2170e244a91ad2ddc42ae168cff
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 

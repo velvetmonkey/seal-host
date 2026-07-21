@@ -9,7 +9,7 @@
     },
     "seal-assurance-kit": {
       "url": "https://github.com/velvetmonkey/seal-assurance-kit.git",
-      "commit": "dc44c578cbdddb620d389d5201b465e658692b47",
+      "commit": "d5e14d173bd8b2170e244a91ad2ddc42ae168cff",
       "wasm": ["kernel/wasm/seal.wasm"]
     },
     "seal-verify-action": {
