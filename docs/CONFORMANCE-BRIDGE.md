@@ -157,17 +157,14 @@ driving the *pinned* in-tree `seal.wasm` would report version skew as a codegen
 bug. That hazard is closed by **rebuilding `seal.wasm` from the current Lean HEAD**
 before the differential, and driving the fresh artifact:
 
-- Source: `mcp-seal-dev` `c3bea29` + seal-host
-  `feat/repin-c3bea29-with-v21-principal` @ `df6684d` (the current P6
-  byte-carrier kernel plus the single-source policy codec and V2.2
-  authority-bound principal envelope: domain tag
+- Source: `mcp-seal-dev` `1d35669` + seal-host
+  `feat/principal-envelope-authority-binding` @ `11e9e8d` (the single-source
+  policy codec + the V2.2 authority-bound principal envelope: domain tag
   `seal/v2.2/principal-envelope\0`, config authority, and length-prefixed key
   id, plus the existing Kernel PB)
-- `seal.wasm` sha256: `d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be`
+- `seal.wasm` sha256: `c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
-- Supersedes `c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda`
-  (the V2.2 authority-bound build against mcp-seal-dev `1d35669`), which
-  superseded `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
+- Supersedes `3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01`
   (the V2.1 principal-envelope build; the hash changes because V2.2 changes
   the signed-message domain and layout), which superseded
   `0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130`
@@ -188,14 +185,13 @@ before the differential, and driving the fresh artifact:
   numeric literal), which in turn superseded the fleet pin
   the superseded pre-migration fleet pin.
 
-For this worktree rebuild, the Emscripten and Lean source directories were read
-from the canonical worktree, and its toolchain-stable runtime/package/stdlib/
-specialization/closure objects were copied into ignored local build directories.
-`build_core.sh` freshly rebuilt every project and mcp-seal object from this
-worktree's IR, and a second `build_core.sh` plus strict link reproduced both
-artifact hashes byte-for-byte. This is same-machine evidence, not a universal
-compile-equivalence proof; clean-runner CI remains the reproducibility judge of
-record.
+For this neutral worktree rebuild, empty ignored object directories exposed two
+workstation assumptions in the checked-in build scripts: canonical-checkout
+absolute paths and a first closure scan whose empty glob needed shell nullglob.
+Those settings were adjusted only for the build and restored before the repin
+commit. The local hash identifies the artifact tested below; finite
+differential agreement is evidence, not a universal compile-equivalence proof.
+Clean-runner CI remains the reproducibility judge of record.
 
 The verified artifact + full provenance + reproduce recipe are staged at
 `wasm-spike/verified/{seal.wasm,seal.js,PROVENANCE.txt}`; the rebuild step that

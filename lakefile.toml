@@ -27,7 +27,9 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 [[require]]
 name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
-rev = "c3bea29a9982616d3ed1dd0d953f105eac7522bf"
+# Local canonical base. Fresh machines cannot resolve this object until the
+# human-approved upstream push; developer builds must seed it locally first.
+rev = "1d3566947196fb688f7eff87c4edda2a0ac015fd"
 
 # One library for the host + kernels + FFI surface. Host and Kernels modules
 # import each other across the prefix boundary (Kernels implement Host.Kernel;
