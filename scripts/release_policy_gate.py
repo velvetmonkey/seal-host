@@ -10,7 +10,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_KERNEL = "a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af"
+EXPECTED_KERNEL = "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be"
 STALE_KERNELS = ("df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8", "ebd17c14")
 SECRET_PATTERNS = {
     "GitHub token": re.compile(rb"gh[opsu]_[A-Za-z0-9]{30,}"),

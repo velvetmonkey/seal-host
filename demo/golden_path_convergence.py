@@ -25,7 +25,7 @@ from doctrine import DemoTrace
 ROOT = gp.ROOT
 KIT = gp.KIT
 HOST = gp.HOST
-PHASE_B_KIT_REV = "62f5fe5d2f3f9d1d700b524aa1d415db449799fc"
+PHASE_B_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
 SERVER_IDENTITY = "seal-convergence-mesh-demo@1.0.0"
 TOOL = "store.update"
 CONVERGENT_OP = "orset.add"
