@@ -214,9 +214,10 @@ Non-vacuity: a live deny-append exemplar plus `combine_extension_from_empty`
 
 - Default-deny + mediation AT THE MODELLED GATE (model-level; not Anderson/Saltzer
   complete mediation, which quantifies over all access paths to the protected
-  objects — see the residuals row in `CLAIMS.md`): `step_forward_non_bypass`
-  (Host/Composition.lean:203), `combine_empty_deny` (:33), `combine_allow_iff`
-  (:45), `SealCore.default_deny_never_allowed` (SealCore/Safety.lean:8).
+  objects — see the residuals row in `CLAIMS.md`): `step_forward_non_bypass`,
+  `combine_empty_deny`, `combine_allow_iff` (all `Host/Composition.lean`),
+  `SealCore.default_deny_never_allowed` (`SealCore/Safety.lean`). Theorem names
+  only: line numbers here went stale within one commit.
 - Stability under gate composition: `combine_allow_implies_member` (:67) — no
   kernel's verdict can be overridden; `combine_deny_of_member` (:72) — one
   deny forces composed deny; per-gate survival `composed_non_bypass` (:86),

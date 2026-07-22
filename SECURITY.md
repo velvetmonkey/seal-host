@@ -14,6 +14,19 @@ It has not completed an independent security audit. Read `docs/LIMITATIONS.md` a
 | `main` | Best effort; not a release channel |
 | Earlier | Unsupported |
 
+## ⚠️ Channel status
+
+**This policy is not yet in force.** As of 2026-07-22 the repository is private, so the
+GitHub advisory form and this document are not publicly reachable, private vulnerability
+reporting and GitHub-issued CVEs are unavailable (both require a public repository), and
+`velvetmonkey.com` publishes a null MX (`MX 0 .`) so the address below does not currently
+receive mail. `.well-known/security.txt` is checked into this repository but is **not**
+served at an HTTPS origin, so it has no RFC 9116 discovery effect.
+
+Do not rely on the channels below until this section is removed. It is recorded here rather
+than quietly omitted, because a disclosure policy pointing at a dead mailbox is worse than
+no policy at all.
+
 ## Reporting a vulnerability
 
 **Email `security@velvetmonkey.com`.** If email is unavailable, open a private
@@ -42,7 +55,13 @@ redacted reproduction is worth more to us than a real one.
 | Triage decision and severity assignment | 10 business days |
 | Fix or documented mitigation, Critical / High | 30 days from triage |
 | Fix or documented mitigation, Medium / Low | 90 days from triage |
-| Coordinated public disclosure | by mutual agreement, default 90 days from triage |
+| Coordinated public disclosure | by mutual agreement, default **90 calendar days from initial receipt** |
+
+The disclosure clock runs from **receipt**, not from triage, so a missed or delayed triage
+cannot postpone it. **If no acknowledgement reaches you within 10 business days, you are free
+to disclose**, and we would rather you did than sit on a live issue. Earlier disclosure is
+also reasonable where there is active exploitation or urgent public risk; tell us if you can,
+but do not wait on us.
 
 If we miss a target we will say so and give a revised date rather than go quiet. If we
 disagree that a report is a vulnerability, we will say that plainly and explain why, and you
@@ -59,8 +78,15 @@ and assurance kit; receipt and envelope formats; key handling and the signed con
 path; the release and build pipeline; and any case where a **published claim in `CLAIMS.md`
 is false**, which we treat as a security issue in its own right.
 
+**The false-claim rule controls.** A defect in a named TCB component remains **in scope** if
+it falsifies a published claim under that claim's stated preconditions. A named unmediated
+route is out of scope only when it stays outside those preconditions and does not expose an
+undocumented route or a false claim. Where the two rules below appear to conflict, the
+false-claim rule wins.
+
 **Out of scope**, because they are documented as trusted or unmediated rather than
-defended, are the non-mediated paths in `THREAT_MODEL.md`: direct shell or network access by
+defended, are the non-mediated paths documented across `THREAT_MODEL.md`, `RUST_BRIDGE.md`
+and `TCB.md`: direct shell or network access by
 the agent, alternate MCP configurations or endpoints, previously cached tool handles,
 in-process orchestrator calls, spawned subprocesses, non-`tools/call` MCP methods, and
 response egress. Reports here are still welcome and useful, but they confirm a documented
@@ -79,14 +105,19 @@ We will not pursue or support legal action against anyone who, in good faith:
 - works only against their own installation or test data, never third-party deployments;
 - gives us reasonable time to remediate before public disclosure.
 
-If a third party brings action against you for research conducted under this policy, we will
-make it known that your actions were authorised.
+Research that complies with this policy is considered **authorised by us**. If a third party
+brings action against you for such research, we will say so, **to the extent of our legal
+authority** — which does not extend to third-party infrastructure, upstream components, or
+rights we do not hold.
 
 ## Handling and credit
 
-Reports are triaged privately. Fixes ship with a GitHub Security Advisory and, where the
-issue warrants one, a **CVE requested through GitHub as CNA**. Advisories name the affected
-versions, the fixed version, and the exact commit and artifact hashes.
+Reports are triaged privately. **Where applicable and available**, fixes ship with a GitHub
+Security Advisory and, where the issue warrants one and the repository is eligible, a CVE
+requested through GitHub as CNA; advisories then name the affected versions, the fixed
+version, and the exact commit and artifact hashes. Not every valid report yields a release
+artifact: a **false published claim** may warrant a documentation correction and disclosure
+with no CVE and no new build, and that is still a resolved security issue under this policy.
 
 Reporters are credited by name unless they ask otherwise. **There is currently no paid bug
 bounty.** We would rather say that than imply one exists.
