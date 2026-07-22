@@ -121,7 +121,7 @@ jobs:
         run: |
           actual=$(git ls-remote https://github.com/velvetmonkey/seal-verify-action.git refs/tags/v1 | awk '{print $1}')
           test "$actual" = "81077e5ee2c042c17ff73de2c00670d4857d7cee"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: release, merge-multiple: true }
       - name: Consolidate SHA-256 checksums
         run: cd release && sha256sum *.tar.gz *.cdx.json > SHA256SUMS
