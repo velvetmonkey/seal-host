@@ -14,8 +14,8 @@
 //!    byte-for-byte — a fast, hermetic guard against Rust encoder drift.
 //! 2. `live_lean_diff_over_shared_corpus` (LIVE, runs by default since
 //!    Stage B — Ben, 2026-07-22 18:07): runs the Lean lane NOW against the
-//!    manifest-pinned `mcp-seal` package (advanced to `81e73dc`, the Stage B
-//!    strip commit, whose build carries `SealV2.EffectEnvelope`) and diffs
+//!    manifest-pinned `mcp-seal` package (advanced to `4f39f20`, the Stage
+//!    B2 reconciliation, whose build carries `SealV2.EffectEnvelope`) and diffs
 //!    both encoders over the corpus with no frozen middleman. THIS test is
 //!    the kernel-to-host binding; layer 1 alone only proves Rust matches a
 //!    snapshot. Spec resolution: `SEAL_V23_SPEC_LEAN_PATH` (+ optional
@@ -24,8 +24,8 @@
 //!
 //! Expectation provenance: generated 2026-07-22 by
 //! `lean --run scripts/envelope_v23_twin_lane.lean rust/tests/vectors/envelope_v23_twin_corpus.json`
-//! against mcp-seal-dev `81e73dc` built oleans (toolchain v4.28.0) — the
-//! Stage B strip commit, the same rev the manifest pins. The `golden-fable`
+//! against mcp-seal-dev `4f39f20` built oleans (toolchain v4.28.0) — the
+//! Stage B2 reconciliation commit, the same rev the manifest pins. The `golden-fable`
 //! line is additionally pinned below to the exact hex that mcp-seal-dev's
 //! `SealV2/EffectEnvelope.lean` freezes under `#guard_msgs`, so the frozen
 //! file cannot silently drift from the spec repo's own pin.
@@ -37,10 +37,10 @@ use serde_json::Value;
 use std::process::Command;
 
 /// The exact hex `mcp-seal-dev/SealV2/EffectEnvelope.lean` pins with
-/// `#guard_msgs` at `81e73dc` (and `rust/tests/envelope_v23.rs` pins as the
+/// `#guard_msgs` at `4f39f20` (and `rust/tests/envelope_v23.rs` pins as the
 /// golden vector). Anchor: the expectation FILE must agree with the spec
 /// repo's own frozen literal on this vector.
-const LEAN_GUARD_MSGS_GOLDEN_HEX: &str = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d200000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d31000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d0000000000000000";
+const LEAN_GUARD_MSGS_GOLDEN_HEX: &str = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d";
 
 fn corpus_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -60,16 +60,17 @@ fn field(v: &Value, key: &str) -> String {
 }
 
 /// (name, line, authority, envelope) for every corpus vector, in file order.
-/// A vector still carrying an E1★ killed field fails loudly here.
+/// A vector still carrying a killed field — or missing a rescued mandatory
+/// one — fails loudly here.
 fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
     const KILLED: [&str; 7] = [
         "idempotency_key",
-        "policy_version",
         "on_behalf_of",
         "parent_capability_ref",
         "delegation",
         "audience",
         "causality_token",
+        "revocation_subject",
     ];
     let text = std::fs::read_to_string(corpus_path()).expect("read corpus");
     let doc: Value = serde_json::from_str(&text).expect("corpus is JSON");
@@ -81,11 +82,16 @@ fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
             let e = &v["envelope"];
             for key in KILLED {
                 assert!(
-                    e.get(key).is_none() && e.get("expires_at").is_none(),
-                    "corpus vector {} carries killed field {key} or expires_at",
+                    e.get(key).is_none(),
+                    "corpus vector {} carries killed field {key}",
                     v["name"]
                 );
             }
+            assert!(
+                e.get("expires_at").is_some() && e.get("policy_version").is_some(),
+                "corpus vector {} is missing a rescued mandatory field",
+                v["name"]
+            );
             let effect = if e["effect"].is_null() {
                 None
             } else {
@@ -100,6 +106,7 @@ fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
                 sig: String::new(),
                 nonce: field(e, "nonce_hex"),
                 issued_at: e["issued_at"].as_u64().expect("issued_at u64"),
+                expires_at: e["expires_at"].as_u64().expect("expires_at u64"),
                 adapter: AdapterClaim {
                     kind: field(&e["adapter"], "type"),
                     version: field(&e["adapter"], "version"),
@@ -107,8 +114,8 @@ fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
                 principal: PrincipalClaim {
                     session: field(e, "session"),
                 },
+                policy_version: field(e, "policy_version"),
                 effect,
-                revocation_subject: field(e, "revocation_subject"),
             };
             let authority: [u8; 32] = hex::decode(field(v, "authority_hex"))
                 .expect("authority hex")

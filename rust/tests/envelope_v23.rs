@@ -30,6 +30,7 @@ fn proof_golden_envelope() -> EnvelopeV23 {
         sig: String::new(),
         nonce: hex::encode((0u8..32).collect::<Vec<_>>()),
         issued_at: 1234,
+        expires_at: 5678,
         adapter: AdapterClaim {
             kind: "mcp".into(),
             version: "2025-06-18".into(),
@@ -37,12 +38,12 @@ fn proof_golden_envelope() -> EnvelopeV23 {
         principal: PrincipalClaim {
             session: "sess-1".into(),
         },
+        policy_version: "pol-1".into(),
         effect: Some(EffectClaim {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
         }),
-        revocation_subject: String::new(),
     }
 }
 
@@ -51,7 +52,7 @@ fn byte_twin_matches_fable_golden_vector() {
     let authority: [u8; 32] = std::array::from_fn(|index| 0xa0 + index as u8);
     let actual =
         hex::encode(effect_message(&authority, &proof_golden_envelope(), r#"{"m":1}"#).unwrap());
-    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d200000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d31000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d0000000000000000";
+    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d";
     assert_eq!(actual, expected);
 }
 
@@ -71,16 +72,17 @@ fn fixture() -> (EnvelopeV23, String, String, serde_json::Value) {
         sig: String::new(),
         nonce: "11".repeat(32),
         issued_at: 1234,
+        expires_at: 4_102_444_800_000,
         adapter: AdapterClaim::deployed_mcp(),
         principal: PrincipalClaim {
             session: "seal-session-v1:test".into(),
         },
+        policy_version: "policy-1".into(),
         effect: Some(EffectClaim {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
         }),
-        revocation_subject: String::new(),
     };
     envelope.sig = hex::encode(
         signing_key
@@ -135,14 +137,16 @@ fn stripped_envelope_verifies() {
 #[test]
 fn killed_field_in_wire_envelope_fails_closed() {
     let (envelope, line, _, _) = fixture();
-    let killed: [(&str, serde_json::Value); 7] = [
+    let killed: [(&str, serde_json::Value); 6] = [
         ("idempotency_key", json!("idem-1")),
-        ("policy_version", json!("policy-7")),
         ("on_behalf_of", json!("orch:alpha")),
         ("parent_capability_ref", json!("cap:parent/9")),
         ("audience", json!("aud:fleet-1")),
         ("causality_token", json!("ct:42")),
-        ("expires_at", json!(1234567890123u64)),
+        // Stage B2: revocation_subject joins the killed set (SEAT, wrong
+        // plane). expires_at and policy_version left this list — they are
+        // RESCUED and mandatory now.
+        ("revocation_subject", json!("rev:bob")),
     ];
     for (key, value) in killed {
         let mut env = serde_json::to_value(&envelope).unwrap();
@@ -185,6 +189,9 @@ fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: 
         action: String::new(),
         args: String::new(),
     });
+    // v1 seats ride at their "unset" wire values regardless of what the v2
+    // envelope now carries (policy_version framed empty, expires_at 0): the
+    // closest v1 receipt to a reconciled v2 one.
     let mut message = Vec::new();
     message.extend_from_slice(DOMAIN_TAG_V1_RETIRED);
     message.extend_from_slice(authority);
@@ -269,18 +276,69 @@ fn kernel_principal_is_cross_checked() {
     assert!(verify_kernel_principal(r#"{"route":"forward"}"#, &verified).is_err());
 }
 
+/// Stage B2 wire-shape checks: the only omissible key is the F3 `effect`
+/// claim (omission IS declared absence); the mandatory bindings cannot be
+/// omitted from the wire at all.
 #[test]
-fn strict_wire_shape_accepts_omitted_revocation_subject() {
+fn strict_wire_shape_effect_omission_is_declared_absence() {
     let (envelope, line, _, _) = fixture();
     let mut env = serde_json::to_value(envelope).unwrap();
-    env.as_object_mut().unwrap().remove("revocation_subject");
+    env.as_object_mut().unwrap().remove("effect");
     let wrapper = json!({"seal_env": env, "request": line}).to_string();
     match wire_view(&wrapper) {
         WireView::Enveloped { envelope, .. } => {
-            assert!(envelope.revocation_subject.is_empty());
+            assert!(envelope.effect.is_none());
         }
         other => panic!("unexpected wire view: {other:?}"),
     }
+}
+
+#[test]
+fn strict_wire_shape_rejects_omitted_mandatory_bindings() {
+    let (envelope, line, _, _) = fixture();
+    for key in ["expires_at", "policy_version"] {
+        let mut env = serde_json::to_value(&envelope).unwrap();
+        env.as_object_mut().unwrap().remove(key);
+        let wrapper = json!({"seal_env": env, "request": line}).to_string();
+        assert!(
+            matches!(wire_view(&wrapper), WireView::Malformed(_)),
+            "omitted mandatory {key} was accepted"
+        );
+    }
+}
+
+/// Stage B2 killed-bypass controls: a VALID signature over an empty/zero
+/// mandatory binding, or over the retired all-empty effect sentinel, still
+/// fails closed.
+#[test]
+fn zero_expires_at_fails_closed_even_when_signed() {
+    let (mut envelope, line, authority, config) = fixture();
+    envelope.expires_at = 0;
+    resign(&mut envelope, &line, &authority);
+    let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
+    assert!(error.contains("expires_at"), "{error}");
+}
+
+#[test]
+fn empty_policy_version_fails_closed_even_when_signed() {
+    let (mut envelope, line, authority, config) = fixture();
+    envelope.policy_version = String::new();
+    resign(&mut envelope, &line, &authority);
+    let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
+    assert!(error.contains("policy_version"), "{error}");
+}
+
+#[test]
+fn all_empty_effect_sentinel_is_a_checked_claim() {
+    let (mut envelope, line, authority, config) = fixture();
+    envelope.effect = Some(EffectClaim {
+        resource: String::new(),
+        action: String::new(),
+        args: String::new(),
+    });
+    resign(&mut envelope, &line, &authority);
+    let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
+    assert!(error.contains("effect claim"), "{error}");
 }
 
 struct RunningHost {
@@ -416,24 +474,26 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","action":"call","arguments":{"q":1}}}"#;
     let principal_key = SigningKey::from_bytes(&PRINCIPAL_SEED);
     let authority = authority_key.verifying_key().to_bytes();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let mut envelope = EnvelopeV23 {
         key_id: "alice".into(),
         sig: String::new(),
         nonce: "22".repeat(32),
-        issued_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64,
+        issued_at: now_ms,
+        expires_at: now_ms + 600_000,
         adapter: AdapterClaim::deployed_mcp(),
         principal: PrincipalClaim {
             session: session.into(),
         },
+        policy_version: "policy-1".into(),
         effect: Some(EffectClaim {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
         }),
-        revocation_subject: String::new(),
     };
     envelope.sig = hex::encode(
         principal_key

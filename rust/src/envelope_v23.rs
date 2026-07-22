@@ -6,13 +6,18 @@
 //! It stages the exact `SealV2.Effect.effectMessage` byte contract and the
 //! transport facts Rust must independently check before the future repin.
 //!
-//! Stage B (E1★ ballot, Ben 2026-07-22): the killed seats — F4
-//! `idempotency_key`, F5 `policy_version`, F6 `on_behalf_of` /
-//! `parent_capability_ref`, and the eighth-field trio `audience` /
-//! `causality_token` / `expires_at` — are STRIPPED from the wire shape and
-//! the signed message. `deny_unknown_fields` makes a wire envelope carrying
-//! any of them fail closed at parse; the domain-tag bump to `seal.effect/v2`
-//! makes a signature over the old seated layout fail closed at verify.
+//! Stage B (E1★ ballot, Ben 2026-07-22) stripped the killed seats; Stage B2
+//! (field-warrant reconciliation, same unshipped tag) adjusts the shape:
+//! `expires_at` and `policy_version` are RESCUED and MANDATORY (their gates
+//! were proven kernel-side), `revocation_subject` is STRIPPED (SEAT — a
+//! request field cannot shrink trust), and the F3 effect claim is
+//! Option-encoded with a SIGNED presence byte (0x00 absent / 0x01 present):
+//! absence is declared, never inferred from empty strings, and the retired
+//! ("","","") sentinel is an ordinary checked claim. Killed and refused at
+//! parse (`deny_unknown_fields`): `idempotency_key`, `on_behalf_of`,
+//! `parent_capability_ref`, `audience`, `causality_token`,
+//! `revocation_subject`; the domain-tag bump to `seal.effect/v2` makes a
+//! signature over the old seated layout fail closed at verify.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -59,20 +64,6 @@ pub struct EffectClaim {
     pub args: String,
 }
 
-impl EffectClaim {
-    fn empty() -> Self {
-        Self {
-            resource: String::new(),
-            action: String::new(),
-            args: String::new(),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.resource.is_empty() && self.action.is_empty() && self.args.is_empty()
-    }
-}
-
 /// The stripped Stage B envelope: every field both authenticated AND
 /// interpreted. The E1★ killed seats are gone from the struct, so
 /// `deny_unknown_fields` rejects any wire envelope still carrying one —
@@ -84,15 +75,20 @@ pub struct EnvelopeV23 {
     pub sig: String,
     pub nonce: String,
     pub issued_at: u64,
+    /// MANDATORY nonzero signer-declared deadline (Stage B2; kernel
+    /// `expiryGate`). A missing key fails parse; zero fails `verify`.
+    pub expires_at: u64,
     pub adapter: AdapterClaim,
     pub principal: PrincipalClaim,
-    /// F3 advisory triple — INTERPRETED (equality gate below); under a
-    /// separate flagged strip decision, deliberately retained in Stage B.
+    /// MANDATORY nonempty anti-downgrade pin (Stage B2; kernel
+    /// `policyVersionGate` holds the equality against trusted state).
+    pub policy_version: String,
+    /// F3 advisory claim — INTERPRETED (equality gate below); under a
+    /// separate flagged strip decision, deliberately retained. `None` is
+    /// DECLARED absence (signed presence byte 0x00), not an empty-string
+    /// sentinel; an absent JSON key parses as `None`.
     #[serde(default)]
     pub effect: Option<EffectClaim>,
-    /// F7 revocation subject (ballot keep-list).
-    #[serde(default)]
-    pub revocation_subject: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,9 +114,9 @@ pub struct HostContext<'a> {
     pub kernel_config: &'a Value,
 }
 
-/// Parse the strict V2.3 wrapper. The optional seat (`revocation_subject`)
-/// may be omitted and becomes its zero-length wire value; unknown fields —
-/// including every E1★ killed field — are refused.
+/// Parse the strict V2.3 wrapper. Only the F3 `effect` claim may be
+/// omitted (declared absence); unknown fields — every killed field,
+/// `revocation_subject` included — are refused.
 pub fn wire_view(line: &str) -> WireView {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return WireView::Plain;
@@ -160,36 +156,46 @@ fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
     message.extend_from_slice(bytes);
 }
 
-/// Exact byte twin of `SealV2.Effect.effectMessage` on Fable's Stage B
-/// branch (mcp-seal-dev `81e73dc`):
+/// Exact byte twin of `SealV2.Effect.effectMessage` on Fable's Stage B2
+/// branch (mcp-seal-dev, Stage B2 reconciliation):
 ///
-///     tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32) ‖ u64be(issued_at)
+///     tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32)
+///         ‖ u64be(issued_at) ‖ u64be(expires_at)
 ///         ‖ frame(line)
 ///         ‖ frame(adapter.type) ‖ frame(adapter.version)
-///         ‖ frame(principal.session)
-///         ‖ frame(effect.resource) ‖ frame(effect.action) ‖ frame(effect.args)
-///         ‖ frame(revocation_subject)
+///         ‖ frame(principal.session) ‖ frame(policy_version)
+///         ‖ opt_effect(effect)
+///
+/// where `opt_effect(None) = 0x00` and `opt_effect(Some c) =
+/// 0x01 ‖ frame(c.resource) ‖ frame(c.action) ‖ frame(c.args)` — the
+/// presence byte is inside the signed message (Lean `optEffect`).
 pub fn effect_message(
     authority: &[u8; 32],
     envelope: &EnvelopeV23,
     line: &str,
 ) -> Result<Vec<u8>, String> {
     let nonce = decode_array::<32>(&envelope.nonce, "nonce")?;
-    let effect = envelope.effect.clone().unwrap_or_else(EffectClaim::empty);
     let mut message = Vec::new();
     message.extend_from_slice(DOMAIN_TAG);
     message.extend_from_slice(authority);
     frame(&mut message, envelope.key_id.as_bytes());
     message.extend_from_slice(&nonce);
     message.extend_from_slice(&envelope.issued_at.to_be_bytes());
+    message.extend_from_slice(&envelope.expires_at.to_be_bytes());
     frame(&mut message, line.as_bytes());
     frame(&mut message, envelope.adapter.kind.as_bytes());
     frame(&mut message, envelope.adapter.version.as_bytes());
     frame(&mut message, envelope.principal.session.as_bytes());
-    frame(&mut message, effect.resource.as_bytes());
-    frame(&mut message, effect.action.as_bytes());
-    frame(&mut message, effect.args.as_bytes());
-    frame(&mut message, envelope.revocation_subject.as_bytes());
+    frame(&mut message, envelope.policy_version.as_bytes());
+    match &envelope.effect {
+        None => message.push(0x00),
+        Some(effect) => {
+            message.push(0x01);
+            frame(&mut message, effect.resource.as_bytes());
+            frame(&mut message, effect.action.as_bytes());
+            frame(&mut message, effect.args.as_bytes());
+        }
+    }
     Ok(message)
 }
 
@@ -234,15 +240,21 @@ pub fn verify(
     if envelope.principal.session.is_empty() || envelope.principal.session != context.session {
         return Err("V2.3 principal session does not match the issued session".into());
     }
+    if envelope.expires_at == 0 {
+        return Err("V2.3 expires_at is mandatory and must be nonzero".into());
+    }
+    if envelope.policy_version.is_empty() {
+        return Err("V2.3 policy_version is mandatory and must be nonempty".into());
+    }
     if let Some(effect) = &envelope.effect {
-        if !effect.is_empty() {
-            if context.adapter.kind != MCP_ADAPTER_TYPE {
-                return Err("non-MCP adapter carried a non-empty MCP effect claim".into());
-            }
-            let expected = derive_mcp_effect(line)?;
-            if *effect != expected {
-                return Err("V2.3 effect claim does not match the judged line".into());
-            }
+        // A PRESENT claim is checked unconditionally — the retired
+        // all-empty sentinel is a claim like any other (Stage B2).
+        if context.adapter.kind != MCP_ADAPTER_TYPE {
+            return Err("non-MCP adapter carried an MCP effect claim".into());
+        }
+        let expected = derive_mcp_effect(line)?;
+        if *effect != expected {
+            return Err("V2.3 effect claim does not match the judged line".into());
         }
     }
 
