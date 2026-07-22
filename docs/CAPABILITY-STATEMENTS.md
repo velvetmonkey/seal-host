@@ -101,7 +101,7 @@ from liveness, and `hACR` lifts that to part-list equality.
 in Lean proves SHA-256 collision resistance. The theorem exposes that as
 `hACR` over `Seal.stableHashString`; deployment makes the assumption
 credible by using SHA-256 over the injective `encodeParts` bytes. NI (state
-secrecy), ReplayIsolation (store isolation), DeployedAdapter O1∧O2 (channel
+secrecy), ReplayIsolation (store isolation), GatedSinkAdapter O1∧O2 (channel
 mediation) are orthogonal — none speak to authority binding across the hash
 seam.
 
