@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN groupadd --system --gid 65532 seal \
     && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin seal \
