@@ -15,14 +15,13 @@ Stage B: the corpus shape is the STRIPPED `seal.effect/v2` envelope
 (mcp-seal-dev `81e73dc`) — the E1★ killed seats no longer exist in either
 encoder or in the corpus.
 
-IMPORT CAVEAT (honest): seal-host's pinned `mcp-seal` package rev predates
-`SealV2.EffectEnvelope`, so `lake env lean` cannot resolve this import from
-the in-repo package graph today. Until the pin advances past mcp-seal-dev
-`81e73dc` (Stage B strip), this lane needs `LEAN_PATH` pointing at a built
-mcp-seal-dev checkout (and its batteries/aesop packages). The Rust side
-therefore also checks a frozen Lean-generated expectation file so CI has
-coverage without this lane; see `rust/tests/envelope_v23_twin.rs` for the
-full story.
+Resolution: the manifest pins `mcp-seal` at `81e73dc` (Stage B strip), so
+`lake env lean` resolves `SealV2.EffectEnvelope` from the in-repo package
+graph and `rust/tests/envelope_v23_twin.rs` runs this lane LIVE by default
+(Ben's Stage B acceptance addition, 2026-07-22). `LEAN_PATH` can still be
+pointed at an out-of-graph built mcp-seal-dev checkout via
+`SEAL_V23_SPEC_LEAN_PATH`. The frozen expectation file remains as a fast
+hermetic layer, anchored to the spec repo's `#guard_msgs` pin.
 -/
 
 open Lean SealV2.Effect
