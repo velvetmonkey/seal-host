@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-twin guard for the V2.3 effect envelope encoding.
+//! Byte-twin guard for the Stage B (`seal.effect/v2`) effect envelope
+//! encoding.
 //!
 //! Shared corpus: `tests/vectors/envelope_v23_twin_corpus.json` — consumed by
 //! this file (Rust `effect_message`) and by
@@ -29,24 +30,25 @@
 //! Rust encoder still matches a 2026-07-20 snapshot; it does NOT mean the Rust
 //! encoder matches the spec. See `.mega-monkey/twin-v1v2-divergence.md`.
 //!
-//! Expectation provenance: generated 2026-07-20 by
-//! `lean --run scripts/envelope_v23_twin_lane.lean tests/vectors/envelope_v23_twin_corpus.json`
-//! against mcp-seal-dev `c3bea29` built oleans (toolchain v4.28.0). The
-//! `golden-fable` line is additionally pinned below to the exact hex that
-//! mcp-seal-dev's `SealV2/EffectEnvelope.lean` freezes under `#guard_msgs`,
-//! so the frozen file cannot silently drift from the spec repo's own pin.
+//! Expectation provenance: generated 2026-07-22 by
+//! `lean --run scripts/envelope_v23_twin_lane.lean rust/tests/vectors/envelope_v23_twin_corpus.json`
+//! against mcp-seal-dev `81e73dc` built oleans (toolchain v4.28.0) — the
+//! Stage B strip commit. The `golden-fable` line is additionally pinned
+//! below to the exact hex that mcp-seal-dev's `SealV2/EffectEnvelope.lean`
+//! freezes under `#guard_msgs`, so the frozen file cannot silently drift
+//! from the spec repo's own pin.
 
 use seal_host_rs::envelope_v23::{
-    effect_message, AdapterClaim, DelegationSeats, EffectClaim, EnvelopeV23, PrincipalClaim,
+    effect_message, AdapterClaim, EffectClaim, EnvelopeV23, PrincipalClaim,
 };
 use serde_json::Value;
 use std::process::Command;
 
 /// The exact hex `mcp-seal-dev/SealV2/EffectEnvelope.lean` pins with
-/// `#guard_msgs` (and `rust/tests/envelope_v23.rs` pins as the golden
-/// vector). Anchor: the expectation FILE must agree with the spec repo's
-/// own frozen literal on this vector.
-const LEAN_GUARD_MSGS_GOLDEN_HEX: &str = "7365616c2e6566666563742f763100a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d200000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d31000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d00000000000000066964656d2d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+/// `#guard_msgs` at `81e73dc` (and `rust/tests/envelope_v23.rs` pins as the
+/// golden vector). Anchor: the expectation FILE must agree with the spec
+/// repo's own frozen literal on this vector.
+const LEAN_GUARD_MSGS_GOLDEN_HEX: &str = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d200000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d31000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d0000000000000000";
 
 fn corpus_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -66,7 +68,17 @@ fn field(v: &Value, key: &str) -> String {
 }
 
 /// (name, line, authority, envelope) for every corpus vector, in file order.
+/// A vector still carrying an E1★ killed field fails loudly here.
 fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
+    const KILLED: [&str; 7] = [
+        "idempotency_key",
+        "policy_version",
+        "on_behalf_of",
+        "parent_capability_ref",
+        "delegation",
+        "audience",
+        "causality_token",
+    ];
     let text = std::fs::read_to_string(corpus_path()).expect("read corpus");
     let doc: Value = serde_json::from_str(&text).expect("corpus is JSON");
     doc["vectors"]
@@ -75,6 +87,13 @@ fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
         .iter()
         .map(|v| {
             let e = &v["envelope"];
+            for key in KILLED {
+                assert!(
+                    e.get(key).is_none() && e.get("expires_at").is_none(),
+                    "corpus vector {} carries killed field {key} or expires_at",
+                    v["name"]
+                );
+            }
             let effect = if e["effect"].is_null() {
                 None
             } else {
@@ -97,16 +116,7 @@ fn corpus_vectors() -> Vec<(String, String, [u8; 32], EnvelopeV23)> {
                     session: field(e, "session"),
                 },
                 effect,
-                idempotency_key: field(e, "idempotency_key"),
-                policy_version: field(e, "policy_version"),
-                delegation: DelegationSeats {
-                    on_behalf_of: field(e, "on_behalf_of"),
-                    parent_capability_ref: field(e, "parent_capability_ref"),
-                },
                 revocation_subject: field(e, "revocation_subject"),
-                audience: field(e, "audience"),
-                causality_token: field(e, "causality_token"),
-                expires_at: e["expires_at"].as_u64().expect("expires_at u64"),
             };
             let authority: [u8; 32] = hex::decode(field(v, "authority_hex"))
                 .expect("authority hex")

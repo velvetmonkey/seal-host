@@ -1,6 +1,6 @@
 {
-  "schema": "seal.effect/v1 twin corpus v1",
-  "comment": "Shared V2.3 envelope encoding vectors. Consumed by rust/tests/envelope_v23_twin.rs (Rust encoder) and scripts/envelope_v23_twin_lane.lean (Lean spec encoder SealV2.Effect.effectMessage). sig is never part of the signed message and is omitted.",
+  "schema": "seal.effect/v2 twin corpus v1",
+  "comment": "Shared Stage B envelope encoding vectors. Consumed by rust/tests/envelope_v23_twin.rs (Rust encoder) and scripts/envelope_v23_twin_lane.lean (Lean spec encoder SealV2.Effect.effectMessage). sig is never part of the signed message and is omitted. The E1★ killed seats (idempotency_key, policy_version, on_behalf_of, parent_capability_ref, audience, causality_token, expires_at) are stripped from the shape; a vector carrying one is a corpus bug.",
   "vectors": [
     {
       "name": "golden-fable",
@@ -20,18 +20,11 @@
           "action": "call",
           "args": "{\"q\":1}"
         },
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": ""
       }
     },
     {
-      "name": "seats-populated",
+      "name": "revocation-subject-populated",
       "authority_hex": "2222222222222222222222222222222222222222222222222222222222222222",
       "line": "{\"m\":2}",
       "envelope": {
@@ -48,14 +41,7 @@
           "action": "call",
           "args": "{\"q\":1}"
         },
-        "idempotency_key": "idem-1",
-        "policy_version": "policy-7",
-        "on_behalf_of": "orch:alpha",
-        "parent_capability_ref": "cap:parent/9",
-        "revocation_subject": "rev:bob",
-        "audience": "aud:fleet-1",
-        "causality_token": "ct:42",
-        "expires_at": 1234567890123
+        "revocation_subject": "rev:bob"
       }
     },
     {
@@ -76,20 +62,13 @@
           "action": "appel·⇒",
           "args": "{\"clé\":\"värde-🗝\"}"
         },
-        "idempotency_key": "idem-ünïcode",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "观众-🔭",
-        "causality_token": "因果-⏳",
-        "expires_at": 0
+        "revocation_subject": "révocation-局-🔑"
       }
     },
     {
       "name": "long-line-multibyte-length",
       "authority_hex": "6666666666666666666666666666666666666666666666666666666666666666",
-      "line": "{\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+      "line": "{\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
       "envelope": {
         "key_id": "alice",
         "nonce_hex": "7777777777777777777777777777777777777777777777777777777777777777",
@@ -100,14 +79,7 @@
         },
         "session": "sess-1",
         "effect": null,
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": ""
       }
     },
     {
@@ -124,14 +96,7 @@
         },
         "session": "sess-1",
         "effect": null,
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": ""
       }
     },
     {
@@ -152,14 +117,7 @@
           "action": "call",
           "args": "{\"q\":1}"
         },
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 18446744073709551615
+        "revocation_subject": ""
       }
     },
     {
@@ -180,14 +138,7 @@
           "action": "",
           "args": ""
         },
-        "idempotency_key": "",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": ""
       }
     },
     {
@@ -208,14 +159,28 @@
           "action": "",
           "args": "{\"q\":1}"
         },
-        "idempotency_key": "",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": ""
+      }
+    },
+    {
+      "name": "adjacent-effect-revocation-probe",
+      "authority_hex": "1010101010101010101010101010101010101010101010101010101010101010",
+      "line": "{\"m\":9}",
+      "envelope": {
+        "key_id": "alice",
+        "nonce_hex": "2323232323232323232323232323232323232323232323232323232323232323",
+        "issued_at": 1234,
+        "adapter": {
+          "type": "mcp",
+          "version": "2025-06-18"
+        },
+        "session": "sess-1",
+        "effect": {
+          "resource": "db.execute",
+          "action": "call",
+          "args": "{\"q\":1}rev"
+        },
+        "revocation_subject": ":bob"
       }
     },
     {
@@ -236,14 +201,7 @@
           "action": "act\\ion",
           "args": "{\"a\":\"b\\\"c\"}"
         },
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": "rev\"subj\\x"
       }
     },
     {
@@ -264,14 +222,7 @@
           "action": "call",
           "args": "{\"q\":1}"
         },
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": ""
       }
     },
     {
@@ -292,14 +243,7 @@
           "action": "a",
           "args": "g"
         },
-        "idempotency_key": "i",
-        "policy_version": "p",
-        "on_behalf_of": "o",
-        "parent_capability_ref": "c",
-        "revocation_subject": "x",
-        "audience": "u",
-        "causality_token": "t",
-        "expires_at": 1
+        "revocation_subject": "x"
       }
     },
     {
@@ -320,14 +264,7 @@
           "action": "call",
           "args": "{\"q\":1}"
         },
-        "idempotency_key": "idem-1",
-        "policy_version": "",
-        "on_behalf_of": "",
-        "parent_capability_ref": "",
-        "revocation_subject": "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
-        "audience": "",
-        "causality_token": "",
-        "expires_at": 0
+        "revocation_subject": "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR"
       }
     }
   ]

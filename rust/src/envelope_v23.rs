@@ -1,16 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Rust byte twin and host-side gates for the gated V2.3 effect envelope.
+//! Rust byte twin and host-side gates for the gated V2.3 effect envelope
+//! (`seal.effect/v2`, Stage B strip).
 //!
 //! This module deliberately does not alter or replace the pinned Lean kernel.
 //! It stages the exact `SealV2.Effect.effectMessage` byte contract and the
 //! transport facts Rust must independently check before the future repin.
+//!
+//! Stage B (E1★ ballot, Ben 2026-07-22): the killed seats — F4
+//! `idempotency_key`, F5 `policy_version`, F6 `on_behalf_of` /
+//! `parent_capability_ref`, and the eighth-field trio `audience` /
+//! `causality_token` / `expires_at` — are STRIPPED from the wire shape and
+//! the signed message. `deny_unknown_fields` makes a wire envelope carrying
+//! any of them fail closed at parse; the domain-tag bump to `seal.effect/v2`
+//! makes a signature over the old seated layout fail closed at verify.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Read;
 
-pub const DOMAIN_TAG: &[u8] = b"seal.effect/v1\0";
+/// Stage B domain tag. The v1→v2 bump IS the strip: `seal.effect/v1` signed
+/// seven fields this layout no longer carries (Lean twin:
+/// `SealV2.Effect.effectTag`, cross-version separation proven there as
+/// `effect_cross_version_v1_separated`).
+pub const DOMAIN_TAG: &[u8] = b"seal.effect/v2\0";
 pub const MCP_ADAPTER_TYPE: &str = "mcp";
 pub const MCP_ADAPTER_VERSION: &str = "2025-06-18";
 
@@ -60,15 +73,10 @@ impl EffectClaim {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct DelegationSeats {
-    #[serde(default)]
-    pub on_behalf_of: String,
-    #[serde(default)]
-    pub parent_capability_ref: String,
-}
-
+/// The stripped Stage B envelope: every field both authenticated AND
+/// interpreted. The E1★ killed seats are gone from the struct, so
+/// `deny_unknown_fields` rejects any wire envelope still carrying one —
+/// the parse-level negative control.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EnvelopeV23 {
@@ -78,21 +86,13 @@ pub struct EnvelopeV23 {
     pub issued_at: u64,
     pub adapter: AdapterClaim,
     pub principal: PrincipalClaim,
+    /// F3 advisory triple — INTERPRETED (equality gate below); under a
+    /// separate flagged strip decision, deliberately retained in Stage B.
     #[serde(default)]
     pub effect: Option<EffectClaim>,
-    pub idempotency_key: String,
-    #[serde(default)]
-    pub policy_version: String,
-    #[serde(default)]
-    pub delegation: DelegationSeats,
+    /// F7 revocation subject (ballot keep-list).
     #[serde(default)]
     pub revocation_subject: String,
-    #[serde(default)]
-    pub audience: String,
-    #[serde(default)]
-    pub causality_token: String,
-    #[serde(default)]
-    pub expires_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,8 +118,9 @@ pub struct HostContext<'a> {
     pub kernel_config: &'a Value,
 }
 
-/// Parse the strict V2.3 wrapper. Optional seats may be omitted and therefore
-/// become their zero-length/zero wire values; unknown fields are refused.
+/// Parse the strict V2.3 wrapper. The optional seat (`revocation_subject`)
+/// may be omitted and becomes its zero-length wire value; unknown fields —
+/// including every E1★ killed field — are refused.
 pub fn wire_view(line: &str) -> WireView {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return WireView::Plain;
@@ -159,7 +160,15 @@ fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
     message.extend_from_slice(bytes);
 }
 
-/// Exact byte twin of `SealV2.Effect.effectMessage` on Fable's proof branch.
+/// Exact byte twin of `SealV2.Effect.effectMessage` on Fable's Stage B
+/// branch (mcp-seal-dev `81e73dc`):
+///
+///     tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32) ‖ u64be(issued_at)
+///         ‖ frame(line)
+///         ‖ frame(adapter.type) ‖ frame(adapter.version)
+///         ‖ frame(principal.session)
+///         ‖ frame(effect.resource) ‖ frame(effect.action) ‖ frame(effect.args)
+///         ‖ frame(revocation_subject)
 pub fn effect_message(
     authority: &[u8; 32],
     envelope: &EnvelopeV23,
@@ -180,17 +189,7 @@ pub fn effect_message(
     frame(&mut message, effect.resource.as_bytes());
     frame(&mut message, effect.action.as_bytes());
     frame(&mut message, effect.args.as_bytes());
-    frame(&mut message, envelope.idempotency_key.as_bytes());
-    frame(&mut message, envelope.policy_version.as_bytes());
-    frame(&mut message, envelope.delegation.on_behalf_of.as_bytes());
-    frame(
-        &mut message,
-        envelope.delegation.parent_capability_ref.as_bytes(),
-    );
     frame(&mut message, envelope.revocation_subject.as_bytes());
-    frame(&mut message, envelope.audience.as_bytes());
-    frame(&mut message, envelope.causality_token.as_bytes());
-    message.extend_from_slice(&envelope.expires_at.to_be_bytes());
     Ok(message)
 }
 
@@ -223,8 +222,7 @@ pub fn derive_mcp_effect(line: &str) -> Result<EffectClaim, String> {
 }
 
 /// Verify every host-owned equality gate and the Ed25519 signature over the
-/// reconstructed full tuple. Seated fields are signed but deliberately not
-/// consulted by any host gate.
+/// reconstructed full tuple.
 pub fn verify(
     envelope: &EnvelopeV23,
     line: &str,
