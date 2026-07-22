@@ -212,7 +212,9 @@ theorem combine_allow_restrict (vs ws : List Verdict)
 Non-vacuity: a live deny-append exemplar plus `combine_extension_from_empty`
 (the boundary witness showing why `vs ≠ []` is required). Everything else:
 
-- Default-deny + complete mediation: `step_forward_non_bypass`
+- Default-deny + mediation AT THE MODELLED GATE (model-level; not Anderson/Saltzer
+  complete mediation, which quantifies over all access paths to the protected
+  objects — see the residuals row in `CLAIMS.md`): `step_forward_non_bypass`
   (Host/Composition.lean:203), `combine_empty_deny` (:33), `combine_allow_iff`
   (:45), `SealCore.default_deny_never_allowed` (SealCore/Safety.lean:8).
 - Stability under gate composition: `combine_allow_implies_member` (:67) — no
