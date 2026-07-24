@@ -35,7 +35,7 @@ consume events over time.
 * the approval — the nonce of one fixed validated request (`c0`, with
   `validate ast st = some c0` supplied as a hypothesis — the family's
   sanctioned hypothesis-form boundary: Ed25519 is not kernel-evaluable and
-  the `ValidCapability` witness is state-indexed);
+  the `ValidApproval` witness is state-indexed);
 * a completed consume receipt at `d` — `d`'s replica containing an entry
   for the approval's replay namespace and nonce, i.e. a successful
   `validateAndConsumeWithStore` write;
@@ -70,7 +70,7 @@ above governs every downstream restatement of this result.
 
 namespace Host.AuthorityFrontierBridge
 
-open SealV2 (ApprovalState AST ConsumedNonce ValidCapability
+open SealV2 (ApprovalState AST ConsumedNonce ValidApproval
   validateAndConsumeWithStore listReplayStore replayNamespace
   pruneConsumedNonces validate)
 open Crdt.AuthorityFrontier (AuthoritySystem Safe frontier
@@ -78,11 +78,11 @@ open Crdt.AuthorityFrontier (AuthoritySystem Safe frontier
 open Host.StatefulNI (ns_beq_refl nonce_beq_refl)
 
 variable (st : ApprovalState) (ast : AST)
-  (c0 : Σ a, ValidCapability a st)
+  (c0 : Σ a, ValidApproval a st)
 
 /-- One gate call against a single replica: SealV2's real consume seam. -/
 def bridgeConsume (s : List ConsumedNonce) :
-    Option (List ConsumedNonce × Σ a, ValidCapability a st) :=
+    Option (List ConsumedNonce × Σ a, ValidApproval a st) :=
   validateAndConsumeWithStore listReplayStore s ast st
 
 /-- The approval's replay namespace. -/
@@ -134,7 +134,7 @@ single-replica consume steps. -/
 inductive BridgeReach (init : BridgeConfig D) : BridgeConfig D → Prop
   | init : BridgeReach init init
   | step {c : BridgeConfig D} {d : D}
-      {r : List ConsumedNonce × Σ a, ValidCapability a st} :
+      {r : List ConsumedNonce × Σ a, ValidApproval a st} :
       BridgeReach init c → bridgeConsume st ast (c d) = some r →
       BridgeReach init (Function.update c d r.1)
 
@@ -323,7 +323,7 @@ theorem bridgeConsume_sealed_none {st' : ApprovalState}
   simp [bridgeConsume, SealV2.validateAndConsumeWithStore, hnone]
 
 variable (stf : D → ApprovalState) (d₀ : D)
-  (cap0 : Σ a, ValidCapability a (stf d₀))
+  (cap0 : Σ a, ValidApproval a (stf d₀))
 
 /-- Reachability for the per-replica-state family: each replica judges the
 approval against ITS OWN `ApprovalState`. -/
@@ -331,7 +331,7 @@ inductive BridgeReachP (stf : D → ApprovalState) (ast : AST)
     (init : BridgeConfig D) : BridgeConfig D → Prop
   | init : BridgeReachP stf ast init init
   | step {c : BridgeConfig D} {d : D}
-      {r : List ConsumedNonce × Σ a, ValidCapability a (stf d)} :
+      {r : List ConsumedNonce × Σ a, ValidApproval a (stf d)} :
       BridgeReachP stf ast init c → bridgeConsume (stf d) ast (c d) = some r →
       BridgeReachP stf ast init (Function.update c d r.1)
 
@@ -527,7 +527,7 @@ inductive MeshReach (st : ApprovalState) (ast : AST)
     BridgeConfig D × M.Config → Prop
   | init : MeshReach st ast M (fun _ => [], M.init)
   | step {p : BridgeConfig D × M.Config} {d : D}
-      {r : List ConsumedNonce × Σ a, ValidCapability a st} {m' : M.Config} :
+      {r : List ConsumedNonce × Σ a, ValidApproval a st} {m' : M.Config} :
       MeshReach st ast M p → bridgeConsume st ast (p.1 d) = some r →
       M.step p.2 d m' →
       MeshReach st ast M (Function.update p.1 d r.1, m')

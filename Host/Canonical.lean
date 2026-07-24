@@ -27,10 +27,8 @@ inductive LineClass where
   | passthrough
   | act (a : CanonicalAction)
   /-- Fail-closed refusal: a wire line the host will not parse because it
-      carries a pathological numeric literal (a monster decimal exponent that
-      would make `Lean.Json.parse` evaluate `10^exponent` and abort — the Lane C
-      native-vs-wasm divergence). It is neither forwarded (never a bypass) nor
-      passed through (never fail-open); `stepRoute` routes it to `.block`. -/
+      carries an unsafe wire form. It is neither forwarded (never a bypass)
+      nor passed through (never fail-open); `stepRoute` routes it to `.block`. -/
   | refuse
 
 private def jsonId (json : Json) : Json :=
@@ -50,6 +48,20 @@ def classifyLine (line : String) : LineClass :=
   -- here fails closed IDENTICALLY in every lane (all run this guard): the line
   -- is neither aborted on nor passed through. (Seal.JsonUtil.wireNumbersSafe.)
   if !Seal.JsonUtil.wireNumbersSafe trimmed then
+    .refuse
+  else
+  -- Duplicate-key mediation gate: `Json.parse` collapses duplicate object
+  -- keys last-wins, but a downstream tool parser may disagree (first-wins/
+  -- reject) — a divergence no post-parse check can see. A line whose RAW
+  -- text carries a duplicate (or escaped) object key is a HARD refusal.
+  -- (Seal.JsonUtil.wireKeysSafe)
+  if !Seal.JsonUtil.wireKeysSafe trimmed then
+    .refuse
+  else
+  -- Stage-A pinned integer bound: >18 significant mantissa digits in an
+  -- unquoted number would diverge from the Stage-C i64 byte twin; fail closed
+  -- here instead. (Seal.JsonUtil.wireDigitsSafe)
+  if !Seal.JsonUtil.wireDigitsSafe trimmed then
     .refuse
   else
   match Json.parse trimmed with

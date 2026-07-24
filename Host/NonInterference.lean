@@ -148,8 +148,8 @@ decision. -/
 theorem authView_noninterference_nonvacuous :
     ∃ (raw : RawBytes) (s1 s2 : ApprovalState), s1 ≠ s2 ∧
       authView raw s1 = authView raw s2 ∧ decide raw s1 = decide raw s2 := by
-  refine ⟨"", ⟨"s", 0, "pk", "md", [], [], "", 300, []⟩,
-    ⟨"s", 1, "pk", "md", [], [], "", 300, []⟩, ?_, rfl, rfl⟩
+  refine ⟨"", ⟨"s", 0, "pk", "md", [], [], "", 300, [], 0⟩,
+    ⟨"s", 1, "pk", "md", [], [], "", 300, [], 0⟩, ?_, rfl, rfl⟩
   intro h
   exact absurd (congrArg SealV2.ApprovalState.now h) (by decide)
 

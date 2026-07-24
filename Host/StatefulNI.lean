@@ -106,7 +106,7 @@ is stated in HYPOTHESIS FORM (a concrete `validate` success is supplied as a
 hypothesis rather than constructed): Ed25519 `verifySignature` is not
 kernel-evaluable, the same boundary `replay_isolation_nonvacuous` states —
 and `validate`'s success at the policyVersion-twisted state is likewise a
-hypothesis because `ValidCapability ast state` is state-indexed (the twisted
+hypothesis because `ValidApproval ast state` is state-indexed (the twisted
 witness exists — `validate` reads `policyVersion` only through
 `nonceConsumed`, vacuous at `consumedNonces = []` — but transporting it
 across the index is dependent-type bureaucracy, not content). No frozen
@@ -207,10 +207,10 @@ theorem leaky_probe_fails :
       leakyObserveStep epoch tool verdicts raw s1 store
         ≠ leakyObserveStep epoch tool verdicts raw s2 store := by
   refine ⟨1, "t", [], "",
-    ⟨"s", 0, "pk", "md", [], [], "", 300, []⟩,
+    ⟨"s", 0, "pk", "md", [], [], "", 300, [], 0⟩,
     ⟨"s", 0, "pk", "md", [], [], "", 300,
       [⟨⟨"pk", "tk", "s", ""⟩,
-        ⟨String.ofList (List.replicate 64 'a'), by decide⟩, 0⟩]⟩,
+        ⟨String.ofList (List.replicate 64 'a'), by decide⟩, 0⟩], 0⟩,
     [], rfl, rfl, ?_, rfl, rfl, rfl, ?_⟩
   · intro h
     exact absurd (congrArg (fun st => st.consumedNonces.length) h) (by decide)
@@ -224,7 +224,7 @@ theorem leaky_probe_fails :
 request alone — the state-indexed witness is discarded by serialization.
 (Repackaging of `decide_allow_of_validate_isSome` at the `validate` layer.) -/
 theorem serialize_validate_eq (raw : RawBytes) (ast : SealV2.AST)
-    (st : ApprovalState) (c : Σ a, SealV2.ValidCapability a st)
+    (st : ApprovalState) (c : Σ a, SealV2.ValidApproval a st)
     (hp : parse raw = some ast) (hv : validate ast st = some c) :
     serialize c = serializeAstValue ast := by
   have hd : SealV2.decide raw st = .Allow (serialize c) := by
@@ -397,8 +397,8 @@ theorem stateful_ni_nonvacuous :
       storeLowEq "alice" (observeTrace epoch tool verdicts s1 raws st1).2
         (observeTrace epoch tool verdicts s2 raws st2).2 := by
   refine ⟨1, "t", [],
-    ⟨"alice", 0, "pk", "md", [], [], "", 300, []⟩,
-    ⟨"alice", 0, "pk", "md", [], [], "", 301, []⟩,
+    ⟨"alice", 0, "pk", "md", [], [], "", 300, [], 0⟩,
+    ⟨"alice", 0, "pk", "md", [], [], "", 301, [], 0⟩,
     [],
     [⟨⟨"pkB", "db write 1 md {}", "bob", "v1"⟩,
       ⟨String.ofList (List.replicate 64 'a'), by decide⟩, 10⟩],
@@ -454,8 +454,8 @@ as hypotheses (Ed25519 is not kernel-evaluable; the witness is
 state-indexed). -/
 theorem policyVersion_declassification_necessary
     (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
-    (c1 : Σ a, SealV2.ValidCapability a s1)
-    (c2 : Σ a, SealV2.ValidCapability a
+    (c1 : Σ a, SealV2.ValidApproval a s1)
+    (c2 : Σ a, SealV2.ValidApproval a
       { s1 with policyVersion := s1.policyVersion ++ "x" })
     (hp : parse raw = some ast)
     (hv1 : validate ast s1 = some c1)
@@ -566,8 +566,8 @@ here leans on the named Ed25519 boundary (`verifySignature` reads
 `publicKey` and is not kernel-evaluable). -/
 theorem publicKey_declassification_necessary
     (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
-    (c1 : Σ a, SealV2.ValidCapability a s1)
-    (c2 : Σ a, SealV2.ValidCapability a
+    (c1 : Σ a, SealV2.ValidApproval a s1)
+    (c2 : Σ a, SealV2.ValidApproval a
       { s1 with publicKey := s1.publicKey ++ "x" })
     (hp : parse raw = some ast)
     (hv1 : validate ast s1 = some c1)
@@ -628,8 +628,8 @@ approval exists modulo the state-indexed transport (the landed bureaucracy
 note); its validation success is the usual hypothesis. -/
 theorem session_declassification_necessary
     (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
-    (c1 : Σ a, SealV2.ValidCapability a s1)
-    (c2 : Σ a, SealV2.ValidCapability a
+    (c1 : Σ a, SealV2.ValidApproval a s1)
+    (c2 : Σ a, SealV2.ValidApproval a
       { s1 with session := s1.session ++ "x" })
     (hp : parse raw = some ast)
     (hv1 : validate ast s1 = some c1)
@@ -693,8 +693,8 @@ twin's validation success at the later clock is the usual hypothesis (its
 HIGH approvals can carry a longer-expiry approval). -/
 theorem now_declassification_necessary
     (raw : RawBytes) (ast : SealV2.AST) (s1 : ApprovalState)
-    (c1 : Σ a, SealV2.ValidCapability a s1)
-    (c2 : Σ a, SealV2.ValidCapability a { s1 with now := s1.now + 1 })
+    (c1 : Σ a, SealV2.ValidApproval a s1)
+    (c2 : Σ a, SealV2.ValidApproval a { s1 with now := s1.now + 1 })
     (hp : parse raw = some ast)
     (hv1 : validate ast s1 = some c1)
     (hv2 : validate ast { s1 with now := s1.now + 1 } = some c2) :
