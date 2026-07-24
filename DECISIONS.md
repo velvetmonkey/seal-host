@@ -11,6 +11,17 @@ tested and discarded.
 already says. This file is not a summary. If a decision produced a pin, `PINS.md` owns the pin and
 this file owns the reasoning.
 
+**Also does not belong here, and this is a hard rule.** No personal data, no names of people, no
+identifiers, no quoted conversation. This file ships with the repository and is written for a
+stranger reading it in six months.
+
+That constraint is not merely privacy hygiene, it improves the entries. "Three independent advisors
+recommended X and one of them found the flaw in it" is the reusable form. Who said it is
+irrelevant to whether it was right, and naming a source invites the reader to weigh the source
+instead of the evidence. Record the argument and the measurement; drop the speaker.
+
+Where a decision genuinely turned on who made the call, say "the maintainer ruled" and move on.
+
 **Format.** Date, the decision, the alternatives rejected, the evidence that settled it. Keep the
 evidence concrete enough that a reader can re-run it and disagree.
 
