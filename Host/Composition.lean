@@ -460,6 +460,8 @@ theorem classify_act_witness (line : String) (act : CanonicalAction)
   split at h
   · exact absurd h (by simp)   -- duplicate/escaped key ⇒ .refuse ≠ .act act
   split at h
+  · exact absurd h (by simp)   -- canonical-equivalent key ⇒ .refuse ≠ .act act
+  split at h
   · exact absurd h (by simp)   -- oversized number ⇒ .refuse ≠ .act act
   cases hp : Lean.Json.parse line.trimAscii.toString with
   | error e => simp [hp] at h

@@ -5,6 +5,7 @@ import SealV2.Parser
 import Seal.Classify
 import Seal.JsonUtil
 import Host.Action
+import Host.UnicodeKeys
 
 namespace Host
 
@@ -56,6 +57,13 @@ def classifyLine (line : String) : LineClass :=
   -- text carries a duplicate (or escaped) object key is a HARD refusal.
   -- (Seal.JsonUtil.wireKeysSafe)
   if !Seal.JsonUtil.wireKeysSafe trimmed then
+    .refuse
+  else
+  -- A downstream Swift/Foundation reader stores object members in
+  -- Dictionary<String, ...>, whose key equality is Unicode canonical
+  -- equivalence. Refuse only an actual canonical-equivalent duplicate; do not
+  -- refuse non-ASCII keys in general. (Host.UnicodeKeys.wireKeysSafe)
+  if !Host.UnicodeKeys.wireKeysSafe trimmed then
     .refuse
   else
   -- Stage-A pinned integer bound: >18 significant mantissa digits in an
