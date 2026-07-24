@@ -270,7 +270,7 @@ theorem channel_emits_only_validated (A : Adapter)
       = post ++ ChanEv.emitEv b :: pre) :
     ∃ (raw : SealV2.RawBytes) (ast : SealV2.AST),
       SealV2.parse raw = some ast ∧
-      ∃ w : SealV2.ValidCapability ast state,
+      ∃ w : SealV2.ValidApproval ast state,
         b = SealV2.serialize (Sigma.mk ast w) := by
   obtain ⟨raw, hmem⟩ :=
     channel_preserves_non_bypass A hO1 hO2 state inputs post b pre hsplit
