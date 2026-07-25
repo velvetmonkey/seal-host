@@ -98,4 +98,54 @@ theorem classifyLine_refuse_of_unsafe (line : String)
     classifyLine line = .refuse := by
   simp only [classifyLine, h, Bool.not_false, if_true]
 
+/-! ### The other three raw-wire guards, proven the same way
+
+The theorem above existed for `wireNumbersSafe` alone. The duplicate-key,
+Unicode-equivalent-key and significant-digit guards were added on 2026-07-24 and
+2026-07-25 with TESTS but WITHOUT the matching theorems, so three of the four
+pre-parse refusals were asserted only by tests while their sibling was proven.
+The pattern was six lines above the whole time.
+
+Each is stated UNCONDITIONALLY on its own guard: an earlier guard failing also
+yields `.refuse`, so the conclusion holds either way and the theorem need not
+assume the earlier guards passed. That is the honest shape, because it says
+"this line is refused" rather than "this line is refused provided nothing else
+refused it first".
+-/
+
+/-- A raw line carrying a duplicate or escaped object key is refused, whatever
+    the other guards say. This is the mediation bypass closed on 2026-07-24:
+    `Json.parse` collapses duplicates last-wins while a downstream parser may
+    read first-wins, a divergence no post-parse check can see. -/
+theorem classifyLine_refuse_of_unsafe_keys (line : String)
+    (h : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine]
+  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
+    simp [hn, h]
+
+/-- A raw line carrying two keys that are DISTINCT byte sequences but share a
+    Unicode canonical identity is refused. A Foundation/Swift reader keys its
+    dictionary on canonical equivalence, so those collide downstream while
+    surviving the byte-level duplicate check. -/
+theorem classifyLine_refuse_of_unsafe_unicode_keys (line : String)
+    (h : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine]
+  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
+    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
+      simp [hn, hk, h]
+
+/-- A raw line whose mantissa exceeds the pinned significant-digit bound is
+    refused, rather than parsed into a value that would diverge from the
+    Stage-C i64 byte twin. -/
+theorem classifyLine_refuse_of_unsafe_digits (line : String)
+    (h : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine]
+  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
+    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
+      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
+        simp [hn, hk, hu, h]
+
 end Host
