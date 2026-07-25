@@ -118,8 +118,7 @@ impl Oracle {
                         "mode": "guarded",
                         "match": {"type": "contains_any_ci", "arg": "sql",
                                   "needles": ["drop", "delete", "truncate"]},
-                        "target": [{"literal": "db"}, {"arg": "database"},
-                                   {"literal": "write"}, {"arg": "sql"}]
+                        "target": [{"full_arguments": true}]
                     },
                     {"name": "approve", "mode": "deny",
                      "match": {"type": "always"}, "target": []}
@@ -357,10 +356,7 @@ impl Drop for Oracle {
 }
 
 fn guarded_call(id: u64, sql: &str) -> String {
-    // "database" and "sql" both feed the policy's target derivation
-    // ([db, arg:database, write, arg:sql]); without them the kernel
-    // default-denies with "missing target field" (fail-closed, but not the
-    // approval path this oracle exercises).
+    // The complete arguments object feeds the policy's target derivation.
     format!(
         r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"db.execute","arguments":{{"database":"prod","sql":{}}}}}}}"#,
         serde_json::to_string(sql).unwrap()
@@ -387,6 +383,88 @@ fn block_target(line: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Stage-A guard rules must bind approvals to the complete canonical
+/// arguments. Exercise the production config load path, not a parser helper:
+/// the stale literal target must stop startup with the kernel's exact error,
+/// while its otherwise-identical full-arguments twin starts successfully.
+#[test]
+fn guarded_non_full_arguments_target_is_rejected_on_startup() {
+    let dir = std::env::temp_dir().join(format!(
+        "seal-host-invalid-guard-target-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let approvals = dir.join("approvals.ndjson");
+    std::fs::write(&approvals, b"").unwrap();
+
+    let run = |tag: &str, target: serde_json::Value| {
+        let config_sk = SigningKey::from_bytes(&[7u8; 32]);
+        let payload = serde_json::json!({
+            "epoch": 1,
+            "safety": {
+                "approval": {
+                    "control_file": approvals.to_str().unwrap(),
+                    "ttl_seconds": 120
+                },
+                "tools": [{
+                    "name": "db.execute",
+                    "mode": "guarded",
+                    "match": {"type": "always"},
+                    "target": target
+                }]
+            }
+        })
+        .to_string();
+        let signature = hex::encode(config_sk.sign(payload.as_bytes()).to_bytes());
+        let envelope = serde_json::json!({
+            "payload": payload,
+            "signature": signature
+        });
+        let config = dir.join(format!("{tag}.json"));
+        std::fs::write(&config, envelope.to_string()).unwrap();
+
+        Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+            .args([
+                "--insecure-development-mode",
+                "--config",
+                config.to_str().unwrap(),
+                "--pubkey",
+                &hex::encode(config_sk.verifying_key().to_bytes()),
+                "--",
+                "/bin/cat",
+            ])
+            .output()
+            .expect("run real host config load path")
+    };
+
+    let rejected = run("literal-target", serde_json::json!([{"literal": "db"}]));
+    assert_eq!(
+        rejected.status.code(),
+        Some(3),
+        "non-full guarded target unexpectedly loaded: stdout={} stderr={}",
+        String::from_utf8_lossy(&rejected.stdout),
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    let expected = r#"guard mode requires target [{"full_arguments": true}]"#;
+    assert!(
+        stderr.lines().any(|line| line.ends_with(expected)),
+        "startup rejection must carry the exact kernel error; stderr={stderr}"
+    );
+
+    let accepted = run(
+        "full-arguments-target",
+        serde_json::json!([{"full_arguments": true}]),
+    );
+    assert!(
+        accepted.status.success(),
+        "full-arguments acceptance twin did not start: stderr={}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -1142,32 +1220,21 @@ fn multibyte_request_commitment_survives_the_ffi_seam() {
     );
 }
 
-/// The kernel approval target is a pure function of the tool name and the
-/// argument paths the policy names (`target: [db, arg:database, write, arg:sql]`);
-/// it IGNORES any argument key the policy does not name. So an attacker cannot
-/// change, dodge, or redirect an approval target by adding sibling keys — and,
-/// dually, a human approval granted for the clean call also covers any variant
-/// that only adds unnamed keys. This is the on-disk defence against the P0-2
-/// on-path downgrade; the Track-1 form is proved in mcp-seal
-/// `Seal.p0_2_policy_target_ignores_unnamed` (that lemma proves the invariance
-/// modulo `atPath` agreement — this test supplies the last mile that `atPath`'s
-/// `partial def` blocks in Lean, against the real kernel binary).
-///
-/// Exercised beyond one token: a scalar sibling (`x:1e309`, serde-hostile) AND a
-/// structurally different nested object/array sibling must both leave the target
-/// byte-identical to the clean call's.
+/// Stage A requires guarded approvals to bind the full canonical arguments.
+/// Adding any sibling argument therefore changes the target, including nested
+/// object/array values. This exercises that binding through the real host path
+/// and confirms that each distinct argument set needs its own approval.
 #[test]
-fn approval_target_ignores_keys_not_in_policy_target() {
-    let mut o = Oracle::spawn("target-ignores-siblings");
+fn approval_target_binds_every_argument_key() {
+    let mut o = Oracle::spawn("target-binds-siblings");
 
     // Clean guarded call: {database:"prod", sql:"drop table accounts"}.
     let clean = guarded_call(90, "drop table accounts");
     o.send(&clean);
     let t_clean = block_target(&o.expect_line()).expect("clean call names its approval target");
 
-    // Variant A — scalar serde-hostile sibling x:1e309 (raw string so the
-    // overflow token survives; serde rejects it, the kernel mediates it).
-    let scalar_sibling = r#"{"jsonrpc":"2.0","id":91,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    // Variant A — a scalar sibling.
+    let scalar_sibling = r#"{"jsonrpc":"2.0","id":91,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":7}}}"#;
     o.send(scalar_sibling);
     let t_scalar =
         block_target(&o.expect_line()).expect("scalar-sibling call names its approval target");
@@ -1179,32 +1246,35 @@ fn approval_target_ignores_keys_not_in_policy_target() {
     let t_nested =
         block_target(&o.expect_line()).expect("nested-sibling call names its approval target");
 
-    assert_eq!(
+    assert_ne!(
         t_clean, t_scalar,
-        "a scalar sibling key (x:1e309) must not change the approval target"
+        "a scalar sibling key must change the full-arguments approval target"
     );
-    assert_eq!(
+    assert_ne!(
         t_clean, t_nested,
-        "a nested object/array sibling key must not change the approval target"
+        "a nested object/array sibling key must change the full-arguments approval target"
+    );
+    assert_ne!(
+        t_scalar, t_nested,
+        "distinct sibling values must have distinct full-arguments targets"
     );
 
-    // Non-vacuous end-to-end: the approval a human grants for the CLEAN target
-    // also authorises both unnamed-key variants — each forwards verbatim once
-    // approved (one-shot, so re-grant per send).
+    // Non-vacuous end-to-end: an approval for the clean target does not
+    // authorise the scalar variant.
     o.approve(&t_clean);
     o.send(scalar_sibling);
-    assert_eq!(
-        o.expect_line(),
-        scalar_sibling,
-        "clean-target approval must authorise the scalar-sibling variant"
+    assert!(
+        is_block(&o.expect_line()),
+        "clean-target approval must not authorise a scalar-sibling variant"
     );
-    o.approve(&t_clean);
+
+    // Each variant forwards only with its own target.
+    o.approve(&t_scalar);
+    o.send(scalar_sibling);
+    assert_eq!(o.expect_line(), scalar_sibling);
+    o.approve(&t_nested);
     o.send(nested_sibling);
-    assert_eq!(
-        o.expect_line(),
-        nested_sibling,
-        "clean-target approval must authorise the nested-sibling variant"
-    );
+    assert_eq!(o.expect_line(), nested_sibling);
 }
 
 /// P2-c observability tap: a FORCED reduced-scope forward (an ALLOW whose wire

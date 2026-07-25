@@ -78,6 +78,23 @@ fn observe(line: &str) -> Result<Obs, String> {
     })
 }
 
+/// CATEGORY ADDED 2026-07-25: `wire-refused`.
+///
+/// This map was written when classify had two outcomes. The raw-wire guards
+/// added on 2026-07-24 introduced a third, `refuse` (2), for lines whose bytes
+/// are ambiguous about which request they are: duplicate object keys, duplicate
+/// `method` keys, oversized integers, lone surrogates in keys.
+///
+/// Without a category for it, every such line fell through to
+/// `classify-contract-violation`, which read as "the boundary drifted" when
+/// what actually happened is that the boundary got STRICTER in a way this map
+/// had no word for.
+///
+/// `wire-refused` is added rather than folding these into an existing bucket
+/// because it is a materially different outcome: nothing is forwarded, and the
+/// refusal happens BEFORE the parse, so no comparison against serde's view is
+/// even meaningful. Collapsing it into `agree-unrouted` would hide the
+/// distinction between "neither side routes this" and "we refused to look".
 fn classify_obs(o: &Obs) -> &'static str {
     match (o.lean, o.routes, o.parts_ok, o.serde_parses) {
         (0, true, _, _) => "BYPASS",
@@ -86,6 +103,7 @@ fn classify_obs(o: &Obs) -> &'static str {
         (1, true, false, _) => "reduced-scope-structural",
         (1, false, _, false) => "reduced-scope-unparseable",
         (1, false, _, true) => "lean-only-routed",
+        (2, _, _, _) => "wire-refused",
         _ => "classify-contract-violation",
     }
 }
@@ -175,8 +193,18 @@ mod props {
         /// tools/call that Lean passes through unmediated) nor in
         /// `lean-only-routed` (Lean mediates a line serde parses as a
         /// different method — an as-yet-unseen divergence) nor violate the
-        /// classify 0/1 contract. Divergence is ALLOWED, but only into the two
-        /// named reduced-scope classes the map already documents.
+        /// classify contract. Divergence is ALLOWED, but only into the named
+        /// reduced-scope classes the map documents, plus `wire-refused`.
+        ///
+        /// `wire-refused` admitted 2026-07-25. It is the STRICTEST outcome:
+        /// the raw-wire guards refuse the line before the parse and nothing is
+        /// forwarded. Excluding it would fail this property on exactly the
+        /// inputs the guards were added to stop, which is backwards.
+        ///
+        /// This allowlist is deliberately NOT "anything but BYPASS". `BYPASS`
+        /// and `lean-only-routed` stay excluded, and so does
+        /// `classify-contract-violation`, so a genuinely new outcome still
+        /// fails here rather than being quietly absorbed.
         #[test]
         fn no_bypass_no_new_divergence(line in probe_line()) {
             let obs = observe(&line).map_err(TestCaseError::fail)?;
@@ -185,7 +213,8 @@ mod props {
                 class == "agree-routed"
                     || class == "agree-unrouted"
                     || class == "reduced-scope-unparseable"
-                    || class == "reduced-scope-structural",
+                    || class == "reduced-scope-structural"
+                    || class == "wire-refused",
                 "unexpected boundary class {class} for {line:?} ({obs:?})"
             );
         }

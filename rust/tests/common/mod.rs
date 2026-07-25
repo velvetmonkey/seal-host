@@ -74,6 +74,11 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
     const AU: &str = "agree-unrouted";
     const RSU: &str = "reduced-scope-unparseable";
     const RSS: &str = "reduced-scope-structural";
+    // Added 2026-07-25. The raw-wire guards refuse these BEFORE the parse, so
+    // there is no serde view to compare against and nothing is forwarded. Not
+    // folded into AU: "neither side routes this" and "we refused to look" are
+    // different facts, and collapsing them would hide the guard entirely.
+    const WR: &str = "wire-refused";
     vec![
         // -- numeric limits in value position
         case("num-overflow-1e309", in_value("1e309"), RSU),
@@ -82,10 +87,10 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case(
             "num-overflow-int-400-digits",
             in_value(&"9".repeat(400)),
-            RSU,
+            WR,
         ),
-        case("num-u64-max", in_value("18446744073709551615"), AR),
-        case("num-2pow64", in_value("18446744073709551616"), AR),
+        case("num-u64-max", in_value("18446744073709551615"), WR),
+        case("num-2pow64", in_value("18446744073709551616"), WR),
         case("num-neg-zero", in_value("-0"), AR),
         case("num-neg-zero-float", in_value("-0.0"), AR),
         case("num-subnormal-1e-309", in_value("1e-309"), AR),
@@ -121,7 +126,7 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case(
             "str-lone-surrogate-in-key",
             in_value(r#"{"\ud800":1}"#),
-            RSU,
+            WR,
         ),
         case("str-raw-nul", in_value("\"a\u{0}b\""), AU),
         case("str-raw-ctrl-0x01", in_value("\"a\u{1}b\""), AU),
@@ -141,18 +146,18 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case("method-u-escaped", as_method(r#""\u0074ools/call""#), AR),
         case("name-u-escaped", as_name(r#""\u0074""#), AR),
         // -- structure: duplicates, nesting, framing
-        case("dup-keys-arguments", in_value(r#"{"a":1,"a":2}"#), AR),
+        case("dup-keys-arguments", in_value(r#"{"a":1,"a":2}"#), WR),
         case(
             "dup-method-last-tools-call",
             r#"{"method":"initialize","method":"tools/call","params":{"name":"t","arguments":{}}}"#
                 .to_string(),
-            AR,
+            WR,
         ),
         case(
             "dup-method-last-initialize",
             r#"{"method":"tools/call","method":"initialize","params":{"name":"t","arguments":{}}}"#
                 .to_string(),
-            AU,
+            WR,
         ),
         case("nesting-100", nested(100), AR),
         case("nesting-123", nested(123), AR),
