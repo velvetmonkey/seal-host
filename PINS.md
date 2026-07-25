@@ -29,7 +29,7 @@ today, and nothing would notice if it stopped being correct.
 | site | status | evidence | note |
 |---|---|---|---|
 | `issuedAt` / `expiresAt` epoch and unit | `PINNED` | commit `d017ac1`, `SealV2/EffectEnvelope.lean` | width and endianness (`u64be`) were already pinned; the MEANING of the integer was not, so two conforming verifiers could read the same bytes as seconds and as milliseconds and diverge silently with no error |
-| `effectMessage` 18-field signed tuple | `PINNED` | `SealV2/EffectEnvelope.lean:339`, `effect_message_injective` | injectivity proven at the hashed-byte surface |
+| `effectMessage` 10-field `seal.effect/v2` envelope | `PINNED` | `SealV2/EffectEnvelope.lean:294,339`, `effect_message_injective` | injectivity proven at the hashed-byte surface |
 | duplicate object keys on the raw wire | `PINNED` | `Seal/JsonUtil.lean` `wireKeysSafe` | raw-text scan, fails closed; also refuses escaped keys rather than re-implementing escape decoding |
 | significant-digit bound | `PINNED` | `Seal/JsonUtil.lean` `wireDigitsSafe` | |
 | pathological exponent guard | `PINNED` | `Seal/JsonUtil.lean` `wireNumbersSafe` | |
