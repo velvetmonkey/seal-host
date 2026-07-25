@@ -17,10 +17,17 @@
 //!    the expectation is frozen — which is why layer 2 exists.
 //! 2. `live_lean_diff_over_shared_corpus` (#[ignore]): runs the Lean lane
 //!    NOW and diffs both encoders over the corpus with no frozen middleman.
-//!    Ignored by default because seal-host's pinned `mcp-seal` package rev
-//!    predates `SealV2.EffectEnvelope`; the lane needs `LEAN_PATH` pointing
-//!    at a built mcp-seal-dev checkout. When the pin advances past
-//!    mcp-seal-dev `9452f32`, un-ignore this and drop the frozen file.
+//!    The lane needs `LEAN_PATH` pointing at a built mcp-seal-dev checkout.
+//!
+//! **The predicted failure happened. Recorded here so the next reader does not
+//! trust layer 1 alone.** Layer 1's stated weakness above is not hypothetical:
+//! by 2026-07-25 the spec HAD drifted (domain tag `seal.effect/v1` to
+//! `seal.effect/v2`, mcp-seal-dev `81e73dc`) and layer 1 stayed green
+//! throughout, because a frozen expectation cannot notice the thing it was
+//! frozen from moving. Layer 2 was `#[ignore]`d for that entire window, so the
+//! only instrument that could see it was switched off. Green here means the
+//! Rust encoder still matches a 2026-07-20 snapshot; it does NOT mean the Rust
+//! encoder matches the spec. See `.mega-monkey/twin-v1v2-divergence.md`.
 //!
 //! Expectation provenance: generated 2026-07-20 by
 //! `lean --run scripts/envelope_v23_twin_lane.lean tests/vectors/envelope_v23_twin_corpus.json`
@@ -144,6 +151,25 @@ fn rust_encoder_matches_lean_generated_expectation() {
     }
 }
 
+/// WHAT THIS CAN AND CANNOT SEE. Corrected 2026-07-25: the name and the old
+/// failure message both oversold it.
+///
+/// Both sides of this comparison are frozen artifacts living in THIS repo.
+/// `expected_path()` is a checked-in file; `LEAN_GUARD_MSGS_GOLDEN_HEX` is a
+/// `const` declared above. Nothing here opens the spec repo. So it catches
+/// exactly one thing: regenerating the expectation file without updating the
+/// const, or the reverse.
+///
+/// It CANNOT see the spec itself changing. On 2026-07-25 the spec had already
+/// moved the domain tag from `seal.effect/v1` to `seal.effect/v2` (mcp-seal-dev
+/// `81e73dc`, reconciled by `ae9fadc`) and this test stayed green, because the
+/// two frozen artifacts still agreed with each other about a layout the spec
+/// no longer used. Only `live_lean_diff_over_shared_corpus` can catch that, and
+/// it is `#[ignore]`d, so nothing was actually watching.
+///
+/// FALSIFIES: make this read the spec repo's `#guard_msgs` literal at test time
+/// (needs the spec checkout reachable from CI), or un-ignore the live diff.
+/// Until one lands, this test's green is evidence about two local files only.
 #[test]
 fn golden_anchor_ties_expectation_to_lean_guard_msgs_pin() {
     let expected = std::fs::read_to_string(expected_path()).expect("read expected hex");
@@ -154,16 +180,35 @@ fn golden_anchor_ties_expectation_to_lean_guard_msgs_pin() {
     assert_eq!(
         expected.lines().nth(golden_index).unwrap(),
         LEAN_GUARD_MSGS_GOLDEN_HEX,
-        "expectation file drifted from the spec repo's #guard_msgs literal"
+        "the expectation file and the in-repo golden const disagree. NOTE: this \
+         compares two frozen LOCAL artifacts, never the spec repo (see docstring)"
     );
 }
 
 /// Live dual-encoder diff, no frozen middleman. Needs the V2.3 Lean spec on
-/// `LEAN_PATH` (see module docs); un-ignore once the mcp-seal pin carries
-/// `SealV2.EffectEnvelope`.
+/// `LEAN_PATH` (see module docs).
+///
+/// The ORIGINAL ignore reason ("pinned mcp-seal rev predates
+/// `SealV2.EffectEnvelope`") stopped being true and was misleading by
+/// 2026-07-25: the pin is `6c74b61`, which carries `SealV2/EffectEnvelope.lean`.
+/// The precondition this test was waiting for HAS been met.
+///
+/// What actually blocks it now is different and larger: running it revealed
+/// that `scripts/envelope_v23_twin_lane.lean` no longer compiles against the
+/// pinned spec (`parentCapabilityRef`, `revocationSubject`, `audience` and
+/// `causalityToken` are no longer fields of `EffectEnvelope`, and a required
+/// `effect` field is missing), and that the Rust encoder is still on
+/// `seal.effect/v1` while the spec is on `seal.effect/v2`. Un-ignoring this
+/// before porting the lane and reconciling the encoder just turns a silent
+/// skip into a noisy red that reports the wrong cause.
+///
+/// Order to unblock: port the lane to the v2 structure, settle whether the host
+/// follows the kernel to v2, regenerate the expectation, THEN un-ignore.
+/// Analysis: `.mega-monkey/twin-v1v2-divergence.md`.
 #[test]
-#[ignore = "pinned mcp-seal rev predates SealV2.EffectEnvelope; run with \
-            SEAL_V23_SPEC_LEAN_PATH pointing at a built mcp-seal-dev (see module docs)"]
+#[ignore = "lane script needs porting to the v2 EffectEnvelope and the Rust \
+            encoder is still seal.effect/v1; run with SEAL_V23_SPEC_LEAN_PATH \
+            pointing at a built mcp-seal-dev (see this test's docstring)"]
 fn live_lean_diff_over_shared_corpus() {
     let lean_path = std::env::var("SEAL_V23_SPEC_LEAN_PATH")
         .expect("set SEAL_V23_SPEC_LEAN_PATH to <mcp-seal-dev>:<batteries>:<aesop> olean dirs");

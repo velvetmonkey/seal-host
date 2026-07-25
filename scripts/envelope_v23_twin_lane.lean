@@ -54,33 +54,43 @@ def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := d
   let some nonce := hexToBytes (← getStr e "nonce_hex")
     | .error "bad nonce_hex"
   let adapter ← e.getObjVal? "adapter"
-  -- `effect: null` and an all-empty effect object are the same wire value:
-  -- three empty frames (the Rust encoder's `Option` is JSON surface only).
+  -- PORTED 2026-07-25 from the `seal.effect/v1` shape to `seal.effect/v2`.
+  --
+  -- The Stage B strip (mcp-seal-dev `81e73dc`, reconciled `ae9fadc`) removed
+  -- `idempotency_key`, `on_behalf_of`, `parent_capability_ref`,
+  -- `revocation_subject`, `audience` and `causality_token` from
+  -- `EffectEnvelope` entirely. This lane no longer reads them. The corpus may
+  -- still carry them; extra JSON keys are simply not consulted, which is
+  -- correct: they are not signed under v2.
+  --
+  -- ONE SEMANTIC CHANGE, DELIBERATE, DO NOT "SIMPLIFY" IT BACK:
+  -- under v1 `effect: null` and an all-empty effect object encoded IDENTICALLY
+  -- (three empty frames), and the old comment here said so. Under v2 `effect`
+  -- is `Option EffectClaim` with a signed presence byte: `none` encodes `0x00`,
+  -- `some` encodes `0x01` followed by three frames. So null and `{"resource":
+  -- "","action":"","args":""}` now produce DIFFERENT signed bytes. Mapping an
+  -- empty object to `none` would silently re-merge two cases the v2 format
+  -- deliberately separates, which is exactly the kind of collapse the presence
+  -- byte exists to prevent. Null maps to `none`; any object maps to `some`,
+  -- empty strings included.
   let effectJson ← e.getObjVal? "effect"
-  let (res, act, args) ←
-    if effectJson.isNull then pure ("", "", "")
+  let effect ←
+    if effectJson.isNull then pure none
     else do
-      pure (← getStr effectJson "resource", ← getStr effectJson "action",
-        ← getStr effectJson "args")
+      pure (some ({ resource := ← getStr effectJson "resource"
+                    action := ← getStr effectJson "action"
+                    args := ← getStr effectJson "args" } : EffectClaim))
   pure (authority, {
     keyId := ← getStr e "key_id"
     nonce := nonce
     issuedAt := ← getNat e "issued_at"
+    expiresAt := ← getNat e "expires_at"
     line := line
     adapterType := ← getStr adapter "type"
     adapterVersion := ← getStr adapter "version"
     session := ← getStr e "session"
-    effectResource := res
-    effectAction := act
-    effectArgs := args
-    idempotencyKey := ← getStr e "idempotency_key"
     policyVersion := ← getStr e "policy_version"
-    onBehalfOf := ← getStr e "on_behalf_of"
-    parentCapabilityRef := ← getStr e "parent_capability_ref"
-    revocationSubject := ← getStr e "revocation_subject"
-    audience := ← getStr e "audience"
-    causalityToken := ← getStr e "causality_token"
-    expiresAt := ← getNat e "expires_at" })
+    effect := effect })
 
 def main (argv : List String) : IO UInt32 := do
   let [path] := argv
