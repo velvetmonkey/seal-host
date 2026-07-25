@@ -63,13 +63,36 @@ fn rust_routes_as_tools_call(line: &str) -> bool {
 /// Exact agreement: the V1 Rust wire view and the Lean canonical routing
 /// view route identically. Holds on the curated corpus; see
 /// `known_lean_stricter_cases` for the documented exceptions.
+///
+/// CONTRACT WIDENED 2026-07-25, from 0/1 to 0/1/2.
+///
+/// These checks were written when classify had two outcomes. The raw-wire
+/// guards added on 2026-07-24 (`wireKeysSafe`, `wireDigitsSafe`,
+/// `wireNumbersSafe`) introduced a third, `refuse` (2), for lines whose bytes
+/// are ambiguous about which request they even are: duplicate object keys,
+/// duplicate `method` keys, oversized integers, pathological exponents.
+///
+/// `refuse` is the STRICTEST outcome, not a new bypass. It is the same
+/// fail-closed direction this file already documents as allowed a few lines
+/// below, where Lean mediating a line serde cannot parse is accepted. Treating
+/// it as a contract violation asserted the PRE-FIX contract and turned a
+/// security improvement into a red test.
+///
+/// It is deliberately NOT enough to merely tolerate 2 here. Tolerance alone
+/// would pass just as happily if the guards silently stopped firing. See
+/// `refusal_fires_on_the_inputs_it_must` below, which pins the specific inputs
+/// that MUST refuse.
 fn check_agreement(line: &str) -> Result<(), String> {
-    let lean = lean_classify(line); // 0 passthrough, 1 mediated act
+    let lean = lean_classify(line); // 0 passthrough, 1 mediated act, 2 refuse
     let rust = rust_routes_as_tools_call(line);
-    if lean > 1 {
+    if lean > 2 {
         return Err(format!(
-            "classify outside 0/1 contract: {lean} for {line:?}"
+            "classify outside the 0/1/2 contract: {lean} for {line:?}"
         ));
+    }
+    // A refusal never reaches the child, so there is no routing to agree about.
+    if lean == 2 {
+        return Ok(());
     }
     if (lean == 1) != rust {
         return Err(format!(
@@ -83,12 +106,14 @@ fn check_agreement(line: &str) -> Result<(), String> {
 /// as a tools/call that Lean nevertheless passes through unmediated to the
 /// child. Lean being STRICTER (mediating a line serde cannot even parse) is
 /// fail-closed and allowed.
+/// `refuse` (2) is the strictest outcome available and forwards nothing, so it
+/// is the OPPOSITE of a bypass. Only `lean == 0` with `rust == true` is one.
 fn check_no_bypass(line: &str) -> Result<(), String> {
     let lean = lean_classify(line);
     let rust = rust_routes_as_tools_call(line);
-    if lean > 1 {
+    if lean > 2 {
         return Err(format!(
-            "classify outside 0/1 contract: {lean} for {line:?}"
+            "classify outside the 0/1/2 contract: {lean} for {line:?}"
         ));
     }
     if rust && lean == 0 {
@@ -97,6 +122,55 @@ fn check_no_bypass(line: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// NEGATIVE CONTROL for the widened contract above.
+///
+/// Widening 0/1 to 0/1/2 means `refuse` is now tolerated everywhere. Tolerance
+/// on its own is worthless: it would pass exactly as happily if every raw-wire
+/// guard silently stopped firing, which is precisely the "green measuring the
+/// wrong thing" shape this repository keeps finding.
+///
+/// So this pins the other direction. Each line below MUST refuse, and each is
+/// here because a specific guard is the only thing standing between it and the
+/// child. If a guard is removed, reordered after `Json.parse`, or has its bound
+/// widened, this test goes red and names the input.
+///
+/// The duplicate-key cases are the mediation bypass closed on 2026-07-24: the
+/// parse collapses them last-wins, so a first-wins downstream parser would see
+/// a different request from the one that was judged.
+#[test]
+fn refusal_fires_on_the_inputs_it_must() {
+    const MUST_REFUSE: &[(&str, &str)] = &[
+        (
+            "duplicate object key inside arguments",
+            r#"{"method":"tools/call","params":{"name":"x","arguments":{"a":1,"a":2}}}"#,
+        ),
+        (
+            "duplicate method key, initialize first",
+            r#"{"method":"initialize","method":"tools/call","params":{"name":"x"}}"#,
+        ),
+        (
+            "duplicate method key, tools/call first",
+            r#"{"method":"tools/call","method":"initialize","params":{"name":"x"}}"#,
+        ),
+        (
+            "integer beyond the pinned significant-digit bound",
+            r#"{"method":"tools/call","params":{"name":"x","arguments":{"v":18446744073709551615}}}"#,
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (why, line) in MUST_REFUSE {
+        let got = lean_classify(line);
+        if got != 2 {
+            failures.push(format!(
+                "{why}: expected refuse (2), got {got} for {line:?} \
+                 — a raw-wire guard is not firing"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{} guard(s) not firing:\n{}", failures.len(), failures.join("\n"));
 }
 
 fn assert_all<'a>(lines: impl IntoIterator<Item = &'a str>, check: fn(&str) -> Result<(), String>) {
