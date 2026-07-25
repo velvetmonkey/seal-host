@@ -11,3 +11,7 @@ __pycache__/
 
 # scratch lane goal files
 .goal-*.md
+
+# Agent scratch state; never part of the repo (2026-07-25: a debug log
+# from this directory was committed onto a branch by accident).
+.juno_task/
