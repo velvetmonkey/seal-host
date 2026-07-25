@@ -66,6 +66,25 @@ for deployability.** Everything in Shape 1, plus:
   mediation proof. It defaults to loopback, requires a private bearer-token
   file before bind, caps requests, exposes only liveness/readiness, and has no
   policy, receipt, approval, child-data, or mutation endpoint.
+- **the build toolchain that produces the linked artifacts, and the integrity
+  of those artifacts.** The list above names the Ed25519 leaf implementation
+  (vendored TweetNaCl) as trusted, but the step from that source to the linked
+  `libsealcrypto.o` is performed by `scripts/build_ffi_so.sh` and is not itself
+  checked: nothing verifies the produced object against its sources. The same
+  applies to the Lean and Rust compilers and to `lake`'s dependency resolution.
+  An adversary holding the build machine substitutes the crypto leaf and no
+  test or boot-time check detects it. This is the ordinary compiler-trust
+  problem, recorded because a TCB list that names an implementation but not the
+  process that compiles it is incomplete about what it actually trusts.
+- **the storage stack beneath `fsync`.** SQLite runs WAL with
+  `synchronous=FULL`, and that genuinely issues `fdatasync` in the commit path
+  rather than deferring to checkpoint time as `synchronous=NORMAL` would. That
+  much is measured, not assumed. What it does NOT establish is that the bytes
+  reach stable media: drive write caches, virtualised block devices and some
+  filesystems can acknowledge a sync that has not been persisted. Durability
+  across power loss is therefore a property of the deployment's storage stack,
+  not of this code. Process-restart durability is tested; power-loss durability
+  is assumed, and checking it needs block-level fault injection.
 - the differential conformance harness (`rust/tests/differential.rs`) pins
   the residual wire-parser gap: property-based agreement between the Rust
   serde_json wire view and the Lean canonical parser on what gets mediated
