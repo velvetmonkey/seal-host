@@ -153,8 +153,7 @@ fn write_config(mask: u8, cal: CalVariant, dir: &Path) -> (PathBuf, String) {
         "mode": "guarded",
         "match": {"type": "contains_any_ci", "arg": "sql",
                   "needles": ["drop", "delete", "truncate"]},
-        "target": [{"literal": "db"}, {"arg": "database"},
-                   {"literal": "write"}, {"arg": "sql"}]
+        "target": [{"full_arguments": true}]
     })];
     // Unlisted tools are safety-denied ("no matching policy rule"), so every
     // probe tool carries an explicit allow rule; allow-mode ALLOWs persist
