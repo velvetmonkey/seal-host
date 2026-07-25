@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Anti-drift gate for PINS.md. The ledger is only useful while every cited
-// file/test/name still exists and every SPEC-ONLY term is still absent.
+// file/test/name still exists, selected load-bearing claims agree with source,
+// and every SPEC-ONLY term is still absent.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -80,6 +81,50 @@ function rowLabel(row) {
   return `PINS.md:${row.line} [${site}]`;
 }
 
+function lineNumber(sourceLines, pattern) {
+  const index = sourceLines.findIndex((line) => pattern.test(line));
+  return index < 0 ? null : index + 1;
+}
+
+function leanDeclarationLine(sourceLines, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return lineNumber(
+    sourceLines,
+    new RegExp(
+      `^\\s*(?:def|abbrev|opaque|structure|inductive|theorem|lemma)\\s+${escaped}(?:\\s|\\{|\\()`,
+    ),
+  );
+}
+
+function leanStructure(sourceLines, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = lineNumber(
+    sourceLines,
+    new RegExp(`^\\s*structure\\s+${escaped}\\s+where\\s*$`),
+  );
+  if (start === null) return null;
+
+  const fields = [];
+  for (let index = start; index < sourceLines.length; index += 1) {
+    const line = sourceLines[index];
+    if (/^\s+deriving\b/.test(line)) break;
+    const match = line.match(/^\s{2}([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+    if (match) fields.push(match[1]);
+  }
+  return { line: start, fields };
+}
+
+function leanStringDefinition(sourceLines, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const match = sourceLines[index].match(
+      new RegExp(`^\\s*def\\s+${escaped}\\s*:\\s*String\\s*:=\\s*"([^"]*)"\\s*$`),
+    );
+    if (match) return { line: index + 1, value: match[1] };
+  }
+  return null;
+}
+
 const rows = [];
 for (let index = 0; index < lines.length; index += 1) {
   const line = lines[index];
@@ -97,7 +142,7 @@ for (let index = 0; index < lines.length; index += 1) {
   });
 }
 
-console.log("==> [1/4] every file path cited by a ledger row exists");
+console.log("==> [1/5] every file path cited by a ledger row exists");
 for (const row of rows) {
   for (const citation of citedPaths(row.raw)) {
     if (!resolveCitation(citation)) {
@@ -106,7 +151,7 @@ for (const row of rows) {
   }
 }
 
-console.log("==> [2/4] PINNED and PINNED-BY-TEST evidence still names real artifacts");
+console.log("==> [2/5] PINNED and PINNED-BY-TEST evidence still names real artifacts");
 for (const row of rows.filter(
   ({ status }) => status === "PINNED" || status === "PINNED-BY-TEST",
 )) {
@@ -142,7 +187,70 @@ for (const row of rows.filter(
   }
 }
 
-console.log("==> [3/4] every cited Lean test is reachable from lakefile.toml defaultTargets");
+console.log("==> [3/5] load-bearing ledger claims agree with kernel source");
+const effectRows = rows.filter((row) => codeNames(row.site).includes("effectMessage"));
+if (effectRows.length !== 1) {
+  failures.push(
+    `PINS.md: expected exactly one source-backed effectMessage row, found ${effectRows.length}`,
+  );
+} else {
+  const row = effectRows[0];
+  const citation = "SealV2/EffectEnvelope.lean";
+  const sourcePath = path.join(KERNEL, citation);
+  if (!fs.existsSync(sourcePath)) {
+    failures.push(`${rowLabel(row)}: kernel source does not exist: ${citation}`);
+  } else {
+    const sourceLines = fs.readFileSync(sourcePath, "utf8").split(/\r?\n/);
+    const envelope = leanStructure(sourceLines, "EffectEnvelope");
+    if (!envelope) {
+      failures.push(
+        `${rowLabel(row)}: ${citation} does not declare structure EffectEnvelope`,
+      );
+    } else {
+      const countClaim = row.site.match(/\b(\d+)-field\b/);
+      if (!countClaim) {
+        failures.push(
+          `${rowLabel(row)}: field count is missing; ${citation}:${envelope.line} structure EffectEnvelope declares ${envelope.fields.length} fields`,
+        );
+      } else if (Number(countClaim[1]) !== envelope.fields.length) {
+        failures.push(
+          `${rowLabel(row)}: field count says ${countClaim[1]}, but ${citation}:${envelope.line} structure EffectEnvelope declares ${envelope.fields.length} fields`,
+        );
+      }
+    }
+
+    const effectTag = leanStringDefinition(sourceLines, "effectTag");
+    if (!effectTag) {
+      failures.push(`${rowLabel(row)}: ${citation} does not define effectTag`);
+    } else {
+      const sourceDomain = effectTag.value.replace(/\\x00$/, "");
+      const domainClaim = row.site.match(/`(seal\.effect\/v[0-9]+)`/);
+      if (!domainClaim) {
+        failures.push(
+          `${rowLabel(row)}: domain tag is missing; ${citation}:${effectTag.line} effectTag is ${sourceDomain}`,
+        );
+      } else if (domainClaim[1] !== sourceDomain) {
+        failures.push(
+          `${rowLabel(row)}: domain tag says ${domainClaim[1]}, but ${citation}:${effectTag.line} effectTag is ${sourceDomain}`,
+        );
+      }
+    }
+
+    const claimedDeclarations = new Set([
+      ...codeNames(row.site),
+      ...codeNames(row.evidence),
+    ]);
+    for (const name of claimedDeclarations) {
+      if (leanDeclarationLine(sourceLines, name) === null) {
+        failures.push(
+          `${rowLabel(row)}: claimed declaration ${name} is absent from ${citation}`,
+        );
+      }
+    }
+  }
+}
+
+console.log("==> [4/5] every cited Lean test is reachable from lakefile.toml defaultTargets");
 const lakefile = fs.readFileSync(path.join(ROOT, "lakefile.toml"), "utf8");
 const defaultTargetsMatch = lakefile.match(/^defaultTargets\s*=\s*\[([^\]]*)\]/m);
 if (!defaultTargetsMatch) {
@@ -191,7 +299,7 @@ function trackedSourceFiles(directory) {
     .map((file) => path.join(directory, file));
 }
 
-console.log("==> [4/4] every SPEC-ONLY name remains absent from both source trees");
+console.log("==> [5/5] every SPEC-ONLY name remains absent from both source trees");
 const specHeading = lines.findIndex((line) => line.startsWith("## Specification-only"));
 const specEnd = lines.findIndex(
   (line, index) => index > specHeading && line.startsWith("## "),
