@@ -192,3 +192,21 @@ jobs:
         with:
           name: seal-host-rust-sbom
           path: rust/target/sbom/seal-host-rust.cdx.json
+
+  release-evidence:
+    if: ${{ always() }}
+    needs:
+      - build
+      - rust-conformance
+      - contract-freeze
+      - cargo-audit
+      - rust-sbom
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: Require every security-relevant job to succeed
+        env:
+          RELEASE_EVIDENCE_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/release_evidence_gate.py
