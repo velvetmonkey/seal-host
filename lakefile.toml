@@ -29,6 +29,13 @@ name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
 rev = "6c74b61382f8b7057cfb332a44a45e9e1b04e2b4"
 
+# Unicode 17 canonical decomposition data for the raw-wire object-key
+# identity guard. This is pinned to the last release built with Lean 4.28.0.
+[[require]]
+name = "UnicodeBasic"
+git = "https://github.com/fgdorais/lean4-unicode-basic.git"
+rev = "ff04f5c424e50e23476d3539c7c0cc4956e971ad"
+
 # One library for the host + kernels + FFI surface. Host and Kernels modules
 # import each other across the prefix boundary (Kernels implement Host.Kernel;
 # Host.Config carries kernel config types), so they must live in ONE Lake lib
