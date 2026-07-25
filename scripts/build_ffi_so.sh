@@ -51,6 +51,12 @@ PROJECT_MODULES=(
   Ffi
   Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step
   Host/Principal Host/Provenance
+  # Added 2026-07-25. `Host/UnicodeKeys.lean` landed on 2026-07-25 and was not
+  # added here, so every relink of the `.so` failed with `undefined symbol:
+  # lp_seal_x2dhost_Host_UnicodeKeys_wireKeysSafe`. This list is MANUAL (see the
+  # comment above): adding a Lean module under Host/ that Ffi's import closure
+  # reaches REQUIRES adding it here, or the shared object cannot be rebuilt.
+  Host/UnicodeKeys
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
   Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/PrincipalBudget
@@ -161,6 +167,21 @@ for pkgdir in "$ROOT"/.lake/packages/*/; do
 done
 if [ "$MCP_TYPE" = "path" ]; then
   archive_package_ir "$CRYPTO_ROOT" 1
+fi
+
+# UnicodeBasic ships a HAND-WRITTEN C library (`libunicodeclib.a`), not Lean-IR
+# output, so `archive_package_ir` above cannot see it: that function collects
+# `.c.o.export` objects, and these are compiled from real `.c` sources in the
+# package's own build. `Host/UnicodeKeys` reaches it, so without this the link
+# fails with `undefined symbol: unicode_case_lookup` / `unicode_prop_lookup`.
+# Added 2026-07-25 alongside Host/UnicodeKeys in PROJECT_MODULES.
+UNICODE_CLIB="$ROOT/.lake/packages/UnicodeBasic/.lake/build/lib/libunicodeclib.a"
+if [ -f "$UNICODE_CLIB" ]; then
+  ARCHIVES+=("$UNICODE_CLIB")
+else
+  echo "FATAL: UnicodeBasic native archive missing: $UNICODE_CLIB" >&2
+  echo "  Host/UnicodeKeys needs it. Run 'lake build' first." >&2
+  exit 1
 fi
 
 cc -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
