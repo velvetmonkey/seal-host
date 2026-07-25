@@ -243,7 +243,7 @@ fn corpus_agreement() {
         "  {\"method\":\"tools/call\",\"params\":{\"name\":\"x\"}}  ",
         // \u-escaped method — decodes to tools/call in any correct JSON parser
         r#"{"method":"tools/call","params":{"name":"x"}}"#,
-        // interior NUL via escape
+        // escaped NUL, no literal byte; see nul_seam.rs
         "{\"method\":\"tools/call\",\"params\":{\"name\":\"a\\u0000b\"}}",
         // UTF-8 BOM prefix: not ASCII whitespace, so strict parsers reject →
         // passthrough on both sides (see RUST_BRIDGE.md, A-strict-child)
