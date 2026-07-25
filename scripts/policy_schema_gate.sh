@@ -35,8 +35,8 @@ if ! diff -u "$ARTIFACT" "$TMP/schema.json"; then
 fi
 echo "    schema byte-identical to $ARTIFACT"
 
-expect_class() { # file expected-class [expected-lean-stage]
-  local file="$1" expected="$2" stage="${3:-}"
+expect_class() { # file expected-class [expected-lean-stage] [expected-lean-error]
+  local file="$1" expected="$2" stage="${3:-}" expected_error="${4:-}"
   local line
   line="$("$BIN" validate "$file")" || {
     # nonzero exit is legal only for expected hard failures; we never expect one
@@ -53,6 +53,15 @@ expect_class() { # file expected-class [expected-lean-stage]
     gotstage="$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["lean_stage"])')"
     if [ "$gotstage" != "$stage" ]; then
       echo "FAIL: $file expected lean stage $stage got $gotstage" >&2
+      printf '%s\n' "$line" >&2
+      exit 1
+    fi
+  fi
+  if [ -n "$expected_error" ]; then
+    local goterror
+    goterror="$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["lean"].get("error", ""))')"
+    if [ "$goterror" != "$expected_error" ]; then
+      echo "FAIL: $file expected Lean error '$expected_error' got '$goterror'" >&2
       printf '%s\n' "$line" >&2
       exit 1
     fi
@@ -119,19 +128,20 @@ done
 # agree_accept. Fail-closed, not a signing bypass: schema rejects, never blesses.
 
 # agree_accept: aliases, defaults, permissive interior, every match variant
-mk alias-guarded.json        '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"a","mode":"guard"},{"name":"b","mode":"guarded"}]}}'
+mk alias-guarded.json        '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"a","mode":"guard","target":[{"full_arguments":true}]},{"name":"b","mode":"guarded","target":[{"full_arguments":true}]}]}}'
 mk defaults.json             '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"allow"}]}}'
-mk permissive-interior.json  '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","_comment":"x","match":{"type":"always","note":1},"target":[{"literal":"x","junk":[]}]}]}}'
-mk match-variants.json       '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","match":{"type":"all","matches":[{"type":"always"},{"type":"equals","arg":"a.b","value":"v"},{"type":"starts_with","arg":"p","value":"q"},{"type":"contains_any_ci","arg":"s","needles":["x"]},{"type":"any","matches":[{"type":"always"}]}]}}]}}'
-mk target-literal-first.json '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","target":[{"literal":"x","arg":"ignored"},{"arg":"a.b"},{"full_arguments":true}]}]}}'
-for f in alias-guarded defaults permissive-interior match-variants target-literal-first; do
+mk permissive-interior.json  '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","_comment":"x","match":{"type":"always","note":1},"target":[{"full_arguments":true}]}]}}'
+mk match-variants.json       '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guard","match":{"type":"all","matches":[{"type":"always"},{"type":"equals","arg":"a.b","value":"v"},{"type":"starts_with","arg":"p","value":"q"},{"type":"contains_any_ci","arg":"s","needles":["x"]},{"type":"any","matches":[{"type":"always"}]}]},"target":[{"full_arguments":true}]}]}}'
+for f in alias-guarded defaults permissive-interior match-variants; do
   expect_class "$TMP/$f.json" agree_accept
 done
 
 # parser_refinement: Lean-only refinements the schema cannot express
+mk guard-non-full-target.json '{"epoch":1,"safety":{"approval":{"control_file":"c"},"tools":[{"name":"t","mode":"guarded","target":[{"literal":"x"}]}]}}'
 mk server-conflict.json      '{"epoch":1,"server":"outer","safety":{"server":"inner","approval":{"control_file":"c"},"tools":[]}}'
 mk calibration-delta.json    '{"epoch":1,'"$SAFETY"',"calibration":{"delta_num":3,"delta_den":2,"min_samples":1,"records_file":"r","gated_tools":[]}}'
 mk pathological-number.json  '{"epoch":1,'"$SAFETY"',"budget":{"budgets":[{"name":"n","cap":1e9999999,"tools":[]}]}}'
+expect_class "$TMP/guard-non-full-target.json" parser_refinement parse 'guard mode requires target [{"full_arguments": true}]'
 expect_class "$TMP/server-conflict.json" parser_refinement parse
 expect_class "$TMP/calibration-delta.json" parser_refinement parse
 # both lanes refuse the pathological exponent (Lean: fail-closed number

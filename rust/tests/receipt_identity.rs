@@ -70,8 +70,7 @@ impl Host {
                         "mode": "guarded",
                         "match": {"type": "contains_any_ci", "arg": "sql",
                                   "needles": ["drop", "delete", "truncate"]},
-                        "target": [{"literal": "db"}, {"arg": "database"},
-                                   {"literal": "write"}, {"arg": "sql"}]
+                        "target": [{"full_arguments": true}]
                     }
                 ]
             }

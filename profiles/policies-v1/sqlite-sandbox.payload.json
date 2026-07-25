@@ -13,19 +13,13 @@
         "name": "execute_sql",
         "mode": "guarded",
         "match": {"type": "always"},
-        "target": [
-          {"literal": "seal-sqlite-sandbox"},
-          {"arg": "sql"}
-        ]
+        "target": [{"full_arguments": true}]
       },
       {
         "name": "search_objects",
         "mode": "guarded",
         "match": {"type": "always"},
-        "target": [
-          {"literal": "seal-sqlite-sandbox"},
-          {"arg": "query"}
-        ]
+        "target": [{"full_arguments": true}]
       },
       {
         "name": "approve",

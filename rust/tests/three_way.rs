@@ -587,7 +587,7 @@ fn mint_envelope(workdir: &Path) -> (String, String, String) {
     let approvals_file = workdir.join("approvals.ndjson");
     fs::write(&approvals_file, "").expect("write approvals control file");
     let payload = format!(
-        r#"{{"epoch":1,"safety":{{"approval":{{"control_file":{},"ttl_seconds":120}},"tools":[{{"name":"db.execute","mode":"guarded","match":{{"type":"contains_any_ci","arg":"sql","needles":["drop","delete","truncate"]}},"target":[{{"literal":"db"}},{{"arg":"database"}},{{"literal":"write"}},{{"arg":"sql"}}]}}]}}}}"#,
+        r#"{{"epoch":1,"safety":{{"approval":{{"control_file":{},"ttl_seconds":120}},"tools":[{{"name":"db.execute","mode":"guarded","match":{{"type":"contains_any_ci","arg":"sql","needles":["drop","delete","truncate"]}},"target":[{{"full_arguments":true}}]}}]}}}}"#,
         serde_json::to_string(&approvals_file.to_string_lossy()).unwrap()
     );
     let key = SigningKey::from_bytes(&[0x42u8; 32]);
