@@ -39,3 +39,5 @@ example : className (classifyLine distinctUtf8KeysLine) = "act" := by native_dec
 #eval "distinct-utf8-keys: " ++ className (classifyLine distinctUtf8KeysLine)
 
 end Test.RepinStep2Guards
+
+def main : IO Unit := IO.println "repin_step2_guards: all five raw-wire guard cases hold (compile-time)"
