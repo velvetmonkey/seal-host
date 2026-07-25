@@ -1,5 +1,44 @@
 # Test baseline: what is red, why, and since when
 
+> **RESOLVED 2026-07-25 16:00, same day.** Everything below is the state as
+> first measured at 11:00, kept verbatim. The outcome:
+>
+> ```
+> 11:00   86 passed / 23 failed   7 red binaries, causes unknown
+> 16:00  105 passed /  1 failed   1 red binary, cause known and scheduled
+> ```
+>
+> **R1, the guard-target rule: CLOSED.** It was a shipped-product defect, not a
+> test defect. `config/payload.example.json` and the sqlite-sandbox profile
+> carried guarded rules the pinned kernel rejects at parse time, so a user
+> following our own documentation got a hard error. Fixed in the configs, with a
+> negative control driving the real host load path and asserting the exact error
+> string. Merged `f2de838`.
+>
+> **R2, the 0/1 classify contract: CLOSED.** The guards were right; the tests
+> encoded the pre-fix contract. Widened to 0/1/2 with
+> `refusal_fires_on_the_inputs_it_must` pinning four inputs that MUST refuse, so
+> the widening cannot silently absorb a guard that stops firing. Merged
+> `d573774`.
+>
+> **The four SUSPECTED rows resolved as suspected**, all R1, all green:
+> `host_path` 0/11 to 12/0, `interactive_path` 0/2 to 2/0, `receipt_identity`
+> 0/2 to 2/0, `topology_matrix` 1/2 to 3/0.
+>
+> **Still red, deliberately: `three_way_agreement`.** The pinned `seal.wasm`
+> predates the wire guards, so native and the model refuse unsafe-number cases
+> the wasm passes through. Deferred until after the batched `seal.effect/v2`
+> plus comprehension shape change so the artifact is rebuilt once, not twice.
+> `emcc` installed 2026-07-25, so it is unblocked.
+>
+> **No assertion was relaxed to get here.** Two of the fixes were product
+> defects that happened to surface as test failures.
+>
+> The original text below is kept rather than rewritten, because a baseline
+> edited to match its outcome is not a baseline.
+
+---
+
 Started 2026-07-25. The point of this file is that "the suite passes" was true
 and meaningless for four days, because the suite was running against a shared
 object that could not be rebuilt. This records what has actually been OBSERVED,
