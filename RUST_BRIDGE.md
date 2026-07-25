@@ -64,8 +64,12 @@ in the deployed flow — step runs only on classify-mediated lines — so
    `serde_json` parse of the kernel's output with route literally
    `"forward"`, and `ClassifyRoute::Passthrough` requires the
    literal `Ok(0)`. `main.rs` and the tests run the SAME functions — there is
-   no test-mirror differential. Pinned by 4 proptests (≈10k cases/run):
-   garbage strings, mutated route fields, every `SeamError`, all `u32`s.
+   no test-mirror differential. The Rust translations are pinned by 4
+   proptests (≈10k cases/run): garbage strings, mutated route fields, every
+   `SeamError`, all `u32`s. The other half of the classify correspondence,
+   Lean's `.passthrough` / `.act` / `.refuse` encoding as `0` / `1` / `2`,
+   is pinned on real inputs by `Test/ClassifyEncoding.lean`. The guarantee
+   holds because both the Lean encoding and the Rust translation are pinned.
 
 2. **A Lean panic cannot fail open.** A compiled Lean `panic!` returns the
    type's `Inhabited` default; `seal_host_classify : UInt32` defaults to 0 =

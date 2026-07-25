@@ -39,7 +39,7 @@ today, and nothing would notice if it stopped being correct.
 
 | site | status | evidence | note |
 |---|---|---|---|
-| Lean-side `seal_host_classify` integer encoding | **`UNPINNED`** | `Ffi.lean:329-334` emits `0/1/2` | **the live gap.** The Rust half is exhaustively property-tested (`rust/tests/differential.rs` `classify_literal_only`, over every `u32`). The Lean half is not. Change `.refuse => 0` and every test still passes while refused lines forward unmediated. Fix queued: assert the three constructors map to exactly 0, 1, 2 |
+| Lean-side `seal_host_classify` integer encoding | `PINNED-BY-TEST` | `Test/ClassifyEncoding.lean` (three build-gated real-input guards) | pins `.passthrough` / `.act` / `.refuse` to exactly `0` / `1` / `2`; together with `rust/tests/differential.rs` `classify_literal_only`, pins the two-sided correspondence stated in `RUST_BRIDGE.md` |
 | Rust `route_of_classify` mapping | `PINNED-BY-TEST` | `rust/tests/differential.rs` `classify_literal_only` | property test over all `u32`; fails closed on everything except literal 0 and 1 |
 | Lean panic default on the classify seam | `PINNED` | `rust/tests/panic_probe.rs`, F1 fix | a compiled Lean panic returns the type default, and for `UInt32` that is `0 = passthrough`. Guarded by `lean_set_exit_on_panic`, with a probe driving the real binary AND an unguarded variant demonstrating the fail-open is genuine |
 | canonical-equivalent duplicate keys | `PINNED` | commit `7f0739d`, `Host/UnicodeKeys.lean` | NFD identity; rejects a repeated canonical identity only, NOT non-ASCII keys generally. Justified by Swift `String ==` canonical equivalence plus the official MCP Swift SDK decoding into `[String: Value]` |
