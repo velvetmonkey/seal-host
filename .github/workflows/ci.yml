@@ -209,4 +209,5 @@ jobs:
       - name: Require every security-relevant job to succeed
         env:
           RELEASE_EVIDENCE_NEEDS: ${{ toJSON(needs) }}
+          RELEASE_EVIDENCE_PRIVATE_TOKEN_CONFIGURED: ${{ secrets.SEAL_CI_READ_TOKEN != '' }}
         run: python3 scripts/release_evidence_gate.py
