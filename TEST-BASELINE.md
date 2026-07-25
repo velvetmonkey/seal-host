@@ -74,19 +74,42 @@ states the same rule.
 The fixtures across the suite mint configs with mixed literal/arg targets, which
 that rule forbids. They pre-date the restriction.
 
-### The open divergence inside R1
+### The suspected divergence inside R1: RESOLVED, there was none
 
-Not resolved, and it is the important part:
+Recorded in full because the wrong version of this was believed for an hour and
+acted on, and the correction is more instructive than the finding would have been.
 
-- the `seal-host` EXECUTABLE rejects the fixture config (`topology_matrix`, above)
-- the `.so`-loaded native lane ACCEPTS the same shape and produced 161 verdict
-  lines (`three_way`, run at 10:08 AFTER the rebuild)
+**What was observed at 10:12:** `three_way` reported `native=161 wasm=161
+model=0`. The `seal-host` executable rejected the fixture config while the
+`.so`-loaded native lane appeared to accept it. That looked like two compiled
+artifacts of one kernel source reaching opposite verdicts on config validity,
+which would have been a validation bypass in the shipping artifact.
 
-Two compiled artifacts of the same kernel source reaching opposite verdicts on
-config validity. Either the `.so` is still not fully current despite the relink
-(archive staleness inside `archive_package_ir`), or the two paths genuinely
-differ. **Until this is settled, do not assume the shipping `.so` enforces what
-the kernel proves.**
+**What settled it:** with a fully current `.so`, native rejects too.
+
+```
+native init rejected: {"error":"trusted config rejected:
+guard mode requires target [{\"full_arguments\": true}]","ok":false}
+```
+
+**Why the earlier observation was wrong.** The `.so` hand-built at 10:08 was
+still not fully current. Cargo's build script rebuilt it at 10:53 once
+`scripts/build_ffi_so.sh` could link again, and only that object enforces the
+rule. So the 10:12 run measured a half-updated artifact. All three lanes agree
+once every artifact is genuinely current.
+
+**Two explanations were eliminated on the way, both by evidence rather than
+argument.** The lanes are NOT handed different documents: `mint_envelope`
+(`three_way.rs:585-601`) builds `envelope` as `{"payload": <that exact payload
+string>, "signature": ...}` and returns both, so the signed wrapper carries
+byte-identical policy content to the raw payload. And simple staleness was not
+visible by inspection either: `strings` found the rule's error text in BOTH the
+`.so` and the executable, because the string was present while the enforcing
+code path was not yet the linked one.
+
+**Standing lesson.** "I rebuilt the artifact" is not the same as "the artifact
+is current". Confirm by observing the artifact enforce something it could not
+have enforced before, not by its timestamp and not by a `strings` hit.
 
 ## R2 — new wire guards return a third classify outcome
 
