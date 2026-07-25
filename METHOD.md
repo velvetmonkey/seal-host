@@ -199,3 +199,47 @@ A change is done when:
 
 If you cannot say all six, say which one you cannot say. "I could not reproduce it" is a respectable
 sentence. "It passed" without the rest is not.
+
+---
+
+## 12. A written-down limitation is not a managed limitation.
+
+This section exists because sections 1 through 11 were not enough, and the evidence is embarrassing
+enough to be worth keeping.
+
+**Instance one, in the code.** The V2.3 byte-twin's author wrote the weakness down precisely: "Any
+Lean SPEC drift is NOT caught here, the expectation is frozen, which is why layer 2 exists." Correct,
+honest, at the site. Layer 2 was then marked `#[ignore]` with a reason that later went stale and
+stopped being true. The spec drifted from `seal.effect/v1` to `seal.effect/v2`; every test stayed
+green for five days; nobody was lied to and nobody noticed.
+
+**Instance two, in this document.** Section 4 says, in these words, to check "whether the documents
+already disclose it" before recording a finding. Six hours after writing that sentence, the author of
+this file reported an absence in the Rust host as a fail-open, then found the host's own
+`docs/EFFECT-ENVELOPE-V23.md` disclosing it deliberately, in a paragraph written for that purpose.
+The rule was correct, specific, and already written. It did not fire.
+
+The common shape: **a control that is documented but not executable degrades to decoration.** A test
+that is `#[ignore]`d, a caveat in a docstring, a discipline in a method file. None of them run. They
+all feel like management because writing them down feels like doing something about it.
+
+**The rules.**
+
+1. Every recorded limitation names the executable thing that would catch it, and whether that thing
+   currently runs. "Layer 2 catches this" is incomplete. "Layer 2 catches this and layer 2 is
+   ignored" is the truth, and reads as the alarm it is.
+2. A disabled control needs an expiry, not just a reason. Reasons rot silently; the twin's ignore
+   reason described a precondition that had been met and nobody re-read it. State what must become
+   true, and check it, because a stale reason is worse than none: it answers the question that would
+   otherwise get asked.
+3. Prefer a check that runs on a small input over a thorough check that is off. The three-way soak is
+   the pattern done right: 256 cases always run, 100,000 on demand. It is the same instrument at two
+   sizes, and the small one is never off.
+4. When a discipline fails to fire, fix the trigger and not the wording. Rewriting section 4 more
+   emphatically would have changed nothing. What was missing was doing the documents grep FIRST,
+   mechanically, before forming a view, rather than as confirmation afterwards.
+
+**The audit worth repeating.** Periodically list every `#[ignore]`, every skipped case, every "not
+checked here" caveat, and for each one ask: what would catch this, and is it on? On 2026-07-25 that
+sweep over seal-host returned two `#[ignore]`s, one a legitimate soak knob and one honestly
+documented, and zero `sorry` in the kernel. A clean result, and worth having asked.
