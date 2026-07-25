@@ -51,7 +51,7 @@ const payload = JSON.stringify({
       name: "db.execute",
       mode: "guarded",
       match: { type: "contains_any_ci", arg: "sql", needles: ["drop"] },
-      target: [{ literal: "db" }, { arg: "database" }, { literal: "write" }, { arg: "sql" }],
+      target: [{ full_arguments: true }],
     }],
   },
 });
@@ -106,5 +106,46 @@ if (!receiptFiles.includes(records[0].head)) {
   throw new Error("durable audit head does not contain the emitted record head");
 }
 
+const narrowPayload = JSON.stringify({
+  epoch: 1,
+  safety: {
+    approval: {
+      control_file: approvals,
+      ttl_seconds: 120,
+      replay_store: { sqlite_path: replay },
+    },
+    tools: [{
+      name: "db.execute",
+      mode: "guarded",
+      match: { type: "contains_any_ci", arg: "sql", needles: ["drop"] },
+      target: [{ arg: "sql" }],
+    }],
+  },
+});
+const narrowTrusted = join(WORK, "narrow-trusted.json");
+writeFileSync(narrowTrusted, JSON.stringify({
+  payload: narrowPayload,
+  signature: sign(null, Buffer.from(narrowPayload), configKeys.privateKey).toString("hex"),
+}));
+chmodSync(narrowTrusted, 0o600);
+const narrowRun = spawnSync(HOST, [
+  "--config", narrowTrusted,
+  "--pubkey", configPubkey,
+  "--channel", "ed25519",
+  "--token-file", tokens,
+  "--approval-pubkey", approvalPubkey,
+  "--receipt-dir", receipts,
+  "--", "/bin/cat",
+], { encoding: "utf8" });
+const guardTargetError = 'guard mode requires target [{"full_arguments": true}]';
+if (narrowRun.error) throw narrowRun.error;
+if (narrowRun.status === 0 || !narrowRun.stderr.includes(guardTargetError)) {
+  throw new Error(
+    `production host did not reject a narrow guarded target with the kernel error` +
+    `\nstatus: ${narrowRun.status}\nstdout:\n${narrowRun.stdout}\nstderr:\n${narrowRun.stderr}`,
+  );
+}
+
 console.log("PASS deployed binary completed a production-mode child round trip");
 console.log("PASS production-mode guarded decision emitted a durable audit record");
+console.log(`PASS production host rejected narrow guarded target: ${guardTargetError}`);
