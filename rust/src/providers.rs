@@ -297,6 +297,18 @@ pub struct Ed25519TokenProvider {
     oversize_reported: bool,
 }
 
+pub fn verify_ed25519_signature(key: &VerifyingKey, payload: &[u8], signature_hex: &str) -> bool {
+    let sig_bytes = match hex::decode(signature_hex) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let sig = match Signature::from_slice(&sig_bytes) {
+        Ok(sig) => sig,
+        Err(_) => return false,
+    };
+    key.verify(payload, &sig).is_ok()
+}
+
 impl Ed25519TokenProvider {
     pub fn new(path: impl Into<std::path::PathBuf>, key_hex: &str) -> Result<Self, String> {
         let bytes: [u8; 32] = hex::decode(key_hex)
@@ -390,31 +402,7 @@ impl ApprovalProvider for Ed25519TokenProvider {
                     continue;
                 }
             };
-            let sig_bytes = match hex::decode(&token.signature) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    poll.warnings.push(ApprovalDropWarning::new(
-                        &mut self.drop_counter,
-                        source,
-                        "bad_signature",
-                        line.as_bytes(),
-                    ));
-                    continue;
-                }
-            };
-            let sig = match Signature::from_slice(&sig_bytes) {
-                Ok(sig) => sig,
-                Err(_) => {
-                    poll.warnings.push(ApprovalDropWarning::new(
-                        &mut self.drop_counter,
-                        source,
-                        "bad_signature",
-                        line.as_bytes(),
-                    ));
-                    continue;
-                }
-            };
-            if self.key.verify(token.payload.as_bytes(), &sig).is_err() {
+            if !verify_ed25519_signature(&self.key, token.payload.as_bytes(), &token.signature) {
                 poll.warnings.push(ApprovalDropWarning::new(
                     &mut self.drop_counter,
                     source,
