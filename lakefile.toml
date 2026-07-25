@@ -1,6 +1,12 @@
 name = "seal-host"
 version = "0.1.0"
-defaultTargets = ["seal-host", "axiom_check", "host_unit_tests", "dx_surface_tests", "classify_encoding_tests"]
+# `repin_step2_guards` added 2026-07-25. Test/RepinStep2Guards.lean carried five
+# compile-time `example ... := by native_decide` assertions covering the
+# duplicate-key mediation bypass and the Unicode canonical-equivalence key case,
+# plus three positive controls. The Test lib globs `Test.+`, so Lake knew the
+# module existed; it simply was never a default target, so it had NEVER been
+# built (no olean on disk, verified). Written, correct, and inert.
+defaultTargets = ["seal-host", "axiom_check", "host_unit_tests", "dx_surface_tests", "classify_encoding_tests", "repin_step2_guards"]
 moreLinkArgs = [".lake/packages/mcp-seal/c/build/libsealcrypto.o"]
 
 # Mathlib-carrying libraries first so mathlib's transitive pins win resolution order.
@@ -96,3 +102,10 @@ root = "Test.Sha256SelfCheck"
 [[lean_exe]]
 name = "l0_liveness_measure"
 root = "Test.L0LivenessMeasure"
+
+# Runs the raw-wire guard matrix. The assertions are compile-time `example`s, so
+# building this target IS the check; the exe exists to give CI a named thing to
+# invoke and a non-zero exit if the module ever stops compiling.
+[[lean_exe]]
+name = "repin_step2_guards"
+root = "Test.RepinStep2Guards"
