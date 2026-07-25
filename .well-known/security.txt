@@ -1,0 +1,10 @@
+# Seal security contact — RFC 9116
+# Canonical policy: https://github.com/velvetmonkey/seal-host/blob/main/SECURITY.md
+
+Contact: mailto:security@velvetmonkey.com
+Contact: https://github.com/velvetmonkey/seal-host/security/advisories/new
+Expires: 2027-07-22T00:00:00.000Z
+Preferred-Languages: en
+Policy: https://github.com/velvetmonkey/seal-host/blob/main/SECURITY.md
+# Canonical: pending — set once this file is served from an owned HTTPS origin.
+# NOT YET DEPLOYED: a repo path has no RFC 9116 discovery effect. See SECURITY.md channel status.
