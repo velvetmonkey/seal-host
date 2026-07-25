@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 39ba7e5616d9d64de14c10a2e6bc6ad850557e2df2689cc75a7181597a21cbd4 # shrinks to line = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"t\",\"arguments\":{\"v\":-1e309}}}"
+cc 786b759f72e4a52d6e837b90ba94df947baeb55660237a0946717bef9c8d01ec # shrinks to line = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"t\",\"arguments\":{\"v\":9999999999999999999}}}"
