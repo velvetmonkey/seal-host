@@ -256,17 +256,29 @@ fn corpus_agreement() {
 }
 
 /// Documented representational differences where Lean is STRICTER than the
-/// serde view — it mediates lines serde cannot parse at all. This is the
-/// fail-closed direction (more mediation, never less); the differential pins
-/// it so a silent flip to the bypass direction cannot pass.
+/// serde view. Lean may mediate or refuse a line serde cannot parse: both are
+/// explicitly enumerated fail-closed outcomes, while passthrough and any new
+/// classifier value fail. The observed outcome is printed so permitted drift
+/// between mediation and refusal remains visible.
 #[test]
 fn known_lean_stricter_cases() {
     // serde_json rejects numbers beyond f64 range (whole parse fails);
-    // Lean's JsonNumber is arbitrary-precision and parses fine → mediated.
+    // Lean must fail closed: mediate (1) or refuse (2), never passthrough (0).
     let overflow = r#"{"method":"tools/call","params":{"name":"x","arguments":{"v":1e309}}}"#;
     let lean = lean_classify(overflow);
     let rust = rust_routes_as_tools_call(overflow);
-    assert_eq!(lean, 1, "Lean must mediate the overflow-number call");
+    println!(
+        "overflow-number classifier outcome: {} ({lean})",
+        match lean {
+            1 => "mediate",
+            2 => "refuse",
+            _ => "unexpected",
+        }
+    );
+    assert!(
+        matches!(lean, 1 | 2),
+        "Lean must fail closed on the overflow-number call (allowed: refuse=2, mediate=1; observed {lean})"
+    );
     assert!(!rust, "serde is expected to reject the overflow number");
     // And the load-bearing direction holds regardless.
     assert_all([overflow], check_no_bypass);

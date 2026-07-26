@@ -20,6 +20,7 @@
 //! output line), so a forwarded line can never be mistaken for a block.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use seal_host_rs::lean::LeanHost;
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
@@ -1224,19 +1225,41 @@ fn non_utf8_line_refused_and_session_survives() {
     );
 }
 
-/// The kernel is deliberately the more tolerant parser (the differential
-/// corpus pins lines Lean mediates that serde rejects). The receipt layer
-/// must therefore never veto a kernel verdict it cannot re-parse: an
-/// allowed call forwards, a blocked call gets the KERNEL's response — and
-/// the receipt records the raw line hash + parse error instead of the
-/// structured request material it does not hold.
+/// An overflow number must stay in the explicitly enumerated fail-closed
+/// classifier set (refuse or mediate), never passthrough or a new value. The
+/// observed outcome is printed so permitted drift remains visible.
+///
+/// For a real agreement-accepted representational difference (the curated
+/// lone-high-surrogate class), the receipt layer must never veto a kernel
+/// verdict it cannot re-parse: an allowed call forwards, a blocked call gets
+/// the KERNEL's response, and the receipt records the raw line hash + parse
+/// error instead of structured request material it does not hold.
 #[test]
 fn receipt_layer_never_vetoes_kernel_verdicts() {
     let mut o = Oracle::spawn("receipt-deparse");
 
-    // A guarded call whose arguments serde cannot parse (1e309 overflows
-    // f64, the whole serde parse fails) but the kernel mediates fine.
-    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    let overflow = r#"{"jsonrpc":"2.0","id":89,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    let overflow_outcome = LeanHost::new()
+        .classify(overflow)
+        .expect("classify seam healthy in host-path test");
+    println!(
+        "overflow-number classifier outcome: {} ({overflow_outcome})",
+        match overflow_outcome {
+            1 => "mediate",
+            2 => "refuse",
+            _ => "unexpected",
+        }
+    );
+    assert!(
+        matches!(overflow_outcome, 1 | 2),
+        "overflow-number classifier must fail closed (allowed: refuse=2, mediate=1; observed {overflow_outcome})"
+    );
+
+    // Existing parser-boundary corpus case `str-lone-high-surrogate`: the
+    // agreement guard accepts it, Lean mediates it, and serde cannot recover
+    // the whole request. The end-to-end probe named in the lane evidence
+    // establishes that this is a reachable production path.
+    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
     o.send(divergent);
     let blocked = o.expect_line();
     assert!(
@@ -1430,18 +1453,20 @@ fn approval_target_binds_every_argument_key() {
     assert_eq!(o.expect_line(), nested_sibling);
 }
 
-/// P2-c observability tap: a FORCED reduced-scope forward (an ALLOW whose wire
-/// line serde cannot recover) must emit a distinct, structured stderr signal so
-/// an operator can see and count forced downgrades — while the forward itself
-/// stays byte-identical and the receipt is unchanged (passive tap). A normal
-/// parseable ALLOW must stay silent. Drives the real binary end-to-end.
+/// P2-c observability tap: the agreement-accepted, curated lone-high-surrogate
+/// class is a real FORCED reduced-scope forward (an ALLOW whose wire line serde
+/// cannot recover). It must emit a distinct, structured stderr signal so an
+/// operator can see and count forced downgrades, while the forward stays
+/// byte-identical and the receipt is unchanged (passive tap). A normal parseable
+/// ALLOW must stay silent. Drives the real binary end-to-end.
 #[test]
 fn reduced_scope_forward_emits_observability_signal() {
     let mut o = Oracle::spawn("reduced-scope-signal");
 
-    // FORCED downgrade: the 1e309 serde-hostile sibling — kernel-mediated,
-    // serde-unrecoverable (same class as receipt_layer_never_vetoes_kernel_verdicts).
-    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
+    // FORCED downgrade: existing parser-boundary corpus case
+    // `str-lone-high-surrogate` — agreement-accepted, kernel-mediated, and
+    // serde-unrecoverable (same class as the receipt-layer test).
+    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
     o.send(divergent);
     let target = block_target(&o.expect_line()).expect("kernel block names its approval target");
     o.approve(&target);
