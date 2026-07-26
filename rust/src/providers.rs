@@ -4,11 +4,12 @@
 //! active provider before each mediated call; records then pass A3
 //! (nonce/replay/TTL) before reaching Lean.
 
+use crate::ed25519::{self, VerificationError};
 use crate::limits::{
     check_json_limits, read_bounded_frame, read_file_bounded, FrameStatus, MAX_APPROVAL_LINE_BYTES,
     MAX_TOKEN_FILE_BYTES,
 };
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 use std::io::BufRead;
@@ -298,15 +299,23 @@ pub struct Ed25519TokenProvider {
 }
 
 pub fn verify_ed25519_signature(key: &VerifyingKey, payload: &[u8], signature_hex: &str) -> bool {
+    verify_ed25519_signature_result(key, payload, signature_hex).is_ok()
+}
+
+fn verify_ed25519_signature_result(
+    key: &VerifyingKey,
+    payload: &[u8],
+    signature_hex: &str,
+) -> Result<(), VerificationError> {
     let sig_bytes = match hex::decode(signature_hex) {
         Ok(bytes) => bytes,
-        Err(_) => return false,
+        Err(_) => return Err(VerificationError::Mismatch),
     };
     let sig = match Signature::from_slice(&sig_bytes) {
         Ok(sig) => sig,
-        Err(_) => return false,
+        Err(_) => return Err(VerificationError::Mismatch),
     };
-    key.verify(payload, &sig).is_ok()
+    ed25519::verify(key, payload, &sig)
 }
 
 impl Ed25519TokenProvider {
@@ -402,11 +411,19 @@ impl ApprovalProvider for Ed25519TokenProvider {
                     continue;
                 }
             };
-            if !verify_ed25519_signature(&self.key, token.payload.as_bytes(), &token.signature) {
+            if let Err(error) = verify_ed25519_signature_result(
+                &self.key,
+                token.payload.as_bytes(),
+                &token.signature,
+            ) {
+                let reason = match error {
+                    VerificationError::NonCanonicalScalar => "non_canonical_signature_scalar",
+                    VerificationError::Mismatch => "bad_signature",
+                };
                 poll.warnings.push(ApprovalDropWarning::new(
                     &mut self.drop_counter,
                     source,
-                    "bad_signature",
+                    reason,
                     line.as_bytes(),
                 ));
                 continue;
@@ -578,6 +595,23 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
 
+    fn add_group_order_to_signature(signature: &ed25519_dalek::Signature) -> String {
+        const L: [u8; 32] = [
+            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
+            0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x10,
+        ];
+        let mut bytes = signature.to_bytes();
+        let mut carry = 0u16;
+        for (scalar, order) in bytes[32..].iter_mut().zip(L) {
+            let sum = *scalar as u16 + order as u16 + carry;
+            *scalar = sum as u8;
+            carry = sum >> 8;
+        }
+        assert_eq!(carry, 0, "S + L fits in the 256-bit signature field");
+        hex::encode(bytes)
+    }
+
     #[test]
     fn control_file_refuses_oversized_line_with_named_bounded_warning() {
         let path = std::env::temp_dir().join(format!("seal-oversized-line-{}", std::process::id()));
@@ -634,6 +668,63 @@ mod tests {
         let records = poll.records;
         assert_eq!(records.len(), 1, "tampered token must be dropped");
         assert_eq!(records[0].target, target);
+    }
+
+    #[test]
+    fn ed25519_provider_scalar_range_and_negative_controls() {
+        let signing_key = SigningKey::from_bytes(&[19u8; 32]);
+        let verifying_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
+        let target = "0000000000000000000000000000000000000000000000000000000000000019";
+        let valid_payload = format!(r#"{{"target":"{target}","issuedAt":5000,"nonce":"valid"}}"#);
+        let valid_signature = signing_key.sign(valid_payload.as_bytes());
+
+        let corrupted_payload =
+            format!(r#"{{"target":"{target}","issuedAt":5001,"nonce":"corrupt"}}"#);
+        let mut corrupted_signature = signing_key.sign(corrupted_payload.as_bytes()).to_bytes();
+        corrupted_signature[0] ^= 1;
+
+        let non_canonical_payload =
+            format!(r#"{{"target":"{target}","issuedAt":5002,"nonce":"noncanonical"}}"#);
+        let non_canonical_signature = signing_key.sign(non_canonical_payload.as_bytes());
+
+        let tokens = [
+            (&valid_payload, hex::encode(valid_signature.to_bytes())),
+            (&corrupted_payload, hex::encode(corrupted_signature)),
+            (
+                &non_canonical_payload,
+                add_group_order_to_signature(&non_canonical_signature),
+            ),
+        ]
+        .into_iter()
+        .map(|(payload, signature)| {
+            format!(
+                r#"{{"payload":{},"signature":"{signature}"}}"#,
+                serde_json::to_string(payload).unwrap()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        let path = std::env::temp_dir().join(format!("seal-scalar-range-{}", std::process::id()));
+        std::fs::write(&path, format!("{tokens}\n")).unwrap();
+        let mut provider = Ed25519TokenProvider::new(&path, &verifying_key_hex).unwrap();
+        let poll = provider.poll();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(
+            poll.records.len(),
+            1,
+            "negative control: only the valid signature may verify"
+        );
+        assert_eq!(poll.records[0].nonce.as_deref(), Some("valid"));
+        assert_eq!(
+            poll.warnings
+                .iter()
+                .map(|warning| warning.reason.as_str())
+                .collect::<Vec<_>>(),
+            ["bad_signature", "non_canonical_signature_scalar"],
+            "ordinary mismatch and malformed RFC 8032 scalar must be distinguishable"
+        );
     }
 
     #[test]

@@ -101,6 +101,23 @@ fn resign(envelope: &mut EnvelopeV23, line: &str, authority_hex: &str) {
     );
 }
 
+fn add_group_order_to_signature(signature_hex: &str) -> String {
+    const L: [u8; 32] = [
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde,
+        0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x10,
+    ];
+    let mut signature = hex::decode(signature_hex).unwrap();
+    let mut carry = 0u16;
+    for (scalar, order) in signature[32..].iter_mut().zip(L) {
+        let sum = *scalar as u16 + order as u16 + carry;
+        *scalar = sum as u8;
+        carry = sum >> 8;
+    }
+    assert_eq!(carry, 0, "S + L fits in the 256-bit signature field");
+    hex::encode(signature)
+}
+
 fn verify_fixture(
     envelope: &EnvelopeV23,
     line: &str,
@@ -128,6 +145,34 @@ fn stripped_envelope_verifies() {
             .unwrap()
             .principal,
         "alice"
+    );
+}
+
+#[test]
+fn envelope_signature_scalar_range_and_negative_controls() {
+    let (envelope, line, authority, config) = fixture();
+
+    assert!(
+        verify_fixture(&envelope, &line, &authority, &config).is_ok(),
+        "negative control: a valid signature must still verify"
+    );
+
+    let mut corrupted = envelope.clone();
+    let mut corrupted_bytes = hex::decode(&corrupted.sig).unwrap();
+    corrupted_bytes[0] ^= 1;
+    corrupted.sig = hex::encode(corrupted_bytes);
+    assert_eq!(
+        verify_fixture(&corrupted, &line, &authority, &config).unwrap_err(),
+        "V2.3 signature verification failed",
+        "negative control: an ordinary mismatch must retain its ordinary error"
+    );
+
+    let mut non_canonical = envelope;
+    non_canonical.sig = add_group_order_to_signature(&non_canonical.sig);
+    assert_eq!(
+        verify_fixture(&non_canonical, &line, &authority, &config).unwrap_err(),
+        "V2.3 signature is malformed: RFC 8032 requires scalar S < L",
+        "S + L must be refused through the envelope production path"
     );
 }
 

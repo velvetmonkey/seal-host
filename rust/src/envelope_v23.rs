@@ -19,7 +19,8 @@
 //! `revocation_subject`; the domain-tag bump to `seal.effect/v2` makes a
 //! signature over the old seated layout fail closed at verify.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use crate::ed25519::{self, VerificationError};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Read;
@@ -278,12 +279,17 @@ pub fn verify(
     let signature = decode_array::<64>(&envelope.sig, "signature")?;
     let verifying_key = VerifyingKey::from_bytes(&pubkey)
         .map_err(|error| format!("invalid principal pubkey: {error}"))?;
-    verifying_key
-        .verify(
-            &effect_message(&authority, envelope, line)?,
-            &Signature::from_bytes(&signature),
-        )
-        .map_err(|_| "V2.3 signature verification failed".to_string())?;
+    ed25519::verify(
+        &verifying_key,
+        &effect_message(&authority, envelope, line)?,
+        &Signature::from_bytes(&signature),
+    )
+    .map_err(|error| match error {
+        VerificationError::NonCanonicalScalar => {
+            "V2.3 signature is malformed: RFC 8032 requires scalar S < L".to_string()
+        }
+        VerificationError::Mismatch => "V2.3 signature verification failed".to_string(),
+    })?;
     Ok(VerifiedEnvelope {
         principal: envelope.key_id.clone(),
     })
