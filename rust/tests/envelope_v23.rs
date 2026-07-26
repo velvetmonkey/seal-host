@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Host-side contract tests for the gated V2.3 effect envelope. These are
-//! tested Rust obligations, not claims that the currently pinned Lean wasm
-//! contains Fable's V2.3 proof package.
+//! Host-side contract tests for the gated Stage B (`seal.effect/v2`) effect
+//! envelope. These are tested Rust obligations, not claims that the currently
+//! pinned Lean wasm contains Fable's V2.3 proof package.
+//!
+//! The killed-field and cross-version cases below are the Stage B NEGATIVE
+//! CONTROLS: reverting the strip (re-adding a killed field to `EnvelopeV23`)
+//! or reverting the domain-tag bump makes them fail.
 
 use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::envelope_v23::{
-    effect_message, verify, verify_kernel_principal, wire_view, AdapterClaim, DelegationSeats,
-    EffectClaim, EnvelopeV23, HostContext, PrincipalClaim, VerifiedEnvelope, WireView,
+    effect_message, verify, verify_kernel_principal, wire_view, AdapterClaim, EffectClaim,
+    EnvelopeV23, HostContext, PrincipalClaim, VerifiedEnvelope, WireView, DOMAIN_TAG,
 };
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
@@ -16,12 +20,17 @@ use std::time::Duration;
 
 const PRINCIPAL_SEED: [u8; 32] = [1; 32];
 
+/// The RETIRED `seal.effect/v1` domain tag — test-local on purpose: the
+/// production module must not export the dead tag.
+const DOMAIN_TAG_V1_RETIRED: &[u8] = b"seal.effect/v1\0";
+
 fn proof_golden_envelope() -> EnvelopeV23 {
     EnvelopeV23 {
         key_id: "alice".into(),
         sig: String::new(),
         nonce: hex::encode((0u8..32).collect::<Vec<_>>()),
         issued_at: 1234,
+        expires_at: 5678,
         adapter: AdapterClaim {
             kind: "mcp".into(),
             version: "2025-06-18".into(),
@@ -29,18 +38,12 @@ fn proof_golden_envelope() -> EnvelopeV23 {
         principal: PrincipalClaim {
             session: "sess-1".into(),
         },
+        policy_version: "pol-1".into(),
         effect: Some(EffectClaim {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
         }),
-        idempotency_key: "idem-1".into(),
-        policy_version: String::new(),
-        delegation: DelegationSeats::default(),
-        revocation_subject: String::new(),
-        audience: String::new(),
-        causality_token: String::new(),
-        expires_at: 0,
     }
 }
 
@@ -49,7 +52,7 @@ fn byte_twin_matches_fable_golden_vector() {
     let authority: [u8; 32] = std::array::from_fn(|index| 0xa0 + index as u8);
     let actual =
         hex::encode(effect_message(&authority, &proof_golden_envelope(), r#"{"m":1}"#).unwrap());
-    let expected = "7365616c2e6566666563742f763100a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d200000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d31000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d00000000000000066964656d2d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d";
     assert_eq!(actual, expected);
 }
 
@@ -69,23 +72,17 @@ fn fixture() -> (EnvelopeV23, String, String, serde_json::Value) {
         sig: String::new(),
         nonce: "11".repeat(32),
         issued_at: 1234,
+        expires_at: 4_102_444_800_000,
         adapter: AdapterClaim::deployed_mcp(),
         principal: PrincipalClaim {
             session: "seal-session-v1:test".into(),
         },
+        policy_version: "policy-1".into(),
         effect: Some(EffectClaim {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
         }),
-        idempotency_key: "idem-1".into(),
-        // Deliberately differs from config epoch: F5 is a signed seat, not a gate.
-        policy_version: "999".into(),
-        delegation: DelegationSeats::default(),
-        revocation_subject: String::new(),
-        audience: String::new(),
-        causality_token: String::new(),
-        expires_at: 0,
     };
     envelope.sig = hex::encode(
         signing_key
@@ -124,16 +121,127 @@ fn verify_fixture(
 }
 
 #[test]
-fn empty_seats_and_epoch_mismatch_are_accepted() {
+fn stripped_envelope_verifies() {
     let (envelope, line, authority, config) = fixture();
-    assert_eq!(envelope.policy_version, "999");
-    assert_eq!(config["epoch"], 1);
     assert_eq!(
         verify_fixture(&envelope, &line, &authority, &config)
             .unwrap()
             .principal,
         "alice"
     );
+}
+
+/// NEGATIVE CONTROL (strip): a wire envelope carrying ANY E1★ killed field
+/// must fail closed at parse. Re-adding a killed field to `EnvelopeV23`
+/// makes the corresponding case here pass parsing and this test fail.
+#[test]
+fn killed_field_in_wire_envelope_fails_closed() {
+    let (envelope, line, _, _) = fixture();
+    let killed: [(&str, serde_json::Value); 6] = [
+        ("idempotency_key", json!("idem-1")),
+        ("on_behalf_of", json!("orch:alpha")),
+        ("parent_capability_ref", json!("cap:parent/9")),
+        ("audience", json!("aud:fleet-1")),
+        ("causality_token", json!("ct:42")),
+        // Stage B2: revocation_subject joins the killed set (SEAT, wrong
+        // plane). expires_at and policy_version left this list — they are
+        // RESCUED and mandatory now.
+        ("revocation_subject", json!("rev:bob")),
+    ];
+    for (key, value) in killed {
+        let mut env = serde_json::to_value(&envelope).unwrap();
+        env.as_object_mut().unwrap().insert(key.into(), value);
+        let wrapper = json!({"seal_env": env, "request": line}).to_string();
+        match wire_view(&wrapper) {
+            WireView::Malformed(reason) => assert!(
+                reason.contains("invalid seal_env"),
+                "killed field {key}: unexpected reason {reason}"
+            ),
+            other => panic!("killed field {key} was accepted: {other:?}"),
+        }
+    }
+    // Same for the retired F6 delegation OBJECT shape.
+    let mut env = serde_json::to_value(&envelope).unwrap();
+    env.as_object_mut().unwrap().insert(
+        "delegation".into(),
+        json!({"on_behalf_of": "", "parent_capability_ref": ""}),
+    );
+    let wrapper = json!({"seal_env": env, "request": line}).to_string();
+    assert!(
+        matches!(wire_view(&wrapper), WireView::Malformed(_)),
+        "delegation object was accepted"
+    );
+}
+
+/// The RETIRED `seal.effect/v1` message layout, reconstructed test-locally:
+/// old tag, then the same bound prefix, then the killed seat frames and the
+/// trailing `u64be(expires_at)`. Seats are encoded at their v1 "unset" wire
+/// values (empty frames / zero), which is exactly the closest v1 receipt to
+/// a stripped v2 one.
+fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: &str) -> Vec<u8> {
+    fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
+        message.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+        message.extend_from_slice(bytes);
+    }
+    let nonce: [u8; 32] = hex::decode(&envelope.nonce).unwrap().try_into().unwrap();
+    let effect = envelope.effect.clone().unwrap_or(EffectClaim {
+        resource: String::new(),
+        action: String::new(),
+        args: String::new(),
+    });
+    // v1 seats ride at their "unset" wire values regardless of what the v2
+    // envelope now carries (policy_version framed empty, expires_at 0): the
+    // closest v1 receipt to a reconciled v2 one.
+    let mut message = Vec::new();
+    message.extend_from_slice(DOMAIN_TAG_V1_RETIRED);
+    message.extend_from_slice(authority);
+    frame(&mut message, envelope.key_id.as_bytes());
+    message.extend_from_slice(&nonce);
+    message.extend_from_slice(&envelope.issued_at.to_be_bytes());
+    frame(&mut message, line.as_bytes());
+    frame(&mut message, envelope.adapter.kind.as_bytes());
+    frame(&mut message, envelope.adapter.version.as_bytes());
+    frame(&mut message, envelope.principal.session.as_bytes());
+    frame(&mut message, effect.resource.as_bytes());
+    frame(&mut message, effect.action.as_bytes());
+    frame(&mut message, effect.args.as_bytes());
+    for _ in 0..7 {
+        // idempotency_key, policy_version, on_behalf_of, parent_capability_ref,
+        // revocation_subject, audience, causality_token — all unset (len 0).
+        frame(&mut message, b"");
+    }
+    message.extend_from_slice(&0u64.to_be_bytes()); // expires_at = 0
+    message
+}
+
+/// NEGATIVE CONTROL (cross-version): a receipt signed under the retired
+/// `seal.effect/v1` layout must NOT verify under the v2 verifier — the Rust
+/// executable face of the Lean theorem `effect_cross_version_v1_separated`.
+/// Reverting the domain-tag bump makes the v1 and v2 messages coincide on
+/// this fixture and this test fail.
+#[test]
+fn v1_tagged_receipt_fails_closed_under_v2() {
+    let (mut envelope, line, authority_hex, config) = fixture();
+    let authority: [u8; 32] = hex::decode(&authority_hex).unwrap().try_into().unwrap();
+    let v1_message = legacy_v1_effect_message(&authority, &envelope, &line);
+    let v2_message = effect_message(&authority, &envelope, &line).unwrap();
+    assert_ne!(
+        v1_message, v2_message,
+        "v1 and v2 messages must differ (tag bump)"
+    );
+    assert_eq!(&v2_message[..DOMAIN_TAG.len()], DOMAIN_TAG);
+    assert_eq!(
+        &v1_message[..DOMAIN_TAG_V1_RETIRED.len()],
+        DOMAIN_TAG_V1_RETIRED
+    );
+    // A signature over the v1 bytes rides the envelope: fail closed.
+    envelope.sig = hex::encode(
+        SigningKey::from_bytes(&PRINCIPAL_SEED)
+            .sign(&v1_message)
+            .to_bytes(),
+    );
+    let error = verify_fixture(&envelope, &line, &authority_hex, &config).unwrap_err();
+    assert!(error.contains("signature verification failed"), "{error}");
 }
 
 #[test]
@@ -168,29 +276,69 @@ fn kernel_principal_is_cross_checked() {
     assert!(verify_kernel_principal(r#"{"route":"forward"}"#, &verified).is_err());
 }
 
+/// Stage B2 wire-shape checks: the only omissible key is the F3 `effect`
+/// claim (omission IS declared absence); the mandatory bindings cannot be
+/// omitted from the wire at all.
 #[test]
-fn strict_wire_shape_accepts_omitted_empty_seats() {
+fn strict_wire_shape_effect_omission_is_declared_absence() {
     let (envelope, line, _, _) = fixture();
     let mut env = serde_json::to_value(envelope).unwrap();
-    for key in [
-        "policy_version",
-        "delegation",
-        "revocation_subject",
-        "audience",
-        "causality_token",
-        "expires_at",
-    ] {
-        env.as_object_mut().unwrap().remove(key);
-    }
+    env.as_object_mut().unwrap().remove("effect");
     let wrapper = json!({"seal_env": env, "request": line}).to_string();
     match wire_view(&wrapper) {
         WireView::Enveloped { envelope, .. } => {
-            assert!(envelope.policy_version.is_empty());
-            assert_eq!(envelope.expires_at, 0);
-            assert_eq!(envelope.delegation, DelegationSeats::default());
+            assert!(envelope.effect.is_none());
         }
         other => panic!("unexpected wire view: {other:?}"),
     }
+}
+
+#[test]
+fn strict_wire_shape_rejects_omitted_mandatory_bindings() {
+    let (envelope, line, _, _) = fixture();
+    for key in ["expires_at", "policy_version"] {
+        let mut env = serde_json::to_value(&envelope).unwrap();
+        env.as_object_mut().unwrap().remove(key);
+        let wrapper = json!({"seal_env": env, "request": line}).to_string();
+        assert!(
+            matches!(wire_view(&wrapper), WireView::Malformed(_)),
+            "omitted mandatory {key} was accepted"
+        );
+    }
+}
+
+/// Stage B2 killed-bypass controls: a VALID signature over an empty/zero
+/// mandatory binding, or over the retired all-empty effect sentinel, still
+/// fails closed.
+#[test]
+fn zero_expires_at_fails_closed_even_when_signed() {
+    let (mut envelope, line, authority, config) = fixture();
+    envelope.expires_at = 0;
+    resign(&mut envelope, &line, &authority);
+    let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
+    assert!(error.contains("expires_at"), "{error}");
+}
+
+#[test]
+fn empty_policy_version_fails_closed_even_when_signed() {
+    let (mut envelope, line, authority, config) = fixture();
+    envelope.policy_version = String::new();
+    resign(&mut envelope, &line, &authority);
+    let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
+    assert!(error.contains("policy_version"), "{error}");
+}
+
+#[test]
+fn all_empty_effect_sentinel_is_a_checked_claim() {
+    let (mut envelope, line, authority, config) = fixture();
+    envelope.effect = Some(EffectClaim {
+        resource: String::new(),
+        action: String::new(),
+        args: String::new(),
+    });
+    resign(&mut envelope, &line, &authority);
+    let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
+    assert!(error.contains("effect claim"), "{error}");
 }
 
 struct RunningHost {
@@ -314,7 +462,7 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
     let issuance: serde_json::Value = serde_json::from_str(&host.receive()).unwrap();
     assert_eq!(issuance["method"], "notifications/seal/session");
     assert_eq!(issuance["params"]["schema"], "seal.session/v1");
-    assert_eq!(issuance["params"]["envelope"], "seal.effect/v1");
+    assert_eq!(issuance["params"]["envelope"], "seal.effect/v2");
     let session = issuance["params"]["session"].as_str().unwrap();
     assert!(session.starts_with("seal-session-v1:"));
     assert!(!session.starts_with("seal-host-rs/stdio:"));
@@ -326,30 +474,26 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
     let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","action":"call","arguments":{"q":1}}}"#;
     let principal_key = SigningKey::from_bytes(&PRINCIPAL_SEED);
     let authority = authority_key.verifying_key().to_bytes();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let mut envelope = EnvelopeV23 {
         key_id: "alice".into(),
         sig: String::new(),
         nonce: "22".repeat(32),
-        issued_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64,
+        issued_at: now_ms,
+        expires_at: now_ms + 600_000,
         adapter: AdapterClaim::deployed_mcp(),
         principal: PrincipalClaim {
             session: session.into(),
         },
+        policy_version: "policy-1".into(),
         effect: Some(EffectClaim {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
         }),
-        idempotency_key: "idem-runtime-1".into(),
-        policy_version: "different-from-epoch".into(),
-        delegation: DelegationSeats::default(),
-        revocation_subject: String::new(),
-        audience: String::new(),
-        causality_token: String::new(),
-        expires_at: 0,
     };
     envelope.sig = hex::encode(
         principal_key

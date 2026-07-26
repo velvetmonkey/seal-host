@@ -1149,7 +1149,7 @@ fn run() -> i32 {
                 "method": "notifications/seal/session",
                 "params": {
                     "schema": "seal.session/v1",
-                    "envelope": "seal.effect/v1",
+                    "envelope": "seal.effect/v2",
                     "session": session,
                 }
             })

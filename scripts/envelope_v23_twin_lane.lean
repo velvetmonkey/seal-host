@@ -11,13 +11,20 @@ byte-twin break.
 
 Run: `lean --run scripts/envelope_v23_twin_lane.lean rust/tests/vectors/envelope_v23_twin_corpus.json`
 
-IMPORT CAVEAT (honest): seal-host's pinned `mcp-seal` package rev predates
-`SealV2.EffectEnvelope`, so `lake env lean` cannot resolve this import from
-the in-repo package graph today. Until the pin advances past mcp-seal-dev
-`9452f32`, this lane needs `LEAN_PATH` pointing at a built mcp-seal-dev
-checkout (and its batteries/aesop packages). The Rust side therefore also
-checks a frozen Lean-generated expectation file so CI has coverage without
-this lane; see `rust/tests/envelope_v23_twin.rs` for the full story.
+Stage B2: the corpus shape is the RECONCILED `seal.effect/v2` envelope
+(mcp-seal-dev `4f39f20`) — killed seats gone (revocation_subject included),
+expires_at/policy_version rescued and mandatory, and the F3 claim is
+Option-encoded with a signed presence byte: `effect: null` and an all-empty
+effect object are now DIFFERENT wire values.
+
+Resolution: the manifest pins `mcp-seal` at `6c74b61`, which contains the
+Stage B2 reconciliation `4f39f20`, so
+`lake env lean` resolves `SealV2.EffectEnvelope` from the in-repo package
+graph and `rust/tests/envelope_v23_twin.rs` runs this lane LIVE by default
+(Ben's Stage B acceptance addition, 2026-07-22). `LEAN_PATH` can still be
+pointed at an out-of-graph built mcp-seal-dev checkout via
+`SEAL_V23_SPEC_LEAN_PATH`. The frozen expectation file remains as a fast
+hermetic layer, anchored to the spec repo's `#guard_msgs` pin.
 -/
 
 open Lean SealV2.Effect
@@ -56,12 +63,11 @@ def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := d
   let adapter ← e.getObjVal? "adapter"
   -- PORTED 2026-07-25 from the `seal.effect/v1` shape to `seal.effect/v2`.
   --
-  -- The Stage B strip (mcp-seal-dev `81e73dc`, reconciled `ae9fadc`) removed
+  -- The Stage B2 reconciliation (mcp-seal-dev `4f39f20`) removed
   -- `idempotency_key`, `on_behalf_of`, `parent_capability_ref`,
   -- `revocation_subject`, `audience` and `causality_token` from
-  -- `EffectEnvelope` entirely. This lane no longer reads them. The corpus may
-  -- still carry them; extra JSON keys are simply not consulted, which is
-  -- correct: they are not signed under v2.
+  -- `EffectEnvelope` entirely, while retaining mandatory `expires_at` and
+  -- `policy_version`. This lane therefore reads exactly the signed v2 shape.
   --
   -- ONE SEMANTIC CHANGE, DELIBERATE, DO NOT "SIMPLIFY" IT BACK:
   -- under v1 `effect: null` and an all-empty effect object encoded IDENTICALLY
@@ -74,12 +80,13 @@ def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := d
   -- byte exists to prevent. Null maps to `none`; any object maps to `some`,
   -- empty strings included.
   let effectJson ← e.getObjVal? "effect"
-  let effect ←
+  let effect : Option EffectClaim ←
     if effectJson.isNull then pure none
     else do
-      pure (some ({ resource := ← getStr effectJson "resource"
-                    action := ← getStr effectJson "action"
-                    args := ← getStr effectJson "args" } : EffectClaim))
+      pure (some {
+        resource := ← getStr effectJson "resource"
+        action := ← getStr effectJson "action"
+        args := ← getStr effectJson "args" })
   pure (authority, {
     keyId := ← getStr e "key_id"
     nonce := nonce
