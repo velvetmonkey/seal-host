@@ -173,12 +173,13 @@ fn rust_encoder_matches_lean_generated_expectation() {
 /// moved the domain tag from `seal.effect/v1` to `seal.effect/v2` (mcp-seal-dev
 /// `81e73dc`, reconciled by `ae9fadc`) and this test stayed green, because the
 /// two frozen artifacts still agreed with each other about a layout the spec
-/// no longer used. Only `live_lean_diff_over_shared_corpus` can catch that, and
-/// it is `#[ignore]`d, so nothing was actually watching.
+/// no longer used. Only `live_lean_diff_over_shared_corpus` can catch that. It
+/// was `#[ignore]`d throughout that drift window; it now runs by default
+/// against the manifest-pinned kernel.
 ///
-/// FALSIFIES: make this read the spec repo's `#guard_msgs` literal at test time
-/// (needs the spec checkout reachable from CI), or un-ignore the live diff.
-/// Until one lands, this test's green is evidence about two local files only.
+/// The active live differential supplies the independent check this frozen
+/// anchor cannot. Green from this test alone is still evidence about two local
+/// files only.
 #[test]
 fn golden_anchor_ties_expectation_to_lean_guard_msgs_pin() {
     let expected = std::fs::read_to_string(expected_path()).expect("read expected hex");
