@@ -40,6 +40,19 @@ const SOURCE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",
 ]);
+const C_STYLE_EXTENSIONS = new Set([
+  ".c",
+  ".cc",
+  ".cpp",
+  ".h",
+  ".hpp",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".rs",
+  ".ts",
+  ".tsx",
+]);
 const LEDGER_STATUSES = new Set([
   "PINNED",
   "PINNED-BY-TEST",
@@ -105,6 +118,241 @@ function resolveCitation(citation) {
 
 function sourceLines(file) {
   return fs.readFileSync(file, "utf8").split(/\r?\n/);
+}
+
+function commentProfile(extension) {
+  if (extension === ".lean") {
+    return {
+      line: "--",
+      block: ["/-", "-/"],
+      nestedBlock: true,
+      quotes: ['"'],
+    };
+  }
+  if (C_STYLE_EXTENSIONS.has(extension)) {
+    return {
+      line: "//",
+      block: ["/*", "*/"],
+      nestedBlock: extension === ".rs",
+      quotes:
+        extension === ".rs"
+          ? ['"']
+          : [extension === ".js" ||
+              extension === ".jsx" ||
+              extension === ".mjs" ||
+              extension === ".ts" ||
+              extension === ".tsx"
+              ? "`"
+              : null, '"', "'"].filter(Boolean),
+    };
+  }
+  if (extension === ".py") {
+    return {
+      line: "#",
+      block: null,
+      nestedBlock: false,
+      quotes: ['"""', "'''", '"', "'"],
+    };
+  }
+  if (extension === ".sh") {
+    return {
+      line: "#",
+      block: null,
+      nestedBlock: false,
+      quotes: ['"', "'", "`"],
+      shellHash: true,
+    };
+  }
+  throw new Error(`no comment syntax registered for source extension ${extension}`);
+}
+
+function blankCommentCharacter(character) {
+  return character === "\n" || character === "\r" ? character : " ";
+}
+
+function rustRawStringAt(text, index) {
+  const match = text
+    .slice(index)
+    .match(/^(?:b|c)?r(#{0,255})"/);
+  if (!match) return null;
+  return {
+    length: match[0].length,
+    end: `"${match[1]}`,
+  };
+}
+
+function cppRawStringAt(text, index) {
+  const match = text
+    .slice(index)
+    .match(/^(?:u8|u|U|L)?R"([^ ()\\\t\v\f\r\n]{0,16})\(/);
+  if (!match) return null;
+  return {
+    length: match[0].length,
+    end: `)${match[1]}"`,
+  };
+}
+
+function rustCharLiteralAt(text, index) {
+  return /^'(?:[^'\\\r\n]|\\(?:.|u\{[0-9a-fA-F_]+\}))'/u.test(
+    text.slice(index),
+  );
+}
+
+function shellHashStartsComment(text, index) {
+  if (text[index] !== "#") return false;
+  if (index === 0) return true;
+  return /[\s;&|()<>\u0000]/.test(text[index - 1]);
+}
+
+/**
+ * Remove comments while preserving strings, newlines, and character offsets.
+ *
+ * This is deliberately a language-profiled lexical pass, not a prose
+ * allow-list. It covers every extension admitted by SOURCE_EXTENSIONS:
+ * Lean (--, nested /- -/), Rust (//, nested block comments, raw strings),
+ * C/C++ headers and sources, JavaScript/TypeScript, Python, and shell.
+ * String literals remain code because protocol field names frequently live
+ * in strings. The pass does not claim to parse arbitrary unlisted languages.
+ */
+export function stripSourceComments(text, extension) {
+  const profile = commentProfile(extension);
+  const output = text.split("");
+  let blockDepth = 0;
+  let lineComment = false;
+  let quote = null;
+  let quoteAllowsEscape = false;
+  let rawEnd = null;
+
+  for (let index = 0; index < text.length; ) {
+    if (lineComment) {
+      output[index] = blankCommentCharacter(text[index]);
+      if (text[index] === "\n") lineComment = false;
+      index += 1;
+      continue;
+    }
+
+    if (blockDepth > 0) {
+      const [blockStart, blockEnd] = profile.block;
+      if (
+        profile.nestedBlock &&
+        text.startsWith(blockStart, index)
+      ) {
+        for (let offset = 0; offset < blockStart.length; offset += 1) {
+          output[index + offset] = " ";
+        }
+        blockDepth += 1;
+        index += blockStart.length;
+        continue;
+      }
+      if (text.startsWith(blockEnd, index)) {
+        for (let offset = 0; offset < blockEnd.length; offset += 1) {
+          output[index + offset] = " ";
+        }
+        blockDepth -= 1;
+        index += blockEnd.length;
+        continue;
+      }
+      output[index] = blankCommentCharacter(text[index]);
+      index += 1;
+      continue;
+    }
+
+    if (rawEnd !== null) {
+      if (text.startsWith(rawEnd, index)) {
+        index += rawEnd.length;
+        rawEnd = null;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (quote !== null) {
+      if (text[index] === "\\" && quoteAllowsEscape) {
+        index += Math.min(2, text.length - index);
+        continue;
+      }
+      if (text.startsWith(quote, index)) {
+        index += quote.length;
+        quote = null;
+        quoteAllowsEscape = false;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (extension === ".rs") {
+      const raw = rustRawStringAt(text, index);
+      if (raw) {
+        rawEnd = raw.end;
+        index += raw.length;
+        continue;
+      }
+      if (text[index] === "'" && rustCharLiteralAt(text, index)) {
+        quote = "'";
+        quoteAllowsEscape = true;
+        index += 1;
+        continue;
+      }
+    } else if (
+      extension === ".c" ||
+      extension === ".cc" ||
+      extension === ".cpp" ||
+      extension === ".h" ||
+      extension === ".hpp"
+    ) {
+      const raw = cppRawStringAt(text, index);
+      if (raw) {
+        rawEnd = raw.end;
+        index += raw.length;
+        continue;
+      }
+    }
+
+    const openingQuote = profile.quotes.find((candidate) =>
+      text.startsWith(candidate, index),
+    );
+    if (openingQuote) {
+      quote = openingQuote;
+      quoteAllowsEscape = !(extension === ".sh" && openingQuote === "'");
+      index += openingQuote.length;
+      continue;
+    }
+
+    if (
+      profile.line &&
+      text.startsWith(profile.line, index) &&
+      (!profile.shellHash || shellHashStartsComment(text, index))
+    ) {
+      for (let offset = 0; offset < profile.line.length; offset += 1) {
+        output[index + offset] = " ";
+      }
+      lineComment = true;
+      index += profile.line.length;
+      continue;
+    }
+
+    if (profile.block && text.startsWith(profile.block[0], index)) {
+      for (let offset = 0; offset < profile.block[0].length; offset += 1) {
+        output[index + offset] = " ";
+      }
+      blockDepth = 1;
+      index += profile.block[0].length;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return output.join("");
+}
+
+function sourceCodeLines(file) {
+  const extension = path.extname(file);
+  return stripSourceComments(fs.readFileSync(file, "utf8"), extension).split(
+    /\r?\n/,
+  );
 }
 
 function lineNumber(lines, pattern) {
@@ -740,7 +988,7 @@ function checkSpecificationOnlyInventory(ctx) {
     );
     let occurrence = null;
     for (const file of sourceFiles) {
-      const index = sourceLines(file).findIndex((sourceLine) =>
+      const index = sourceCodeLines(file).findIndex((sourceLine) =>
         pattern.test(sourceLine),
       );
       if (index >= 0) {

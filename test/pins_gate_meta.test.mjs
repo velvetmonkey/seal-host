@@ -19,7 +19,79 @@ import {
   ROOT,
   matchingRows,
   parseLedger,
+  stripSourceComments,
 } from "../scripts/pins_gate.mjs";
+
+test("specification-only search strips comments but preserves code strings", () => {
+  const fixtures = new Map([
+    [
+      ".lean",
+      [
+        "-- line_only",
+        "/- outer block_only /- nested_only -/ still_block_only -/",
+        'def string_key := "string_only -- not a comment"',
+        "structure Witness where",
+        "  field_only : Nat",
+      ].join("\n"),
+    ],
+    [
+      ".rs",
+      [
+        "/// doc_only",
+        "/* outer block_only /* nested_only */ still_block_only */",
+        'const STRING_KEY: &str = r#\"string_only // not a comment\"#;',
+        "struct Witness { field_only: u64 }",
+      ].join("\n"),
+    ],
+    [
+      ".cpp",
+      [
+        "// line_only",
+        "/* block_only */",
+        'const char *key = R\"tag(string_only // not a comment)tag\";',
+        "struct Witness { int field_only; };",
+      ].join("\n"),
+    ],
+    [
+      ".mjs",
+      [
+        "// line_only",
+        "/* block_only */",
+        "const key = `string_only // not a comment`;",
+        "const field_only = 1;",
+      ].join("\n"),
+    ],
+    [
+      ".py",
+      [
+        "# line_only",
+        'key = """string_only # not a comment"""',
+        "field_only = 1",
+      ].join("\n"),
+    ],
+    [
+      ".sh",
+      [
+        "# line_only",
+        "key='string_only # not a comment'",
+        "field_only=1",
+        "embedded#hash=kept",
+      ].join("\n"),
+    ],
+  ]);
+
+  for (const [extension, fixture] of fixtures) {
+    const code = stripSourceComments(fixture, extension);
+    assert.doesNotMatch(code, /\b(?:line|doc|block|nested|still_block)_only\b/);
+    assert.match(code, /\bstring_only\b/);
+    assert.match(code, /\bfield_only\b/);
+    assert.equal(
+      code.split("\n").length,
+      fixture.split("\n").length,
+      `${extension} comment stripping changed line numbers`,
+    );
+  }
+});
 
 test("every PINS ledger row is classified exactly once", () => {
   const { rows } = parseLedger();
