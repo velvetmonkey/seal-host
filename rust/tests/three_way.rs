@@ -73,11 +73,11 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// Pinned wasm artifact under test. Authority: wasm-spike/verified/PROVENANCE.txt
-/// (rebuilt for the V2.2 authority-bound principal envelope and P6 byte frames
-/// from mcp-seal-dev c3bea29 + seal-host df6684d; Lean v4.28.0, emscripten
-/// 6.0.0). This harness
+/// (rebuilt for the V2.2 authority-bound principal envelope, P6 byte frames,
+/// and raw-wire guards from mcp-seal-dev 6c74b61 + seal-host 4b0845e; Lean
+/// v4.28.0, emscripten 6.0.0). This harness
 /// NEVER rebuilds the wasm; a hash mismatch is a preflight failure.
-const PINNED_WASM_SHA256: &str = "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be";
+const PINNED_WASM_SHA256: &str = "70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf";
 
 const DEFAULT_SEED: u64 = 0x5EA1_C0DE_2026_0716;
 /// Fresh session every SEGMENT cases — bounds failure repro to one segment.

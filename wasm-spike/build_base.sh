@@ -20,7 +20,9 @@ compile() {
 
 echo "[build_base] runtime package modules"
 for src in "$ROOT"/.lake/packages/consensus-lean/.lake/build/ir/Consensus/Checker.c \
-           "$ROOT"/.lake/packages/temporal-logic-lean/.lake/build/ir/Temporal/*.c; do
+           "$ROOT"/.lake/packages/temporal-logic-lean/.lake/build/ir/Temporal/*.c \
+           "$ROOT"/.lake/packages/UnicodeBasic/.lake/build/ir/UnicodeBasic.c \
+           "$ROOT"/.lake/packages/UnicodeBasic/.lake/build/ir/UnicodeBasic/*.c; do
   rel="${src#*/.lake/build/ir/}"
   compile "$src" "build-pkg/${rel//\//_}.o"
 done

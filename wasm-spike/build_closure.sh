@@ -73,7 +73,10 @@ normalize_init_system_io_abi() {
 
 # One batched emnm pass over every object -> the global symbol table for the round.
 scan_syms() {
-  emnm build-core/*.o build-seal/*.o build-pkg/*.o build-stdlib/*.o "$OUTDIR"/*.o 2>/dev/null
+  local objs=(build-core/*.o build-seal/*.o build-pkg/*.o build-stdlib/*.o)
+  local closure_objs=("$OUTDIR"/*.o)
+  [ -e "${closure_objs[0]}" ] && objs+=("${closure_objs[@]}")
+  emnm "${objs[@]}" 2>/dev/null
 }
 defined_inits()    { grep -E ' T initialize_' /tmp/seal_syms.txt | awk '{print $NF}' | sort -u; }
 referenced_inits() { grep -E ' U initialize_' /tmp/seal_syms.txt | awk '{print $NF}' | sort -u; }
