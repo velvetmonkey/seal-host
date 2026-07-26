@@ -32,7 +32,7 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - name: PINS ledger anti-drift gate
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: node scripts/pins_gate.mjs
+        run: node scripts/pins_gate.mjs --check
       - run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: lake build
@@ -156,6 +156,8 @@ jobs:
       CONTRACT_FREEZE_CI: "1"
     steps:
       - uses: actions/checkout@v6.0.3
+      - name: PINS gated-row registry matches the ledger, checker, and CI
+        run: node --test test/pins_gate_meta.test.mjs
       - name: V2.3 contract must match its review baseline and freeze manifest
         run: python3 scripts/contract_freeze_gate.py
       - name: Freeze gate fail-closed self-tests
