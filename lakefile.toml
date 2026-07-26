@@ -109,3 +109,9 @@ root = "Test.L0LivenessMeasure"
 [[lean_exe]]
 name = "repin_step2_guards"
 root = "Test.RepinStep2Guards"
+
+# V3.1 downstream parser-agreement oracle. Given one terminator-stripped
+# JSON-RPC frame, print the production classifier's CanonicalAction as JSON.
+[[lean_exe]]
+name = "downstream_parser_oracle"
+root = "Test.DownstreamParserOracle"
