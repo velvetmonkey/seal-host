@@ -14,8 +14,8 @@
 //!    byte-for-byte — a fast, hermetic guard against Rust encoder drift.
 //! 2. `live_lean_diff_over_shared_corpus` (LIVE, runs by default since
 //!    Stage B — Ben, 2026-07-22 18:07): runs the Lean lane NOW against the
-//!    manifest-pinned `mcp-seal` package (advanced to `4f39f20`, the Stage
-//!    B2 reconciliation, whose build carries `SealV2.EffectEnvelope`) and diffs
+//!    manifest-pinned `mcp-seal` package (`6c74b61`, which contains the Stage
+//!    B2 reconciliation `4f39f20` and carries `SealV2.EffectEnvelope`) and diffs
 //!    both encoders over the corpus with no frozen middleman. THIS test is
 //!    the kernel-to-host binding; layer 1 alone only proves Rust matches a
 //!    snapshot. Spec resolution: `SEAL_V23_SPEC_LEAN_PATH` (+ optional
@@ -196,7 +196,8 @@ fn golden_anchor_ties_expectation_to_lean_guard_msgs_pin() {
 
 /// Live dual-encoder diff, no frozen middleman — the kernel-to-host binding.
 /// Default: `lake env lean` against the manifest-pinned `mcp-seal` package
-/// (`81e73dc`, Stage B). Override with `SEAL_V23_SPEC_LEAN_PATH` (+ optional
+/// (`6c74b61`, containing Stage B2). Override with
+/// `SEAL_V23_SPEC_LEAN_PATH` (+ optional
 /// `SEAL_V23_LEAN_BIN`) to diff against an out-of-graph spec checkout.
 #[test]
 fn live_lean_diff_over_shared_corpus() {

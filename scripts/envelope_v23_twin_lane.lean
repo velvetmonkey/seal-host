@@ -17,7 +17,8 @@ expires_at/policy_version rescued and mandatory, and the F3 claim is
 Option-encoded with a signed presence byte: `effect: null` and an all-empty
 effect object are now DIFFERENT wire values.
 
-Resolution: the manifest pins `mcp-seal` at `4f39f20` (Stage B2), so
+Resolution: the manifest pins `mcp-seal` at `6c74b61`, which contains the
+Stage B2 reconciliation `4f39f20`, so
 `lake env lean` resolves `SealV2.EffectEnvelope` from the in-repo package
 graph and `rust/tests/envelope_v23_twin.rs` runs this lane LIVE by default
 (Ben's Stage B acceptance addition, 2026-07-22). `LEAN_PATH` can still be
