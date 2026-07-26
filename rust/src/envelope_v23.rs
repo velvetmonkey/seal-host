@@ -159,12 +159,14 @@ fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
 /// Exact byte twin of `SealV2.Effect.effectMessage` on Fable's Stage B2
 /// branch (mcp-seal-dev, Stage B2 reconciliation):
 ///
-///     tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32)
-///         ‖ u64be(issued_at) ‖ u64be(expires_at)
-///         ‖ frame(line)
-///         ‖ frame(adapter.type) ‖ frame(adapter.version)
-///         ‖ frame(principal.session) ‖ frame(policy_version)
-///         ‖ opt_effect(effect)
+/// ```text
+/// tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32)
+///     ‖ u64be(issued_at) ‖ u64be(expires_at)
+///     ‖ frame(line)
+///     ‖ frame(adapter.type) ‖ frame(adapter.version)
+///     ‖ frame(principal.session) ‖ frame(policy_version)
+///     ‖ opt_effect(effect)
+/// ```
 ///
 /// where `opt_effect(None) = 0x00` and `opt_effect(Some c) =
 /// 0x01 ‖ frame(c.resource) ‖ frame(c.action) ‖ frame(c.args)` — the
