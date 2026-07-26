@@ -74,19 +74,19 @@ FROZEN_DIRECTORIES = (
 # the file and its manifest entry to approve one another.
 REVIEWED_HASHES = {
     "docs/EFFECT-ENVELOPE-V23.md":
-        "2257776a0acf5d0b53e44e87d77af27eccdbb9bdc481ae49ea66ff51e9674e01",
+        "f0b0715dd047bd688c75c84010af33feb804aa9e0e9afcedd080cd00736bdd34",
     "rust/src/envelope_v23.rs":
-        "e38f42940d4b587705ccd6c3dee4a24ae53bc60487d9fcce352336f8a39d3a34",
+        "2c820ba406771032f417b01d88447319a7a98e82032242c8e3f82864637a30b3",
     "rust/tests/envelope_v23.rs":
-        "d17c37db02cb82ac329c05d55db09fccc4bafc96e1ca461082467ed18bed9b33",
+        "57c3c3a829d4020778edf566da0d33f7aeb6d723709326aa9039f2f0fbe9d5ac",
     "rust/tests/envelope_v23_twin.rs":
-        "3023bd4b93dd33c807cafbbc6b43f1d6842476f5a7523c55ec5c0cf7ee08464d",
+        "6bab05228b6b42b10f3ded8361f580a60cd80d3512db7b6cb8c9bfadea2a090a",
     "rust/tests/vectors/envelope_v23_twin_corpus.json":
-        "d177022f1ba2a7aea9ce4913684c3b827858692387cbae72aaef47a027668fe7",
+        "ce9048af3df4a2edc70c09b3bb9c6f7b920ac53775d0a0a1e8c5efc5b0075cd1",
     "rust/tests/vectors/envelope_v23_twin_expected.hex":
-        "762756a6a6368a9a024886763d9aad96dcb0e58536bff793d50ac030ca4649fc",
+        "7fd50361da59fef0d157829bbf4268c4fc9cd213a8fed57b3503865a1e6c5e15",
     "scripts/envelope_v23_twin_lane.lean":
-        "b28149576feffbf84e7922d0f2948f1ab425285ade9b0033277e17752e853e03",
+        "9ce45fd3850a4643986a936df049eb6f65992b4170b55f7f727a469eaac8292d",
 }
 
 TWIN_TEST = ROOT / "rust" / "tests" / "envelope_v23_twin.rs"
@@ -161,12 +161,12 @@ def check_anchors(paths: tuple[str, ...]) -> None:
         fail(f"expectation/corpus vector count mismatch: "
              f"{len(expected_lines)} expectation lines, {len(vectors)} corpus vectors")
 
-    # "7365616c2e6566666563742f7631" is hex("seal.effect/v1"), the message
+    # "7365616c2e6566666563742f7632" is hex("seal.effect/v2"), the message
     # magic — every full golden literal starts with it.
     twin_literal = extract_hex_literal(
-        TWIN_TEST, r'"(7365616c2e6566666563742f7631[0-9a-f]+)"')
+        TWIN_TEST, r'"(7365616c2e6566666563742f7632[0-9a-f]+)"')
     host_literal = extract_hex_literal(
-        HOST_TEST, r'"(7365616c2e6566666563742f7631[0-9a-f]+)"')
+        HOST_TEST, r'"(7365616c2e6566666563742f7632[0-9a-f]+)"')
     expectation_golden = expected_lines[golden_index]
 
     if twin_literal != host_literal:
