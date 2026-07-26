@@ -32,7 +32,7 @@ listener implemented in `health.rs`.
 
 | # | Source | Sink | Mediated? |
 |---|--------|------|-----------|
-| P1 | stdin line (hostile) | `child_in.write_all` (classify fast path) | YES — `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); a Lean panic exits the process, never returns a routable default |
+| P1 | stdin line (hostile) | `child_in.write_all` (classify fast path) | YES — `firstAgreementUnsafeNumber? == none`, then `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); a Lean panic exits the process, never returns a routable default |
 | P2 | stdin line | `child_in.write_all` (step path) | YES — `seal_host_step` route `forward`, exact parse (`route_of_step_output`) |
 | P3 | stdin line | `child_in.write_all` (interactive retry) | YES — second `seal_host_step == forward` after a human-minted approval |
 | P4 | operator argv | `Command::new(...).spawn()` | N/A — operator-trusted setup; the spawned child IS the guarded resource |
@@ -49,12 +49,14 @@ written and flushed before the next begins. Write/flush failure is terminal;
 child stdin write/flush and child stdout framing failures stop the session
 fail-closed rather than being ignored.
 
-Enforced invariant: **bytes reach the child ⇔ the Lean kernel returned
-classify == 0 or step route == forward for the byte-identical line.** Every
-seam error, panic, or ambiguity refuses the line and answers the client with
-the static `SEAM_ERROR_RESPONSE`. (Step-level `"passthrough"` is impossible
-in the deployed flow — step runs only on classify-mediated lines — so
-`route_of_step_output` maps it to `SeamFailure`, not `Forward`.)
+Enforced invariant: **bytes reach the child ⇔ the Lean numeric-agreement scan
+accepted and the kernel then returned classify == 0 or step route == forward
+for the byte-identical line.** Every seam error, panic, or ambiguity refuses
+the line and answers the client with the static `SEAM_ERROR_RESPONSE`.
+Numeric disagreement returns a JSON-RPC invalid-request response naming the
+exact literal the Lean scan rejected. (Step-level `"passthrough"` is
+impossible in the deployed flow — step runs only on classify-mediated lines
+— so `route_of_step_output` maps it to `SeamFailure`, not `Forward`.)
 
 ## Enforced by construction
 
@@ -99,11 +101,12 @@ in the deployed flow — step runs only on classify-mediated lines — so
    to a refusal.
 
 5. **A refused line cannot hang the client.** Any seam failure answers with
-   `SEAM_ERROR_RESPONSE` (JSON-RPC error, `id:null`). This is the single
-   host-authored egress string; the id is null because recovering it would
-   mean re-parsing raw input — the parser differential this host forbids.
-   Non-UTF-8 input is refused per-line and the session survives (pinned by
-   `tests/host_path.rs`).
+   `SEAM_ERROR_RESPONSE` (JSON-RPC error, `id:null`). Numeric disagreement
+   answers with the other host-authored refusal shape, also `id:null`, naming
+   the exact literal returned by Lean. The id is null because recovering it
+   would mean re-parsing raw input — the parser differential this host
+   forbids. Non-UTF-8 input is refused per-line and the session survives
+   (pinned by `tests/host_path.rs`).
 
 6. **The whole path is ORACLE-tested, not spot-checked.**
    `tests/host_path.rs` drives the real binary (Lean FFI, providers, A3,
@@ -154,7 +157,9 @@ Still trusted after this work:
   `mcp-seal-dev`. Failure direction is drop-the-record ⇒ deny.
 - **Line framing**: the terminator strip that defines what "one line" means
   (the only byte-level transformation on the request path).
-- **`SEAM_ERROR_RESPONSE`**: the one host-authored egress string.
+- **Host-authored refusals**: the static `SEAM_ERROR_RESPONSE` and the
+  serde-framed numeric-agreement response containing only Lean's offending
+  numeric token.
 - **Response egress (P6)** and **A-strict-child** — see the top of this
   document; they are limitations of the claim, not bugs in the code.
 

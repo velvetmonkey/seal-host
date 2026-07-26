@@ -10,7 +10,7 @@
 //!
 //! | # | Source                    | Sink                                   | Mediated? |
 //! |---|---------------------------|----------------------------------------|-----------|
-//! | P1| stdin line (hostile)      | `child_in.write_all` (classify path)   | YES — `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); Lean panic exits the process (never a routable default) |
+//! | P1| stdin line (hostile)      | `child_in.write_all` (classify path)   | YES — numeric-agreement scan accepts, then `seal_host_classify == 0`, literal-only mapping (`route_of_classify`); Lean panic exits the process (never a routable default) |
 //! | P2| stdin line                | `child_in.write_all` (step path)       | YES — `seal_host_step` route `forward`, exact parse (`route_of_step_output`) |
 //! | P3| stdin line                | `child_in.write_all` (interactive retry)| YES — second `seal_host_step == forward` after a human-minted approval |
 //! | P4| operator argv             | `Command::new(...).spawn()`            | N/A — operator-trusted setup; the child IS the guarded resource |
@@ -21,9 +21,10 @@
 //! | P9| votes/grants/forecasts    | (raw text to Lean)                     | Lean parses; grants cursor line-split is drop-only |
 //! | P10| authenticated health HTTP| fixed health/readiness response         | N/A — operational status only; no MCP or mutation surface |
 //!
-//! Enforced invariant: bytes reach the child ⇔ the Lean kernel returned
-//! classify == 0 or step route == forward for the byte-identical JUDGED
-//! line. For a plain line the judged line is the terminator-stripped wire
+//! Enforced invariant: bytes reach the child ⇔ the Lean numeric-agreement
+//! scan accepted and the kernel then returned classify == 0 or step route ==
+//! forward for the byte-identical JUDGED line. For a plain line the judged
+//! line is the terminator-stripped wire
 //! and the child receives the original wire verbatim. For a V2.1 principal
 //! envelope (strict `envelope_view` predicate) the judged line is the EXACT
 //! inner request string and the child receives exactly those bytes plus one
@@ -31,7 +32,8 @@
 //! child line and the kernel's `request_sha256` commitment differ only by
 //! that canonical terminator. Every seam error, panic, malformed envelope,
 //! or ambiguity refuses the line and answers the client with
-//! `SEAM_ERROR_RESPONSE` — the only host-authored egress bytes.
+//! `SEAM_ERROR_RESPONSE`. Numeric disagreement instead returns a host-authored
+//! invalid-request response naming the kernel-reported offending literal.
 //!
 //! The wire bytes the client sent are forwarded VERBATIM on allow (enveloped
 //! lines: the inner bytes verbatim + `\n`) — the host never reconstructs,
@@ -55,8 +57,8 @@ use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
 use seal_host_rs::replay_store::SqliteReplayStore;
 use seal_host_rs::route::{
-    route_of_classify, route_of_step_output, ClassifyRoute, Route, RESOURCE_LIMIT_RESPONSE,
-    SEAM_ERROR_RESPONSE,
+    numeric_agreement_refusal_response, route_of_classify, route_of_step_output, ClassifyRoute,
+    Route, RESOURCE_LIMIT_RESPONSE, SEAM_ERROR_RESPONSE,
 };
 use seal_host_rs::secure_fs;
 use serde_json::{json, Value};
@@ -1308,6 +1310,43 @@ fn run() -> i32 {
             if let Err(limit) = check_json_limits(line.as_bytes()) {
                 emit_resource_limit(limit.name(), limit.maximum());
                 if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
+                    break;
+                }
+                continue;
+            }
+        }
+        // Numeric agreement is independent of the parse-cost guard already
+        // inside `seal_host_classify`: ask the pinned Lean kernel for the
+        // exact first literal BEFORE the classify fast path can admit this
+        // judged line to either passthrough or mediation. The returned
+        // literal is used only in a host-authored refusal; it is never parsed
+        // or forwarded.
+        match host.first_agreement_unsafe_number(line) {
+            Ok(Some(literal)) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "error": "numeric agreement refusal",
+                        "offending_literal": literal
+                    })
+                );
+                let response = numeric_agreement_refusal_response(&literal);
+                if write_frame(&output, &response).is_err() {
+                    break;
+                }
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "error": format!(
+                            "numeric agreement seam failure; line refused: {error}"
+                        )
+                    })
+                );
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
                     break;
                 }
                 continue;

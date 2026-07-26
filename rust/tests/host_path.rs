@@ -75,16 +75,20 @@ fn wall_now_ms() -> u64 {
 
 impl Oracle {
     fn spawn(tag: &str) -> Oracle {
-        Oracle::spawn_channel(tag, false)
+        Oracle::spawn_channel(tag, false, false)
     }
 
     /// Spawn on the PRODUCTION approval channel: ed25519 signed tokens with
     /// a sqlite replay store (required by the host for this channel).
     fn spawn_signed(tag: &str) -> Oracle {
-        Oracle::spawn_channel(tag, true)
+        Oracle::spawn_channel(tag, true, false)
     }
 
-    fn spawn_channel(tag: &str, signed: bool) -> Oracle {
+    fn spawn_numeric_observer(tag: &str) -> Oracle {
+        Oracle::spawn_channel(tag, false, true)
+    }
+
+    fn spawn_channel(tag: &str, signed: bool, numeric_observer: bool) -> Oracle {
         let dir =
             std::env::temp_dir().join(format!("seal-host-oracle-{}-{}", std::process::id(), tag));
         std::fs::create_dir_all(&dir).unwrap();
@@ -108,21 +112,34 @@ impl Oracle {
                 "sqlite_path": dir.join("replay.sqlite").to_str().unwrap()
             });
         }
+        let mut tools = vec![
+            serde_json::json!({
+                "name": "db.execute",
+                "mode": "guarded",
+                "match": {"type": "contains_any_ci", "arg": "sql",
+                          "needles": ["drop", "delete", "truncate"]},
+                "target": [{"full_arguments": true}]
+            }),
+            serde_json::json!({
+                "name": "approve",
+                "mode": "deny",
+                "match": {"type": "always"},
+                "target": []
+            }),
+        ];
+        if numeric_observer {
+            tools.push(serde_json::json!({
+                "name": "numeric.observer",
+                "mode": "allow",
+                "match": {"type": "always"},
+                "target": []
+            }));
+        }
         let payload = serde_json::json!({
             "epoch": 1,
             "safety": {
                 "approval": approval,
-                "tools": [
-                    {
-                        "name": "db.execute",
-                        "mode": "guarded",
-                        "match": {"type": "contains_any_ci", "arg": "sql",
-                                  "needles": ["drop", "delete", "truncate"]},
-                        "target": [{"full_arguments": true}]
-                    },
-                    {"name": "approve", "mode": "deny",
-                     "match": {"type": "always"}, "target": []}
-                ]
+                "tools": tools
             }
         })
         .to_string();
@@ -167,7 +184,38 @@ impl Oracle {
                 receipt_dir.to_str().unwrap().to_string(),
             ]);
         }
-        args.extend(["--".to_string(), "/bin/cat".to_string()]);
+        args.push("--".to_string());
+        if numeric_observer {
+            const OBSERVER: &str = r#"
+import json
+import sys
+for line in sys.stdin:
+    raw = line.rstrip("\n")
+    message = json.loads(raw)
+    value = message["params"]["arguments"]["v"]
+    response = {
+        "jsonrpc": "2.0",
+        "id": message["id"],
+        "result": {
+            "content": [{
+                "type": "text",
+                "text": f"observer received v={value}",
+                "raw": raw,
+                "value": value,
+            }],
+            "isError": False,
+        },
+    }
+    print(json.dumps(response, separators=(",", ":")), flush=True)
+"#;
+            args.extend([
+                "/usr/bin/python3".to_string(),
+                "-c".to_string(),
+                OBSERVER.to_string(),
+            ]);
+        } else {
+            args.push("/bin/cat".to_string());
+        }
 
         let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&args);
         Oracle {
@@ -383,6 +431,111 @@ fn block_target(line: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn numeric_call(id: u64, literal: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"numeric.observer","arguments":{{"v":{literal}}}}}}}"#
+    )
+}
+
+/// RUN: REPINNUM-WIRE-EVIDENCE
+///
+/// The real stdio host and a real downstream JSON observer establish
+/// both halves of the agreement gate: disagreement is refused before child
+/// ingress with the exact literal named, while agreed values are mediated,
+/// receipt-bound by the kernel request hash, and forwarded byte-identically.
+#[test]
+fn numeric_agreement_refuses_at_wire_and_preserves_negative_control() {
+    let mut o = Oracle::spawn_numeric_observer("numeric-agreement-wire");
+
+    let fixture =
+        include_str!("corpora/JSONTestSuite/test_parsing/i_number_neg_int_huge_exp.json").trim();
+    let measured_literal = fixture
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .expect("measured JSONTestSuite vector is a one-element array");
+    let measured = numeric_call(200, measured_literal);
+    o.send(&measured);
+    let measured_response = o.expect_line();
+    println!("WIRE REFUSAL REQUEST: {measured}");
+    println!("WIRE REFUSAL RESPONSE: {measured_response}");
+    assert!(
+        measured_response.contains("request refused")
+            && measured_response.contains(measured_literal),
+        "measured vector must be refused at the wire with its literal named: {measured_response}"
+    );
+    assert_ne!(
+        measured_response, measured,
+        "measured vector must not reach the echo observer"
+    );
+
+    let negative = numeric_call(201, "1e308");
+    o.send(&negative);
+    let negative_response = o.expect_line();
+    println!("NEGATIVE CTRL REQUEST: {negative}");
+    println!("NEGATIVE CTRL OBSERVER RESPONSE: {negative_response}");
+    let observer: serde_json::Value =
+        serde_json::from_str(&negative_response).expect("observer returned valid JSON");
+    let observation = &observer["result"]["content"][0];
+    let observer_value = observation["value"]
+        .as_f64()
+        .expect("downstream observer reads 1e308 as binary64");
+    let observer_raw = observation["raw"]
+        .as_str()
+        .expect("downstream observer reports exact input line");
+    let negative_receipt = o
+        .receipts()
+        .into_iter()
+        .rev()
+        .find(|receipt| receipt["verdict"] == "ALLOW")
+        .expect("kernel-signed ALLOW receipt for 1e308");
+    let expected_hash = hex::encode(sha2::Sha256::digest(negative.as_bytes()));
+    println!(
+        "NEGATIVE CTRL OBSERVER: raw={observer_raw} value={observer_value:e} kernel_request_sha256={}",
+        negative_receipt["request_sha256"]
+    );
+    assert_eq!(observer_raw, negative, "1e308 must forward verbatim");
+    assert_eq!(observer_value, 1e308);
+    assert_eq!(
+        negative_receipt["request_sha256"], expected_hash,
+        "the kernel-signed request commitment must bind the bytes the observer read"
+    );
+
+    let safe_boundary = numeric_call(202, "9007199254740991");
+    o.send(&safe_boundary);
+    let safe_response = o.expect_line();
+    let safe_observer: serde_json::Value =
+        serde_json::from_str(&safe_response).expect("safe-boundary observer response parses");
+    let safe_observation = &safe_observer["result"]["content"][0];
+    println!("BOUNDARY SAFE REQUEST: {safe_boundary}");
+    println!("BOUNDARY SAFE OBSERVER RESPONSE: {safe_response}");
+    assert_eq!(
+        safe_observation["raw"].as_str(),
+        Some(safe_boundary.as_str()),
+        "2^53 - 1 must be accepted and forwarded verbatim"
+    );
+    assert_eq!(safe_observation["value"].as_u64(), Some(9007199254740991));
+
+    let unsafe_boundary = numeric_call(203, "9007199254740993");
+    o.send(&unsafe_boundary);
+    let unsafe_response = o.expect_line();
+    let rounded = serde_json::from_str::<serde_json::Value>(&unsafe_boundary)
+        .expect("serde parses the unsafe boundary")["params"]["arguments"]["v"]
+        .as_f64()
+        .expect("unsafe boundary has a binary64 reading");
+    println!("BOUNDARY UNSAFE REQUEST: {unsafe_boundary}");
+    println!("BOUNDARY UNSAFE BINARY64 READBACK: {rounded:.0}");
+    println!("BOUNDARY UNSAFE RESPONSE: {unsafe_response}");
+    assert_eq!(rounded, 9007199254740992.0);
+    assert!(
+        unsafe_response.contains("request refused") && unsafe_response.contains("9007199254740993"),
+        "2^53 + 1 must be refused with the literal named: {unsafe_response}"
+    );
+    assert_ne!(
+        unsafe_response, unsafe_boundary,
+        "2^53 + 1 must not reach the echo observer"
+    );
 }
 
 /// Stage-A guard rules must bind approvals to the complete canonical

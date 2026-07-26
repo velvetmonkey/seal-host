@@ -69,6 +69,7 @@ extern "C" {
     fn seal_host_init(envelope: LeanObj, pubkey: LeanObj) -> LeanObj;
     fn seal_host_step(input: LeanObj) -> LeanObj;
     fn seal_host_classify(line: LeanObj) -> c_uint;
+    fn seal_host_first_agreement_unsafe_number(line: LeanObj) -> LeanObj;
     fn seal_policy_schema(unit: LeanObj) -> LeanObj;
     fn seal_policy_validate(payload: LeanObj) -> LeanObj;
 }
@@ -224,6 +225,22 @@ impl LeanHost {
             seal_host_classify(to_lean_string(line))
         }))
         .map_err(|_| SeamError::Panic)
+    }
+
+    /// Return the first raw numeric literal whose exact Lean value is not
+    /// preserved by an IEEE-754 binary64 round trip. `None` means the
+    /// independent agreement scan accepted every unquoted number.
+    pub fn first_agreement_unsafe_number(&self, line: &str) -> Result<Option<String>, SeamError> {
+        self.call_string(|| unsafe {
+            seal_host_first_agreement_unsafe_number(to_lean_string(line))
+        })
+        .map(|literal| {
+            if literal.is_empty() {
+                None
+            } else {
+                Some(literal)
+            }
+        })
     }
 
     /// Test seam for `tests/panic_probe.rs` ONLY: trigger a Lean panic. With

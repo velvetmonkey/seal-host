@@ -119,6 +119,24 @@ pub fn route_of_step_output(out: Result<String, SeamError>) -> Route {
 /// forbids. Named in RUST_BRIDGE.md.
 pub const SEAM_ERROR_RESPONSE: &str = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"seal-host: mediation seam failure; request blocked\"}}\n";
 
+/// A hard pre-parse refusal for a numeric literal on which the exact Lean
+/// reader and a downstream IEEE-754 binary64 reader disagree. Constructed
+/// through serde so an attacker-controlled literal can never break framing.
+pub fn numeric_agreement_refusal_response(literal: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": serde_json::Value::Null,
+        "error": {
+            "code": -32600,
+            "message": format!(
+                "seal-host: request refused — unsafe numeric literal {literal}"
+            )
+        }
+    })
+    .to_string()
+        + "\n"
+}
+
 /// Stable response for any hostile-boundary resource-limit refusal. The
 /// detailed, non-secret limit name is emitted once on stderr; the wire shape
 /// remains constant and never reflects attacker-controlled bytes.
