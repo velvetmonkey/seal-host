@@ -74,11 +74,11 @@ FROZEN_DIRECTORIES = (
 # the file and its manifest entry to approve one another.
 REVIEWED_HASHES = {
     "docs/EFFECT-ENVELOPE-V23.md":
-        "f0b0715dd047bd688c75c84010af33feb804aa9e0e9afcedd080cd00736bdd34",
+        "4b4f652d0bbd42a1323ac28b10a78bea8d5cd2eef7f2af7b2dc4cd031dff9c8a",
     "rust/src/envelope_v23.rs":
-        "2c820ba406771032f417b01d88447319a7a98e82032242c8e3f82864637a30b3",
+        "6374ef4eed83607df44137dfcc15efd2ef022c50cddb68482f77e7884f933d74",
     "rust/tests/envelope_v23.rs":
-        "57c3c3a829d4020778edf566da0d33f7aeb6d723709326aa9039f2f0fbe9d5ac",
+        "5558a435d43c7947dcb990bf1a72447723fa65a100d204e46a985fd21e3e4581",
     "rust/tests/envelope_v23_twin.rs":
         "6bab05228b6b42b10f3ded8361f580a60cd80d3512db7b6cb8c9bfadea2a090a",
     "rust/tests/vectors/envelope_v23_twin_corpus.json":
