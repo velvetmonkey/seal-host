@@ -3,8 +3,9 @@
 r"""
 CLI approver for seal-host ed25519-token channel (developer ingress).
 
-One-shot: given a target (from a block's "approval required: <hex>"), decide
-approve or deny, sign a TARGET-BOUND token, append to the token file.
+One-shot: given a target (from a block's "approval required: <hex>") and the
+exact blocked MCP request frame, decide approve or deny, sign a request-bound
+ApprovalRecord v2, and append it to the token file.
 
   block happens -> (human sees target) -> CLI signs+appends -> action flows (or refused) -> receipt/audit
 
@@ -21,17 +22,21 @@ Usage (key via env for demo, or --key-file):
   python3 demo/approve_cli.py \
     --token-file /tmp/seal-tokens.ndjson \
     --target 0000...64hex \
+    --request-file /tmp/exact-mcp-request.frame \
     --approve   # or --deny, or omit for prompt
 
   # or non-interactive one-liner in scripts:
   python3 - <<'PY' ...
   from demo.approve_cli import ... but prefer the bin.
 
-The emitted record is {"payload": "<compact json with target|nonce|issuedAt[|decision]>","signature":"..."}
-Exactly what Ed25519TokenProvider verifies.
+Approvals use ApprovalRecord v2 and bind the target, exact framed request
+(including its delimiter), exact text shown here, times, nonce, session,
+renderer, approver, and signing-key identity. Explicit declines retain the
+legacy signed-decline envelope because ApprovalRecord v2 has no decline shape.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -45,7 +50,16 @@ from sign_approval import (
     generate_approval_keypair,
     public_key_hex_from_private,
     sign_approval_token,
+    sign_approval_v2_token,
 )
+
+RENDERER_NAME = "seal-approve-cli-raw-mcp-frame"
+RENDERER_VERSION = "1.0.0"
+RENDERER_MANIFEST = (
+    b'{"name":"seal-approve-cli-raw-mcp-frame","version":"1.0.0",'
+    b'"format":"heading, target line, then exact UTF-8 MCP request frame including delimiter"}'
+)
+RENDERER_MANIFEST_SHA256 = hashlib.sha256(RENDERER_MANIFEST).hexdigest()
 
 
 def now_ms() -> int:
@@ -78,9 +92,20 @@ def main() -> int:
     p.add_argument("--key", help="32-byte privkey hex (or use SEAL_APPROVAL_KEY_HEX)")
     p.add_argument("--key-file", help="path to file containing the 32-byte privkey hex")
     p.add_argument("--nonce", help="override nonce (default: random uuid)")
-    p.add_argument("--issued-at", type=int, help="override issuedAt ms (default: now)")
+    p.add_argument("--issued-at", type=int, help="override authorized_at ms (default: now)")
+    p.add_argument("--expiry", type=int, help="override expiry ms (default: authorized_at + 120s)")
+    p.add_argument("--session", help="approval session label (default: random CLI session)")
+    p.add_argument("--approver", default="local CLI operator", help="identity shown in the v2 record")
+    p.add_argument(
+        "--request-file",
+        help="exact UTF-8 MCP request frame, including its LF or CRLF delimiter (required for approval)",
+    )
     p.add_argument("--yes", "-y", action="store_true", help="do not prompt for confirmation")
-    p.add_argument("--plain", action="store_true", help="DEV-ONLY: write plain unauth record (for control-file demo); default is signed envelope for ed25519-token")
+    p.add_argument(
+        "--plain",
+        action="store_true",
+        help="DEV-ONLY legacy decline only; unauthenticated v1 approvals are no longer admitted",
+    )
     args = p.parse_args()
 
     if args.approve and args.deny:
@@ -99,36 +124,101 @@ def main() -> int:
     allow = not args.deny  # default allow unless --deny
     decision = "allow" if allow else "deny"
 
+    if allow and args.plain:
+        p.error(
+            "--plain cannot emit an admitted approval: the host refuses v1 and "
+            "the v2 approval channel requires an Ed25519 signature"
+        )
+    if allow and not args.request_file:
+        p.error(
+            "--request-file is required for ApprovalRecord v2; the target alone "
+            "does not identify the exact framed request"
+        )
+    if not args.approver:
+        p.error("--approver must be non-empty")
+    if args.session == "":
+        p.error("--session must be non-empty")
+
     priv = load_privkey(args)
     # validate by deriving pub (will raise on bad)
     pub = public_key_hex_from_private(priv)
 
     nonce = args.nonce or uuid.uuid4().hex
-    issued = args.issued_at or now_ms()
+    issued = args.issued_at if args.issued_at is not None else now_ms()
 
     if args.plain:
-        # DEV-ONLY unauth path for control-file quickstart demos
-        plain = json.dumps({"target": target, "issuedAt": issued, "nonce": nonce} | ({"decision": "deny"} if not allow else {}), separators=(",", ":"))
-        line = plain
-        print("WARNING: --plain writes DEV-ONLY UNAUTHENTICATED record (control-file). Real usage uses the signed envelope (no --plain).")
+        # ApprovalRecord v2 has no unsigned/control-file representation. The
+        # legacy control-file decline remains explicit and fail-closed.
+        line = json.dumps(
+            {"target": target, "issuedAt": issued, "nonce": nonce, "decision": "deny"},
+            separators=(",", ":"),
+        )
+        print("WARNING: --plain writes a DEV-ONLY UNAUTHENTICATED legacy decline.")
+    elif not allow:
+        line = sign_approval_token(priv, target, issued, nonce, allow=False)
     else:
-        line = sign_approval_token(priv, target, issued, nonce, allow=allow)
+        framed_bytes = Path(args.request_file).read_bytes()
+        if not framed_bytes.endswith((b"\n", b"\r\n")):
+            p.error("--request-file must include the request frame's LF or CRLF delimiter")
+        body = framed_bytes[:-2] if framed_bytes.endswith(b"\r\n") else framed_bytes[:-1]
+        if b"\n" in body or b"\r" in body:
+            p.error("--request-file must contain exactly one line-framed MCP request")
+        try:
+            body.decode("utf-8")
+            request = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            p.error(f"--request-file is not one UTF-8 JSON request frame: {error}")
+        if not isinstance(request, dict) or request.get("method") != "tools/call":
+            p.error("--request-file must contain the blocked tools/call request")
+
+        shown = (
+            f"Seal approval request\n"
+            f"target: {target}\n"
+            "exact MCP request frame (including delimiter):\n"
+        ).encode("utf-8") + framed_bytes
+        sys.stdout.buffer.write(shown)
+        sys.stdout.buffer.flush()
+        if not args.yes and input("Approve this exact request? [y/N] ").strip().lower() != "y":
+            print("No approval emitted.")
+            return 1
+
+        expiry = args.expiry if args.expiry is not None else issued + 120_000
+        if expiry < issued:
+            p.error("--expiry must be greater than or equal to --issued-at")
+        line = sign_approval_v2_token(
+            priv,
+            target=target,
+            authorized_at=issued,
+            expiry=expiry,
+            nonce=nonce,
+            session=args.session or f"approve-cli/{uuid.uuid4().hex}",
+            framed_bytes=framed_bytes,
+            shown_bytes=shown,
+            renderer_name=RENDERER_NAME,
+            renderer_version=RENDERER_VERSION,
+            renderer_manifest_sha256=RENDERER_MANIFEST_SHA256,
+            approver=args.approver,
+        )
 
     # Append atomically enough for demo (single writer assumption)
     with token_path.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
 
-    print(f"signed {decision} for target={target}")
-    print(f"  nonce={nonce} issuedAt={issued}")
+    print(f"{'signed' if not args.plain else 'recorded'} {decision} for target={target}")
+    print(f"  nonce={nonce} authorizedAt={issued}")
     print(f"  appended to {token_path}")
     print(f"  using pubkey={pub}")
     print("")
     print("TCB (CLI): host + CLI + local key on same machine.")
     print("  Co-resident attacker who reads the key or controls the signer can forge.")
-    print("  This demo uses the signed ed25519-token channel (not the unauthenticated control-file).")
-    print("  `echo >> control_file` remains DEV-ONLY / UNAUTHENTICATED (labeled in DEPLOY.md).")
+    if allow:
+        print("  ApprovalRecord v2 binds the exact framed MCP request and exact text shown above.")
+    elif args.plain:
+        print("  This decline is unauthenticated and DEV-ONLY.")
+    else:
+        print("  Explicit decline uses the legacy signed-decline envelope (v2 has no decline shape).")
     print("")
-    print("Next: re-issue the exact MCP call; host will poll the token, verify, and flow or refuse.")
+    print("Next: re-issue the exact MCP frame; host will poll the token, verify, and flow or refuse.")
     return 0
 
 
