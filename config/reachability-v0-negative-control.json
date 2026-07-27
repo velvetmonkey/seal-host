@@ -1,0 +1,103 @@
+{
+  "seal_reachability_inventory": "seal-reachability-inventory/v0",
+  "deployment": "deploy/container/compose.yaml release service — NEGATIVE CONTROL",
+  "agent": "the MCP agent runtime connected to the seal-host child transport",
+  "evidence_sources": [
+    {
+      "path": "../deploy/container/compose.yaml",
+      "description": "container deployment declaration"
+    },
+    {
+      "path": "payload.example.json",
+      "description": "seal policy payload represented by this deployment inventory"
+    }
+  ],
+  "broker": {
+    "policy_path": "payload.example.json",
+    "route": "the seal-host stdio mediation boundary",
+    "conditional_on": "the agent runtime has no direct handle or credential for the same effect outside seal"
+  },
+  "declared_paths": [
+    {
+      "id": "transport.seal-stdio",
+      "category": "transport",
+      "mechanism": "JSON-RPC tool calls sent through seal-host stdin to its configured child",
+      "route": "THROUGH_SEAL",
+      "reason": "the deployment starts the child behind seal-host's stdio transport"
+    },
+    {
+      "id": "filesystem.container-tmp",
+      "category": "filesystem",
+      "mechanism": "direct writes to the container /tmp tmpfs",
+      "route": "DIRECT",
+      "reason": "the deployment mounts /tmp read-write and seal does not broker ordinary filesystem syscalls",
+      "conditional_on": "the agent runtime executes in this container with access to the declared /tmp mount"
+    },
+    {
+      "id": "negative-control.direct-echo-handle",
+      "category": "tool_handles",
+      "mechanism": "a direct subprocess tool handle invoking /bin/echo",
+      "route": "DIRECT",
+      "reason": "the negative-control runtime configuration exposes this innocuous handle without crossing the seal-host transport"
+    }
+  ],
+  "category_enumeration": [
+    {
+      "category": "tool_handles",
+      "method": "enumerate effect-capable tool names from the seal policy (excluding unconditional deny), then add deployment-declared direct handles",
+      "complete": false,
+      "unknown_id": "tool-handles.child-manifest-unavailable",
+      "unknown_reason": "the policy is not an authoritative manifest of every tool exposed by the child runtime"
+    },
+    {
+      "category": "transport",
+      "method": "read the declared seal-host child transport; no live file-descriptor inspection",
+      "complete": false,
+      "unknown_id": "transport.live-descriptors-uninspected",
+      "unknown_reason": "v0 cannot inspect the live agent process for additional sockets, pipes, or inherited descriptors"
+    },
+    {
+      "category": "subprocess_shell",
+      "method": "look for deployment declarations; no live process or syscall inspection",
+      "complete": false,
+      "unknown_id": "subprocess-shell.runtime-capability-unknown",
+      "unknown_reason": "the deployment files do not establish whether the agent runtime exposes subprocess or shell execution"
+    },
+    {
+      "category": "outbound_network",
+      "method": "hash the compose declaration containing network_mode:none; no live namespace or policy inspection",
+      "complete": false,
+      "unknown_id": "outbound-network.live-policy-unverified",
+      "unknown_reason": "v0 cannot verify that the declared network isolation is applied to the live agent runtime"
+    },
+    {
+      "category": "filesystem",
+      "method": "enumerate declared container mounts; no live mount namespace or open-descriptor inspection",
+      "complete": false,
+      "unknown_id": "filesystem.live-namespace-uninspected",
+      "unknown_reason": "undeclared mounts, inherited descriptors, and runtime-created paths cannot be excluded"
+    },
+    {
+      "category": "scheduled_execution",
+      "method": "look for deployment declarations; no scheduler API or live process inspection",
+      "complete": false,
+      "unknown_id": "scheduler.runtime-state-unknown",
+      "unknown_reason": "v0 cannot determine whether the agent runtime holds timers, cron handles, queues, or delayed-job APIs"
+    },
+    {
+      "category": "in_process_handles",
+      "method": "declaration only; the runtime object graph is not introspectable by seal-host",
+      "complete": false,
+      "unknown_id": "in-process-handles.object-graph-unknown",
+      "unknown_reason": "seal-host cannot enumerate effectful objects already held inside the agent runtime"
+    }
+  ],
+  "limitations": [
+    "prove that the configured inventory equals total agent reachability",
+    "discover undeclared direct tool handles automatically",
+    "inspect live credentials, environment variables, file descriptors, namespaces, or network policy",
+    "distinguish one hidden path from many hidden paths behind an UNKNOWN sentinel",
+    "treat BROKERED as SAFE or as proof that every call will be allowed",
+    "authenticate the signing key owner without an externally supplied expected public key"
+  ]
+}

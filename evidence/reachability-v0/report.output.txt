@@ -1,0 +1,52 @@
+SEAL UNBROKERED REACHABILITY REPORT v0
+Deployment: deploy/container/compose.yaml release service
+Agent: the MCP agent runtime connected to the seal-host child transport
+This agent has 10 enumerated path records.
+TOTAL agent reachability: UNKNOWN — NOT TOTAL REACHABILITY: v0 cannot prove the declaration is complete, and each UNKNOWN sentinel may compress multiple paths.
+Coverage: NOT COMPUTED (the denominator is not proven sound).
+
+BROKERED (2):
+  - seal-tool:db.execute [tool_handles]: db.execute via the seal-host stdio mediation boundary — tool name is present in the configured seal policy and routed through seal
+  - transport.seal-stdio [transport]: JSON-RPC tool calls sent through seal-host stdin to its configured child — the deployment starts the child behind seal-host's stdio transport
+
+UNBROKERED (1):
+  - filesystem.container-tmp [filesystem]: direct writes to the container /tmp tmpfs — the deployment mounts /tmp read-write and seal does not broker ordinary filesystem syscalls
+
+UNKNOWN (7):
+  - filesystem.live-namespace-uninspected [filesystem]: unenumerated remainder of filesystem — undeclared mounts, inherited descriptors, and runtime-created paths cannot be excluded
+  - in-process-handles.object-graph-unknown [in_process_handles]: unenumerated remainder of in_process_handles — seal-host cannot enumerate effectful objects already held inside the agent runtime
+  - outbound-network.live-policy-unverified [outbound_network]: unenumerated remainder of outbound_network — v0 cannot verify that the declared network isolation is applied to the live agent runtime
+  - scheduler.runtime-state-unknown [scheduled_execution]: unenumerated remainder of scheduled_execution — v0 cannot determine whether the agent runtime holds timers, cron handles, queues, or delayed-job APIs
+  - subprocess-shell.runtime-capability-unknown [subprocess_shell]: unenumerated remainder of subprocess_shell — the deployment files do not establish whether the agent runtime exposes subprocess or shell execution
+  - tool-handles.child-manifest-unavailable [tool_handles]: unenumerated remainder of tool_handles — the policy is not an authoritative manifest of every tool exposed by the child runtime
+  - transport.live-descriptors-uninspected [transport]: unenumerated remainder of transport — v0 cannot inspect the live agent process for additional sockets, pipes, or inherited descriptors
+
+CONDITIONAL (2):
+  - filesystem.container-tmp is UNBROKERED CONDITIONAL ON the agent runtime executes in this container with access to the declared /tmp mount; seal cannot verify this condition.
+  - seal-tool:db.execute is BROKERED CONDITIONAL ON the agent runtime has no direct handle or credential for the same effect outside seal; seal cannot verify this condition.
+
+CATEGORY ENUMERATION:
+  - tool_handles: enumerate effect-capable tool names from the seal policy (excluding unconditional deny), then add deployment-declared direct handles (INCOMPLETE; named UNKNOWN emitted)
+  - transport: read the declared seal-host child transport; no live file-descriptor inspection (INCOMPLETE; named UNKNOWN emitted)
+  - subprocess_shell: look for deployment declarations; no live process or syscall inspection (INCOMPLETE; named UNKNOWN emitted)
+  - outbound_network: hash the compose declaration containing network_mode:none; no live namespace or policy inspection (INCOMPLETE; named UNKNOWN emitted)
+  - filesystem: enumerate declared container mounts; no live mount namespace or open-descriptor inspection (INCOMPLETE; named UNKNOWN emitted)
+  - scheduled_execution: look for deployment declarations; no scheduler API or live process inspection (INCOMPLETE; named UNKNOWN emitted)
+  - in_process_handles: declaration only; the runtime object graph is not introspectable by seal-host (INCOMPLETE; named UNKNOWN emitted)
+
+v0 DOES NOT:
+  - prove that the configured inventory equals total agent reachability
+  - discover undeclared direct tool handles automatically
+  - inspect live credentials, environment variables, file descriptors, namespaces, or network policy
+  - distinguish one hidden path from many hidden paths behind an UNKNOWN sentinel
+  - treat BROKERED as SAFE or as proof that every call will be allowed
+  - authenticate the signing key owner without an externally supplied expected public key
+  - UNKNOWN sentinels are one record each but may stand for zero, one, or many actual paths.
+  - v0 trusts deployment declarations and file snapshots; it does not inspect a live process, namespace, credentials, network policy, or in-process object graph.
+
+SIGNATURE:
+  algorithm: Ed25519 over the exact UTF-8 payload bytes
+  key_id: f38969aa289f362edd5682d2bc6d878a4df9756757c4fcf5a20f61903bd64992
+  payload_sha256: f4d27d526b278dcfa35d9ffe1413b9bf5f3df015ade4028b17709ac2fcd98e6c
+  signature: 22d36f1b4959f08c38d0b273ceca529a48fd428ddbb79728debfb4cfdf65bb6894824ad7a26497d87f30bce5c7568368d5aef645854d6dd31019ef801af63c02
+  artifact: evidence/reachability-v0/report.signed.json
