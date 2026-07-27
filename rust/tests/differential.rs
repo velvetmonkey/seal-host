@@ -522,10 +522,12 @@ mod props {
             nonce in "[a-f0-9]{8}",
         ) {
             let mut a3 = A3Filter::new(u64::MAX);
-            let rec = || ApprovalRecord {
-                target: target.clone(),
-                issued_at: Some(issued),
-                nonce: Some(nonce.clone()),
+            let rec = || {
+                ApprovalRecord::legacy(
+                    target.clone(),
+                    Some(issued),
+                    Some(nonce.clone()),
+                )
             };
             let (first, _) = a3.filter(vec![rec()], now1);
             let (second, _) = a3.filter(vec![rec()], now2);
@@ -544,11 +546,11 @@ mod props {
         ) {
             let mut a3 = A3Filter::new(ttl);
             let (ok, _) = a3.filter(
-                vec![ApprovalRecord {
-                    target: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
-                    issued_at: Some(issued),
-                    nonce: None,
-                }],
+                vec![ApprovalRecord::legacy(
+                    "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
+                    Some(issued),
+                    None,
+                )],
                 now,
             );
             let expired = now.saturating_sub(issued) > ttl;

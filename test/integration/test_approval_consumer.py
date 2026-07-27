@@ -59,7 +59,11 @@ def main() -> int:
     # Closes the 0011268d gap: Step A's unit test self-signs in Rust; here the
     # REAL Python signer produces the bytes and the REAL provider consumes them.
     sys.path.insert(0, str(ROOT / "test" / "tools"))
-    from sign_approval import generate_approval_keypair, sign_approval_token  # noqa: E402
+    from sign_approval import (  # noqa: E402
+        generate_approval_keypair,
+        sign_approval_token,
+        sign_approval_v2_token,
+    )
 
     sk_hex, pk_hex = generate_approval_keypair()
     target = "00000000000000000000000000000000000000000000000000000000000000cd"
@@ -69,11 +73,34 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="consumer-stepA2-") as td:
         ndjson = Path(td) / "python-signed.ndjson"
         ndjson.write_text(allow_line + "\n" + decline_line + "\n", encoding="utf-8")
+        framed_bytes = b'{"integer":1234567890123456789}\n'
+        shown_bytes = b"1234567890123456768"
+        v2_target = "00000000000000000000000000000000000000000000000000000000000000d2"
+        v2_session = "python-v2-session"
+        v2_line = sign_approval_v2_token(
+            sk_hex,
+            target=v2_target,
+            authorized_at=2_000,
+            expiry=122_000,
+            nonce="py-v2-nonce",
+            session=v2_session,
+            framed_bytes=framed_bytes,
+            shown_bytes=shown_bytes,
+            renderer_name="python-test-renderer",
+            renderer_version="2.0.0",
+            renderer_manifest_sha256="ab" * 32,
+            approver="python-test-human",
+        )
+        v2_ndjson = Path(td) / "python-signed-v2.ndjson"
+        v2_ndjson.write_text(v2_line + "\n", encoding="utf-8")
         env2 = env.copy()
         env2["SEAL_PY_SIGNED_NDJSON"] = str(ndjson)
         env2["SEAL_PY_SIGNED_PUBKEY"] = pk_hex
         env2["SEAL_PY_SIGNED_TARGET"] = target
         env2["SEAL_PY_SIGNED_DECLINE_NONCE"] = decline_nonce
+        env2["SEAL_PY_SIGNED_V2_NDJSON"] = str(v2_ndjson)
+        env2["SEAL_PY_SIGNED_V2_TARGET"] = v2_target
+        env2["SEAL_PY_SIGNED_V2_SESSION"] = v2_session
         res2 = subprocess.run(
             ["cargo", "test", "--test", "python_signed_provider", "--", "--nocapture"],
             cwd=ROOT / "rust",
@@ -90,7 +117,10 @@ def main() -> int:
         if "SKIP:" in res2.stdout or "SKIP:" in res2.stderr:
             print("Step A' FAILED: provider test skipped (env vars not seen)")
             return 1
-    print("Step A' OK (real provider consumed Python-signed allow + decline: 1 record, 1 decline, 0 warnings)")
+    print(
+        "Step A' OK (real provider consumed Python-signed legacy allow + decline "
+        "and ApprovalRecord v2)"
+    )
 
     print("\n=== Step B: host short-circuit with signed decline ===")
     with tempfile.TemporaryDirectory(prefix="consumer-stepb-") as td:

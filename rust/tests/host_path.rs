@@ -19,8 +19,13 @@
 //! The protocol is strictly lockstep (each input line produces exactly one
 //! output line), so a forwarded line can never be mistaken for a block.
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use seal_host_rs::lean::LeanHost;
+use seal_host_rs::providers::{
+    approval_v2_signature_preimage, canonical_approval_v2_payload, ApprovalRecordV2Payload,
+    ApprovalRenderer,
+};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
@@ -65,6 +70,47 @@ fn signed_token(target: &str, issued_at: u64, nonce: &str, decision: Option<&str
         serde_json::to_string(&payload).unwrap(),
         sig
     )
+}
+
+fn signed_v2_token(target: &str, framed_bytes: &[u8], shown_bytes: &[u8], nonce: &str) -> String {
+    let sk = approval_signing_key();
+    let authorized_at = wall_now_ms();
+    let payload = ApprovalRecordV2Payload {
+        approval_record_version: 2,
+        target: target.to_string(),
+        authorized_at,
+        expiry: authorized_at + 120_000,
+        nonce: nonce.to_string(),
+        session: "host-path-approval-session".to_string(),
+        subject_sha256: hex::encode(sha2::Sha256::digest(framed_bytes)),
+        subject_length: framed_bytes.len() as u64,
+        subject_scope: "mcp-jsonrpc-request-frame-including-delimiter".to_string(),
+        subject_encoding: "bytes".to_string(),
+        shown_sha256: hex::encode(sha2::Sha256::digest(shown_bytes)),
+        shown_length: shown_bytes.len() as u64,
+        shown_media_type: "text/plain".to_string(),
+        shown_character_encoding: "utf-8".to_string(),
+        renderer: ApprovalRenderer {
+            name: "host-path-renderer".to_string(),
+            version: "2.0.0".to_string(),
+            manifest_sha256: hex::encode(sha2::Sha256::digest(b"host-path renderer manifest")),
+        },
+        approver: "host-path-human".to_string(),
+        authorization_signer_key_id: hex::encode(sha2::Sha256::digest(
+            sk.verifying_key().to_bytes(),
+        )),
+        authorization_signature_algorithm: "Ed25519".to_string(),
+        authorization_domain: "seal.approval-record/v2".to_string(),
+    };
+    let signature = sk.sign(&approval_v2_signature_preimage(&payload).unwrap());
+    serde_json::json!({
+        "payload": String::from_utf8(canonical_approval_v2_payload(&payload).unwrap()).unwrap(),
+        "signature_algorithm": "Ed25519",
+        "signature_encoding": "base64url-nopad",
+        "signer_key_id": payload.authorization_signer_key_id,
+        "signature": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+    })
+    .to_string()
 }
 
 fn wall_now_ms() -> u64 {
@@ -1005,6 +1051,75 @@ fn ed25519_signed_approval_forwards_end_to_end() {
             && refused_stderr.contains("approval token file")
             && refused_stderr.contains("required 0600"),
         "unexpected production refusal: {refused_stderr}"
+    );
+}
+
+#[test]
+fn ed25519_approval_v2_forwards_the_exact_framed_subject() {
+    let mut o = Oracle::spawn_signed("ed25519-v2-subject");
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+    o.send(init);
+    assert_eq!(o.expect_line(), init);
+    assert_eq!(o.expect_raw(), format!("{init}\n").as_bytes());
+
+    let call = guarded_call(2, "drop table approval_v2_exact_bytes");
+    o.send(&call);
+    let blocked = o.expect_line();
+    assert!(is_block(&blocked));
+    let _blocked_raw = o.expect_raw();
+    let target = block_target(&blocked).expect("block names its approval target");
+
+    let framed_bytes = format!("{call}\n").into_bytes();
+    let shown_bytes = b"Approve: drop table approval_v2_exact_bytes";
+    let wrong_target = if target.starts_with('0') {
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    } else {
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    };
+    let wrong_target_token = signed_v2_token(
+        wrong_target,
+        &framed_bytes,
+        shown_bytes,
+        "n-v2-wrong-target",
+    );
+    o.append_token_line(&wrong_target_token);
+    o.send(&call);
+    let wrong_target_response = o.expect_line();
+    assert!(
+        is_block(&wrong_target_response),
+        "exact subject with a different signed target must fail closed"
+    );
+    let _wrong_target_raw = o.expect_raw();
+
+    let wrong_subject_token = signed_v2_token(
+        &target,
+        format!("{call} \n").as_bytes(),
+        shown_bytes,
+        "n-v2-wrong",
+    );
+    o.append_token_line(&wrong_subject_token);
+    o.send(&call);
+    let wrong_subject_response = o.expect_line();
+    assert!(
+        is_block(&wrong_subject_response),
+        "valid signature over a different framed subject must fail closed"
+    );
+    let _wrong_subject_raw = o.expect_raw();
+
+    let token = signed_v2_token(&target, &framed_bytes, shown_bytes, "n-v2-host-path");
+    o.append_token_line(&token);
+    o.send(&call);
+    assert_eq!(
+        o.expect_raw(),
+        framed_bytes,
+        "v2 evidence must not rewrite any forwarded byte"
+    );
+    assert_eq!(o.expect_line(), call);
+
+    o.send(&call);
+    assert!(
+        is_block(&o.expect_line()),
+        "v2 approval remains one-shot after exact-byte forward"
     );
 }
 
