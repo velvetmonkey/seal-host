@@ -443,6 +443,27 @@ pub struct ApprovalPoll {
     pub warnings: Vec<ApprovalDropWarning>,
 }
 
+/// The single admission boundary for syntactically valid v1 approvals.
+///
+/// Keeping both ingest providers on this boundary lets the mutation harness
+/// restore the old admission behavior in one place. Production always takes
+/// this refusal body; the ablation is applied only to a disposable source
+/// copy by `scripts/test_v1_refusal_ablation.sh`.
+fn refuse_v1_approval(
+    poll: &mut ApprovalPoll,
+    drop_counter: &mut u64,
+    source: &'static str,
+    record: ApprovalRecord,
+) {
+    let redaction_material = record_redaction_material(&record);
+    poll.warnings.push(ApprovalDropWarning::new(
+        drop_counter,
+        source,
+        V1_APPROVAL_REFUSAL_REASON,
+        redaction_material,
+    ));
+}
+
 /// Warning reason for a record whose `decision` value is outside the
 /// allowlist {absent, "allow", "deny"}. Names the value (truncated) so the
 /// audit log shows WHAT was refused, never silently reinterpreted.
@@ -630,17 +651,12 @@ impl ApprovalProvider for ControlFileProvider {
             }
             match serde_json::from_str::<LegacyApprovalRecord>(line) {
                 Ok(record) => {
-                    let red = record_redaction_material(&ApprovalRecord::legacy(
-                        record.target,
-                        record.issued_at,
-                        record.nonce,
-                    ));
-                    poll.warnings.push(ApprovalDropWarning::new(
+                    refuse_v1_approval(
+                        &mut poll,
                         &mut self.drop_counter,
                         source,
-                        V1_APPROVAL_REFUSAL_REASON,
-                        red,
-                    ));
+                        ApprovalRecord::legacy(record.target, record.issued_at, record.nonce),
+                    );
                 }
                 Err(_) => poll.warnings.push(ApprovalDropWarning::new(
                     &mut self.drop_counter,
@@ -1041,17 +1057,12 @@ impl ApprovalProvider for Ed25519TokenProvider {
             // decision spelling is unrecognised.
             match sp.decision.as_deref() {
                 None | Some("allow") => {
-                    let red = record_redaction_material(&ApprovalRecord::legacy(
-                        sp.target,
-                        sp.issued_at,
-                        sp.nonce,
-                    ));
-                    poll.warnings.push(ApprovalDropWarning::new(
+                    refuse_v1_approval(
+                        &mut poll,
                         &mut self.drop_counter,
                         source,
-                        V1_APPROVAL_REFUSAL_REASON,
-                        red,
-                    ));
+                        ApprovalRecord::legacy(sp.target, sp.issued_at, sp.nonce),
+                    );
                 }
                 Some("deny") => poll.declines.push(DeclineRecord {
                     target: sp.target,
