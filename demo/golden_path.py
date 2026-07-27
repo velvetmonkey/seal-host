@@ -653,8 +653,9 @@ PROVEN REFERENCE SEMANTICS
 
 SIGNED / VERIFIED KEYS
   Policy: exact payload text bytes, Ed25519 policy key {config_pub}
-  Approval provider: exact {{target,issuedAt,nonce}} payload bytes,
-  Ed25519 approval key {approval_pub}; expiry derives from signed-policy TTL.
+  Approval provider: ApprovalRecord v2 binds exact framed MCP request bytes
+  and exact shown-text bytes plus target, times, nonce, session, renderer,
+  approver, and signer identity; Ed25519 approval key {approval_pub}.
 
 RECEIPT ESTABLISHES
   {receipt_claim} Native/FFI hashes

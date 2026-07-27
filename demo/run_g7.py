@@ -21,18 +21,24 @@ fixtures for Part B, no API keys. Output: /tmp/seal-host-g7/G7-REPORT.md.
 """
 
 import json
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test" / "tools"))
 sys.path.insert(0, str(ROOT / "test" / "integration"))
+from sign_approval import (  # noqa: E402
+    generate_approval_keypair,
+    sign_approval_v2_token,
+)
 from sign_config import generate_keypair, public_key_hex_from_private, sign_payload  # noqa: E402
-from test_host import stable_hash  # noqa: E402
 
 WORK = Path("/tmp/seal-host-g7")
 CONFIG_SK = os.environ.get("SEAL_CONFIG_SIGNING_KEY_HEX")
@@ -46,6 +52,15 @@ CANARY = Path(os.environ.get("CANARY_ROOT", Path(__file__).resolve().parents[2] 
 
 REPORT: list[str] = []
 AUDIT: list[str] = []
+APPROVAL_RENDERER_NAME = "seal-demo-raw-mcp-frame"
+APPROVAL_RENDERER_VERSION = "1.0.0"
+APPROVAL_RENDERER_MANIFEST = (
+    b'{"name":"seal-demo-raw-mcp-frame","version":"1.0.0",'
+    b'"format":"heading, target line, then exact UTF-8 MCP request frame including delimiter"}'
+)
+APPROVAL_RENDERER_MANIFEST_SHA256 = hashlib.sha256(
+    APPROVAL_RENDERER_MANIFEST
+).hexdigest()
 
 
 def say(tag: str, msg: str) -> None:
@@ -67,14 +82,13 @@ def config_payload(tmp: Path) -> dict:
                 {"name": "db.execute", "mode": "guarded",
                  "match": {"type": "contains_any_ci", "arg": "sql",
                            "needles": ["drop", "delete", "truncate"]},
-                 "target": [{"literal": "db"}, {"arg": "database"},
-                            {"literal": "write"}, {"arg": "sql"}]},
+                 "target": [{"full_arguments": True}]},
                 {"name": "session.revoke", "mode": "guarded",
-                 "match": {"type": "always"}, "target": [{"literal": "revoke"}]},
+                 "match": {"type": "always"}, "target": [{"full_arguments": True}]},
                 {"name": "payments.send", "mode": "guarded",
-                 "match": {"type": "always"}, "target": [{"literal": "pay"}]},
+                 "match": {"type": "always"}, "target": [{"full_arguments": True}]},
                 {"name": "store.update", "mode": "guarded",
-                 "match": {"type": "always"}, "target": [{"literal": "store"}]},
+                 "match": {"type": "always"}, "target": [{"full_arguments": True}]},
                 {"name": "shell.run", "mode": "deny",
                  "match": {"type": "always"}, "target": []},
             ],
@@ -93,27 +107,84 @@ def config_payload(tmp: Path) -> dict:
 
 
 class Host:
-    def __init__(self, tmp: Path, channel_args: tuple[str, ...] = ()):
+    def __init__(self, tmp: Path):
         config = tmp / "trusted.json"
         config.write_text(sign_payload(config_payload(tmp), CONFIG_SK), encoding="utf-8")
         (tmp / "approvals.ndjson").touch()
+        self.tokens = tmp / "tokens.ndjson"
+        self.tokens.touch()
+        self.approval_sk, approval_pub = generate_approval_keypair()
+        self.approval_session = f"g7/{tmp.name}/{uuid.uuid4().hex}"
         self.proc = subprocess.Popen(
-            [str(BIN), "--insecure-development-mode", "--config", str(config), "--pubkey", PUBKEY, *channel_args,
-             "--", "python3", str(MOCK)],
+            [
+                str(BIN), "--insecure-development-mode", "--config", str(config),
+                "--pubkey", PUBKEY, "--channel", "ed25519",
+                "--token-file", str(self.tokens),
+                "--approval-pubkey", approval_pub,
+                "--", "python3", str(MOCK),
+            ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
         )
         self.mid = 0
+        self.last_frame: bytes | None = None
+        self.last_response: dict | None = None
+
+    def _send(self, frame: bytes) -> dict:
+        assert self.proc.stdin and self.proc.stdout
+        self.proc.stdin.write(frame.decode("utf-8"))
+        self.proc.stdin.flush()
+        response = json.loads(self.proc.stdout.readline())
+        self.last_frame = frame
+        self.last_response = response
+        return response
 
     def call(self, name: str, arguments: dict) -> dict:
         self.mid += 1
         msg = {"jsonrpc": "2.0", "id": self.mid, "method": "tools/call",
                "params": {"name": name, "arguments": arguments}}
-        self.proc.stdin.write(json.dumps(msg, separators=(",", ":")) + "\n")
-        self.proc.stdin.flush()
-        return json.loads(self.proc.stdout.readline())
+        frame = (json.dumps(msg, separators=(",", ":")) + "\n").encode("utf-8")
+        return self._send(frame)
+
+    def approve_last_block(self, label: str) -> None:
+        assert self.last_frame is not None and self.last_response is not None
+        found = re.search(
+            r"approval required: ([0-9a-f]{64})",
+            json.dumps(self.last_response, separators=(",", ":")),
+        )
+        assert found, f"{label}: response did not contain an approval target"
+        target = found.group(1)
+        shown = (
+            f"G7 approval {label}\n"
+            f"target: {target}\n"
+            "exact MCP request frame (including delimiter):\n"
+        ).encode("utf-8") + self.last_frame
+        sys.stdout.buffer.write(shown)
+        sys.stdout.buffer.flush()
+        authorized_at = int(time.time() * 1000)
+        line = sign_approval_v2_token(
+            self.approval_sk,
+            target=target,
+            authorized_at=authorized_at,
+            expiry=authorized_at + 120_000,
+            nonce=f"g7-{label}-{uuid.uuid4().hex}",
+            session=self.approval_session,
+            framed_bytes=self.last_frame,
+            shown_bytes=shown,
+            renderer_name=APPROVAL_RENDERER_NAME,
+            renderer_version=APPROVAL_RENDERER_VERSION,
+            renderer_manifest_sha256=APPROVAL_RENDERER_MANIFEST_SHA256,
+            approver="G7 scripted demo operator",
+        )
+        with self.tokens.open("a", encoding="utf-8") as token_file:
+            token_file.write(line + "\n")
+
+    def retry_last(self) -> dict:
+        assert self.last_frame is not None
+        return self._send(self.last_frame)
 
     def close(self) -> str:
+        assert self.proc.stdin and self.proc.stderr
         self.proc.stdin.close()
         self.proc.wait(timeout=10)
         return self.proc.stderr.read()
@@ -127,41 +198,41 @@ def part_a() -> None:
     say("DEMO", "── Part A: six blocks under one fail-closed host ──")
     tmp = WORK / "part-a"
     tmp.mkdir(parents=True)
-    approvals = tmp / "approvals.ndjson"
     votes = tmp / "votes.ndjson"
     host = Host(tmp)
     destructive = {"database": "prod", "sql": "drop table users"}
-    db_target = stable_hash(["db.execute", "db", "prod", "write", "drop table users"])
 
     # S — poisoned-source destructive call, no human approval: blocked.
     r = host.call("db.execute", destructive)
     assert blocked(r), "S failed"
     say("S", f"poisoned destructive call BLOCKED: {r['result']['content'][0]['text']!r}")
 
-    # Human approval through the control-file back-channel: legit retry runs.
-    approvals.write_text(json.dumps({"target": db_target}) + "\n", encoding="utf-8")
-    r = host.call("db.execute", destructive)
+    # ApprovalRecord v2 binds the exact framed request, including its delimiter.
+    host.approve_last_block("S-first-db")
+    r = host.retry_last()
     assert not blocked(r), "approved retry failed"
     say("S", "human-approved retry ALLOWED (one-shot ticket consumed)")
 
     # B — second executed call fits cap 2; the third is over budget even
     # with a fresh valid approval.
-    with approvals.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": db_target}) + "\n")
     r = host.call("db.execute", destructive)
+    assert blocked(r), "second call did not request a fresh approval"
+    host.approve_last_block("B-second-db")
+    r = host.retry_last()
     assert not blocked(r), "second in-budget call failed"
-    with approvals.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": db_target}) + "\n")
     r = host.call("db.execute", destructive)
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host.approve_last_block("B-over-budget")
+    r = host.retry_last()
     assert blocked(r) and "over budget" in r["result"]["content"][0]["text"], "B failed"
     say("B", f"over-budget call DENIED: {r['result']['content'][0]['text']!r}")
 
     # C — multi-party action: approved but unratified -> denied; 1-of-3 is
     # not a quorum; 2-of-3 ratifies.
-    pay_target = stable_hash(["payments.send", "pay"])
-    with approvals.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": pay_target}) + "\n")
     r = host.call("payments.send", {"amount": 9000})
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host.approve_last_block("C-payment")
+    r = host.retry_last()
     assert blocked(r) and "quorum missing" in r["result"]["content"][0]["text"], "C failed"
     say("C", f"single-signer high-stakes action DENIED: {r['result']['content'][0]['text']!r}")
     votes.write_text(json.dumps({"acceptor": 1, "value": "payments.send"}) + "\n",
@@ -176,23 +247,26 @@ def part_a() -> None:
     say("C", "2-of-3 ratified quorum ALLOWED (validB certificate checked)")
 
     # V — divergent write refused; convergent op admitted.
-    store_target = stable_hash(["store.update", "store"])
-    with approvals.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": store_target}) + "\n")
     r = host.call("store.update", {"op": "assign", "key": "k"})
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host.approve_last_block("V-store")
+    r = host.retry_last()
     assert blocked(r) and "proven-convergent" in r["result"]["content"][0]["text"], "V failed"
     say("V", f"divergent LWW write REFUSED: {r['result']['content'][0]['text']!r}")
     r = host.call("store.update", {"op": "orset.add", "key": "k"})
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host.approve_last_block("V-convergent-store")
+    r = host.retry_last()
     assert not blocked(r), "V convergent failed"
     say("V", "convergent op (orset.add) ADMITTED")
 
     # T — out-of-order replay: revoke executes, then a previously-legitimate
     # destructive call (fresh approval, in budget on a NEW session) replays
     # AFTER revoke and is blocked by the trace monitor.
-    revoke_target = stable_hash(["session.revoke", "revoke"])
-    with approvals.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": revoke_target}) + "\n")
     r = host.call("session.revoke", {})
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host.approve_last_block("T-revoke")
+    r = host.retry_last()
     assert not blocked(r), "revoke failed"
     say("T", "session.revoke executed (trigger recorded in trace)")
     stderr = host.close()
@@ -202,14 +276,15 @@ def part_a() -> None:
     tmp2 = WORK / "part-a-replay"
     tmp2.mkdir(parents=True)
     host2 = Host(tmp2)
-    approvals2 = tmp2 / "approvals.ndjson"
-    with approvals2.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": revoke_target}) + "\n")
     r = host2.call("session.revoke", {})
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host2.approve_last_block("T-replay-revoke")
+    r = host2.retry_last()
     assert not blocked(r)
-    with approvals2.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"target": db_target}) + "\n")
     r = host2.call("db.execute", destructive)
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    host2.approve_last_block("T-replay-db")
+    r = host2.retry_last()
     assert blocked(r) and "temporal policy violated" in r["result"]["content"][0]["text"], "T failed"
     say("T", f"approved destructive call replayed AFTER revoke BLOCKED: "
              f"{r['result']['content'][0]['text']!r}")
@@ -218,39 +293,28 @@ def part_a() -> None:
 
     # HU — Ed25519 signed-token back-channel: a human-signed approval unlocks
     # a legit retry through a swappable channel (and A3 rejects its replay).
-    try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives import serialization
-    except ImportError:
-        say("HU", "SKIPPED (python cryptography unavailable)")
-        return
-    sk = Ed25519PrivateKey.generate()
-    pk_hex = sk.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
     tmp3 = WORK / "part-a-ed25519"
     tmp3.mkdir(parents=True)
-    tokens = tmp3 / "tokens.ndjson"
-    tokens.touch()
-    host3 = Host(tmp3, ("--channel", "ed25519", "--token-file", str(tokens),
-                        "--approval-pubkey", pk_hex))
+    host3 = Host(tmp3)
     r = host3.call("db.execute", destructive)
     assert blocked(r)
     say("HU", "destructive call blocked; asking the human (Ed25519 channel)...")
-    payload = json.dumps({"target": db_target, "issuedAt": int(time.time() * 1000),
-                          "nonce": "g7-demo-nonce-1"}, separators=(",", ":"))
-    sig = sk.sign(payload.encode()).hex()
-    tokens.write_text(json.dumps({"payload": payload, "signature": sig},
-                                 separators=(",", ":")) + "\n", encoding="utf-8")
-    r = host3.call("db.execute", destructive)
+    host3.approve_last_block("HU-db")
+    token_line = host3.tokens.read_text(encoding="utf-8")
+    r = host3.retry_last()
     assert not blocked(r), "HU retry failed"
-    say("HU", "human-signed approval token verified; legit retry ALLOWED")
-    with tokens.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"payload": payload, "signature": sig},
-                           separators=(",", ":")) + "\n")
-    r = host3.call("db.execute", destructive)
+    say("HU", "human-signed ApprovalRecord v2 verified; legit retry ALLOWED")
+    # Reissue the same exact frame without a fresh token to establish the
+    # matching v2 challenge, then replay the original token against it.
+    r = host3.retry_last()
+    assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
+    with host3.tokens.open("a", encoding="utf-8") as f:
+        f.write(token_line)
+    r = host3.retry_last()
     assert blocked(r), "HU replay failed"
-    say("HU", "replayed token REJECTED by A3 (nonce already seen)")
     stderr = host3.close()
+    assert "replayed_nonce" in stderr, "HU replay did not report replayed_nonce"
+    say("HU", "replayed token REJECTED by A3 (replayed_nonce)")
     AUDIT.extend(l for l in stderr.splitlines() if l.startswith("{"))
 
 

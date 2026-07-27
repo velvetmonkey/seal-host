@@ -57,3 +57,44 @@ fn ed25519_provider_accepts_python_signed_ndjson() {
          1 record, 1 decline, 0 warnings (target {target})"
     );
 }
+
+#[test]
+fn ed25519_provider_accepts_python_signed_approval_v2() {
+    let (path, vk_hex, target, session) = match (
+        std::env::var("SEAL_PY_SIGNED_V2_NDJSON"),
+        std::env::var("SEAL_PY_SIGNED_PUBKEY"),
+        std::env::var("SEAL_PY_SIGNED_V2_TARGET"),
+        std::env::var("SEAL_PY_SIGNED_V2_SESSION"),
+    ) {
+        (Ok(p), Ok(k), Ok(t), Ok(s)) => (p, k, t, s),
+        _ => {
+            eprintln!(
+                "SKIP: SEAL_PY_SIGNED_V2_* env not set — run via \
+                 test/integration/test_approval_consumer.py (Step A')"
+            );
+            return;
+        }
+    };
+
+    let mut provider = Ed25519TokenProvider::new(&path, &vk_hex)
+        .expect("provider must construct from the Python-signed v2 inputs");
+    let poll = provider.poll();
+    assert!(
+        poll.warnings.is_empty(),
+        "Python-signed v2 token must produce zero warnings: {:?}",
+        poll.warnings
+    );
+    assert_eq!(poll.records.len(), 1);
+    let record = poll.records[0]
+        .v2()
+        .expect("Python v2 token must retain exact-byte evidence");
+    assert_eq!(record.approval_record_version, 2);
+    assert_eq!(record.target, target);
+    assert_eq!(record.session, session);
+    assert_eq!(record.authorization_domain, "seal.approval-record/v2");
+    assert_eq!(record.authorization_signature_algorithm, "Ed25519");
+    println!(
+        "Python-signed ApprovalRecord v2 accepted: subject={} shown={} token_bytes={}",
+        record.subject_sha256, record.shown_sha256, record.authorization_token.decoded_length
+    );
+}

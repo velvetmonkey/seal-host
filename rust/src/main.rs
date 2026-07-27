@@ -1094,6 +1094,11 @@ fn run() -> i32 {
         }
     };
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
+    let mut approval_context_drop_counter: u64 = 0;
+    // ApprovalRecord v2 is admitted only while an exact-frame challenge for
+    // its target is outstanding. One slot is enough for this lockstep stdio
+    // protocol; a later block replaces it and a forward clears it.
+    let mut pending_approval_challenge: Option<(String, usize, String)> = None;
     let interactive = args.channel == "interactive";
 
     let mut child = match Command::new(&args.cmd[0])
@@ -1448,7 +1453,25 @@ fn run() -> i32 {
 
         let poll = provider.poll();
         let mut warnings = poll.warnings;
-        let (records, a3_warnings) = a3.filter(poll.records, now);
+        let framed_sha256 = sha256_hex(&wire);
+        let expected_approval_target = pending_approval_challenge
+            .as_ref()
+            .filter(|(digest, length, _)| digest == &framed_sha256 && *length == wire.len())
+            .map(|(_, _, target)| target.as_str());
+        let (context_bound_records, context_warnings) = providers::filter_approval_context(
+            poll.records,
+            &wire,
+            expected_approval_target,
+            &mut approval_context_drop_counter,
+        );
+        if context_bound_records
+            .iter()
+            .any(|record| record.v2().is_some())
+        {
+            pending_approval_challenge = None;
+        }
+        warnings.extend(context_warnings);
+        let (records, a3_warnings) = a3.filter(context_bound_records, now);
         if !admit_pending_approvals(&mut pending_approvals, &records, now, ttl_ms) {
             warnings.extend(a3_warnings);
             emit_approval_drop_warnings(&warnings);
@@ -1473,11 +1496,11 @@ fn run() -> i32 {
         let envelope = match envelope {
             Some(env) => {
                 let (nonce, issued_at) = env.nonce_and_issued_at();
-                let rec = providers::ApprovalRecord {
-                    target: sha256_hex(line.as_bytes()),
-                    issued_at: Some(issued_at),
-                    nonce: Some(nonce.to_owned()),
-                };
+                let rec = providers::ApprovalRecord::legacy(
+                    sha256_hex(line.as_bytes()),
+                    Some(issued_at),
+                    Some(nonce.to_owned()),
+                );
                 let (ok, env_warnings) = a3_env.filter(vec![rec], now);
                 emit_approval_drop_warnings(&env_warnings);
                 if ok.is_empty() {
@@ -1535,6 +1558,7 @@ fn run() -> i32 {
         }
         match route_of_step_output(Ok(step_output.clone())) {
             Route::Forward { audit } => {
+                pending_approval_challenge = None;
                 if let Some(a) = audit {
                     if emit_audit(&mut receipts, &a).is_err() {
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
@@ -1617,6 +1641,12 @@ fn run() -> i32 {
                     }
                     continue;
                 }
+
+                pending_approval_challenge = response
+                    .split("approval required: ")
+                    .nth(1)
+                    .and_then(extract_target_hex)
+                    .map(|target| (framed_sha256.clone(), wire.len(), target));
 
                 // Explicit signed decline short-circuit (first-class deny):
                 // if a decline for the target (from this poll) is present on
@@ -1732,6 +1762,7 @@ fn run() -> i32 {
                             }
                             match route_of_step_output(Ok(retry_output.clone())) {
                                 Route::Forward { audit } => {
+                                    pending_approval_challenge = None;
                                     if let Some(a) = audit {
                                         if emit_audit(&mut receipts, &a).is_err() {
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
@@ -1802,6 +1833,11 @@ fn run() -> i32 {
                                         }
                                         continue;
                                     }
+                                    pending_approval_challenge = r2
+                                        .split("approval required: ")
+                                        .nth(1)
+                                        .and_then(extract_target_hex)
+                                        .map(|target| (framed_sha256.clone(), wire.len(), target));
                                     response = r2;
                                 }
                                 Route::SeamFailure { reason } => {

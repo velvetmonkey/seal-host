@@ -19,8 +19,13 @@
 //! The protocol is strictly lockstep (each input line produces exactly one
 //! output line), so a forwarded line can never be mistaken for a block.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::lean::LeanHost;
+use seal_host_rs::providers::{
+    approval_v2_signature_preimage, canonical_approval_v2_payload, ApprovalRecordV2Payload,
+    ApprovalRenderer,
+};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
@@ -65,6 +70,47 @@ fn signed_token(target: &str, issued_at: u64, nonce: &str, decision: Option<&str
         serde_json::to_string(&payload).unwrap(),
         sig
     )
+}
+
+fn signed_v2_token(target: &str, framed_bytes: &[u8], shown_bytes: &[u8], nonce: &str) -> String {
+    let sk = approval_signing_key();
+    let authorized_at = wall_now_ms();
+    let payload = ApprovalRecordV2Payload {
+        approval_record_version: 2,
+        target: target.to_string(),
+        authorized_at,
+        expiry: authorized_at + 120_000,
+        nonce: nonce.to_string(),
+        session: "host-path-approval-session".to_string(),
+        subject_sha256: hex::encode(sha2::Sha256::digest(framed_bytes)),
+        subject_length: framed_bytes.len() as u64,
+        subject_scope: "mcp-jsonrpc-request-frame-including-delimiter".to_string(),
+        subject_encoding: "bytes".to_string(),
+        shown_sha256: hex::encode(sha2::Sha256::digest(shown_bytes)),
+        shown_length: shown_bytes.len() as u64,
+        shown_media_type: "text/plain".to_string(),
+        shown_character_encoding: "utf-8".to_string(),
+        renderer: ApprovalRenderer {
+            name: "host-path-renderer".to_string(),
+            version: "2.0.0".to_string(),
+            manifest_sha256: hex::encode(sha2::Sha256::digest(b"host-path renderer manifest")),
+        },
+        approver: "host-path-human".to_string(),
+        authorization_signer_key_id: hex::encode(sha2::Sha256::digest(
+            sk.verifying_key().to_bytes(),
+        )),
+        authorization_signature_algorithm: "Ed25519".to_string(),
+        authorization_domain: "seal.approval-record/v2".to_string(),
+    };
+    let signature = sk.sign(&approval_v2_signature_preimage(&payload).unwrap());
+    serde_json::json!({
+        "payload": String::from_utf8(canonical_approval_v2_payload(&payload).unwrap()).unwrap(),
+        "signature_algorithm": "Ed25519",
+        "signature_encoding": "base64url-nopad",
+        "signer_key_id": payload.authorization_signer_key_id,
+        "signature": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+    })
+    .to_string()
 }
 
 fn wall_now_ms() -> u64 {
@@ -315,6 +361,11 @@ for line in sys.stdin:
         writeln!(f, "{line}").unwrap();
     }
 
+    fn approve_v2(&mut self, target: &str, framed_bytes: &[u8], nonce: &str) {
+        let token = signed_v2_token(target, framed_bytes, b"host-path test approval", nonce);
+        self.append_token_line(&token);
+    }
+
     fn send_bytes(&mut self, bytes: &[u8]) {
         self.stdin.write_all(bytes).unwrap();
         self.stdin.flush().unwrap();
@@ -367,15 +418,6 @@ for line in sys.stdin:
             Ok(bytes) => bytes,
             Err(e) => panic!("host produced no raw output frame in time: {e}"),
         }
-    }
-
-    fn approve(&mut self, target: &str) {
-        use std::io::Write as _;
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .open(self.dir.join("approvals.ndjson"))
-            .unwrap();
-        writeln!(f, "{{\"target\": \"{target}\"}}").unwrap();
     }
 
     fn append_approval_line(&mut self, line: &str) {
@@ -623,7 +665,7 @@ fn guarded_non_full_arguments_target_is_rejected_on_startup() {
 
 #[test]
 fn mediation_obfuscation_and_one_shot_approval() {
-    let mut o = Oracle::spawn("main");
+    let mut o = Oracle::spawn_signed("main");
 
     // Passthrough lines echo VERBATIM (the wire bytes, not a reconstruction).
     let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
@@ -708,10 +750,11 @@ fn mediation_obfuscation_and_one_shot_approval() {
         "non-tools/call method is passthrough"
     );
 
-    // Approve the canonical target, then fire a DISGUISE first: the approval
-    // is in hand, bound to the canonical bytes — the disguise must still
-    // block (and the ingested approval survives the deny; Registry.lean).
-    o.approve(&target);
+    // Present an exact-subject v2 approval for the canonical call, then fire a
+    // DISGUISE first: the subject mismatch must drop the token and block.
+    let approved = guarded_call(31, "drop table accounts");
+    let approved_frame = format!("{approved}\n");
+    o.approve_v2(&target, approved_frame.as_bytes(), "n-main-wrong-subject");
     let disguised_again = guarded_call(30, "DROP TABLE ACCOUNTS");
     o.send(&disguised_again);
     let resp = o.expect_line();
@@ -720,8 +763,14 @@ fn mediation_obfuscation_and_one_shot_approval() {
         "approval for canonical must not unlock a disguise: {resp}"
     );
 
-    // The canonical call is now approved: it must FORWARD (echo verbatim).
-    let approved = guarded_call(31, "drop table accounts");
+    // Re-establish the canonical challenge, issue a fresh exact-subject v2
+    // token, and prove that the canonical call forwards.
+    o.send(&approved);
+    assert!(
+        is_block(&o.expect_line()),
+        "the mismatched v2 token must not survive for the canonical call"
+    );
+    o.approve_v2(&target, approved_frame.as_bytes(), "n-main-canonical");
     o.send(&approved);
     assert_eq!(
         o.expect_line(),
@@ -770,7 +819,7 @@ fn mediation_obfuscation_and_one_shot_approval() {
         .unwrap()
         .starts_with("seal-host-rs/stdio:"));
     assert!(effect_view.get("principal").is_none());
-    assert_eq!(allow["approval"]["approval_identity"]["channel"], "file");
+    assert_eq!(allow["approval"]["approval_identity"]["channel"], "ed25519");
     assert_eq!(allow["approval"]["policy_hash"].as_str().unwrap().len(), 64);
     assert_eq!(allow["host_identity"]["equivalence"], "not_proven");
     assert_eq!(
@@ -805,7 +854,7 @@ fn mediation_obfuscation_and_one_shot_approval() {
 /// benign half.
 #[test]
 fn terminator_shares_commitment_but_child_sees_original_bytes() {
-    let mut o = Oracle::spawn("t3-terminator");
+    let mut o = Oracle::spawn_signed("t3-terminator");
 
     // Read every frame RAW so the terminator is visible; parse the string
     // view from the same bytes (keeps the raw/lines channels aligned — this
@@ -830,14 +879,18 @@ fn terminator_shares_commitment_but_child_sees_original_bytes() {
     let target = block_target(&blocked).expect("unapproved guarded call names its target");
 
     // (A) LF-terminated, approved → forwards. The child echoes the wire.
-    o.approve(&target);
-    o.send_bytes(format!("{call}\n").as_bytes());
+    let lf_frame = format!("{call}\n");
+    o.approve_v2(&target, lf_frame.as_bytes(), "n-terminator-lf");
+    o.send_bytes(lf_frame.as_bytes());
     let lf_child = o.expect_raw();
 
-    // (B) SAME call, CRLF-terminated. Approve again (one-shot consumed the
-    // first grant), forward, capture the child echo.
-    o.approve(&target);
-    o.send_bytes(format!("{call}\r\n").as_bytes());
+    // (B) SAME call, CRLF-terminated. First establish the distinct framed
+    // challenge, then approve those exact bytes and capture the child echo.
+    let crlf_frame = format!("{call}\r\n");
+    o.send_bytes(crlf_frame.as_bytes());
+    assert!(is_block(&raw_str(&o.expect_raw())));
+    o.approve_v2(&target, crlf_frame.as_bytes(), "n-terminator-crlf");
+    o.send_bytes(crlf_frame.as_bytes());
     let crlf_child = o.expect_raw();
 
     // -- HALF 1: the child received byte-DIFFERENT lines --
@@ -881,9 +934,8 @@ fn terminator_shares_commitment_but_child_sees_original_bytes() {
     assert_eq!(sha_a, expected, "commitment is sha256 of the stripped line");
 }
 
-/// BLUE: the PRODUCTION channel end to end — a signed ed25519 approval
-/// unlocks exactly its target through the full host path (signature verify,
-/// A3 nonce/replay via sqlite, Lean consume), and the approval is one-shot.
+/// A validly signed v1 approval is explicitly refused on the production
+/// channel and cannot unlock its guarded effect.
 #[test]
 fn ed25519_signed_approval_forwards_end_to_end() {
     let mut o = Oracle::spawn_signed("ed25519-blue");
@@ -921,48 +973,33 @@ fn ed25519_signed_approval_forwards_end_to_end() {
     assert!(is_block(&blocked), "unapproved call must block: {blocked}");
     let target = block_target(&blocked).expect("block names its approval target");
 
-    // Signed approval for the target: the call now forwards.
+    // A validly signed v1 approval for the target is refused and the effect
+    // remains blocked.
     let token = signed_token(&target, wall_now_ms(), "n-blue-1", None);
     o.append_token_line(&token);
     o.send(&call);
-    assert_eq!(
-        o.expect_line(),
-        call,
-        "signed approval must forward the call"
+    let refused_response = o.expect_line();
+    println!("V1 REFUSAL RESPONSE: {refused_response}");
+    assert!(
+        is_block(&refused_response),
+        "v1 approval must leave the guarded call blocked: {refused_response}"
     );
-
-    // The explicit production sink contains a private ALLOW receipt. Verify
-    // its signed config cryptographically and its byte-identical kernel view.
-    let allow = o
-        .receipts()
-        .into_iter()
-        .rev()
-        .find(|receipt| receipt["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW authorization decision");
-    assert_eq!(allow["approval"]["approval_identity"]["channel"], "ed25519");
-    assert!(allow["approval"]["approval_identity"]["key_id"].is_string());
-    let signed = &allow["signed_config"];
-    let signed_payload = signed["payload"].as_str().unwrap();
-    let signed_pubkey: [u8; 32] = hex::decode(signed["pubkey"].as_str().unwrap())
-        .unwrap()
-        .try_into()
-        .unwrap();
-    let signed_signature: [u8; 64] = hex::decode(signed["signature"].as_str().unwrap())
-        .unwrap()
-        .try_into()
-        .unwrap();
-    VerifyingKey::from_bytes(&signed_pubkey)
-        .unwrap()
-        .verify_strict(
-            signed_payload.as_bytes(),
-            &Signature::from_bytes(&signed_signature),
-        )
-        .expect("receipt's embedded config signature must verify");
-    assert_eq!(
-        serde_json::to_string(&allow["kernel_config"]).unwrap(),
-        signed_payload,
-        "receipt kernel view must be the exact signed payload"
+    assert_ne!(
+        refused_response, call,
+        "v1 approval must not forward the guarded call to the effect"
     );
+    assert!(
+        !o.receipts()
+            .iter()
+            .any(|receipt| receipt["verdict"] == "ALLOW"),
+        "v1 refusal must not persist an ALLOW authorization decision"
+    );
+    let stderr = o.drain_stderr(Duration::from_millis(100));
+    let refusal = stderr
+        .iter()
+        .find(|line| line.contains("approval_record_v1_not_supported"))
+        .expect("operator must see the explicit v1 refusal");
+    println!("V1 REFUSAL STDERR: {refusal}");
     for receipt in std::fs::read_dir(o.receipt_dir()).unwrap() {
         let receipt = receipt.unwrap();
         if receipt.path().extension().and_then(|value| value.to_str()) == Some("json") {
@@ -970,19 +1007,21 @@ fn ed25519_signed_approval_forwards_end_to_end() {
         }
     }
 
-    // Restart on the same sqlite store, then replay the byte-identical token.
-    // The in-memory state is gone, so only the durable nonce record can deny it.
+    // Restart on the same sqlite store: v1 stays refused independently of
+    // in-memory provider state or replay tracking.
     o.restart();
     o.append_token_line(&token);
     o.send(&call);
     assert!(
         is_block(&o.expect_line()),
-        "replayed token must not re-approve after restart"
+        "v1 token must not approve after restart"
     );
     let stderr = o.drain_stderr(Duration::from_millis(100));
     assert!(
-        stderr.iter().any(|l| l.contains("replayed_nonce")),
-        "operator must see the replay drop: {stderr:?}"
+        stderr
+            .iter()
+            .any(|l| l.contains("approval_record_v1_not_supported")),
+        "operator must see the v1 refusal after restart: {stderr:?}"
     );
 
     // A permission regression is rejected by production preflight before the
@@ -1008,28 +1047,80 @@ fn ed25519_signed_approval_forwards_end_to_end() {
     );
 }
 
-/// KNOWN DEFECT PIN — this test documents CURRENT WRONG BEHAVIOR, not a
-/// desired property. Do not read it as the specification.
-///
-/// A valid signed approval whose ingesting step is denied by Lean for an
-/// unrelated reason (here: a different call's missing approval) is retired
-/// before the verdict exists: the nonce is committed inside `a3.filter` at
-/// main.rs:634 (via a3.rs:167 → persist_nonce), eighteen lines before the
-/// Lean verdict at main.rs:652, and `ReplayStore` has no un-consume. The
-/// burn is DURABLE (sqlite) while the approval's ingestion into the Lean
-/// registry is in-memory only — so across a host restart the approval is
-/// gone, and resubmitting the very same signed token dies as
-/// `replayed_nonce`. The approval is permanently retired without ever
-/// having authorized anything. (Within one process the Lean registry
-/// retains the ingested approval across the deny, which masks the defect
-/// until a restart.)
-///
-/// Redesign options (NOT applied here): split validate from commit-nonce
-/// and commit only on `route == Forward`, or give the replay store a
-/// rollback path. Cross-reference: checkpoint ckpt-19caa937cca56524,
-/// roadmap item P10.
 #[test]
-fn pinned_defect_denied_call_retires_valid_approval() {
+fn ed25519_approval_v2_forwards_the_exact_framed_subject() {
+    let mut o = Oracle::spawn_signed("ed25519-v2-subject");
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+    o.send(init);
+    assert_eq!(o.expect_line(), init);
+    assert_eq!(o.expect_raw(), format!("{init}\n").as_bytes());
+
+    let call = guarded_call(2, "drop table approval_v2_exact_bytes");
+    o.send(&call);
+    let blocked = o.expect_line();
+    assert!(is_block(&blocked));
+    let _blocked_raw = o.expect_raw();
+    let target = block_target(&blocked).expect("block names its approval target");
+
+    let framed_bytes = format!("{call}\n").into_bytes();
+    let shown_bytes = b"Approve: drop table approval_v2_exact_bytes";
+    let wrong_target = if target.starts_with('0') {
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    } else {
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    };
+    let wrong_target_token = signed_v2_token(
+        wrong_target,
+        &framed_bytes,
+        shown_bytes,
+        "n-v2-wrong-target",
+    );
+    o.append_token_line(&wrong_target_token);
+    o.send(&call);
+    let wrong_target_response = o.expect_line();
+    assert!(
+        is_block(&wrong_target_response),
+        "exact subject with a different signed target must fail closed"
+    );
+    let _wrong_target_raw = o.expect_raw();
+
+    let wrong_subject_token = signed_v2_token(
+        &target,
+        format!("{call} \n").as_bytes(),
+        shown_bytes,
+        "n-v2-wrong",
+    );
+    o.append_token_line(&wrong_subject_token);
+    o.send(&call);
+    let wrong_subject_response = o.expect_line();
+    assert!(
+        is_block(&wrong_subject_response),
+        "valid signature over a different framed subject must fail closed"
+    );
+    let _wrong_subject_raw = o.expect_raw();
+
+    let token = signed_v2_token(&target, &framed_bytes, shown_bytes, "n-v2-host-path");
+    o.append_token_line(&token);
+    o.send(&call);
+    assert_eq!(
+        o.expect_raw(),
+        framed_bytes,
+        "v2 evidence must not rewrite any forwarded byte"
+    );
+    assert_eq!(o.expect_line(), call);
+
+    o.send(&call);
+    assert!(
+        is_block(&o.expect_line()),
+        "v2 approval remains one-shot after exact-byte forward"
+    );
+}
+
+/// V1 refusal happens at provider ingestion, before A3 can burn its nonce.
+/// Resubmitting the same v1 token after restart remains an unsupported-v1
+/// refusal, never a replay refusal, and cannot unlock the guarded effect.
+#[test]
+fn v1_refusal_happens_before_replay_admission() {
     let mut o = Oracle::spawn_signed("ed25519-pin");
 
     // Learn target T of call C (the call the approval is FOR).
@@ -1039,25 +1130,22 @@ fn pinned_defect_denied_call_retires_valid_approval() {
     assert!(is_block(&blocked));
     let target_t = block_target(&blocked).expect("block names target T");
 
-    // A valid signed approval for T arrives, but the next mediated line is
-    // an UNRELATED unapproved call D: the poll ingests the token during D's
-    // step (nonce committed pre-verdict) and Lean denies D for its own
-    // missing approval — a reason unrelated to T's approval.
-    o.append_token_line(&signed_token(&target_t, wall_now_ms(), "n-pin-1", None));
-    let call_d = guarded_call(11, "delete from users");
-    o.send(&call_d);
+    let token = signed_token(&target_t, wall_now_ms(), "n-pin-1", None);
+    o.append_token_line(&token);
+    o.send(&call_c);
     let resp_d = o.expect_line();
     assert!(
         is_block(&resp_d),
-        "unrelated call D stays blocked: {resp_d}"
-    );
-    assert_ne!(
-        block_target(&resp_d).expect("D names its own target"),
-        target_t,
-        "D's deny must be unrelated to T's approval"
+        "v1 token must not unlock its guarded effect: {resp_d}"
     );
 
     let before_restart = o.drain_stderr(Duration::from_millis(200));
+    assert!(before_restart
+        .iter()
+        .any(|line| line.contains("approval_record_v1_not_supported")));
+    assert!(!before_restart
+        .iter()
+        .any(|line| line.contains("replayed_nonce")));
     let prior_record = before_restart
         .iter()
         .filter_map(|line| {
@@ -1072,17 +1160,15 @@ fn pinned_defect_denied_call_retires_valid_approval() {
     // Host restarts (the sqlite replay store is the state that survives).
     o.restart();
 
-    // Resubmit the SAME valid token. PINNED DEFECT: it is dead — the nonce
-    // was durably burned by the denied step, so call C can never forward on
-    // this approval even though it never authorized anything.
-    o.append_token_line(&signed_token(&target_t, wall_now_ms(), "n-pin-1", None));
+    // Resubmit the byte-identical token after restart. It is still refused as
+    // v1, proving its nonce was never admitted into replay state.
+    o.append_token_line(&token);
     let call_c2 = guarded_call(12, "drop table accounts");
     o.send(&call_c2);
     let resp = o.expect_line();
     assert!(
         is_block(&resp),
-        "PINNED DEFECT: the retired approval cannot be resubmitted; \
-         if this forwards, the defect was fixed — update this pin: {resp}"
+        "resubmitted v1 token must remain refused: {resp}"
     );
     let stderr = o.drain_stderr(Duration::from_millis(200));
     let restarted_record = stderr
@@ -1097,8 +1183,14 @@ fn pinned_defect_denied_call_retires_valid_approval() {
     );
     assert_ne!(restarted_record["session"], prior_record["session"]);
     assert!(
-        stderr.iter().any(|l| l.contains("replayed_nonce")),
-        "the resubmitted token dies as a nonce replay: {stderr:?}"
+        stderr
+            .iter()
+            .any(|l| l.contains("approval_record_v1_not_supported")),
+        "the resubmitted token must be refused as unsupported v1: {stderr:?}"
+    );
+    assert!(
+        !stderr.iter().any(|l| l.contains("replayed_nonce")),
+        "v1 refusal must happen before replay admission: {stderr:?}"
     );
 }
 
@@ -1237,7 +1329,7 @@ fn non_utf8_line_refused_and_session_survives() {
 /// error instead of structured request material it does not hold.
 #[test]
 fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
-    let mut o = Oracle::spawn("receipt-deparse");
+    let mut o = Oracle::spawn_signed("receipt-deparse");
 
     let overflow = r#"{"jsonrpc":"2.0","id":89,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
     let overflow_outcome = LeanHost::new()
@@ -1271,7 +1363,11 @@ fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
 
     // Approve and resend: the kernel allows — the receipt writer must not
     // stand in the way of the proven verdict.
-    o.approve(&target);
+    o.approve_v2(
+        &target,
+        format!("{divergent}\n").as_bytes(),
+        "n-receipt-deparse",
+    );
     o.send(divergent);
     assert_eq!(
         o.expect_line(),
@@ -1403,7 +1499,7 @@ fn multibyte_request_commitment_survives_the_ffi_seam() {
 /// and confirms that each distinct argument set needs its own approval.
 #[test]
 fn approval_target_binds_every_argument_key() {
-    let mut o = Oracle::spawn("target-binds-siblings");
+    let mut o = Oracle::spawn_signed("target-binds-siblings");
 
     // Clean guarded call: {database:"prod", sql:"drop table accounts"}.
     let clean = guarded_call(90, "drop table accounts");
@@ -1438,7 +1534,9 @@ fn approval_target_binds_every_argument_key() {
 
     // Non-vacuous end-to-end: an approval for the clean target does not
     // authorise the scalar variant.
-    o.approve(&t_clean);
+    o.send(&clean);
+    assert!(is_block(&o.expect_line()));
+    o.approve_v2(&t_clean, format!("{clean}\n").as_bytes(), "n-target-clean");
     o.send(scalar_sibling);
     assert!(
         is_block(&o.expect_line()),
@@ -1446,10 +1544,20 @@ fn approval_target_binds_every_argument_key() {
     );
 
     // Each variant forwards only with its own target.
-    o.approve(&t_scalar);
+    o.approve_v2(
+        &t_scalar,
+        format!("{scalar_sibling}\n").as_bytes(),
+        "n-target-scalar",
+    );
     o.send(scalar_sibling);
     assert_eq!(o.expect_line(), scalar_sibling);
-    o.approve(&t_nested);
+    o.send(nested_sibling);
+    assert!(is_block(&o.expect_line()));
+    o.approve_v2(
+        &t_nested,
+        format!("{nested_sibling}\n").as_bytes(),
+        "n-target-nested",
+    );
     o.send(nested_sibling);
     assert_eq!(o.expect_line(), nested_sibling);
 }
@@ -1462,7 +1570,7 @@ fn approval_target_binds_every_argument_key() {
 /// ALLOW must stay silent. Drives the real binary end-to-end.
 #[test]
 fn reduced_scope_forward_attempt_emits_observability_signal() {
-    let mut o = Oracle::spawn("reduced-scope-signal");
+    let mut o = Oracle::spawn_signed("reduced-scope-signal");
 
     // FORCED downgrade: existing parser-boundary corpus case
     // `str-lone-high-surrogate` — agreement-accepted, kernel-mediated, and
@@ -1470,7 +1578,11 @@ fn reduced_scope_forward_attempt_emits_observability_signal() {
     let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
     o.send(divergent);
     let target = block_target(&o.expect_line()).expect("kernel block names its approval target");
-    o.approve(&target);
+    o.approve_v2(
+        &target,
+        format!("{divergent}\n").as_bytes(),
+        "n-reduced-scope",
+    );
     o.send(divergent);
 
     // Passive-tap property #1: the child receives the wire VERBATIM — the forward
@@ -1529,7 +1641,11 @@ fn reduced_scope_forward_attempt_emits_observability_signal() {
     let parseable = guarded_call(91, "drop table accounts");
     o.send(&parseable);
     let t2 = block_target(&o.expect_line()).expect("parseable guarded call blocks");
-    o.approve(&t2);
+    o.approve_v2(
+        &t2,
+        format!("{parseable}\n").as_bytes(),
+        "n-reduced-parseable",
+    );
     o.send(&parseable);
     assert_eq!(
         o.expect_line(),

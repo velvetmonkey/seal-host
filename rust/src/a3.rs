@@ -143,6 +143,17 @@ impl A3Filter {
         let mut ok = Vec::new();
         let mut dropped = Vec::new();
         for r in records {
+            if let Some(v2) = r.v2() {
+                if now_ms > v2.expiry {
+                    dropped.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        "a3",
+                        "expired",
+                        record_redaction_material(&r),
+                    ));
+                    continue;
+                }
+            }
             if let Some(issued) = r.issued_at {
                 if issued > now_ms.saturating_add(MAX_FUTURE_SKEW_MS) {
                     dropped.push(ApprovalDropWarning::new(
@@ -190,11 +201,7 @@ mod tests {
     use std::rc::Rc;
 
     fn rec(target: &str, issued: Option<u64>, nonce: Option<&str>) -> ApprovalRecord {
-        ApprovalRecord {
-            target: target.to_string(),
-            issued_at: issued,
-            nonce: nonce.map(String::from),
-        }
+        ApprovalRecord::legacy(target.to_string(), issued, nonce.map(String::from))
     }
 
     fn temp_db_path(tag: &str) -> std::path::PathBuf {
