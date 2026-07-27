@@ -12,6 +12,7 @@ pub mod lean;
 pub mod limits;
 pub mod output;
 pub mod providers;
+pub mod reachability;
 pub mod receipt;
 pub mod replay_store;
 pub mod route;

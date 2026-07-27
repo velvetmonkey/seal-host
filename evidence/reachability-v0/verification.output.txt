@@ -1,0 +1,5 @@
+VERIFY OK: Ed25519 signature valid for exact payload bytes.
+kind: seal-reachability-report/v0
+key_id: f38969aa289f362edd5682d2bc6d878a4df9756757c4fcf5a20f61903bd64992
+payload_sha256: f4d27d526b278dcfa35d9ffe1413b9bf5f3df015ade4028b17709ac2fcd98e6c
+expected public key: MATCH
