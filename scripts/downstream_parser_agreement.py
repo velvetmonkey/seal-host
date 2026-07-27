@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """V3.1 exact-byte downstream MCP parser agreement experiment.
 
-For every Rust-NotAct / Lean-Act JSONTestSuite vector, this script:
+For every Rust/Lean parser-boundary divergence in JSONTestSuite, this script:
 
 1. embeds the untouched corpus bytes in the same fixed envelope as
    rust/tests/external_json_corpus.rs;
@@ -56,6 +56,10 @@ VECTORS = [
     "i_number_pos_double_huge_exp.json",
     "i_number_real_neg_overflow.json",
     "i_number_real_pos_overflow.json",
+    "i_number_real_underflow.json",
+    "i_number_too_big_neg_int.json",
+    "i_number_too_big_pos_int.json",
+    "i_number_very_big_negative_int.json",
     "i_string_1st_surrogate_but_2nd_missing.json",
     "i_string_1st_valid_surrogate_2nd_invalid.json",
     "i_string_incomplete_surrogate_and_escape_valid.json",
@@ -67,6 +71,7 @@ VECTORS = [
     "i_string_lone_second_surrogate.json",
     "i_structure_500_nested_arrays.json",
 ]
+NEGATIVE_CONTROLS = ["y_object_simple.json"]
 
 INIT = (
     b'{"jsonrpc":"2.0","id":0,"method":"initialize","params":'
@@ -259,6 +264,22 @@ def extraction_outcome(
     return "DISAGREE", "different tool or arguments", matching
 
 
+def evidence_safe(value):
+    """Render lone UTF-16 code units as literal escape text in valid JSON."""
+    if isinstance(value, str):
+        return "".join(
+            f"\\u{ord(char):04X}" if 0xD800 <= ord(char) <= 0xDFFF else char
+            for char in value
+        )
+    if isinstance(value, list):
+        return [evidence_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            evidence_safe(key): evidence_safe(item) for key, item in value.items()
+        }
+    return value
+
+
 def run_cell(server: Server, vector: str, judged: bytes, action: dict, base: Path) -> dict:
     work = base / re.sub(r"[^A-Za-z0-9_.-]", "_", server.name) / vector
     work.mkdir(parents=True)
@@ -311,6 +332,23 @@ def run_cell(server: Server, vector: str, judged: bytes, action: dict, base: Pat
         if init_response is None:
             record.update(outcome="UNKNOWN", detail="server did not initialize")
             return record
+        try:
+            parsed_init = json.loads(init_response)
+        except Exception:
+            parsed_init = {
+                "unparseable_response": init_response.decode("utf-8", "replace")
+            }
+        record["initialize_response"] = parsed_init
+        if not (
+            isinstance(parsed_init, dict)
+            and parsed_init.get("id") == 0
+            and isinstance(parsed_init.get("result"), dict)
+        ):
+            record.update(
+                outcome="UNKNOWN",
+                detail="server returned a non-initialize response to initialize",
+            )
+            return record
         proc.stdin.write(INITIALIZED)
         proc.stdin.flush()
 
@@ -330,7 +368,7 @@ def run_cell(server: Server, vector: str, judged: bytes, action: dict, base: Pat
             except Exception:
                 block_response = {"raw": block_text}
             record.update(
-                outcome="UNKNOWN",
+                outcome="REFUSED",
                 detail="Seal refused before approval/forwarding",
                 seal_response=block_response,
                 downstream_exercised=False,
@@ -414,51 +452,88 @@ def main() -> int:
         return 2
 
     results = []
-    disagreement = None
-    with tempfile.TemporaryDirectory(prefix="seal-v31-") as temp:
-        base = Path(temp)
-        vault = base / "vault"
-        vault.mkdir()
-        (vault / ".obsidian").mkdir()
-        database = base / "sandbox.sqlite"
-        server_list = servers(vault, database)
-        for vector in VECTORS:
-            corpus_bytes = (CORPUS / vector).read_bytes()
-            judged = CALL_PREFIX + corpus_bytes + CALL_SUFFIX
-            action_dir = base / "lean" / vector
-            action_dir.mkdir(parents=True)
-            action = lean_action(judged, action_dir)
-            for server in server_list:
+    disagreements = []
+    base = Path(tempfile.mkdtemp(prefix="seal-v31rest."))
+    vault = base / "vault"
+    vault.mkdir()
+    (vault / ".obsidian").mkdir()
+    database = base / "sandbox.sqlite"
+    server_list = servers(vault, database)
+    for vector in VECTORS + NEGATIVE_CONTROLS:
+        corpus_bytes = (CORPUS / vector).read_bytes()
+        judged = CALL_PREFIX + corpus_bytes + CALL_SUFFIX
+        action_dir = base / "lean" / vector
+        action_dir.mkdir(parents=True)
+        action = lean_action(judged, action_dir)
+        for server in server_list:
+            try:
                 result = run_cell(server, vector, judged, action, base)
-                results.append(result)
-                print(
-                    f"{vector}\t{server.name}\t{result['outcome']}\t{result['detail']}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                if result["outcome"] == "DISAGREE":
-                    disagreement = {
+            except Exception as exc:
+                result = {
+                    "vector": vector,
+                    "server": server.name,
+                    "lean": action,
+                    "outcome": "UNKNOWN",
+                    "detail": f"harness exception: {type(exc).__name__}: {exc}",
+                    "downstream_exercised": False,
+                }
+            results.append(result)
+            print(
+                f"{vector}\t{server.name}\t{result['outcome']}\t{result['detail']}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if result["outcome"] in ("DISAGREE", "REJECTS"):
+                disagreements.append(
+                    {
                         "vector": vector,
                         "server": server.name,
                         "detail": result["detail"],
                     }
-                    break
-            if disagreement is not None:
-                break
+                )
+
+    classifications = []
+    for vector in VECTORS:
+        vector_results = [result for result in results if result["vector"] == vector]
+        outcomes = [result["outcome"] for result in vector_results]
+        if outcomes and all(outcome == "REFUSED" for outcome in outcomes):
+            classification = "REFUSED by the guard"
+        elif any(outcome in ("DISAGREE", "REJECTS") for outcome in outcomes):
+            classification = "FORWARDED and observers DISAGREE"
+        elif outcomes and all(outcome == "AGREE" for outcome in outcomes):
+            classification = "FORWARDED and observers AGREE"
+        else:
+            classification = "UNACCOUNTED"
+        classifications.append(
+            {
+                "vector": vector,
+                "classification": classification,
+                "observer_outcomes": outcomes,
+            }
+        )
 
     output = {
         "generated_at_unix_ms": int(time.time() * 1000),
+        "evidence_dir": str(base),
         "corpus_dir": str(CORPUS),
         "host": str(HOST),
         "lean_oracle": str(LEAN_ORACLE),
         "vectors": VECTORS,
+        "negative_controls": NEGATIVE_CONTROLS,
         "servers": [server.name for server in server_list],
         "results": results,
-        "halted_on_disagreement": disagreement,
+        "classifications": classifications,
+        "negative_control_results": [
+            result
+            for result in results
+            if result["vector"] in NEGATIVE_CONTROLS
+        ],
+        "disagreements": disagreements,
     }
-    json.dump(output, sys.stdout, indent=2, ensure_ascii=True)
+    json.dump(evidence_safe(output), sys.stdout, indent=2, ensure_ascii=True)
     sys.stdout.write("\n")
-    return 1 if disagreement is not None else 0
+    has_unknown = any(result["outcome"] == "UNKNOWN" for result in results)
+    return 1 if disagreements or has_unknown else 0
 
 
 if __name__ == "__main__":
