@@ -333,6 +333,16 @@ def sealHostClassify (line : String) : UInt32 :=
   | .act _ => 1
   | .refuse => 2
 
+/-- The deployed Rust host's pre-classify numeric-agreement seam. The empty
+    string is the safe sentinel (a JSON numeric literal is never empty);
+    otherwise the exact offending raw literal is returned so the host can
+    name what it refused without parsing the request. The scan runs over the
+    same ASCII-trimmed `line` binding handed to `sealHostClassify` and
+    `sealHostStep`. -/
+@[export seal_host_first_agreement_unsafe_number]
+def sealHostFirstAgreementUnsafeNumber (line : String) : String :=
+  (Seal.JsonUtil.firstAgreementUnsafeNumber? line.trimAscii.toString).getD ""
+
 /-! ### Policy schema/validate exports — `seal schema` / `seal validate`
 
 Thin projections of the SAME `Seal.policyBundleCodec` the init path parses

@@ -12,6 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.lake/build/lib/libsealffi.so"
 TMP="$ROOT/.lake/build/ffi-archives"
+LEANBUILD="${LEANBUILD:-/home/monkey/bin/leanbuild}"
 LEAN_PREFIX="$(lean --print-prefix)"
 MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
 if [ "$MCP_TYPE" = "path" ]; then
@@ -33,6 +34,9 @@ fi
 # named explicitly because `+Ffi:o` otherwise materializes their C/olean inputs
 # but can leave old `.c.o.export` files from a previous dependency revision.
 LAKE_FLAGS=()
+if [ -n "${SEAL_LAKE_PACKAGES:-}" ]; then
+  LAKE_FLAGS+=("--packages=$SEAL_LAKE_PACKAGES")
+fi
 if [ "${SEAL_LAKE_OLD:-0}" = "1" ]; then
   # Compatibility-probe escape hatch for a memory-constrained developer box.
   # This is never the release build: --old deliberately ignores transitive
@@ -81,7 +85,7 @@ done
 # the missing symbol — extend this build line then. (`ffi_shared` cannot be
 # the vehicle: its exe-shaped -shared link pulls the static libleanrt.a,
 # which can never enter a shared object, and the target has never built.)
-(cd "$ROOT" && lake "${LAKE_FLAGS[@]}" build "${PROJECT_TARGETS[@]}" "${MCP_TARGETS[@]}" seal-host)
+(cd "$ROOT" && "$LEANBUILD" "${LAKE_FLAGS[@]}" build "${PROJECT_TARGETS[@]}" "${MCP_TARGETS[@]}" seal-host)
 
 # Project objects: the exact Ffi runtime closure, excluding theorem/off-path
 # modules even if stale objects for them exist in the build directory.
