@@ -67,6 +67,65 @@ class ContractFreezeGateTests(unittest.TestCase):
         result = self.run_gate(root)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_rust_comment_edit_is_not_contract_drift(self) -> None:
+        root = self.make_repo_copy()
+        source = root / "rust" / "src" / "envelope_v23.rs"
+        text = source.read_text(encoding="utf-8")
+        before = "Rust byte twin and host-side gates"
+        after = "Rust byte twin plus host-side gates"
+        self.assertEqual(text.count(before), 1)
+        source.write_text(text.replace(before, after), encoding="utf-8")
+        result = self.run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rust_comment_line_addition_is_not_contract_drift(self) -> None:
+        root = self.make_repo_copy()
+        source = root / "rust" / "src" / "envelope_v23.rs"
+        text = source.read_text(encoding="utf-8")
+        marker = "use crate::ed25519::{self, VerificationError};"
+        self.assertEqual(text.count(marker), 1)
+        source.write_text(
+            text.replace(marker, "// Non-contract rationale.\n" + marker),
+            encoding="utf-8",
+        )
+        result = self.run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_rust_wire_byte_edit_is_contract_drift(self) -> None:
+        root = self.make_repo_copy()
+        source = root / "rust" / "src" / "envelope_v23.rs"
+        text = source.read_text(encoding="utf-8")
+        before = 'b"seal.effect/v2\\0"'
+        after = 'b"seal.effect/v3\\0"'
+        self.assertEqual(text.count(before), 1)
+        source.write_text(text.replace(before, after), encoding="utf-8")
+        result = self.run_gate(root)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("rust/src/envelope_v23.rs", result.stderr)
+        self.assertIn("--refreeze cannot approve", result.stderr)
+
+    def test_rust_test_function_name_is_not_contract_drift(self) -> None:
+        root = self.make_repo_copy()
+        source = root / "rust" / "tests" / "envelope_v23.rs"
+        text = source.read_text(encoding="utf-8")
+        before = "fn byte_twin_matches_fable_golden_vector()"
+        after = "fn byte_twin_matches_fable_golden_bytes()"
+        self.assertEqual(text.count(before), 1)
+        source.write_text(text.replace(before, after), encoding="utf-8")
+        result = self.run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_lean_comment_edit_is_not_contract_drift(self) -> None:
+        root = self.make_repo_copy()
+        source = root / "scripts" / "envelope_v23_twin_lane.lean"
+        text = source.read_text(encoding="utf-8")
+        before = "Any divergence from the Rust encoder"
+        after = "Every divergence from the Rust encoder"
+        self.assertEqual(text.count(before), 1)
+        source.write_text(text.replace(before, after), encoding="utf-8")
+        result = self.run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_doc_edit_without_refreeze_fails(self) -> None:
         root = self.make_repo_copy()
         doc = root / "docs" / "EFFECT-ENVELOPE-V23.md"
