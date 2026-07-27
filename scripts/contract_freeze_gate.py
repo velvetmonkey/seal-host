@@ -4,11 +4,31 @@
 
 The V2.3 contract surface — the prose contract doc, the Rust encoder source,
 the shared twin corpus, the Lean-generated expectation file, the twin/host
-test sources, and the Lean lane source — is pinned by SHA-256 in both
+test sources, and the Lean lane source — is pinned by contract-view SHA-256
+in both
 ``docs/effect-envelope-v23.freeze.json`` and an independently maintained
 review baseline below. ``--refreeze`` updates only the manifest. A contract
 change therefore also requires a conspicuous, manually reviewed gate-code
 change; file plus manifest cannot certify themselves.
+
+Contract views are deliberately simple and language-specific:
+
+* Markdown, JSON, hex, and unknown file kinds are byte-exact. The Markdown is
+  the normative prose contract, while JSON and hex are wire corpora.
+* Rust hashes executable source after lexical comments are removed and
+  inter-token whitespace is collapsed. In test sources only, the identifier
+  after a plain ``#[test] fn`` is canonicalised; the test body remains frozen.
+* Lean hashes executable source with the same comment and whitespace rules.
+
+The scanners understand strings, character literals, Rust raw strings, and
+nested block comments, so comment delimiters and whitespace inside literals
+remain contract bytes.
+
+The checked-in manifest predates contract views and contains whole-file
+digests. ``LEGACY_CONTRACT_VIEWS`` bridges that one-time migration without a
+ceremonial refreeze: an exact approved contract view yields its old stored
+digest. Any contract-view change yields the new digest directly. Once a file
+has a real reviewed contract change, its legacy entry is no longer involved.
 
 This gate deliberately needs no Lean, no cargo, and no private dependency
 token: it is standard-library Python over checked-in files plus Git's tracked
@@ -89,6 +109,22 @@ REVIEWED_HASHES = {
         "9ce45fd3850a4643986a936df049eb6f65992b4170b55f7f727a469eaac8292d",
 }
 
+# One-time compatibility for the manifest and review baseline written before
+# contract views existed. Each value is the contract-view SHA-256 derived from
+# the file already approved by REVIEWED_HASHES. A matching view returns only
+# REVIEWED_HASHES[path]; this table cannot name an alternative accepted output.
+# Executable drift changes the view digest and is returned directly.
+LEGACY_CONTRACT_VIEWS = {
+    "rust/src/envelope_v23.rs":
+        "0a99165671c5d41818026d9029f45fef417bc93cc6c409153f2ace01be2b9e21",
+    "rust/tests/envelope_v23.rs":
+        "a46fd72e295800c4ea8fbe8a1c3ab50eeb989d70407800b15237eac875662df5",
+    "rust/tests/envelope_v23_twin.rs":
+        "91779c32813b82ba49d8216f6f7b93285c29fe953c1c9c5e6e254e3f7b457e68",
+    "scripts/envelope_v23_twin_lane.lean":
+        "dfca3de0cf4d4e4891dd393ea9ea2dd819f73025cb58dfe3868e9bf8abf885d8",
+}
+
 TWIN_TEST = ROOT / "rust" / "tests" / "envelope_v23_twin.rs"
 HOST_TEST = ROOT / "rust" / "tests" / "envelope_v23.rs"
 CORPUS = ROOT / "rust" / "tests" / "vectors" / "envelope_v23_twin_corpus.json"
@@ -101,8 +137,171 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _copy_quoted(data: bytes, start: int, quote: int) -> int:
+    """Return the first byte after a conventional escaped string/character."""
+    index = start + 1
+    while index < len(data):
+        if data[index] == ord("\\"):
+            index += 2
+        elif data[index] == quote:
+            return index + 1
+        else:
+            index += 1
+    return len(data)
+
+
+def _rust_raw_string_end(data: bytes, start: int) -> int | None:
+    """Return the end of a Rust r###"..."### literal starting at ``start``."""
+    index = start
+    if data[index:index + 2] in (b"br", b"cr"):
+        index += 2
+    elif data[index:index + 1] == b"r":
+        index += 1
+    else:
+        return None
+    hashes = 0
+    while index < len(data) and data[index] == ord("#"):
+        hashes += 1
+        index += 1
+    if index >= len(data) or data[index] != ord('"'):
+        return None
+    close = b'"' + (b"#" * hashes)
+    found = data.find(close, index + 1)
+    return len(data) if found == -1 else found + len(close)
+
+
+def _looks_like_char_literal(data: bytes, start: int) -> bool:
+    """Distinguish a short character literal from an identifier apostrophe."""
+    end = start + 1
+    if end >= len(data) or data[end] in b"\r\n'":
+        return False
+    if data[end] == ord("\\"):
+        end += 2
+        if end < len(data) and data[end - 1] == ord("u") and data[end] == ord("{"):
+            close = data.find(b"}", end + 1)
+            end = len(data) if close == -1 else close + 1
+    else:
+        first = data[end]
+        width = (
+            1 if first < 0x80 else
+            2 if first & 0xE0 == 0xC0 else
+            3 if first & 0xF0 == 0xE0 else
+            4 if first & 0xF8 == 0xF0 else
+            1
+        )
+        end += width
+    return end < len(data) and data[end] == ord("'")
+
+
+def _without_comments(
+    data: bytes, *, line_open: bytes, block_open: bytes, block_close: bytes,
+    rust_literals: bool,
+) -> bytes:
+    """Return code tokens with comments removed and whitespace canonicalised."""
+    output = bytearray()
+
+    def append_space() -> None:
+        if output and output[-1] != ord(" "):
+            output.append(ord(" "))
+
+    index = 0
+    while index < len(data):
+        if data.startswith(line_open, index):
+            append_space()
+            newline = data.find(b"\n", index + len(line_open))
+            if newline == -1:
+                break
+            index = newline + 1
+            continue
+        if data.startswith(block_open, index):
+            append_space()
+            index += len(block_open)
+            depth = 1
+            while index < len(data) and depth:
+                if data.startswith(block_open, index):
+                    depth += 1
+                    index += len(block_open)
+                elif data.startswith(block_close, index):
+                    depth -= 1
+                    index += len(block_close)
+                else:
+                    index += 1
+            continue
+        if rust_literals:
+            raw_end = _rust_raw_string_end(data, index)
+            if raw_end is not None:
+                output.extend(data[index:raw_end])
+                index = raw_end
+                continue
+            if data[index:index + 2] in (b'b"', b'c"'):
+                end = _copy_quoted(data, index + 1, ord('"'))
+                output.extend(data[index:end])
+                index = end
+                continue
+            if data[index:index + 2] == b"b'" and _looks_like_char_literal(data, index + 1):
+                end = _copy_quoted(data, index + 1, ord("'"))
+                output.extend(data[index:end])
+                index = end
+                continue
+            if data[index] == ord("'") and not _looks_like_char_literal(data, index):
+                output.append(data[index])
+                index += 1
+                continue
+        if data[index] == ord("'") and not _looks_like_char_literal(data, index):
+            output.append(data[index])
+            index += 1
+            continue
+        if data[index] in (ord('"'), ord("'")):
+            end = _copy_quoted(data, index, data[index])
+            output.extend(data[index:end])
+            index = end
+            continue
+        if data[index] in b" \t\r\n\v\f":
+            append_space()
+            index += 1
+            while index < len(data) and data[index] in b" \t\r\n\v\f":
+                index += 1
+            continue
+        output.append(data[index])
+        index += 1
+    return bytes(output).strip()
+
+
+def contract_view(relative: str, path: Path) -> bytes:
+    """Return the deterministic bytes whose digest represents ``relative``."""
+    data = path.read_bytes()
+    if path.suffix == ".rs":
+        view = _without_comments(
+            data,
+            line_open=b"//",
+            block_open=b"/*",
+            block_close=b"*/",
+            rust_literals=True,
+        )
+        if relative.startswith("rust/tests/"):
+            view = re.sub(
+                rb"(#\s*\[\s*test\s*\]\s*fn\s+)[A-Za-z_][A-Za-z0-9_]*",
+                rb"\1<test-name>",
+                view,
+            )
+        return view
+    if path.suffix == ".lean":
+        return _without_comments(
+            data,
+            line_open=b"--",
+            block_open=b"/-",
+            block_close=b"-/",
+            rust_literals=False,
+        )
+    return data
+
+
+def contract_sha256(relative: str, path: Path) -> str:
+    digest = hashlib.sha256(contract_view(relative, path)).hexdigest()
+    legacy = LEGACY_CONTRACT_VIEWS.get(relative)
+    if legacy is not None and digest == legacy:
+        return REVIEWED_HASHES[relative]
+    return digest
 
 
 def frozen_files() -> tuple[str, ...]:
@@ -178,7 +377,10 @@ def check_anchors(paths: tuple[str, ...]) -> None:
 
 
 def current_hashes(paths: tuple[str, ...]) -> dict[str, str]:
-    return {relative: sha256(ROOT / relative) for relative in paths}
+    return {
+        relative: contract_sha256(relative, ROOT / relative)
+        for relative in paths
+    }
 
 
 def read_manifest(*, allow_missing: bool = False) -> dict[str, str]:
