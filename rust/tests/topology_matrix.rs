@@ -38,7 +38,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -577,4 +577,99 @@ fn topology_matrix_calibration_absent_vs_disabled() {
              behaviourally identical to absent"
         );
     }
+}
+
+/// T1.2 claim-label frisk: exercise the widest "always allow" shape Safety's
+/// exact-tool policy language provides. The `payments.send` rule built by
+/// `write_config` is `mode: allow` with an `always` matcher, so every argument
+/// value for that tool is policy-allowed. This is intentionally a statement
+/// about the deployed native path, not the unimplemented g9 verifier ABI:
+/// the live process emits an ALLOW authorization decision and no AUTHORIZED
+/// status.
+#[test]
+fn explicit_allow_is_policy_relative_and_emits_no_authorized_status() {
+    let dir = std::env::temp_dir().join(format!(
+        "seal-topo-{}-t12-explicit-allow",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (config, pubkey) = write_config(0, CalVariant::Absent, &dir);
+    let call = call_line(12, "payments.send");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+        .args([
+            "--insecure-development-mode",
+            "--config",
+            config.to_str().unwrap(),
+            "--pubkey",
+            &pubkey,
+            "--",
+            "/bin/cat",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn seal-host-rs");
+    let mut stdin = child.stdin.take().expect("host stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("host stdout"));
+    let mut stderr = child.stderr.take().expect("host stderr");
+    writeln!(stdin, "{call}").unwrap();
+    stdin.flush().unwrap();
+    let mut response = String::new();
+    stdout
+        .read_line(&mut response)
+        .expect("read forwarded response");
+    drop(stdin);
+    let status = child.wait().expect("wait for seal-host-rs");
+    let mut stderr_text = String::new();
+    stderr
+        .read_to_string(&mut stderr_text)
+        .expect("read host stderr");
+
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "host must exit cleanly after EOF; stderr={stderr_text}"
+    );
+    assert_eq!(
+        response.trim_end(),
+        call,
+        "explicit allow must reach the child"
+    );
+
+    let mut paths: Vec<_> = std::fs::read_dir(dir.join("seal-receipts"))
+        .expect("authorization-decision directory")
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths.len(),
+        1,
+        "one mediated call, one authorization decision"
+    );
+    let decision: Value =
+        serde_json::from_slice(&std::fs::read(&paths[0]).unwrap()).expect("decision JSON");
+
+    assert_eq!(decision["record_type"], "seal.authorization-decision");
+    assert_eq!(decision["verdict"], "ALLOW");
+    assert_eq!(decision["authorization"], "explicit_policy_allow");
+    assert_eq!(
+        cert_of(&decision, "safety")["reason"],
+        "explicit policy allow"
+    );
+    assert!(
+        !decision.to_string().contains("AUTHORIZED"),
+        "the deployed authorization decision must not be confused with g9's status ABI"
+    );
+
+    println!("T12_NATIVE_EXIT={}", status.code().unwrap());
+    println!("T12_NATIVE_STDOUT={}", response.trim_end());
+    println!("T12_NATIVE_RECORD_TYPE={}", decision["record_type"]);
+    println!("T12_NATIVE_VERDICT={}", decision["verdict"]);
+    println!("T12_NATIVE_AUTHORIZATION={}", decision["authorization"]);
+    println!("T12_G9_STATUS_EMITTED=false");
+
+    std::fs::remove_dir_all(dir).unwrap();
 }
