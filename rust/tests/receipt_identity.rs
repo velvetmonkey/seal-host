@@ -14,7 +14,12 @@
 //! mutation drill in the D3 report plants exactly that and watches
 //! `approval_identity_ignores_self_asserted_caller` refuse it.
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
+use seal_host_rs::providers::{
+    approval_v2_signature_preimage, canonical_approval_v2_payload, ApprovalRecordV2Payload,
+    ApprovalRenderer,
+};
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -183,19 +188,49 @@ impl Drop for Host {
     }
 }
 
-fn signed_token(seed: [u8; 32], target: &str, nonce: &str) -> String {
+fn signed_v2_token(seed: [u8; 32], target: &str, call: &str, nonce: &str) -> String {
     let sk = SigningKey::from_bytes(&seed);
-    let issued_at = std::time::SystemTime::now()
+    let authorized_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    let payload = format!(r#"{{"target":"{target}","issuedAt":{issued_at},"nonce":"{nonce}"}}"#);
-    let sig = hex::encode(sk.sign(payload.as_bytes()).to_bytes());
-    format!(
-        r#"{{"payload":{},"signature":"{}"}}"#,
-        serde_json::to_string(&payload).unwrap(),
-        sig
-    )
+    let framed_bytes = format!("{call}\n").into_bytes();
+    let payload = ApprovalRecordV2Payload {
+        approval_record_version: 2,
+        target: target.to_string(),
+        authorized_at,
+        expiry: authorized_at + 120_000,
+        nonce: nonce.to_string(),
+        session: "receipt-identity-test-session".to_string(),
+        subject_sha256: hex::encode(sha2::Sha256::digest(&framed_bytes)),
+        subject_length: framed_bytes.len() as u64,
+        subject_scope: "mcp-jsonrpc-request-frame-including-delimiter".to_string(),
+        subject_encoding: "bytes".to_string(),
+        shown_sha256: hex::encode(sha2::Sha256::digest(call.as_bytes())),
+        shown_length: call.len() as u64,
+        shown_media_type: "text/plain".to_string(),
+        shown_character_encoding: "utf-8".to_string(),
+        renderer: ApprovalRenderer {
+            name: "receipt-identity-test-renderer".to_string(),
+            version: "2.0.0".to_string(),
+            manifest_sha256: hex::encode(sha2::Sha256::digest(b"receipt-identity-test-renderer")),
+        },
+        approver: "receipt-identity-test-human".to_string(),
+        authorization_signer_key_id: hex::encode(sha2::Sha256::digest(
+            sk.verifying_key().to_bytes(),
+        )),
+        authorization_signature_algorithm: "Ed25519".to_string(),
+        authorization_domain: "seal.approval-record/v2".to_string(),
+    };
+    let signature = sk.sign(&approval_v2_signature_preimage(&payload).unwrap());
+    serde_json::json!({
+        "payload": String::from_utf8(canonical_approval_v2_payload(&payload).unwrap()).unwrap(),
+        "signature_algorithm": "Ed25519",
+        "signature_encoding": "base64url-nopad",
+        "signer_key_id": payload.authorization_signer_key_id,
+        "signature": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+    })
+    .to_string()
 }
 
 fn is_block(line: &str) -> bool {
@@ -232,7 +267,7 @@ fn allow_receipt_for(
     let blocked = host.expect_line();
     assert!(is_block(&blocked), "unapproved call must block: {blocked}");
     let target = block_target(&blocked);
-    host.append_token_line(&signed_token(seed, &target, nonce));
+    host.append_token_line(&signed_v2_token(seed, &target, call, nonce));
     host.send(call);
     assert_eq!(
         host.expect_line(),

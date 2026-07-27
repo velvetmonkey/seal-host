@@ -18,6 +18,7 @@ use std::io::BufRead;
 
 pub const APPROVAL_RECORD_V2_DOMAIN: &str = "seal.approval-record/v2";
 const APPROVAL_RECORD_V2_DOMAIN_PREFIX: &[u8] = b"seal.approval-record/v2\0";
+const V1_APPROVAL_REFUSAL_REASON: &str = "approval_record_v1_not_supported";
 const MAX_CANONICAL_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 const SUBJECT_SCOPE: &str = "mcp-jsonrpc-request-frame-including-delimiter";
 
@@ -227,9 +228,9 @@ impl ApprovalRecord {
         }
     }
 
-    /// `None` is the fail-closed evidence classification for a legacy record:
-    /// it may retain legacy decision compatibility, but cannot be promoted to
-    /// an exact-byte `AUTHORIZED` claim.
+    /// `None` is the fail-closed evidence classification for an internal
+    /// legacy record. Ingest providers refuse v1 approvals; legacy records
+    /// remain for non-admission checks such as principal-envelope replay.
     pub fn v2(&self) -> Option<&ApprovalRecordV2> {
         match &self.evidence {
             ApprovalEvidence::Legacy => None,
@@ -628,11 +629,19 @@ impl ApprovalProvider for ControlFileProvider {
                 }
             }
             match serde_json::from_str::<LegacyApprovalRecord>(line) {
-                Ok(record) => poll.records.push(ApprovalRecord::legacy(
-                    record.target,
-                    record.issued_at,
-                    record.nonce,
-                )),
+                Ok(record) => {
+                    let red = record_redaction_material(&ApprovalRecord::legacy(
+                        record.target,
+                        record.issued_at,
+                        record.nonce,
+                    ));
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        V1_APPROVAL_REFUSAL_REASON,
+                        red,
+                    ));
+                }
                 Err(_) => poll.warnings.push(ApprovalDropWarning::new(
                     &mut self.drop_counter,
                     source,
@@ -685,8 +694,9 @@ struct SignedPayload {
 /// where payload parses to an ApprovalRecord (or DeclineRecord) with a
 /// MANDATORY nonce and issuedAt. The signature is verified over the exact
 /// payload bytes against the trusted verifying key.
-/// Decision field: absent or "allow" => approval record; "deny" => decline;
-/// any other value => record dropped with an `unknown_decision:<value>` warning.
+/// Decision field for signed v1 tokens: absent or "allow" is refused as an
+/// unsupported v1 approval; "deny" remains a decline; any other value is
+/// dropped with an `unknown_decision:<value>` warning.
 /// NOTE: `echo >> ndjson` (control-file) and unsigned tokens are DEV-ONLY
 /// and UNAUTHENTICATED — the ed25519 channel is the signed origin path.
 pub struct Ed25519TokenProvider {
@@ -847,11 +857,7 @@ impl ApprovalProvider for Ed25519TokenProvider {
         let source = self.name();
         let mut poll = ApprovalPoll::default();
         for original_line in fresh {
-            // Preserve the deployed v1 behavior: surrounding transport
-            // whitespace is ignored before limits, parsing, and verification.
-            // V2 rejects such whitespace below so every accepted token's
-            // retained bytes are exactly the bytes verified here.
-            let line = original_line.trim();
+            let line = original_line;
             if line.len() > MAX_APPROVAL_LINE_BYTES {
                 poll.warnings.push(ApprovalDropWarning::new(
                     &mut self.drop_counter,
@@ -934,7 +940,7 @@ impl ApprovalProvider for Ed25519TokenProvider {
                     ));
                     continue;
                 }
-                if original_line != line {
+                if original_line.trim() != original_line {
                     poll.warnings.push(ApprovalDropWarning::new(
                         &mut self.drop_counter,
                         source,
@@ -1029,14 +1035,23 @@ impl ApprovalProvider for Ed25519TokenProvider {
                 ));
                 continue;
             }
-            // ALLOWLIST on decision: absent or "allow" => approval; exactly "deny"
-            // => decline; ANY other value => drop with a warning naming it. A signed
-            // record meaning "do not run this" must never mint an approval because
-            // its decision spelling is unrecognised.
+            // Signed v1 allows are refused. Exactly "deny" remains a decline;
+            // ANY other value drops with a warning naming it. A signed record
+            // meaning "do not run this" must never mint an approval because its
+            // decision spelling is unrecognised.
             match sp.decision.as_deref() {
                 None | Some("allow") => {
-                    poll.records
-                        .push(ApprovalRecord::legacy(sp.target, sp.issued_at, sp.nonce))
+                    let red = record_redaction_material(&ApprovalRecord::legacy(
+                        sp.target,
+                        sp.issued_at,
+                        sp.nonce,
+                    ));
+                    poll.warnings.push(ApprovalDropWarning::new(
+                        &mut self.drop_counter,
+                        source,
+                        V1_APPROVAL_REFUSAL_REASON,
+                        red,
+                    ));
                 }
                 Some("deny") => poll.declines.push(DeclineRecord {
                     target: sp.target,
@@ -1305,37 +1320,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_approval_is_accepted_only_as_degraded_evidence() {
-        let signing_key = SigningKey::from_bytes(&[31u8; 32]);
-        let target = digest(b"legacy approval target");
-        let payload =
-            format!(r#"{{"target":"{target}","issuedAt":1720000000000,"nonce":"legacy-nonce"}}"#);
-        let signature = hex::encode(signing_key.sign(payload.as_bytes()).to_bytes());
-        let token = serde_json::json!({
-            "payload": payload,
-            "signature": signature,
-        })
-        .to_string();
-        let path =
-            std::env::temp_dir().join(format!("seal-approval-v1-compat-{}", std::process::id()));
-        // Existing v1 files may carry transport whitespace; deployed v1
-        // semantics trim it before limits, signature parsing, and admission.
-        std::fs::write(&path, format!("  {token}  \n")).unwrap();
-        let mut provider =
-            Ed25519TokenProvider::new(&path, &hex::encode(signing_key.verifying_key().to_bytes()))
-                .unwrap();
-        let poll = provider.poll();
-        std::fs::remove_file(&path).ok();
-
-        assert!(poll.warnings.is_empty());
-        assert_eq!(poll.records.len(), 1);
-        assert!(
-            poll.records[0].v2().is_none(),
-            "legacy approval must never be promoted to exact-byte AUTHORIZED evidence"
-        );
-    }
-
-    #[test]
     fn v2_context_filter_is_fail_closed_without_changing_legacy() {
         let signing_key = SigningKey::from_bytes(&[37u8; 32]);
         let framed_bytes = b"{\"integer\":1234567890123456789}\n";
@@ -1408,7 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn ed25519_provider_accepts_valid_rejects_tampered() {
+    fn ed25519_provider_refuses_valid_v1_and_rejects_tampered() {
         let sk = SigningKey::from_bytes(&[7u8; 32]);
         let vk_hex = hex::encode(sk.verifying_key().to_bytes());
         let target = "000000000000000000000000000000000000000000000000000000000000002a";
@@ -1426,11 +1410,15 @@ mod tests {
         let mut p = Ed25519TokenProvider::new(&dir, &vk_hex).unwrap();
         let poll = p.poll();
         std::fs::remove_file(&dir).ok();
-        assert_eq!(poll.warnings.len(), 1, "tampered token emits one warning");
-        assert_eq!(poll.warnings[0].reason, "bad_signature");
-        let records = poll.records;
-        assert_eq!(records.len(), 1, "tampered token must be dropped");
-        assert_eq!(records[0].target, target);
+        assert!(poll.records.is_empty());
+        assert_eq!(
+            poll.warnings
+                .iter()
+                .map(|warning| warning.reason.as_str())
+                .collect::<Vec<_>>(),
+            [V1_APPROVAL_REFUSAL_REASON, "bad_signature"],
+            "the valid v1 token is explicitly refused and the tampered token remains distinguishable"
+        );
     }
 
     #[test]
@@ -1474,24 +1462,23 @@ mod tests {
         let poll = provider.poll();
         std::fs::remove_file(&path).ok();
 
-        assert_eq!(
-            poll.records.len(),
-            1,
-            "negative control: only the valid signature may verify"
-        );
-        assert_eq!(poll.records[0].nonce.as_deref(), Some("valid"));
+        assert!(poll.records.is_empty());
         assert_eq!(
             poll.warnings
                 .iter()
                 .map(|warning| warning.reason.as_str())
                 .collect::<Vec<_>>(),
-            ["bad_signature", "non_canonical_signature_scalar"],
-            "ordinary mismatch and malformed RFC 8032 scalar must be distinguishable"
+            [
+                V1_APPROVAL_REFUSAL_REASON,
+                "bad_signature",
+                "non_canonical_signature_scalar"
+            ],
+            "valid-but-v1, ordinary mismatch, and malformed RFC 8032 scalar must be distinguishable"
         );
     }
 
     #[test]
-    fn ed25519_provider_accepts_signed_decline_and_allow() {
+    fn ed25519_provider_refuses_signed_v1_allow_and_accepts_decline() {
         let sk = SigningKey::from_bytes(&[11u8; 32]);
         let vk_hex = hex::encode(sk.verifying_key().to_bytes());
         let target = "00000000000000000000000000000000000000000000000000000000000000ab";
@@ -1519,12 +1506,9 @@ mod tests {
         let mut p = Ed25519TokenProvider::new(&dir, &vk_hex).unwrap();
         let poll = p.poll();
         std::fs::remove_file(&dir).ok();
-        assert!(
-            poll.warnings.is_empty(),
-            "valid signed allow+decline must have zero warnings"
-        );
-        assert_eq!(poll.records.len(), 1);
-        assert_eq!(poll.records[0].target, target);
+        assert!(poll.records.is_empty());
+        assert_eq!(poll.warnings.len(), 1);
+        assert_eq!(poll.warnings[0].reason, V1_APPROVAL_REFUSAL_REASON);
         assert_eq!(poll.declines.len(), 1);
         assert_eq!(poll.declines[0].target, target);
         assert_eq!(poll.declines[0].nonce.as_deref(), Some(nonce));
@@ -1604,10 +1588,9 @@ mod tests {
         );
     }
 
-    /// BLUE: the allowlisted spellings still work on the signed channel —
-    /// absent decision and explicit "allow" both mint approvals.
+    /// V1 allow spellings are refused on the signed channel.
     #[test]
-    fn ed25519_provider_still_approves_absent_and_allow() {
+    fn ed25519_provider_refuses_v1_absent_and_allow() {
         let sk = SigningKey::from_bytes(&[17u8; 32]);
         let vk_hex = hex::encode(sk.verifying_key().to_bytes());
         let target = "00000000000000000000000000000000000000000000000000000000000000ef";
@@ -1633,11 +1616,13 @@ mod tests {
         let mut p = Ed25519TokenProvider::new(&path, &vk_hex).unwrap();
         let poll = p.poll();
         std::fs::remove_file(&path).ok();
-        assert!(poll.warnings.is_empty());
+        assert_eq!(poll.warnings.len(), 2);
+        assert!(poll
+            .warnings
+            .iter()
+            .all(|warning| warning.reason == V1_APPROVAL_REFUSAL_REASON));
         assert!(poll.declines.is_empty());
-        assert_eq!(poll.records.len(), 2);
-        assert_eq!(poll.records[0].nonce.as_deref(), Some("n-abs"));
-        assert_eq!(poll.records[1].nonce.as_deref(), Some("n-alw"));
+        assert!(poll.records.is_empty());
     }
 
     /// RED: same allowlist on the control-file channel — "DENY"/"revoke" never approve.
@@ -1665,10 +1650,9 @@ mod tests {
         assert_eq!(poll.warnings[1].reason, "unknown_decision:revoke");
     }
 
-    /// BLUE: control-file channel still approves absent decision and "allow",
-    /// and still parses exact "deny" as a decline.
+    /// Control-file v1 allows are refused; exact "deny" remains a decline.
     #[test]
-    fn control_file_still_approves_absent_and_allow_and_declines_deny() {
+    fn control_file_refuses_v1_absent_and_allow_and_declines_deny() {
         let target = "0000000000000000000000000000000000000000000000000000000000000022";
         let path = std::env::temp_dir().join(format!("seal-cf-alw-{}", std::process::id()));
         std::fs::write(
@@ -1681,8 +1665,12 @@ mod tests {
         let mut p = ControlFileProvider::new(&path);
         let poll = p.poll();
         std::fs::remove_file(&path).ok();
-        assert!(poll.warnings.is_empty());
-        assert_eq!(poll.records.len(), 2);
+        assert_eq!(poll.warnings.len(), 2);
+        assert!(poll
+            .warnings
+            .iter()
+            .all(|warning| warning.reason == V1_APPROVAL_REFUSAL_REASON));
+        assert!(poll.records.is_empty());
         assert_eq!(poll.declines.len(), 1);
         assert_eq!(poll.declines[0].target, target);
     }
