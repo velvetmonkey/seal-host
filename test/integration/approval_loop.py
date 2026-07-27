@@ -7,7 +7,7 @@ Provides:
 - spawn_with_child(config, extra_args, child)
 - call(proc, mid, name, arguments)
 - block_and_extract_target(proc, call_json) -> target_hex or None
-- apply_cli_signed_decision(cli_path, token_file, target, allow, key_hex) -> CLI output
+- apply_cli_signed_decision(cli_path, token_file, request_file, target, allow, key_hex) -> CLI output
 - reissue_and_observe(proc, call_json, timeout=5.0) -> (response_dict_or_str, stdout_tail, stderr_tail)
 
 Returns structured observations including 'refused' (host emitted refused response or audit).
@@ -101,12 +101,32 @@ def block_and_extract_target(proc, call_json_str: str, max_reads=12, sleep=0.05)
     return m.group(1) if m else None
 
 
-def apply_cli_signed_decision(cli_path: Path, token_file: Path, target: str, allow: bool, key_hex: str):
-    """Invoke the real CLI approver to sign and append a target-bound record.
+def apply_cli_signed_decision(
+    cli_path: Path,
+    token_file: Path,
+    request_file: Path,
+    target: str,
+    allow: bool,
+    key_hex: str,
+):
+    """Invoke the real CLI approver to sign and append a request-bound record.
     Returns the CLI stdout.
     """
     flag = "--approve" if allow else "--deny"
-    cmd = [sys.executable, str(cli_path), "--token-file", str(token_file), "--target", target, flag, "--key", key_hex, "--yes"]
+    cmd = [
+        sys.executable,
+        str(cli_path),
+        "--token-file",
+        str(token_file),
+        "--request-file",
+        str(request_file),
+        "--target",
+        target,
+        flag,
+        "--key",
+        key_hex,
+        "--yes",
+    ]
     out = subprocess.check_output(cmd, cwd=ROOT, text=True, env=env_with_ld(), timeout=15)
     return out
 
@@ -194,11 +214,17 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
     dummy = work_dir / "dummy.ndjson"
     dummy.write_text("", encoding="utf-8")
 
-    # Use the test's write_config to get a trusted that works for ed25519 (includes replay etc.)
+    # Reuse the test payload (including replay etc.), but bind every guarded
+    # approval to the complete arguments as required by the current kernel.
     sys.path.insert(0, str(ROOT / "test" / "integration"))
-    from test_host_rs import write_config, PUBKEY as CONFIG_PUB  # noqa: E402
+    from test_host_rs import CONFIG_SK, PUBKEY as CONFIG_PUB, config_payload  # noqa: E402
 
-    trusted = write_config(work_dir, dummy)
+    payload = config_payload(work_dir, dummy)
+    for rule in payload["safety"]["tools"]:
+        if rule["mode"] == "guarded":
+            rule["target"] = [{"full_arguments": True}]
+    trusted = work_dir / "trusted.json"
+    trusted.write_text(sign_payload(payload, CONFIG_SK), encoding="utf-8")
 
     appr_priv, appr_pub = generate_approval_keypair()
 
@@ -232,6 +258,8 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
         call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                            "params": {"name": tool_name, "arguments": tool_args}},
                           separators=(",", ":"))
+        request_file = work_dir / "request.frame"
+        request_file.write_text(call + "\n", encoding="utf-8")
 
         # Send call, extract target (must succeed)
         proc.stdin.write(call + "\n")
@@ -261,7 +289,14 @@ def run_signed_ed25519_loop(work_dir: Path, allow: bool, tool_name: str = "db.ex
         obs["block_text"] = blocked  # raw host block response containing "approval required: <hex>" for demo visibility + evidence
 
         # Real CLI approver signs the target-bound record (allow or decline)
-        cli_out = apply_cli_signed_decision(CLI := (ROOT / "demo" / "approve_cli.py"), tokens, t, allow, appr_priv)
+        cli_out = apply_cli_signed_decision(
+            CLI := (ROOT / "demo" / "approve_cli.py"),
+            tokens,
+            request_file,
+            t,
+            allow,
+            appr_priv,
+        )
         obs["cli_out"] = cli_out
 
         # Re-issue the exact same call
