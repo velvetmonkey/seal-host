@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Canonical v2 decision receipts for the deployed native host.
+//! Canonical v2 authorization decisions for the deployed native host.
 //!
 //! The Lean step output remains the authority for verdicts and certificates.
 //! This module only assembles that material with the exact request, signed
@@ -17,10 +17,10 @@ const VERIFIED_WASM: &[u8] = include_bytes!("../../receipt-verifier/wasm/seal.wa
 pub const VERIFIED_WASM_SHA256: &str =
     "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be";
 
-/// Declared verification profile of seal-host's receipt-verifier surface
+/// Declared verification profile of seal-host's authorization-decision verifier surface
 /// (seal-assurance-kit docs/VERIFY-PROFILES.md): P-ENFORCE — the production
-/// receipt gate. The embedded re-derivation body above is the verifier body
-/// receipts name via `kernel_identity.wasm_sha256`; the gating surface
+/// authorization-decision gate. The embedded re-derivation body above is the verifier body
+/// authorization decisions name via `kernel_identity.wasm_sha256`; the gating surface
 /// (`scripts/v2_receipt_conformance.py`, the Golden Path demos) always
 /// supplies the config-signer trust-anchor pin (`--expected-config-pubkey`)
 /// and consumes the pinned external verifiers' 0/4/3/1-class exit codes.
@@ -44,7 +44,7 @@ pub struct SignedConfig {
 #[derive(Debug)]
 pub struct DecisionInput<'a> {
     pub line: &'a str,
-    /// Boot-scoped host runtime context. Receipt-only: this is not supplied
+    /// Boot-scoped host runtime context. Authorization-decision-only: this is not supplied
     /// to Lean and has no role in authorization or freshness.
     pub session: &'a str,
     pub now: u64,
@@ -57,7 +57,7 @@ pub struct DecisionInput<'a> {
 }
 
 #[derive(Debug)]
-pub struct ReceiptWriter {
+pub struct AuthorizationDecisionWriter {
     dir: PathBuf,
     next_entry: u64,
     native_executable_sha256: String,
@@ -65,7 +65,7 @@ pub struct ReceiptWriter {
 }
 
 #[derive(Debug, Clone)]
-pub struct PersistedReceipt {
+pub struct PersistedAuthorizationDecision {
     pub path: PathBuf,
     pub consumed_target: Option<String>,
 }
@@ -104,7 +104,7 @@ fn canonical_request(tool: &str, arguments: &Value) -> Value {
     Value::Object(request)
 }
 
-/// Build the receipt-only MCP projection. Every value here is either a
+/// Build the authorization-decision-only MCP projection. Every value here is either a
 /// constant descriptor, boot/request context already held by the host, or a
 /// by-value projection of the line `request_parts` parsed. It is deliberately
 /// not an input to Lean, signature verification, routing, or A3 freshness.
@@ -129,7 +129,7 @@ fn effect_view(
             "version": "1"
         }),
     );
-    // Preserve the receipt's honesty rule: never mint a `principal` key when
+    // Preserve the authorization decision's honesty rule: never mint a `principal` key when
     // the kernel authenticated none. When present, the id comes only from the
     // authoritative step output and is paired with passive session context.
     if let Some(id) = step.get("principal").and_then(Value::as_str) {
@@ -161,7 +161,7 @@ fn effect_view(
         Value::String(format!("{}:{request_sha256}", input.session)),
     );
     // `epoch` is a required field of the successfully verified config. Keep
-    // this best-effort so receipt enrichment can never veto a kernel verdict.
+    // this best-effort so authorization-decision enrichment can never veto a kernel verdict.
     if let Some(policy_version) = input.kernel_config.get("epoch") {
         view.insert("policy_version".into(), policy_version.clone());
         view.insert("policy_version_enforced".into(), Value::Bool(false));
@@ -170,18 +170,18 @@ fn effect_view(
     Value::Object(view)
 }
 
-/// Best-effort structured view of the wire line for the receipt's derived
+/// Best-effort structured view of the wire line for the authorization decision's derived
 /// fields. This is DESCRIPTIVE material only: the kernel is deliberately the
 /// more tolerant parser (the differential corpus pins lines Lean mediates
 /// that serde rejects, e.g. `1e309`), so a failure here must never influence
-/// whether the kernel's verdict is enacted — the receipt records the raw
+/// whether the kernel's verdict is enacted — the authorization decision records the raw
 /// line hash instead and the decision stands.
 /// Public so the parser-boundary conformance test (`tests/parser_boundary.rs`)
-/// exercises the SAME structured-view parser the receipt layer runs — the
+/// exercises the SAME structured-view parser the authorization-decision layer runs — the
 /// lib.rs no-test-mirror rule.
 pub fn request_parts(line: &str) -> Result<(String, Value), String> {
     let request: Value = serde_json::from_str(line.trim())
-        .map_err(|e| format!("cannot parse mediated request for receipt: {e}"))?;
+        .map_err(|e| format!("cannot parse mediated request for authorization decision: {e}"))?;
     let tool = request
         .pointer("/params/name")
         .and_then(Value::as_str)
@@ -195,7 +195,7 @@ pub fn request_parts(line: &str) -> Result<(String, Value), String> {
     Ok((tool, arguments))
 }
 
-fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
+fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
     let step: Value = serde_json::from_str(input.emitted_bytes)
         .map_err(|e| format!("cannot parse authoritative Lean step output: {e}"))?;
     let route = step
@@ -204,7 +204,7 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         .ok_or("authoritative Lean step output lacks route")?;
     if route != "forward" && route != "block" {
         return Err(format!(
-            "no decision receipt for non-mediated route {route}"
+            "no authorization decision for non-mediated route {route}"
         ));
     }
     let audit_text = step
@@ -266,9 +266,9 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         )
     };
 
-    // The receipt derives structured request material only when the line
+    // The authorization decision derives structured request material only when the line
     // parses; otherwise it records the raw line hash and the parse error.
-    // Never an Err: the receipt layer holds no veto over the kernel.
+    // Never an Err: the authorization-decision layer holds no veto over the kernel.
     let request_material = request_parts(input.line);
 
     let safety_target = certs
@@ -290,7 +290,11 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
 
     let policy_hash = canonical_json_sha256(input.kernel_config)?;
     let mut receipt = Map::new();
-    receipt.insert("seal_receipt".into(), Value::String("v2".into()));
+    receipt.insert(
+        "record_type".into(),
+        Value::String("seal.authorization-decision".into()),
+    );
+    receipt.insert("record_version".into(), Value::from(2));
     if let Ok((tool, arguments)) = &request_material {
         receipt.insert("tool".into(), Value::String(tool.clone()));
         receipt.insert("arguments".into(), arguments.clone());
@@ -325,7 +329,7 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         );
     }
     // Hash of the exact wire line as judged by the kernel — present on every
-    // receipt, and the only request identity when the line is unparseable.
+    // authorization decision, and the only request identity when the line is unparseable.
     // Cross-checked above against the kernel-attested hash in the audit, so
     // this value is kernel-backed, not merely host-asserted.
     receipt.insert("request_sha256".into(), Value::String(host_request_sha256));
@@ -396,12 +400,12 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
         "self_verified": sha256_hex(VERIFIED_WASM) == VERIFIED_WASM_SHA256,
         "note": "Re-derive against this wasm; the native executor is identified separately, not proven equivalent."
     }));
-    receipt.insert("host_identity".into(), Value::Null); // filled by ReceiptWriter
+    receipt.insert("host_identity".into(), Value::Null); // filled by AuthorizationDecisionWriter
     receipt.insert("asserted_provenance".into(), serde_json::json!({
         "verified_in_browser": false,
         "lean_toolchain": "leanprover/lean4:v4.28.0",
         "axioms": ["propext", "Classical.choice", "Quot.sound"],
-        "note": "Source-level provenance asserted by the producer; not established by this receipt."
+        "note": "Source-level provenance asserted by the producer; not established by this authorization decision."
     }));
     receipt.insert(
         "signed_config".into(),
@@ -425,19 +429,28 @@ fn receipt_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
     Ok(Value::Object(receipt))
 }
 
-impl ReceiptWriter {
+impl AuthorizationDecisionWriter {
     pub fn new(dir: impl Into<PathBuf>) -> Result<Self, String> {
         let dir = dir.into();
-        secure_fs::ensure_private_dir(&dir, "receipt directory")?;
+        secure_fs::ensure_private_dir(&dir, "authorization decision directory")?;
         let probe = dir.join(format!(".seal-receipt-probe-{}", std::process::id()));
-        let mut probe_file = secure_fs::open_private_new(&probe, "receipt probe")?;
+        let mut probe_file = secure_fs::open_private_new(&probe, "authorization decision probe")?;
         probe_file
             .write_all(b"probe")
             .and_then(|_| probe_file.sync_all())
-            .map_err(|e| format!("receipt directory {} is not writable: {e}", dir.display()))?;
+            .map_err(|e| {
+                format!(
+                    "authorization decision directory {} is not writable: {e}",
+                    dir.display()
+                )
+            })?;
         drop(probe_file);
-        std::fs::remove_file(&probe)
-            .map_err(|e| format!("cannot clean receipt probe {}: {e}", probe.display()))?;
+        std::fs::remove_file(&probe).map_err(|e| {
+            format!(
+                "cannot clean authorization decision probe {}: {e}",
+                probe.display()
+            )
+        })?;
 
         let exe =
             std::env::current_exe().map_err(|e| format!("cannot identify host executable: {e}"))?;
@@ -450,16 +463,22 @@ impl ReceiptWriter {
         })
     }
 
-    pub fn persist(&mut self, input: DecisionInput<'_>) -> Result<PersistedReceipt, String> {
-        let mut receipt = receipt_from_step(&input)?;
-        receipt.as_object_mut().expect("receipt object").insert(
-            "host_identity".into(),
-            serde_json::json!({
-                "native_executable_sha256": self.native_executable_sha256,
-                "lean_ffi_sha256": self.lean_ffi_sha256,
-                "equivalence": "not_proven"
-            }),
-        );
+    pub fn persist(
+        &mut self,
+        input: DecisionInput<'_>,
+    ) -> Result<PersistedAuthorizationDecision, String> {
+        let mut receipt = authorization_decision_from_step(&input)?;
+        receipt
+            .as_object_mut()
+            .expect("authorization decision object")
+            .insert(
+                "host_identity".into(),
+                serde_json::json!({
+                    "native_executable_sha256": self.native_executable_sha256,
+                    "lean_ffi_sha256": self.lean_ffi_sha256,
+                    "equivalence": "not_proven"
+                }),
+            );
         // Filename identity: canonical request hash when the line parsed
         // (unchanged for every previously-possible receipt), raw line hash
         // otherwise — always present, so naming can never veto persistence.
@@ -467,7 +486,7 @@ impl ReceiptWriter {
             .get("canonical_request_sha256")
             .or_else(|| receipt.get("request_sha256"))
             .and_then(Value::as_str)
-            .ok_or("receipt lacks a request hash")?;
+            .ok_or("authorization decision lacks a request hash")?;
         let consumed_target = receipt
             .get("approval")
             .and_then(|a| a.get("approval_identity"))
@@ -482,7 +501,7 @@ impl ReceiptWriter {
                     .map(str::to_owned)
             });
         let bytes = serde_json::to_string_pretty(&receipt)
-            .map_err(|e| format!("cannot serialize v2 receipt: {e}"))?
+            .map_err(|e| format!("cannot serialize v2 authorization decision: {e}"))?
             + "\n";
 
         loop {
@@ -498,25 +517,26 @@ impl ReceiptWriter {
                 continue;
             }
             let write_result = (|| -> std::io::Result<()> {
-                let mut file = secure_fs::open_private_new(&tmp_path, "receipt temp")
-                    .map_err(std::io::Error::other)?;
+                let mut file =
+                    secure_fs::open_private_new(&tmp_path, "authorization decision temp")
+                        .map_err(std::io::Error::other)?;
                 file.write_all(bytes.as_bytes())?;
                 file.sync_all()?;
                 std::fs::rename(&tmp_path, &final_path)?;
-                secure_fs::validate_private_file(&final_path, "receipt")
+                secure_fs::validate_private_file(&final_path, "authorization decision")
                     .map_err(std::io::Error::other)?;
-                secure_fs::sync_dir(&self.dir, "receipt directory")
+                secure_fs::sync_dir(&self.dir, "authorization decision directory")
                     .map_err(std::io::Error::other)?;
                 Ok(())
             })();
             if let Err(e) = write_result {
                 let _ = std::fs::remove_file(&tmp_path);
                 return Err(format!(
-                    "cannot persist decision receipt in {}: {e}",
+                    "cannot persist authorization decision in {}: {e}",
                     self.dir.display()
                 ));
             }
-            return Ok(PersistedReceipt {
+            return Ok(PersistedAuthorizationDecision {
                 path: final_path,
                 consumed_target,
             });
@@ -542,7 +562,7 @@ mod tests {
     #[test]
     fn verify_profile_declared_and_grammar_extractable() {
         assert_eq!(VERIFY_PROFILE, "P-ENFORCE");
-        let src = include_str!("decision_receipt.rs");
+        let src = include_str!("authorization_decision.rs");
         let extracted = src.lines().find_map(|l| {
             let code = l.trim_start();
             if code.starts_with("//") || code.starts_with("///") {
@@ -610,7 +630,7 @@ mod tests {
             channel: "file".into(),
             key_id: None,
         };
-        receipt_from_step(&DecisionInput {
+        authorization_decision_from_step(&DecisionInput {
             line,
             session: "test-session",
             now: 1000,
@@ -623,15 +643,15 @@ mod tests {
         })
     }
 
-    /// RED: a kernel-allowed line serde cannot parse still yields a receipt
+    /// RED: a kernel-allowed line serde cannot parse still yields an authorization decision
     /// — raw line hash + named parse error, structured fields ABSENT. The
-    /// receipt layer never vetoes the kernel (this call returned Err before
+    /// authorization-decision layer never vetoes the kernel (this call returned Err before
     /// the de-parse, refusing a Lean-allowed call).
     #[test]
-    fn unparseable_line_yields_receipt_with_raw_hash_not_an_error() {
+    fn unparseable_line_yields_authorization_decision_with_raw_hash_not_an_error() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1e309}}}"#;
-        let receipt =
-            build(line, &allow_step_output(line)).expect("de-parsed receipt must persist");
+        let receipt = build(line, &allow_step_output(line))
+            .expect("de-parsed authorization decision must persist");
         assert_eq!(
             receipt["request_sha256"],
             Value::String(sha256_hex(line.as_bytes()))
@@ -658,7 +678,7 @@ mod tests {
     #[test]
     fn parseable_line_keeps_structured_fields_and_gains_raw_hash() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"x":1}}}"#;
-        let receipt = build(line, &allow_step_output(line)).expect("receipt");
+        let receipt = build(line, &allow_step_output(line)).expect("authorization decision");
         assert_eq!(receipt["tool"], "t");
         assert!(receipt["arguments"].is_object());
         assert!(receipt["args_hash"].is_string());
@@ -671,11 +691,11 @@ mod tests {
     }
 
     #[test]
-    fn effect_view_is_non_authoritative_by_value_and_receipt_only() {
+    fn effect_view_is_non_authoritative_by_value_and_authorization_decision_only() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"notes.add","arguments":{"z":1,"a":2,"effect":{"resource":"forged","action":"allow"}}}}"#;
         let mut step: Value = serde_json::from_str(&allow_step_output(line)).unwrap();
         step["principal"] = Value::String("alice".into());
-        let receipt = build(line, &step.to_string()).expect("receipt");
+        let receipt = build(line, &step.to_string()).expect("authorization decision");
         let view = &receipt["effect_view"];
 
         assert_eq!(view["schema"], "seal.effect-view/v0");
@@ -705,7 +725,7 @@ mod tests {
     /// RED (the security property of the kernel request commitment):
     /// a forged pairing — kernel material minted for line A presented with
     /// line B as the request — is refused. Before this cross-check the
-    /// receipt layer would happily pair any kernel output with any line;
+    /// authorization-decision layer would happily pair any kernel output with any line;
     /// the host asserted the pairing and nothing could catch it lying.
     #[test]
     fn forged_line_pairing_is_refused() {

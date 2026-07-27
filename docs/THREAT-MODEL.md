@@ -5,7 +5,7 @@
 - Human approval authority.
 - MCP tool calls that can create external effects.
 - Target commitments and approval records.
-- Decision receipts and audit chains.
+- Authorization decisions and audit chains.
 - Kernel and artifact provenance.
 
 ## Adversaries
@@ -13,7 +13,7 @@
 - An AI agent that is mistaken, manipulated, or trying to route around policy.
 - Prompt-injection content that influences the agent's tool request.
 - A user or integration that presents stale, malformed, or mismatched approvals.
-- A reviewer who needs to detect tampered receipts or record chains.
+- A reviewer who needs to detect tampered authorization decisions or record chains.
 
 ## In scope
 

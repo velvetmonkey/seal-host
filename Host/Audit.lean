@@ -11,7 +11,7 @@ open Lean
 /-- One audit line per mediated call: the config epoch, the tool, the combined
     verdict, every gating kernel's certificate, and `request_sha256` — the
     kernel's own commitment to the EXACT bytes it judged (lowercase-hex
-    SHA-256 of `reqLine`, mirroring `rust/src/decision_receipt.rs`
+    SHA-256 of `reqLine`, mirroring `rust/src/authorization_decision.rs`
     `sha256_hex(input.line.as_bytes())` byte-for-byte).
 
     `reqLine` is the terminator-stripped `lean_view` of the wire line: the
@@ -44,9 +44,9 @@ def auditLine (epoch : Nat) (tool : String) (combined : VerdictKind)
 
 /-! ## Reference conformance (build-gated compiled evaluation)
 
-Golden vectors mirroring `rust/src/decision_receipt.rs`
+Golden vectors mirroring `rust/src/authorization_decision.rs`
 (`request_sha256 = sha256_hex(input.line.as_bytes())`). A bare `lake build`
-fails on any byte mismatch. Rust twins: `decision_receipt.rs`
+fails on any byte mismatch. Rust twins: `authorization_decision.rs`
 `request_hash_golden_vectors_match_lean` and `main.rs`
 `request_commitment_is_over_the_terminator_stripped_lean_view`.
 

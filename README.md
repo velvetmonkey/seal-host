@@ -5,7 +5,7 @@
 
 **Stops the unapproved prod action before it ever reaches your real MCP server.**
 
-An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching human approval for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident receipt.
+An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching human approval for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident authorization decision.
 
 One command shows the full loop over a fake ledger in seconds (block with 64-hex target, signed approval via CLI, action or explicit refused, side-effect or audit).
 
@@ -62,7 +62,7 @@ TELEGRAM_BOT_TOKEN=… SEAL_TG_ALLOWED=<id> python3 demo/dogfood_telegram.py   #
 
 Each prints the raw `approval required: <64-hex>` block and the raw second response (`SYNTHETIC_LEDGER_ACTION … committed via approval`, or an explicit refusal). `dogfood_failclosed.py` is one-command and needs no human; `dogfood_telegram.py` exits 2 with 3-step BotFather setup if no bot token is set — nothing is mocked.
 
-**Prove the receipt (5-minute cold-reviewer walkthrough)**
+**Prove the authorization decision (5-minute cold-reviewer walkthrough)**
 
 The showcase shows the *decision*; this shows the *evidence is tamper-evident*. One command, no external setup:
 
@@ -83,10 +83,10 @@ RECEIPT DEMO PASSED
 
 <!-- TODO(asset, shot #5, PROMO-GRADE): real terminal GIF (asciinema) of the full loop —
      guarded db.execute BLOCKED with the 64-hex target commitment visible, human appends the
-     approval line, the identical call passes, receipt JSON line printed. Capture from the
+     approval line, the identical call passes, authorization-decision JSON line printed. Capture from the
      docs/DEPLOY.md walkthrough. Do NOT fake or mock this capture. -->
 <!-- TODO(asset, shot #6, AI-generatable): clean diagram — agent → seal-host (guard) →
-     real MCP server, approval channel as side input, receipt as output. Cleaner render of
+     real MCP server, approval channel as side input, authorization decision as output. Cleaner render of
      the ASCII art in docs/DEPLOY.md. -->
 
 The Rust host receives MCP traffic and forwards ordinary traffic unchanged. When a guarded `tools/call` arrives, it gathers approval records, filters them for freshness and replay, and calls the Lean kernel through the FFI surface. A matching approval routes the original call forward. No match returns a JSON-RPC error before the downstream tool sees anything.
@@ -114,7 +114,7 @@ Mandatory non-claims (canonical copy: [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
 - Axiom footprint {propext, Classical.choice, Quot.sound} is the minimal classical fragment; no extra axioms.
 <!-- claims:end -->
 
-## Beyond mediation: the receipt is not a covert channel
+## Beyond mediation: the authorization decision is not a covert channel
 
 Machine-checked non-interference: any two approval states that agree on the single authorized bit for a request produce byte-identical decisions **and** byte-identical audit records — for one request (`observe_noninterference`) and across a whole session trace with the durable replay store varying (`stateful_noninterference_trace`). The record chain is tamper-evident under an injective hash step (`Host.Record.tamper_evident` — notably an **axiom-free** theorem: collision resistance and genesis freshness enter as explicit hypotheses, not axioms).
 
@@ -144,15 +144,15 @@ _All Seal-family repositories are currently private; these links resolve only fo
 - [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo): Watch it work.
 - [seal-assurance-kit](https://github.com/velvetmonkey/seal-assurance-kit): Check your own boundary.
 - [witness-check](https://github.com/velvetmonkey/witness-check): The sufficiency analyzer. (private/proprietary)
-- [seal-verify-action](https://github.com/velvetmonkey/seal-verify-action): Gate receipts in CI.
+- [seal-verify-action](https://github.com/velvetmonkey/seal-verify-action): Gate authorization decisions in CI.
 
 ## Documentation
 
-- **[Deploy: stand the gate up in front of your own agent](docs/DEPLOY.md)** — clone → build → first blocked call → approve → receipt
+- **[Deploy: stand the gate up in front of your own agent](docs/DEPLOY.md)** — clone → build → first blocked call → approve → authorization decision
 - **[Operate the V1 core](docs/OPERATIONS.md)** — authenticated health/readiness, retention, rotation, secrets, and replay recovery
 - [What Seal is NOT](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/WHAT-SEAL-IS-NOT.md) — read this first (private kit repo)
 - [Family claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md) · [family architecture map](https://github.com/velvetmonkey/seal/blob/main/docs/ARCHITECTURE.md) (private umbrella)
-- [Receipt-evidence deployment (assurance kit): install to first PASS/FAIL](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/DEPLOYMENT.md) (private kit repo)
+- [Authorization-decision evidence deployment (assurance kit): install to first PASS/FAIL](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/DEPLOYMENT.md) (private kit repo)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Threat model](docs/THREAT-MODEL.md)
 - [Assumptions](docs/ASSUMPTIONS.md)

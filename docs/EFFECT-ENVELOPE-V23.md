@@ -23,7 +23,7 @@ notification:
 
 The 32 random bytes come from `/dev/urandom`; failure to obtain them refuses
 startup. The value is stable for the life of this host process and is the
-host equality comparand for `principal.session`. It is not the receipt-only
+host equality comparand for `principal.session`. It is not the authorization-decision-only
 `seal-host-rs/stdio:<pid>:<start-ms>` string. The notification is acknowledged
 by the single stdout owner before the child relay starts, so a child frame
 cannot race ahead of session issuance.

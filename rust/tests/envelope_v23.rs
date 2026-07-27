@@ -221,7 +221,7 @@ fn killed_field_in_wire_envelope_fails_closed() {
 /// The RETIRED `seal.effect/v1` message layout, reconstructed test-locally:
 /// old tag, then the same bound prefix, then the killed seat frames and the
 /// trailing `u64be(expires_at)`. Seats are encoded at their v1 "unset" wire
-/// values (empty frames / zero), which is exactly the closest v1 receipt to
+/// values (empty frames / zero), which is exactly the closest v1 authorization decision to
 /// a stripped v2 one.
 fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: &str) -> Vec<u8> {
     fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
@@ -236,7 +236,7 @@ fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: 
     });
     // v1 seats ride at their "unset" wire values regardless of what the v2
     // envelope now carries (policy_version framed empty, expires_at 0): the
-    // closest v1 receipt to a reconciled v2 one.
+    // closest v1 authorization decision to a reconciled v2 one.
     let mut message = Vec::new();
     message.extend_from_slice(DOMAIN_TAG_V1_RETIRED);
     message.extend_from_slice(authority);
@@ -259,13 +259,13 @@ fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: 
     message
 }
 
-/// NEGATIVE CONTROL (cross-version): a receipt signed under the retired
+/// NEGATIVE CONTROL (cross-version): an authorization decision signed under the retired
 /// `seal.effect/v1` layout must NOT verify under the v2 verifier — the Rust
 /// executable face of the Lean theorem `effect_cross_version_v1_separated`.
 /// Reverting the domain-tag bump makes the v1 and v2 messages coincide on
 /// this fixture and this test fail.
 #[test]
-fn v1_tagged_receipt_fails_closed_under_v2() {
+fn v1_tagged_authorization_decision_fails_closed_under_v2() {
     let (mut envelope, line, authority_hex, config) = fixture();
     let authority: [u8; 32] = hex::decode(&authority_hex).unwrap().try_into().unwrap();
     let v1_message = legacy_v1_effect_message(&authority, &envelope, &line);

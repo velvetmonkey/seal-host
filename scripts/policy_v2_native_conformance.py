@@ -144,7 +144,7 @@ def main() -> int:
             raise RuntimeError(f"host exited {proc.returncode}: {stderr}")
 
         produced = sorted(receipts.glob("receipt-*.json"))
-        assert len(produced) == 7, f"expected seven decision receipts: {produced}\n{stderr}"
+        assert len(produced) == 7, f"expected seven authorization decisions: {produced}\n{stderr}"
         records = [json.loads(path.read_text(encoding="utf-8")) for path in produced]
         explicit = [r for r in records if r.get("authorization") == "explicit_policy_allow"]
         approved = [r for r in records if r.get("authorization") == "approval"]

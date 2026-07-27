@@ -59,13 +59,13 @@ for deployability.** Everything in Shape 1, plus:
   control-file/interactive demo channels keep in-memory replay state only.
 - the bounded stdout frame queue (`output.rs`) and private filesystem helpers
   (`secure_fs.rs`): these are tested Rust transport controls, not Lean proofs.
-  The audit head state and decision receipts rely on file `fsync`, atomic
+  The audit head state and authorization decisions rely on file `fsync`, atomic
   rename, parent-directory `fsync`, Unix ownership, and exact modes behaving
   as checked by the host.
 - the opt-in health listener (`health.rs`): tested Rust, outside the Lean
   mediation proof. It defaults to loopback, requires a private bearer-token
   file before bind, caps requests, exposes only liveness/readiness, and has no
-  policy, receipt, approval, child-data, or mutation endpoint.
+  policy, authorization decision, approval, child-data, or mutation endpoint.
 - **the build toolchain that produces the linked artifacts, and the integrity
   of those artifacts.** The list above names the Ed25519 leaf implementation
   (vendored TweetNaCl) as trusted, but the step from that source to the linked

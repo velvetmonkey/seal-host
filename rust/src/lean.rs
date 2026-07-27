@@ -262,7 +262,7 @@ impl Default for LeanHost {
 /// Resolve the shared object that supplied the decision export actually
 /// linked into this process. This is provenance only: hashing this artifact
 /// identifies the native executor; it does not prove equivalence to the wasm
-/// re-derivation body named by a decision receipt.
+/// re-derivation body named by an authorization decision.
 #[cfg(unix)]
 pub fn loaded_ffi_path() -> Option<PathBuf> {
     unsafe {

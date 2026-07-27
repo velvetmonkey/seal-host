@@ -443,7 +443,7 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
         responses.push(response);
     }
 
-    // Every receipt is persisted before its response line, so after nine
+    // Every authorization decision is persisted before its response line, so after nine
     // responses the nine receipts are on disk.
     let receipts = host.receipts();
     assert_eq!(receipts.len(), 9, "[{ctx}] one receipt per mediated call");
@@ -456,8 +456,12 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
     for (receipt, &(bit, kernel, tool, deny_reason)) in receipts.iter().zip(PROBES.iter()) {
         let active = mask & bit != 0;
         assert_eq!(
-            receipt["seal_receipt"], "v2",
-            "[{ctx}] {tool} receipt schema"
+            receipt["record_type"], "seal.authorization-decision",
+            "[{ctx}] {tool} authorization-decision record type"
+        );
+        assert_eq!(
+            receipt["record_version"], 2,
+            "[{ctx}] {tool} authorization-decision record version"
         );
         assert_eq!(receipt["tool"], tool, "[{ctx}] receipt order");
         let mut expected = st.clone();

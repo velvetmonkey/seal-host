@@ -135,7 +135,7 @@ residual, and (C) fixes the hash.
   audited steps.
 * The JS `stableHashParts` mirror (receipt-format.js / seal-config.js /
   decide.cjs — the whole `capabilityTarget` convention in
-  `docs/DECISION-RECEIPT-SCHEMA.md`) must swap to SHA-256 in lockstep, or
+  `docs/AUTHORIZATION-DECISION-SCHEMA.md`) must swap to SHA-256 in lockstep, or
   the four-bodies conformance chain breaks.
 * Target commitments split from `Hash = UInt64` into `TargetHash = Digest256`;
   audit `certHash` remained the legacy UInt64 decimal-string encoding.

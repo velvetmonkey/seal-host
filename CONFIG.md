@@ -635,22 +635,22 @@ The CLI key is device-local but not hardware-backed. The host, CLI, key file,
 and same-user machine are in this channel’s TCB. A future device-held/passkey
 signer should make channels relay-only.
 
-**Who the receipt authenticates (scope, normative):** the receipt's
+**Who the authorization decision authenticates (scope, normative):** the authorization decision's
 `approval_identity` names the APPROVER's trust root — the channel kind plus,
 on `--channel ed25519` only, the SHA-256 fingerprint of `--approval-pubkey`.
 It is a boot-scoped constant of the configuration, provably independent of
 the request bytes. It never names the CALLER: stdio mediation carries no
-transport credential, so no receipt field can authenticate which agent made
+transport credential, so no authorization-decision field can authenticate which agent made
 a call — proven, not pending (`Host/ReceiptIdentity.lean`, and the "Who does
-a receipt authenticate?" section of `docs/HONESTY-MATRIX.md`). The `file`
-and `interactive` channels are DEV-ONLY and unauthenticated: their receipts
+an authorization decision authenticate?" section of `docs/HONESTY-MATRIX.md`). The `file`
+and `interactive` channels are DEV-ONLY and unauthenticated: their authorization decisions
 name a channel kind and make no identity claim at all. Binding a caller is a
-V2.1 topology change (per-caller transport credentials), not a receipt
+V2.1 topology change (per-caller transport credentials), not an authorization-decision
 field.
 
-## 5. Receipt lifecycle
+## 5. Authorization-decision lifecycle
 
-Every mediated BLOCK or ALLOW writes one v2 receipt before an ALLOW can reach
+Every mediated BLOCK or ALLOW writes one v2 authorization decision before an ALLOW can reach
 the server:
 
 ```bash
@@ -678,15 +678,15 @@ node ../seal-check/test/verify-file.cjs .seal/tampered.json       # exit 1
 node ../seal-assurance-kit/bin/seal verify .seal/tampered.json   # exit 1
 ```
 
-`kernel_identity.wasm_sha256` names the wasm used to re-derive the receipt.
+`kernel_identity.wasm_sha256` names the wasm used to re-derive the authorization decision.
 `host_identity` separately hashes the native executable and Lean FFI that
 made the decision. Those hashes identify the two bodies; they do not prove
 them equivalent. That is the open Lane C gap.
 
-## 6. Fail-closed receipt availability
+## 6. Fail-closed authorization-decision availability
 
-Receipt persistence is part of the gate. A full filesystem, lost mount,
-invalid permissions, or unwritable receipt directory blocks forwarding.
+Authorization-decision persistence is part of the gate. A full filesystem,
+lost mount, invalid permissions, or unwritable authorization-decision directory blocks forwarding.
 Safety is preserved at the cost of availability.
 
 ```bash
@@ -695,18 +695,18 @@ chmod 500 .seal/receipts
 chmod 700 .seal/receipts
 ```
 
-Operators must monitor free space and writeability and define receipt
+Operators must monitor free space and writeability and define authorization-decision
 retention. “The agent stopped working” may correctly mean “Seal could not
 persist evidence, so it refused to act.”
 
-Receipt directories must be owned by the service user with mode `0700`;
-receipt files and the SQLite replay database must be owned by that user with
+Authorization-decision directories must be owned by the service user with mode `0700`;
+authorization-decision files and the SQLite replay database must be owned by that user with
 mode `0600`. Existing unsafe modes, foreign ownership, and symlinks are
-rejected rather than repaired. After each receipt is written and file-fsynced,
-the host atomically renames it and fsyncs the receipt directory.
+rejected rather than repaired. After each authorization decision is written and file-fsynced,
+the host atomically renames it and fsyncs the authorization-decision directory.
 
 The exact crash-consistency claim is deliberately narrow: after `persist`
-returns success, the complete receipt bytes and its directory entry have been
+returns success, the complete authorization-decision bytes and its directory entry have been
 submitted through file `fsync`, atomic rename, and parent-directory `fsync`.
 They are expected to survive an ordinary process or OS crash on a local
 filesystem that honors those calls. This is not a claim against faulty storage,
@@ -731,7 +731,7 @@ replay backup/recovery are specified in [`docs/OPERATIONS.md`](docs/OPERATIONS.m
 
 ## Honesty rails
 
-- The v2 decision receipt and audit chain are distinct artifacts.
+- The v2 authorization decision and audit chain are distinct artifacts.
 - Policy-v1 substring matching is not a SQL parser.
 - Starter profiles require coverage and adequacy review before trust.
 - Seal controls recognized MCP `tools/call` ingress. Child responses are not
