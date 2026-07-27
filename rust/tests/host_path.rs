@@ -752,8 +752,9 @@ fn mediation_obfuscation_and_one_shot_approval() {
         .iter()
         .rev()
         .find(|receipt| receipt["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW receipt");
-    assert_eq!(allow["seal_receipt"], "v2");
+        .expect("forwarded decision persisted an ALLOW authorization decision");
+    assert_eq!(allow["record_type"], "seal.authorization-decision");
+    assert_eq!(allow["record_version"], 2);
     let effect_view = &allow["effect_view"];
     assert_eq!(effect_view["schema"], "seal.effect-view/v0");
     assert_eq!(effect_view["authoritative"], false);
@@ -774,7 +775,7 @@ fn mediation_obfuscation_and_one_shot_approval() {
     assert_eq!(allow["host_identity"]["equivalence"], "not_proven");
     assert_eq!(
         allow["kernel_identity"]["wasm_sha256"],
-        seal_host_rs::decision_receipt::VERIFIED_WASM_SHA256
+        seal_host_rs::authorization_decision::VERIFIED_WASM_SHA256
     );
 
     // One-shot: the same call again must block — the approval was consumed.
@@ -937,7 +938,7 @@ fn ed25519_signed_approval_forwards_end_to_end() {
         .into_iter()
         .rev()
         .find(|receipt| receipt["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW receipt");
+        .expect("forwarded decision persisted an ALLOW authorization decision");
     assert_eq!(allow["approval"]["approval_identity"]["channel"], "ed25519");
     assert!(allow["approval"]["approval_identity"]["key_id"].is_string());
     let signed = &allow["signed_config"];
@@ -1102,14 +1103,14 @@ fn pinned_defect_denied_call_retires_valid_approval() {
 }
 
 #[test]
-fn receipt_sink_failure_blocks_before_child_forward() {
+fn authorization_decision_sink_failure_blocks_before_child_forward() {
     let mut o = Oracle::spawn("receipt-sink-failure");
 
     // READINESS BY ROUND-TRIP, not by stat. `ReceiptChain::new` calls
     // `create_dir_all` and only THEN probes the sink
-    // (decision_receipt.rs:326-336), so "the receipt directory exists" goes
+    // (authorization_decision.rs:326-336), so "the authorization-decision directory exists" goes
     // true BEFORE the host is past its probe. Sabotaging inside that window
-    // makes the host fail the probe and exit 4 ("receipt sink rejected")
+    // makes the host fail the probe and exit 4 ("authorization decision sink rejected")
     // without ever answering -- a DIFFERENT failure than the one under test,
     // and the source of this test's flake. Only a completed round-trip proves
     // the probe is done and the host is serving. This call is guarded with no
@@ -1123,7 +1124,7 @@ fn receipt_sink_failure_blocks_before_child_forward() {
     let receipt_dir = o.receipt_dir();
     assert!(
         receipt_dir.is_dir(),
-        "host did not initialize its receipt sink"
+        "host did not initialize its authorization decision sink"
     );
     assert_eq!(
         std::fs::metadata(&receipt_dir).unwrap().mode() & 0o777,
@@ -1135,7 +1136,7 @@ fn receipt_sink_failure_blocks_before_child_forward() {
         assert_eq!(metadata.mode() & 0o777, 0o600, "receipt must be private");
     }
     // `remove_dir_all`, not `remove_dir`: the warm-up above has already written
-    // a decision receipt, so the directory is NOT empty and `remove_dir` would
+    // an authorization decision, so the directory is NOT empty and `remove_dir` would
     // fail ENOTEMPTY. Contents are irrelevant -- the scenario only needs the
     // sink PATH to stop being a directory.
     std::fs::remove_dir_all(&receipt_dir).unwrap();
@@ -1146,12 +1147,12 @@ fn receipt_sink_failure_blocks_before_child_forward() {
     assert_eq!(
         o.expect_line(),
         SEAM_ERROR_RESPONSE.trim_end(),
-        "receipt persistence failure must never reach the child"
+        "authorization decision persistence failure must never reach the child"
     );
     let stderr = o.drain_stderr(Duration::from_millis(100));
     assert!(
         stderr.iter().any(|line| {
-            line.contains("receipt persistence failure")
+            line.contains("authorization decision persistence failure")
                 || line.contains("audit head persistence failure")
         }),
         "operator must see the availability failure: {stderr:?}"
@@ -1230,12 +1231,12 @@ fn non_utf8_line_refused_and_session_survives() {
 /// observed outcome is printed so permitted drift remains visible.
 ///
 /// For a real agreement-accepted representational difference (the curated
-/// lone-high-surrogate class), the receipt layer must never veto a kernel
+/// lone-high-surrogate class), the authorization-decision layer must never veto a kernel
 /// verdict it cannot re-parse: an allowed call forwards, a blocked call gets
-/// the KERNEL's response, and the receipt records the raw line hash + parse
+/// the KERNEL's response, and the authorization decision records the raw line hash + parse
 /// error instead of structured request material it does not hold.
 #[test]
-fn receipt_layer_never_vetoes_kernel_verdicts() {
+fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
     let mut o = Oracle::spawn("receipt-deparse");
 
     let overflow = r#"{"jsonrpc":"2.0","id":89,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":1e309}}}"#;
@@ -1285,7 +1286,7 @@ fn receipt_layer_never_vetoes_kernel_verdicts() {
         .iter()
         .rev()
         .find(|receipt| receipt["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW receipt");
+        .expect("forwarded decision persisted an ALLOW authorization decision");
     assert_eq!(
         allow["request_sha256"],
         hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
@@ -1457,10 +1458,10 @@ fn approval_target_binds_every_argument_key() {
 /// class is a real FORCED reduced-scope forward (an ALLOW whose wire line serde
 /// cannot recover). It must emit a distinct, structured stderr signal so an
 /// operator can see and count forced downgrades, while the forward stays
-/// byte-identical and the receipt is unchanged (passive tap). A normal parseable
+/// byte-identical and the authorization decision is unchanged (passive tap). A normal parseable
 /// ALLOW must stay silent. Drives the real binary end-to-end.
 #[test]
-fn reduced_scope_forward_emits_observability_signal() {
+fn reduced_scope_forward_attempt_emits_observability_signal() {
     let mut o = Oracle::spawn("reduced-scope-signal");
 
     // FORCED downgrade: existing parser-boundary corpus case
@@ -1485,8 +1486,8 @@ fn reduced_scope_forward_emits_observability_signal() {
         .drain_stderr(Duration::from_millis(400))
         .into_iter()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
-        .find(|v| v["event"] == "reduced_scope_forward")
-        .expect("a forced reduced-scope forward must emit the observability signal");
+        .find(|v| v["event"] == "reduced_scope_forward_attempt")
+        .expect("a forced reduced-scope forward attempt must emit the observability signal");
     assert_eq!(
         signal["request_sha256"],
         hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
@@ -1498,14 +1499,14 @@ fn reduced_scope_forward_emits_observability_signal() {
     );
     assert_eq!(signal["count"], 1, "first forced downgrade is count 1");
 
-    // Passive-tap property #2: the receipt is unchanged — still the reduced-scope
+    // Passive-tap property #2: the authorization decision is unchanged — still the reduced-scope
     // shape (raw hash + parse error, structured fields absent), not touched by the signal.
     let receipts = o.receipts();
     let allow = receipts
         .iter()
         .rev()
         .find(|r| r["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW receipt");
+        .expect("forwarded decision persisted an ALLOW authorization decision");
     assert_eq!(
         allow["request_sha256"],
         hex::encode(sha2::Sha256::digest(divergent.as_bytes()))
@@ -1539,7 +1540,7 @@ fn reduced_scope_forward_emits_observability_signal() {
         .drain_stderr(Duration::from_millis(400))
         .into_iter()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
-        .any(|v| v["event"] == "reduced_scope_forward");
+        .any(|v| v["event"] == "reduced_scope_forward_attempt");
     assert!(
         !no_signal,
         "a parseable ALLOW must not emit the reduced-scope signal"

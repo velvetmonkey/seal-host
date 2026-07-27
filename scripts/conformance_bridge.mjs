@@ -288,7 +288,7 @@ if (hostAudits.length === 3 && hostRecords.length === 3) {
   else
     fail(`deployed binary record diverges: derived ${hostHead}, emitted ${emittedHead}, model ${modelSeqHead}`);
 } else {
-  fail(`expected 3 audit certs and 3 receipt records from the deployed binary, captured ${hostAudits.length}/${hostRecords.length}`);
+  fail(`expected 3 audit certs and 3 authorization-decision records from the deployed binary, captured ${hostAudits.length}/${hostRecords.length}`);
 }
 
 console.log("\n===============================================================");

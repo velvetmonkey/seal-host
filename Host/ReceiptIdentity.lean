@@ -7,7 +7,7 @@ import Host.Sha256
 # D3 — the authority frontier: whose identity the receipt binds,
 # and the caller no-go
 
-**The frontier, in one sentence.** A decision receipt's `approval_identity`
+**The frontier, in one sentence.** An authorization decision's `approval_identity`
 names the APPROVAL TRUST ROOT the operator configured at boot — the channel
 kind and (on the signed channel) the SHA-256 fingerprint of the approval
 verifying key — and NOTHING derived from the mediated request can name the
@@ -30,8 +30,8 @@ trust plane ONLY:
 
 It is a boot-scoped constant. The signed approval token gates only WHETHER
 the `approval` block appears on a receipt (the consumed-approval guard,
-`rust/src/decision_receipt.rs:196-204`); it never chooses the identity VALUE
-(`decision_receipt.rs:259-269` reads the boot constant). The original D3
+`rust/src/authorization_decision.rs:196-204`); it never chooses the identity VALUE
+(`authorization_decision.rs:259-269` reads the boot constant). The original D3
 brief said "a function of the signed approval token and the trust root";
 disk says trust root alone — the theorems below state that STRONGER fact:
 
@@ -121,7 +121,7 @@ def Channel.name : Channel → String
   | .ed25519 => "ed25519"
 
 /-- Lean twin of the Rust `ApprovalIdentity { channel, key_id }`
-    (`rust/src/decision_receipt.rs:21-25`). -/
+    (`rust/src/authorization_decision.rs:21-25`). -/
 structure ApprovalIdentity where
   channel : Channel
   keyId : Option String
@@ -146,7 +146,7 @@ def receiptIdentityOf (channel : Channel) (boot : ApprovalState) : ApprovalIdent
       | _ => none }
 
 /-- The receipt identity FIELD, presence included: the `approval` block
-    appears iff an approval was consumed (`decision_receipt.rs:196-204`) —
+    appears iff an approval was consumed (`authorization_decision.rs:196-204`) —
     a fact of the TRUSTED planes (boot state + gathered evidence), here any
     predicate of exactly those planes. The value, when present, is the boot
     constant. -/
@@ -225,7 +225,7 @@ theorem keyId_only_on_signed_channel (channel : Channel) (boot : ApprovalState)
   cases channel <;> simp_all [receiptIdentityOf]
 
 /-- **R-IDENT (TCB seam, made visible).** The identity the Rust assembler
-    wrote (`decision_receipt.rs:259-269`) equals the model value for the
+    wrote (`authorization_decision.rs:259-269`) equals the model value for the
     boot state — same idiom as `Host.CapabilityAdequacy.MintFaithful`:
     an explicit hypothesis, deliberately never a Lean axiom, discharged
     operationally by `rust/tests/receipt_identity.rs` against the real

@@ -2,14 +2,14 @@
 //! Property-test of the serde/Lean parser boundary (RED corpus B2-a).
 //!
 //! Two parsers judge the same wire bytes: Lean's `Host.classifyLine` (the
-//! routing authority) and serde_json (the receipt layer's descriptive view,
-//! `decision_receipt::request_parts`). Where Lean mediates a line the serde
+//! routing authority) and serde_json (the authorization-decision layer's descriptive view,
+//! `authorization_decision::request_parts`). Where Lean mediates a line the serde
 //! view cannot fully parse, the host takes the reduced-scope
 //! `authorised-unparseable` path (raw line hash only, no structured fields).
 //!
 //! Until now exactly ONE parseability divergence was pinned, by example,
 //! three times over (`1e309`: differential.rs:192, host_path.rs:734,
-//! decision_receipt.rs golden vectors). This test maps the WHOLE boundary:
+//! authorization_decision.rs golden vectors). This test maps the WHOLE boundary:
 //! a deterministic corpus across the JSON grammar plus randomized probes,
 //! each case classified into a named outcome. The map is exhaustive in both
 //! directions — a NEW divergence fails the test, and a divergence that
@@ -36,7 +36,7 @@
 mod common;
 
 use common::{as_arguments, as_method, as_name, as_params, boundary_corpus, in_value};
-use seal_host_rs::decision_receipt::request_parts;
+use seal_host_rs::authorization_decision::request_parts;
 use seal_host_rs::lean::LeanHost;
 use std::sync::OnceLock;
 
@@ -51,7 +51,7 @@ struct Obs {
     lean: u32,          // 0 passthrough, 1 mediated (routing authority)
     serde_parses: bool, // serde_json::from_str::<Value> succeeds on trim
     routes: bool,       // serde view routes as tools/call (differential.rs mirror)
-    parts_ok: bool,     // decision_receipt::request_parts succeeds (product fn)
+    parts_ok: bool,     // authorization_decision::request_parts succeeds (product fn)
 }
 
 fn observe(line: &str) -> Result<Obs, String> {

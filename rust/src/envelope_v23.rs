@@ -311,7 +311,7 @@ pub fn verify_kernel_principal(
 }
 
 /// A boot-stable, client-visible session id. Entropy failure is a startup
-/// failure: silently falling back to the receipt PID string would cross the
+/// failure: silently falling back to the authorization-decision PID string would cross the
 /// locked session-plane boundary.
 pub fn issue_session_id() -> Result<String, String> {
     let mut random = [0u8; 32];

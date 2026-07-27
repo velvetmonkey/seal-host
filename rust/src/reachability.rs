@@ -5,7 +5,7 @@
 //! incompletely enumerated category becomes a concrete UNKNOWN record and the
 //! report refuses to calculate a coverage percentage.
 
-use crate::decision_receipt::sha256_hex;
+use crate::authorization_decision::sha256_hex;
 use crate::providers::verify_ed25519_signature;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};

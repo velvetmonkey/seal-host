@@ -1,12 +1,12 @@
 # Deploy: seal-host in front of your own agent
 
 The shortest path from a clean checkout to watching seal-host **block** an unapproved
-tool call, then let it through once you approve it, and hand you a receipt.
+tool call, then let it through once you approve it, and hand you an authorization decision.
 
 > **Runtime profile: `compatible`.** This guide stands up the `compatible`-profile host.
 > That is the right profile for integration and deployment evaluation. It is **not** the
 > stricter `canonical-l0` proof-covered route. This walkthrough makes **operational** claims
-> only: you will get a working gated MCP call that emits a replayable receipt. It does **not**
+> only: you will get a working gated MCP call that emits a replayable authorization decision. It does **not**
 > claim end-to-end proof. For the exact claim boundary read the truthbox in
 > [`../README.md`](../README.md), [`../PROFILE.md`](../PROFILE.md), and the family
 > [claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md).
@@ -20,7 +20,7 @@ tool call, then let it through once you approve it, and hand you a receipt.
   (e.g. Claude Desktop)   --->  (the guard)      -->      (filesystem, sqlite, db, ...)
                                    |
                                    | guarded tools/call with no live approval => BLOCKED
-                                   | every decision => a receipt
+                                   | every decision => an authorization decision
                                    v
                           approval channel (NDJSON file a human writes to)
 ```
@@ -113,7 +113,7 @@ Minimal shape:
 `/var/lib/seal-host/replay.sqlite`); the durable store is what makes replay survive a
 host restart.
 
-For production mode, put the config, approval-token file, receipt directory,
+For production mode, put the config, approval-token file, authorization-decision directory,
 and replay database in a service-owned directory with mode `0700`; files must
 be mode `0600`. Do not place the replay database directly in `/tmp`.
 
@@ -231,9 +231,9 @@ check the log two ways, and they prove different things:
   audit lines and exits non-zero if any line was inserted, reordered, or mutated. The head
   is an injective function of the whole log, so tampering is always detected. This is the
   deployed host's own audit trail; nothing external is needed to check its integrity.
-- **A single decision is correct.** That is the schema-v2 *decision* receipt, where you
+- **A single decision is correct.** That is the schema-v2 *authorization decision*, where you
   re-derive the verdict from the request bytes and check it with `seal-check` / `seal verify`.
-  The compatible-profile host writes this receipt in `--receipt-dir` **and** emits the
+  The compatible-profile host writes this authorization decision in `--receipt-dir` **and** emits the
   distinct audit/chain pair on stderr. Do not present either artifact as the other.
 
 That is the full loop: a guarded call blocked, a human approval, the identical call allowed
@@ -256,7 +256,7 @@ It prints:
 - signed NDJSON appended to the token file
 - provider accepts (sig verified)
 - action flows (observable `SYNTHETIC_LEDGER_ACTION`) **or** explicit `refused` (for deny)
-- audit / receipt lines
+- audit / authorization-decision lines
 
 The CLI and Telegram approvers live in `demo/`. They are **not** the signing key; they are
 intent delivery. The key does the signature.
@@ -324,7 +324,7 @@ intent delivery. The key does the signature.
   signed declines (decision:"deny").
 - Explicit decline produces "refused" in audit (not a timeout or generic deny).
 - The CLI approver emits exactly the envelope the provider verifies.
-- The one-command path (synthetic) drives block → signed record → (flow | refused) → receipt.
+- The one-command path (synthetic) drives block → signed record → (flow | refused) → authorization decision.
 
 **Does NOT prove:**
 - End-to-end correctness of a production deployment.

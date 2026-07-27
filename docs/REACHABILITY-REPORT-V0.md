@@ -40,10 +40,10 @@ existing signed config and approval envelopes: the signature covers the exact
 UTF-8 bytes in `payload`; it does not depend on JSON canonicalisation. The
 verifier calls the production approval-signature verification helper.
 
-The current `main` base has no receipt-level signature producer. Native
-decision receipts are re-derived and audit records are SHA-256 chained.
+The current `main` base has no authorization-decision-level signature producer. Native
+authorization decisions are re-derived and audit records are SHA-256 chained.
 Therefore v0 reuses the existing signed-envelope cryptographic path, not a
-nonexistent receipt signer. The report records this distinction explicitly.
+nonexistent authorization-decision signer. The report records this distinction explicitly.
 
 Verification requires an expected public key. The artifact embeds a public key
 so it is portable, but an embedded key alone proves integrity, not who owns the
@@ -72,4 +72,4 @@ cargo run --bin seal-reachability-report -- \
 - equate BROKERED with safe or allowed;
 - authenticate a signer without an external expected-public-key trust anchor;
   or
-- reuse a receipt-level signer, because the base branch has none.
+- reuse an authorization-decision-level signer, because the base branch has none.

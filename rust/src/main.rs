@@ -40,8 +40,9 @@
 //! re-encodes, or trims what the child receives.
 
 use seal_host_rs::a3;
-use seal_host_rs::decision_receipt::{
-    request_parts, sha256_hex, ApprovalIdentity, DecisionInput, ReceiptWriter, SignedConfig,
+use seal_host_rs::authorization_decision::{
+    request_parts, sha256_hex, ApprovalIdentity, AuthorizationDecisionWriter, DecisionInput,
+    SignedConfig,
 };
 use seal_host_rs::envelope_v23::{
     self, AdapterClaim, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
@@ -332,7 +333,10 @@ fn production_preflight(args: &Args, replay_store_path: Option<&str>) -> Result<
 
     secure_fs::validate_private_file(std::path::Path::new(&args.config), "trusted config")?;
     secure_fs::validate_private_file(std::path::Path::new(token_file), "approval token file")?;
-    secure_fs::ensure_private_dir(std::path::Path::new(receipt_dir), "receipt directory")?;
+    secure_fs::ensure_private_dir(
+        std::path::Path::new(receipt_dir),
+        "authorization decision directory",
+    )?;
     secure_fs::validate_private_parent(
         std::path::Path::new(replay_path),
         "replay database directory",
@@ -344,18 +348,18 @@ fn production_preflight(args: &Args, replay_store_path: Option<&str>) -> Result<
 }
 
 fn persist_decision(
-    writer: &mut ReceiptWriter,
+    writer: &mut AuthorizationDecisionWriter,
     input: DecisionInput<'_>,
 ) -> Result<Option<String>, ()> {
     match writer.persist(input) {
-        Ok(receipt) => {
-            eprintln!("{}", json!({"decision_receipt": receipt.path}));
-            Ok(receipt.consumed_target)
+        Ok(decision) => {
+            eprintln!("{}", json!({"authorization_decision": decision.path}));
+            Ok(decision.consumed_target)
         }
         Err(error) => {
             eprintln!(
                 "{}",
-                json!({"error": "receipt persistence failure", "detail": error})
+                json!({"error": "authorization decision persistence failure", "detail": error})
             );
             Err(())
         }
@@ -520,13 +524,14 @@ fn admit_pending_approvals(
     true
 }
 
-/// The P2-c observability signal for a FORCED reduced-scope forward: an ALLOW
+/// The P2-c observability signal for a FORCED reduced-scope forward attempt: an ALLOW
 /// whose wire line `request_parts` cannot recover (whole-line serde failure — the
 /// `1e309` / argless / non-object-args class). Returns `None` for a normal
 /// parseable ALLOW, so the signal fires ONLY on the reduced-scope condition; the
 /// reduced-scope test hook is `request_parts` itself, the SAME function the
-/// receipt writer uses, so the signal's condition is identical to the receipt's
-/// by construction. `count` is the running total of forced downgrades this
+/// authorization-decision writer uses, so the signal's condition is identical
+/// to the authorization decision's by construction. `count` is the running
+/// total of forced downgrades this
 /// session (burst visibility).
 ///
 /// `parse_error` and `tool_hint` can carry ATTACKER-CHOSEN bytes from the wire;
@@ -534,8 +539,8 @@ fn admit_pending_approvals(
 /// stderr line (quote-breaking, newline injection, ANSI smuggling). Kept as a
 /// named fn so a regression test pins the escaping — swapping this for `format!()`
 /// would silently kill it. Passive tap: reads only `line`, never `wire`, the
-/// receipt, or the verdict.
-fn reduced_scope_forward_line(line: &str, count: u64) -> Option<String> {
+/// authorization decision, or the verdict.
+fn reduced_scope_forward_attempt_line(line: &str, count: u64) -> Option<String> {
     let parse_error = match request_parts(line) {
         Ok(_) => return None,
         Err(error) => error,
@@ -553,7 +558,7 @@ fn reduced_scope_forward_line(line: &str, count: u64) -> Option<String> {
         });
     Some(
         json!({
-            "event": "reduced_scope_forward",
+            "event": "reduced_scope_forward_attempt",
             "request_sha256": sha256_hex(line.as_bytes()),
             "parse_error": parse_error,
             "tool_hint": tool_hint,
@@ -1040,10 +1045,10 @@ fn run() -> i32 {
         .as_ref()
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| default_receipt_dir(&args.config));
-    let mut decision_receipts = match ReceiptWriter::new(&receipt_dir) {
+    let mut authorization_decisions = match AuthorizationDecisionWriter::new(&receipt_dir) {
         Ok(writer) => writer,
         Err(e) => {
-            eprintln!("receipt sink rejected: {e}");
+            eprintln!("authorization decision sink rejected: {e}");
             return 4;
         }
     };
@@ -1142,7 +1147,7 @@ fn run() -> i32 {
     // V2.3 clients must learn the boot-stable SESSION PLANE before they can
     // sign a call. Publish it before the relay thread starts, so no child
     // frame can race ahead of this issuance frame. This is deliberately not
-    // the receipt-only PID session.
+    // the authorization-decision-only PID session.
     if let Some(session) = &v23_session {
         let notification = format!(
             "{}\n",
@@ -1220,7 +1225,7 @@ fn run() -> i32 {
     // P2-c observability: monotonic count of forced reduced-scope forwards, so a
     // BURST (the griefing pattern) is distinguishable from an occasional
     // legitimate unparseable call. Passive — never gates the forward.
-    let mut reduced_scope_forwards: u64 = 0;
+    let mut reduced_scope_forward_attempts: u64 = 0;
     readiness.store(true, Ordering::Release);
     loop {
         wire.clear();
@@ -1539,7 +1544,7 @@ fn run() -> i32 {
                     }
                 }
                 let consumed = match persist_decision(
-                    &mut decision_receipts,
+                    &mut authorization_decisions,
                     DecisionInput {
                         line,
                         session: &receipt_session,
@@ -1561,14 +1566,17 @@ fn run() -> i32 {
                     }
                 };
                 consume_pending_approval(&mut pending_approvals, consumed);
-                // P2-c passive observability tap: an ALLOW forwarded with an
-                // UNRECOVERABLE request (reduced-scope receipt) is a forced
-                // downgrade an operator must be able to see and count. Emitted
-                // BEFORE the forward but reads only `line` — it never touches
-                // `wire`, the receipt, or the verdict, so the forward stays
+                // P2-c passive observability tap: an ALLOW about to be forwarded
+                // with an UNRECOVERABLE request (reduced-scope authorization
+                // decision) is a forced downgrade an operator must be able to
+                // see and count. Emitted BEFORE the forward attempt but reads
+                // only `line` — it never touches `wire`, the authorization
+                // decision, or the verdict, so the forwarded bytes stay
                 // byte-identical with or without it.
-                if let Some(signal) = reduced_scope_forward_line(line, reduced_scope_forwards + 1) {
-                    reduced_scope_forwards += 1;
+                if let Some(signal) =
+                    reduced_scope_forward_attempt_line(line, reduced_scope_forward_attempts + 1)
+                {
+                    reduced_scope_forward_attempts += 1;
                     eprintln!("{signal}");
                 }
                 if write_child(&mut child_in, &forward, &readiness).is_err() {
@@ -1589,7 +1597,7 @@ fn run() -> i32 {
                     }
                 }
                 if persist_decision(
-                    &mut decision_receipts,
+                    &mut authorization_decisions,
                     DecisionInput {
                         line,
                         session: &receipt_session,
@@ -1733,7 +1741,7 @@ fn run() -> i32 {
                                         }
                                     }
                                     let consumed = match persist_decision(
-                                        &mut decision_receipts,
+                                        &mut authorization_decisions,
                                         DecisionInput {
                                             line,
                                             session: &receipt_session,
@@ -1774,7 +1782,7 @@ fn run() -> i32 {
                                         }
                                     }
                                     if persist_decision(
-                                        &mut decision_receipts,
+                                        &mut authorization_decisions,
                                         DecisionInput {
                                             line,
                                             session: &receipt_session,
@@ -2016,24 +2024,24 @@ mod tests {
         assert!(parsed.get("approval_drop").is_some() && parsed.as_object().unwrap().len() == 1);
     }
 
-    /// P2-c signal, unit half: `reduced_scope_forward_line` fires EXACTLY on the
+    /// P2-c signal, unit half: `reduced_scope_forward_attempt_line` fires EXACTLY on the
     /// unrecoverable-request condition and is silent on a normal parseable ALLOW.
     #[test]
-    fn reduced_scope_forward_line_fires_only_on_unrecoverable_request() {
+    fn reduced_scope_forward_attempt_line_fires_only_on_unrecoverable_request() {
         // Parseable guarded call → no signal (a normal ALLOW must stay silent).
         let parseable = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table t"}}}"#;
         assert!(
-            reduced_scope_forward_line(parseable, 1).is_none(),
+            reduced_scope_forward_attempt_line(parseable, 1).is_none(),
             "a parseable ALLOW must not emit the reduced-scope signal"
         );
 
         // Whole-line serde failure (the 1e309 class) → signal fires, tool_hint
         // is null (the line is not parseable JSON), request_sha256 matches.
         let overflow = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table t","x":1e309}}}"#;
-        let signal =
-            reduced_scope_forward_line(overflow, 7).expect("unrecoverable line must signal");
+        let signal = reduced_scope_forward_attempt_line(overflow, 7)
+            .expect("unrecoverable line must signal");
         let parsed: serde_json::Value = serde_json::from_str(&signal).unwrap();
-        assert_eq!(parsed["event"], "reduced_scope_forward");
+        assert_eq!(parsed["event"], "reduced_scope_forward_attempt");
         assert_eq!(parsed["request_sha256"], sha256_hex(overflow.as_bytes()));
         assert!(parsed["parse_error"].is_string());
         assert!(
@@ -2049,10 +2057,10 @@ mod tests {
     /// signal). `json!()` escaping is the ONLY control that stops those bytes
     /// forging a second stderr line. Swap it for `format!()` and this goes RED.
     #[test]
-    fn reduced_scope_forward_line_escapes_hostile_tool_hint_no_second_line() {
+    fn reduced_scope_forward_attempt_line_escapes_hostile_tool_hint_no_second_line() {
         // Quote-break, CR/LF newline forge, ANSI escape, NUL — the smuggling kit.
         let hostile =
-            "\"}\n{\"event\":\"reduced_scope_forward\",\"tool_hint\":\"FORGED\"}\r\n\u{1b}[31mx\u{1b}[0m\u{0000}end";
+            "\"}\n{\"event\":\"reduced_scope_forward_attempt\",\"tool_hint\":\"FORGED\"}\r\n\u{1b}[31mx\u{1b}[0m\u{0000}end";
         // Valid JSON with a string params.name but a NON-OBJECT arguments →
         // request_parts fails on "lacks object params.arguments", so the signal
         // fires AND carries the hostile name as tool_hint.
@@ -2062,7 +2070,7 @@ mod tests {
         })
         .to_string();
         let signal =
-            reduced_scope_forward_line(&wire, 1).expect("non-object-args line must signal");
+            reduced_scope_forward_attempt_line(&wire, 1).expect("non-object-args line must signal");
 
         // Exactly one physical line — no raw newline forged a second record.
         assert_eq!(
@@ -2078,7 +2086,7 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&signal).expect("escaped signal must parse as JSON");
         assert_eq!(parsed["tool_hint"].as_str().unwrap(), hostile);
-        assert_eq!(parsed["event"], "reduced_scope_forward");
+        assert_eq!(parsed["event"], "reduced_scope_forward_attempt");
         assert_eq!(
             parsed.as_object().unwrap().len(),
             5,
@@ -2088,8 +2096,8 @@ mod tests {
 
     /// PURE, HOST-SIDE half of T3: `lean_view` collapses the three terminator
     /// forms (`\r\n`, `\n`, none) to one committed string, and the host's OWN
-    /// commitment fn (`decision_receipt::sha256_hex`, the same call the host
-    /// makes at `decision_receipt.rs`) over that string yields the golden
+    /// commitment fn (`authorization_decision::sha256_hex`, the same call the host
+    /// makes at `authorization_decision.rs`) over that string yields the golden
     /// vector. A change to either the strip or the host hash RED-fires here.
     ///
     /// This pin does NOT exercise the kernel seam or the child — it must not
@@ -2108,7 +2116,7 @@ mod tests {
         // Commit the golden with the PRODUCTION host fn, not a raw digest, so a
         // change to the host's commitment hashing cannot pass this pin silently.
         assert_eq!(
-            seal_host_rs::decision_receipt::sha256_hex(lean_view(b"x\r\n")),
+            seal_host_rs::authorization_decision::sha256_hex(lean_view(b"x\r\n")),
             "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
         );
     }

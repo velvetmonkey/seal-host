@@ -32,10 +32,10 @@ started; it drops to 503 when the child/output transport is known dead or
 during shutdown. Requests are capped at 8 KiB, connections have short I/O
 timeouts, and only `GET /healthz` and `GET /readyz` are accepted.
 
-## Receipt retention and redaction
+## Authorization-decision retention and redaction
 
-Decision receipts contain full tool arguments, the signed policy, kernel
-output, and approval metadata. Treat the receipt directory as sensitive even
+Authorization decisions contain full tool arguments, the signed policy, kernel
+output, and approval metadata. Treat the authorization-decision directory as sensitive even
 though it is mode `0700` and each artifact is mode `0600`.
 
 Choose a retention period from legal, incident-response, and data-minimization
@@ -45,11 +45,11 @@ Delete only `receipt-<20 digits>-<64 hex>.json`; never delete
 `.seal-audit-head.state` while the host is running. Stop the service before
 bulk retention work so file selection is stable.
 
-Do not redact a receipt in place: removing or replacing arguments destroys the
+Do not redact an authorization decision in place: removing or replacing arguments destroys the
 artifact the verifier re-derives. A disclosure-safe derivative must be labelled
 `NON-VERIFIABLE REDACTED EXPORT`, retain the SHA-256 of the original artifact,
-and live outside the receipt directory. Keep or destroy the original according
-to the retention policy; never present the derivative as a valid receipt.
+and live outside the authorization-decision directory. Keep or destroy the original according
+to the retention policy; never present the derivative as a valid authorization decision.
 
 ## Key rotation and secret storage
 
@@ -86,7 +86,7 @@ chmod 600 /secure-backup/seal-replay-*.sqlite
 Recovery is fail-closed:
 
 1. Stop the host.
-2. Ensure the service state and receipt directories are owner-only `0700`.
+2. Ensure the service state and authorization-decision directories are owner-only `0700`.
 3. Restore the database to a temporary file in the state directory, set mode
    `0600`, fsync it, atomically rename it to `replay.sqlite`, and fsync the
    parent directory.
@@ -96,7 +96,7 @@ Recovery is fail-closed:
 5. Start the host, require `/readyz` 200, and confirm a known consumed token is
    rejected before reopening traffic.
 
-Back up the receipt directory and `.seal-audit-head.state` as one generation if
+Back up the authorization-decision directory and `.seal-audit-head.state` as one generation if
 cross-process audit continuity is required. Restoring only the head state or
-only the receipts creates an honest, detectable continuity gap; it does not
+only the authorization decisions creates an honest, detectable continuity gap; it does not
 reconstruct missing evidence.

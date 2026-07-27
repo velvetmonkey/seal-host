@@ -1,18 +1,19 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Decision-Receipt Schema (normative: v2 current, v1 legacy)
+# Authorization-Decision Schema (normative: v2 current, v1 legacy)
 
 **Status: v1 CONVERGED (Day-2 complete, 2026-07-04).** The Day-1 freeze was
 reviewed and passed; the two parked decisions were ruled: (1) neutral
-discriminator `seal_receipt: "v1"` adopted; (2) **hard split** of
+discriminator `record_type: "seal.authorization-decision"` plus
+`record_version: 1` adopted; (2) **hard split** of
 `kernel_identity` vs asserted provenance, with `v0-live` grandfathered.
 Producers and verifiers in seal-check and seal-assurance-kit now emit/accept
 this schema (§10 records what landed). Serialization/format consolidation
 only: nothing here changes the wasm binary, its pin, any Lean proof, or any
 decision logic.
 
-This document is the single normative definition of the JSON **decision
-receipt** produced and verified across the seal family. It exists because
+This document is the single normative definition of the JSON **authorization
+decision** produced and verified across the seal family. It exists because
 three incompatible dialects drifted into production:
 
 | Dialect | Producer | Verifier | Fate under v1 |
@@ -26,7 +27,8 @@ three incompatible dialects drifted into production:
 A v1 receipt is a single JSON object. Version discriminator:
 
 ```
-"seal_receipt": "v1"
+"record_type": "seal.authorization-decision",
+"record_version": 1
 ```
 
 Verifiers MUST also accept the legacy discriminator `"seal_live_receipt":
@@ -35,15 +37,17 @@ gateway keeps emitting it until its own audited bump). The Schema K
 discriminator `"seal_check_receipt"` is NOT v1-compatible; verifiers MUST
 reject it as legacy, naming this spec.
 
-> **Decision (ruled at Day-1 review):** the neutral discriminator
-> `seal_receipt: "v1"` is adopted; producers do not spread the
+> **Decision (ruled at Day-1 review):** the discriminator
+> `record_type: "seal.authorization-decision"` with `record_version: 1` is
+> adopted; producers do not spread the
 > `seal_live_receipt` key beyond the deployed gateway that already emits it.
 
 ### Field table
 
 | Field | Type | Required | Semantics |
 |---|---|---|---|
-| `seal_receipt` | `"v1"` | yes (or legacy `seal_live_receipt:"v0"`) | schema version discriminator |
+| `record_type` | `"seal.authorization-decision"` | yes | authorization-decision type discriminator |
+| `record_version` | `1` | yes (or legacy `seal_live_receipt:"v0"`) | schema version discriminator |
 | `tool` | string | yes | mediated tool name (e.g. `"db.execute"`) |
 | `arguments` | object | yes | the tool-call arguments, verbatim; key order is fixed at production time and is significant (§2) |
 | `now` | integer ≥ 0 | optional (default 1000) | the caller-supplied **logical clock** the kernel decided with — carried so re-derivation replays the same clock; NOT wall time |
@@ -173,7 +177,7 @@ Legacy `v0-live` receipts with the merged block are grandfathered: verifiers
 accept them as v0-live and base nothing on those fields either way.
 
 The current private verified wasm pin (`2d9ef8e0b0b977bde9b9a95832493aee24771c727fb954bae693faa9bf730ba0`)
-is not changed by this receipt schema; the pending audited public repin
+is not changed by this authorization-decision schema; the pending audited public repin
 (`docs/CONFORMANCE-BRIDGE.md`) is a separate step.
 
 ## 5. Verdict vocabulary
@@ -222,7 +226,7 @@ item.)
 4. Handle `bypass` per §6: report NOT MEDIATED, never "verified".
 5. Reject `seal_check_receipt` objects as legacy Schema K.
 
-## 8. The host audit line is NOT a decision receipt
+## 8. The host audit line is NOT an authorization decision
 
 `seal-host/Host/Audit.lean` emits `{epoch, tool, verdict, request_sha256,
 certs}` (verdict lowercase `allow`/`deny`; `request_sha256` the kernel's own
@@ -249,8 +253,10 @@ One module implements §2, §3 and §5 for every JS producer/verifier:
 Frozen exports (signatures are the Day-1 contract):
 
 ```js
-RECEIPT_SCHEMA_VERSION            // "v1"
-RECEIPT_VERSION_KEY               // "seal_receipt"
+AUTHORIZATION_DECISION_RECORD_TYPE // "seal.authorization-decision"
+AUTHORIZATION_DECISION_VERSION     // 1
+RECORD_TYPE_KEY                    // "record_type"
+RECORD_VERSION_KEY                 // "record_version"
 LEGACY_VERSION_KEYS               // ["seal_live_receipt", "seal_check_receipt"]
 VERDICTS                          // ["ALLOW", "BLOCK", "ERROR"]
 HOST_AUDIT_VERDICT_MAP            // { allow: "ALLOW", deny: "BLOCK" }
@@ -292,23 +298,25 @@ with each producer change).
    (`fixtures/receipt-crosstool.json`, byte-identical copy, wired into
    `npm test`).
 5. seal-live-demo stays as-is (`v0-live` accepted); its own bump to
-   `seal_receipt: "v1"` is a separate, later step. **Superseded by §11:** the
+   `record_type: "seal.authorization-decision", record_version: 1` is a
+   separate, later step. **Superseded by §11:** the
    demo's bump goes straight to v2.
 
-## 11. Receipt schema v2 (DRAFT — frozen on merge of this section)
+## 11. Authorization-decision schema v2 (DRAFT — frozen on merge of this section)
 
 **Status: DRAFT, 2026-07-08.** v2 extends v1 with an approval block, derived
-effect hashes, and class-gated payment fields, so one receipt schema serves
+effect hashes, and class-gated payment fields, so one authorization-decision schema serves
 every surface (Lean model via the conformance bridge, Rust host, wasm,
 browser, checker) and the payments/PO audit story. Nothing in v2 changes the
 host audit line or chain record (§8) — those artifacts stay byte-identical;
-the v2 decision receipt is emitted alongside them. Nothing here changes any
+the v2 authorization decision is emitted alongside them. Nothing here changes any
 Lean proof, the wasm binary, its pin, or decision logic.
 
 Version discriminator:
 
 ```
-"seal_receipt": "v2"
+"record_type": "seal.authorization-decision",
+"record_version": 2
 ```
 
 **Acceptance ladder (ruled 2026-07-08):** verifiers accept `v2` (current),
@@ -494,7 +502,7 @@ v2 key order (extends the §1/`V1_KEY_ORDER` pattern; producers emit exactly
 this top-level order):
 
 ```
-seal_receipt, tool, action, arguments, args_hash, now,
+record_type, record_version, tool, action, arguments, args_hash, now,
 canonical_request, canonical_request_sha256, request_sha256, request_parse_error,
 bypass, verdict, authorization, reason,
 deny_kernel, amount, merchant, currency, approval, certs, emitted_bytes,

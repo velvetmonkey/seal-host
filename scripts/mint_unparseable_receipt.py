@@ -39,7 +39,7 @@ VECTOR1_PUB = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
 # The pinned divergent line: 1e309 overflows f64, the whole serde parse
 # fails, the kernel mediates fine. Golden-vectored in Host/Audit.lean (v2)
-# and decision_receipt.rs request_hash_golden_vectors_match_lean.
+# and authorization_decision.rs request_hash_golden_vectors_match_lean.
 LINE = (
     '{"jsonrpc":"2.0","id":90,"method":"tools/call","params":'
     '{"name":"db.execute","arguments":{"database":"prod",'
