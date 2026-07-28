@@ -476,6 +476,23 @@ fn block_target(line: &str) -> Option<String> {
     }
 }
 
+fn block_framed_subject(line: &str) -> Option<Vec<u8>> {
+    let response: serde_json::Value = serde_json::from_str(line).ok()?;
+    let subject = response.pointer("/result/framed_subject")?;
+    if subject.get("encoding")?.as_str()? != "base64" {
+        return None;
+    }
+    let framed_bytes = base64::engine::general_purpose::STANDARD
+        .decode(subject.get("base64")?.as_str()?)
+        .ok()?;
+    if subject.get("length")?.as_u64()? != framed_bytes.len() as u64
+        || subject.get("sha256")?.as_str()? != hex::encode(sha2::Sha256::digest(&framed_bytes))
+    {
+        return None;
+    }
+    Some(framed_bytes)
+}
+
 fn numeric_call(id: u64, literal: &str) -> String {
     format!(
         r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"numeric.observer","arguments":{{"v":{literal}}}}}}}"#
@@ -1062,7 +1079,13 @@ fn ed25519_approval_v2_forwards_the_exact_framed_subject() {
     let _blocked_raw = o.expect_raw();
     let target = block_target(&blocked).expect("block names its approval target");
 
-    let framed_bytes = format!("{call}\n").into_bytes();
+    let framed_bytes =
+        block_framed_subject(&blocked).expect("block emits its exact framed approval subject");
+    assert_eq!(
+        framed_bytes,
+        format!("{call}\n").into_bytes(),
+        "emitted approval subject must round-trip to the caller's exact frame"
+    );
     let shown_bytes = b"Approve: drop table approval_v2_exact_bytes";
     let wrong_target = if target.starts_with('0') {
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -1084,12 +1107,9 @@ fn ed25519_approval_v2_forwards_the_exact_framed_subject() {
     );
     let _wrong_target_raw = o.expect_raw();
 
-    let wrong_subject_token = signed_v2_token(
-        &target,
-        format!("{call} \n").as_bytes(),
-        shown_bytes,
-        "n-v2-wrong",
-    );
+    let mut mutated_subject = framed_bytes.clone();
+    mutated_subject[1] ^= 1;
+    let wrong_subject_token = signed_v2_token(&target, &mutated_subject, shown_bytes, "n-v2-wrong");
     o.append_token_line(&wrong_subject_token);
     o.send(&call);
     let wrong_subject_response = o.expect_line();
@@ -1386,7 +1406,17 @@ fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
     assert_eq!(
         allow["request_sha256"],
         hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
-        "receipt must hash the exact wire line"
+        "receipt must hash the terminator-stripped body judged by the kernel"
+    );
+    assert_eq!(
+        allow["framed_subject_sha256"],
+        hex::encode(sha2::Sha256::digest(format!("{divergent}\n").as_bytes())),
+        "receipt must separately hash the delimiter-bearing approval subject"
+    );
+    assert_eq!(
+        allow["framed_subject_length"],
+        divergent.len() + 1,
+        "receipt must state the delimiter-bearing approval subject length"
     );
     assert!(
         allow["request_parse_error"].is_string(),
@@ -1437,6 +1467,11 @@ fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
         last["request_sha256"],
         hex::encode(sha2::Sha256::digest(parseable.as_bytes()))
     );
+    assert_eq!(
+        last["framed_subject_sha256"],
+        hex::encode(sha2::Sha256::digest(format!("{parseable}\n").as_bytes()))
+    );
+    assert_eq!(last["framed_subject_length"], parseable.len() + 1);
     assert!(last.get("request_parse_error").is_none());
 
     // The rest of the divergent corpus: shapes Lean's act parse admits but
