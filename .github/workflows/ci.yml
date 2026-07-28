@@ -122,6 +122,16 @@ jobs:
         working-directory: rust
       - run: lake build
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - name: Build debug Rust host for Python integration entrypoint
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: cargo build --bins
+        working-directory: rust
+      - name: Run Python host integration entrypoints
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          python3 test/integration/test_host.py
+          python3 test/integration/test_host_rs.py
       - run: lake exe honesty_matrix > /tmp/honesty.json
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json

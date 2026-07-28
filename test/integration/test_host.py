@@ -45,42 +45,44 @@ def safety_section(approval_file: Path) -> dict:
                     "arg": "sql",
                     "needles": ["drop", "delete", "truncate"],
                 },
-                "target": [
-                    {"literal": "db"},
-                    {"arg": "database"},
-                    {"literal": "write"},
-                    {"arg": "sql"},
-                ],
+                # Legacy target committed: "db", arguments.database, "write",
+                # arguments.sql. Stage A commits the entire arguments object.
+                "target": [{"full_arguments": True}],
             },
             {
                 "name": "session.revoke",
                 "mode": "guarded",
                 "match": {"type": "always"},
-                "target": [{"literal": "revoke"}],
+                # Legacy target committed only the fixed literal "revoke".
+                "target": [{"full_arguments": True}],
             },
             {
                 "name": "payments.send",
                 "mode": "guarded",
                 "match": {"type": "always"},
-                "target": [{"literal": "pay"}],
+                # Legacy target committed only the fixed literal "pay".
+                "target": [{"full_arguments": True}],
             },
             {
                 "name": "store.update",
                 "mode": "guarded",
                 "match": {"type": "always"},
-                "target": [{"literal": "store"}],
+                # Legacy target committed only the fixed literal "store".
+                "target": [{"full_arguments": True}],
             },
             {
                 "name": "model.act",
                 "mode": "guarded",
                 "match": {"type": "always"},
-                "target": [{"literal": "act"}],
+                # Legacy target committed only the fixed literal "act".
+                "target": [{"full_arguments": True}],
             },
             {
                 "name": "key.use",
                 "mode": "guarded",
                 "match": {"type": "always"},
-                "target": [{"literal": "key"}],
+                # Legacy target committed only the fixed literal "key".
+                "target": [{"full_arguments": True}],
             },
             {"name": "approve", "mode": "deny", "match": {"type": "always"}, "target": []},
         ],
