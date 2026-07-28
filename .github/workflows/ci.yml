@@ -11,11 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
+      # The footprint gate fetches every repository in the fleet lock, and five
+      # of the six are private. Without credentials each fetch dies with
+      # "could not read Username", the gate reports UNKNOWN REPOSITORY and
+      # refuses to write a manifest. Same two steps as public-export.yml.
+      - name: Require private build dependency access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - name: Configure private build dependency access
+        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
       - name: Gate the generated kernel-hash footprint
         run: node scripts/kernel_hash_footprint.mjs --check
       - name: Prove every locked repository is scanned
