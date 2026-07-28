@@ -134,9 +134,6 @@ def preflight() -> None:
     kit_head = gp.run(["git", "rev-parse", "HEAD"], cwd=KIT).stdout.strip()
     if kit_head != PHASE_B_KIT_REV:
         raise gp.DemoSkip(f"pinned assurance kit required: got {kit_head}, need {PHASE_B_KIT_REV}")
-    frozen = stable_hash_parts(["store.update", "store"])
-    if frozen != "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984":
-        raise gp.DemoFailure("approval-target SHA-256/netstring self-check failed")
     check("base + prerequisites", f"{branch}@{head}; pinned kit; deterministic local adapter")
 
 
@@ -296,18 +293,7 @@ class HostSession:
         self.proc.close()
 
 
-def stable_hash_parts(parts: list[str]) -> str:
-    framed = "".join(f"{len(part)}:{part}" for part in parts)
-    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
-
-
-def approval_target(arguments: dict) -> str:
-    canonical_args = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return stable_hash_parts([SERVER_IDENTITY, TOOL, canonical_args])
-
-
-def signed_token(key: Path, arguments: dict, label: str) -> dict:
-    target = approval_target(arguments)
+def signed_token(key: Path, target: str, label: str) -> dict:
     return gp.approval_token(key, target, f"c4-{label}-{uuid.uuid4().hex}")
 
 
@@ -349,20 +335,38 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     prompt = "Summarize the ratified demo doctrine in one sentence."
     over_args = {"prompt": prompt, "usage": {"tokens": OVER_COST}}
     retry_args = {"prompt": prompt, "usage": {"tokens": RETRY_COST}}
+    mint_tokens = work / "approval-target-mint-tokens.ndjson"
+    mint_tokens.write_text("", encoding="utf-8")
+    over_target = gp.mint_approval_target(
+        host_command(
+            trusted, config_pub, approval_pub, mint_tokens,
+            work / "approval-target-mint-over-receipts", adapter,
+        ),
+        TOOL,
+        over_args,
+    )
+    retry_target = gp.mint_approval_target(
+        host_command(
+            trusted, config_pub, approval_pub, mint_tokens,
+            work / "approval-target-mint-retry-receipts", adapter,
+        ),
+        TOOL,
+        retry_args,
+    )
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
         # Mint both exact full-argument approvals before either mediated call.
         # This keeps the first human-visible receipt on the required Budget deny,
         # with no hidden approval-discovery tool call.
-        session.append(signed_token(approval_key, over_args, "over-cap"))
-        session.append(signed_token(approval_key, retry_args, "retry"))
+        session.append(signed_token(approval_key, over_target, "over-cap"))
+        session.append(signed_token(approval_key, retry_target, "retry"))
 
         denied, deny_receipt = session.call(over_args)
         assert_block(denied, "over budget token-usage (0+11>10)")
         deny_record = verify_receipt(seal, deny_receipt, "BLOCK")
         if deny_record.get("deny_kernel") != "budget":
             raise gp.DemoFailure(f"first call deny_kernel is not budget: {deny_record.get('deny_kernel')}")
-        require_cert(deny_record, "safety", "allow", approval_target(over_args))
+        require_cert(deny_record, "safety", "allow", over_target)
         require_cert(deny_record, "budget", "deny", "over budget token-usage (0+11>10): llm_call")
         if session.marker_count() != 0:
             raise gp.DemoFailure("over-budget llm_call reached the adapter")
@@ -378,7 +382,7 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         allowed, allow_receipt = session.call(retry_args)
         assert_allow(allowed)
         allow_record = verify_receipt(seal, allow_receipt, "ALLOW")
-        require_cert(allow_record, "safety", "allow", approval_target(retry_args))
+        require_cert(allow_record, "safety", "allow", retry_target)
         require_cert(allow_record, "budget", "allow", "within budget: llm_call")
         if session.marker_count() != 1:
             raise gp.DemoFailure(f"in-budget retry downstream count != 1: {session.marker_count()}")

@@ -314,18 +314,8 @@ class HostSession:
         self.proc.close()
 
 
-def stable_hash_parts(parts: list[str]) -> str:
-    framed = "".join(f"{len(part)}:{part}" for part in parts)
-    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
-
-
-def approval_target(arguments: dict) -> str:
-    canonical_args = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return stable_hash_parts([SERVER_IDENTITY, TOOL, canonical_args])
-
-
-def signed_token(key: Path, arguments: dict, label: str) -> dict:
-    return gp.approval_token(key, approval_target(arguments), f"c5-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, target: str, label: str) -> dict:
+    return gp.approval_token(key, target, f"c5-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -369,18 +359,36 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
               approval_pub: str, work: Path, adapter: Path) -> dict:
     allowed_args = {"op": CONVERGENT_OP, "key": "team/c5", "value": "member-a"}
     denied_args = {"op": NONCONVERGENT_OP, "key": "team/c5", "value": "blind-overwrite"}
+    mint_tokens = work / "approval-target-mint-tokens.ndjson"
+    mint_tokens.write_text("", encoding="utf-8")
+    allowed_target = gp.mint_approval_target(
+        host_command(
+            trusted, config_pub, approval_pub, mint_tokens,
+            work / "approval-target-mint-allow-receipts", adapter,
+        ),
+        TOOL,
+        allowed_args,
+    )
+    denied_target = gp.mint_approval_target(
+        host_command(
+            trusted, config_pub, approval_pub, mint_tokens,
+            work / "approval-target-mint-deny-receipts", adapter,
+        ),
+        TOOL,
+        denied_args,
+    )
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
         # Both exact approvals are real and live before the first mediated call.
         # This also lets the trace pin the actual approval-event ordering:
         # two events on step one, none on step two.
-        session.append(signed_token(approval_key, allowed_args, "convergent"))
-        session.append(signed_token(approval_key, denied_args, "nonconvergent"))
+        session.append(signed_token(approval_key, allowed_target, "convergent"))
+        session.append(signed_token(approval_key, denied_target, "nonconvergent"))
 
         allowed, allow_receipt = session.call(allowed_args)
         assert_allow(allowed)
         allow_record = inspect_receipt(seal, allow_receipt, "ALLOW", standalone=True)
-        require_cert(allow_record, "safety", "allow", approval_target(allowed_args))
+        require_cert(allow_record, "safety", "allow", allowed_target)
         require_cert(allow_record, "convergence", "allow", f"convergent op admitted: {CONVERGENT_OP}")
         session.wait_stderr(f"SEAL_CONVERGENCE_EXECUTED tool={TOOL} op={CONVERGENT_OP}")
         if session.marker_count(CONVERGENT_OP) != 1 or session.marker_count(NONCONVERGENT_OP) != 0:
@@ -391,7 +399,7 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         deny_record = inspect_receipt(seal, deny_receipt, "BLOCK", standalone=False)
         if deny_record.get("deny_kernel") != "convergence":
             raise gp.DemoFailure(f"non-convergent call deny_kernel is not Convergence: {deny_record.get('deny_kernel')}")
-        require_cert(deny_record, "safety", "allow", approval_target(denied_args))
+        require_cert(deny_record, "safety", "allow", denied_target)
         require_cert(
             deny_record, "convergence", "deny",
             f"op not in the proven-convergent set: {NONCONVERGENT_OP}",
@@ -412,6 +420,8 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
             "allow_record": allow_record,
             "deny_receipt": deny_receipt,
             "deny_record": deny_record,
+            "allow_target": allowed_target,
+            "deny_target": denied_target,
         }
     finally:
         session.close()
@@ -442,8 +452,8 @@ def build_transcript(artifact_dir: Path, pair: dict) -> tuple[Path, str]:
 
     approvals = [{"target": item["target"]} for item in allow_record.get("granted_capabilities", [])]
     expected_targets = {
-        approval_target(allow_record["arguments"]),
-        approval_target(deny_record["arguments"]),
+        pair["allow_target"],
+        pair["deny_target"],
     }
     if {item["target"] for item in approvals} != expected_targets:
         raise gp.DemoFailure("first receipt does not pin both live Safety approvals")
