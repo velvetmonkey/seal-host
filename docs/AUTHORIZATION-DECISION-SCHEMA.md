@@ -338,7 +338,9 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | `approval.expiry` | integer (epoch ms) | yes iff derivable (`issued_at` + TTL) or carried | absolute expiry deadline |
 | `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the canonical `kernel_config` serialization — see 11.3 |
 | `args_hash` | 64-hex string | yes when mediated and the request parsed (see the unparseable-request rule below) | SHA-256 of the canonical `arguments` serialization — see 11.3 |
-| `request_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the exact wire line the kernel judged (raw bytes, pre-canonicalisation) — present on every receipt, and the ONLY request identity when the line is unparseable. KERNEL-ATTESTED: the kernel emits the same hash inside its audit (`emitted_bytes`), and the producer cross-checks the two before persisting — a mismatch is a SEAM failure that fails closed (host and kernel caught disagreeing about which line was judged) |
+| `request_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the terminator-stripped request body the kernel judged (pre-canonicalisation). This established field is not the ApprovalRecord v2 framed-subject digest. Present on every receipt and kernel-attested: the kernel emits the same hash inside its audit (`emitted_bytes`), and the producer cross-checks the two before persisting — a mismatch is a SEAM failure that fails closed. |
+| `framed_subject_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the exact delimiter-bearing raw frame used by ApprovalRecord v2 subject admission. Deliberately named separately from `request_sha256`; for ordinary LF-framed requests these hash nearly the same bytes but MUST NOT be interchanged. |
+| `framed_subject_length` | non-negative integer | yes on native-host receipts | Byte length of the exact delimiter-bearing raw frame hashed by `framed_subject_sha256` and matched by ApprovalRecord v2. |
 | `request_parse_error` | string | yes iff the producer could not parse the wire line | names why the structured request material is absent |
 | `action` | string | optional | the SealV2 `params.action` binding when the producer parsed one; absent under the `compatible` profile, which does not parse it |
 | `host_identity` | object | optional; required for the native Rust host | `{native_executable_sha256, lean_ffi_sha256, equivalence:"not_proven"}`. Identifies the native artifacts that executed the decision. It does **not** prove them equivalent to `kernel_identity.wasm_sha256`; that remains the Lane C gap. |
@@ -356,8 +358,9 @@ appear only when that channel actually carried or derived them.
 deliberately the more tolerant parser — lines exist that Lean mediates and
 serde cannot re-parse (the differential corpus pins `1e309`). The receipt
 layer is DESCRIPTIVE and holds no veto over the kernel's verdict: on such a
-line the producer emits the receipt with `request_sha256` +
-`request_parse_error` and OMITS `tool`, `arguments`, `args_hash`,
+line the producer emits the receipt with `request_sha256`,
+`framed_subject_sha256`, `framed_subject_length`, and
+`request_parse_error`, and OMITS `tool`, `arguments`, `args_hash`,
 `canonical_request`, `canonical_request_sha256` (and any payment fields,
 which are bound to arguments it does not hold) — the honesty rule applied to
 the request itself. Verifiers re-derive what the receipt carries: on an

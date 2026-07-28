@@ -3,8 +3,8 @@
 r"""
 CLI approver for seal-host ed25519-token channel (developer ingress).
 
-One-shot: given a target (from a block's "approval required: <hex>") and the
-exact blocked MCP request frame, decide approve or deny, sign a request-bound
+One-shot: given a saved host refusal (or, for compatibility, a target and exact
+blocked MCP request frame), decide approve or deny, sign a request-bound
 ApprovalRecord v2, and append it to the token file.
 
   block happens -> (human sees target) -> CLI signs+appends -> action flows (or refused) -> receipt/audit
@@ -21,8 +21,7 @@ SECURITY (per design council):
 Usage (key via env for demo, or --key-file):
   python3 demo/approve_cli.py \
     --token-file /tmp/seal-tokens.ndjson \
-    --target 0000...64hex \
-    --request-file /tmp/exact-mcp-request.frame \
+    --refusal-file /tmp/blocked-response.json \
     --approve   # or --deny, or omit for prompt
 
   # or non-interactive one-liner in scripts:
@@ -36,9 +35,12 @@ legacy signed-decline envelope because ApprovalRecord v2 has no decline shape.
 """
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -81,12 +83,44 @@ def load_privkey(args: argparse.Namespace) -> str:
     return priv
 
 
+def material_from_refusal(path: Path) -> tuple[str, bytes]:
+    try:
+        refusal = json.loads(path.read_text(encoding="utf-8"))
+        text = refusal["result"]["content"][0]["text"]
+        subject = refusal["result"]["framed_subject"]
+        target_match = re.search(r"approval required: ([0-9a-f]{64})", text)
+        if not target_match:
+            raise ValueError("content text lacks an exact approval target")
+        if subject.get("encoding") != "base64":
+            raise ValueError("framed_subject.encoding is not base64")
+        framed_bytes = base64.b64decode(subject["base64"], validate=True)
+        if len(framed_bytes) != subject["length"]:
+            raise ValueError("framed_subject.length does not match decoded bytes")
+        digest = hashlib.sha256(framed_bytes).hexdigest()
+        if digest != subject["sha256"]:
+            raise ValueError("framed_subject.sha256 does not match decoded bytes")
+        return target_match.group(1), framed_bytes
+    except (
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ) as error:
+        raise ValueError(f"invalid host refusal in {path}: {error}") from error
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Sign target-bound allow/deny for seal-host ed25519 channel."
     )
     p.add_argument("--token-file", required=True, help="NDJSON file passed as --token-file to host")
     p.add_argument("--target", help="64-hex target from 'approval required: <hex>' (prompt if omitted)")
+    p.add_argument(
+        "--refusal-file",
+        help="saved host refusal JSON; supplies and verifies the target and exact framed subject",
+    )
     p.add_argument("--approve", action="store_true", help="Emit allow (default if neither)")
     p.add_argument("--deny", action="store_true", help="Emit explicit decline (first-class refused)")
     p.add_argument("--key", help="32-byte privkey hex (or use SEAL_APPROVAL_KEY_HEX)")
@@ -110,11 +144,23 @@ def main() -> int:
 
     if args.approve and args.deny:
         p.error("--approve and --deny are mutually exclusive")
+    if args.refusal_file and args.request_file:
+        p.error("--refusal-file and --request-file are mutually exclusive")
 
     token_path = Path(args.token_file)
     token_path.parent.mkdir(parents=True, exist_ok=True)
 
-    target = args.target
+    refusal_framed_bytes = None
+    refusal_target = None
+    if args.refusal_file:
+        try:
+            refusal_target, refusal_framed_bytes = material_from_refusal(Path(args.refusal_file))
+        except ValueError as error:
+            p.error(str(error))
+        if args.target and args.target != refusal_target:
+            p.error("--target disagrees with the target in --refusal-file")
+
+    target = args.target or refusal_target
     if not target:
         target = input("target (64 lowercase hex from block message): ").strip()
     if len(target) != 64 or any(c not in "0123456789abcdef" for c in target):
@@ -129,10 +175,10 @@ def main() -> int:
             "--plain cannot emit an admitted approval: the host refuses v1 and "
             "the v2 approval channel requires an Ed25519 signature"
         )
-    if allow and not args.request_file:
+    if allow and not (args.request_file or refusal_framed_bytes is not None):
         p.error(
-            "--request-file is required for ApprovalRecord v2; the target alone "
-            "does not identify the exact framed request"
+            "--refusal-file or --request-file is required for ApprovalRecord v2; "
+            "the target alone does not identify the exact framed request"
         )
     if not args.approver:
         p.error("--approver must be non-empty")
@@ -157,19 +203,23 @@ def main() -> int:
     elif not allow:
         line = sign_approval_token(priv, target, issued, nonce, allow=False)
     else:
-        framed_bytes = Path(args.request_file).read_bytes()
+        framed_bytes = (
+            refusal_framed_bytes
+            if refusal_framed_bytes is not None
+            else Path(args.request_file).read_bytes()
+        )
         if not framed_bytes.endswith((b"\n", b"\r\n")):
-            p.error("--request-file must include the request frame's LF or CRLF delimiter")
+            p.error("framed subject must include the request frame's LF or CRLF delimiter")
         body = framed_bytes[:-2] if framed_bytes.endswith(b"\r\n") else framed_bytes[:-1]
         if b"\n" in body or b"\r" in body:
-            p.error("--request-file must contain exactly one line-framed MCP request")
+            p.error("framed subject must contain exactly one line-framed MCP request")
         try:
             body.decode("utf-8")
             request = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            p.error(f"--request-file is not one UTF-8 JSON request frame: {error}")
+            p.error(f"framed subject is not one UTF-8 JSON request frame: {error}")
         if not isinstance(request, dict) or request.get("method") != "tools/call":
-            p.error("--request-file must contain the blocked tools/call request")
+            p.error("framed subject must contain the blocked tools/call request")
 
         shown = (
             f"Seal approval request\n"

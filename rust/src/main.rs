@@ -14,7 +14,7 @@
 //! | P2| stdin line                | `child_in.write_all` (step path)       | YES — `seal_host_step` route `forward`, exact parse (`route_of_step_output`) |
 //! | P3| stdin line                | `child_in.write_all` (interactive retry)| YES — second `seal_host_step == forward` after a human-minted approval |
 //! | P4| operator argv             | `Command::new(...).spawn()`            | N/A — operator-trusted setup; the child IS the guarded resource |
-//! | P5| kernel block response     | client stdout                          | YES — kernel-authored bytes |
+//! | P5| kernel block response     | client stdout                          | YES — kernel-authored response plus host-owned exact framed-subject metadata on approval refusals |
 //! | P6| child stdout              | client stdout (relay thread)           | NO — response egress is unmediated BY DESIGN (requests are mediated, responses are not; see RUST_BRIDGE.md) |
 //! | P7| audit / A3 drops / errors | stderr                                 | telemetry only, no effect |
 //! | P8| approval evidence         | (feeds Lean via A3 only)               | parse failure drops the record ⇒ deny |
@@ -39,6 +39,7 @@
 //! lines: the inner bytes verbatim + `\n`) — the host never reconstructs,
 //! re-encodes, or trims what the child receives.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use seal_host_rs::a3;
 use seal_host_rs::authorization_decision::{
     request_parts, sha256_hex, ApprovalIdentity, AuthorizationDecisionWriter, DecisionInput,
@@ -246,6 +247,44 @@ fn extract_target_hex(s: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Add the exact delimiter-bearing approval subject to an approval-required
+/// refusal. The kernel-authored target text is retained byte-for-byte as a
+/// JSON string value; this host-owned sibling is transport metadata only and
+/// is never fed back into target derivation, Lean, or approval verification.
+fn refusal_with_framed_subject(
+    response: &str,
+    framed_subject: &[u8],
+    framed_subject_sha256: &str,
+) -> Result<String, String> {
+    if response
+        .split("approval required: ")
+        .nth(1)
+        .and_then(extract_target_hex)
+        .is_none()
+    {
+        return Ok(response.to_owned());
+    }
+
+    let mut refusal: Value = serde_json::from_str(response)
+        .map_err(|error| format!("cannot add framed subject to refusal: {error}"))?;
+    let result = refusal
+        .get_mut("result")
+        .and_then(Value::as_object_mut)
+        .ok_or("cannot add framed subject to refusal: result is not an object")?;
+    result.insert(
+        "framed_subject".into(),
+        json!({
+            "encoding": "base64",
+            "length": framed_subject.len(),
+            "sha256": framed_subject_sha256,
+            "base64": STANDARD.encode(framed_subject),
+        }),
+    );
+    serde_json::to_string(&refusal)
+        .map(|text| text + "\n")
+        .map_err(|error| format!("cannot serialize framed-subject refusal: {error}"))
 }
 
 fn read_or_empty(path: &str) -> String {
@@ -1571,6 +1610,7 @@ fn run() -> i32 {
                     &mut authorization_decisions,
                     DecisionInput {
                         line,
+                        framed_subject: &wire,
                         session: &receipt_session,
                         now,
                         emitted_bytes: &step_output,
@@ -1624,6 +1664,7 @@ fn run() -> i32 {
                     &mut authorization_decisions,
                     DecisionInput {
                         line,
+                        framed_subject: &wire,
                         session: &receipt_session,
                         now,
                         emitted_bytes: &step_output,
@@ -1775,6 +1816,7 @@ fn run() -> i32 {
                                         &mut authorization_decisions,
                                         DecisionInput {
                                             line,
+                                            framed_subject: &wire,
                                             session: &receipt_session,
                                             now: retry_now,
                                             emitted_bytes: &retry_output,
@@ -1816,6 +1858,7 @@ fn run() -> i32 {
                                         &mut authorization_decisions,
                                         DecisionInput {
                                             line,
+                                            framed_subject: &wire,
                                             session: &receipt_session,
                                             now: retry_now,
                                             emitted_bytes: &retry_output,
@@ -1848,6 +1891,13 @@ fn run() -> i32 {
                         }
                     }
                 }
+                response = match refusal_with_framed_subject(&response, &wire, &framed_sha256) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        eprintln!("{}", json!({"error": error}));
+                        SEAM_ERROR_RESPONSE.to_string()
+                    }
+                };
                 if write_frame(&output, &response).is_err() {
                     break;
                 }
@@ -1873,6 +1923,38 @@ fn run() -> i32 {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn approval_refusal_emits_exact_framed_subject_with_explicit_identity() {
+        let frame = b"{\"jsonrpc\":\"2.0\",\"id\":1}\r\n";
+        let digest = sha256_hex(frame);
+        let response = concat!(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",",
+            "\"text\":\"approval required: ",
+            "58309503cc30803da92ad66ba02f9b3e182d6513fad532dea18d37d3f25eb39d",
+            "\"}],\"isError\":true}}\n"
+        );
+        let enriched =
+            refusal_with_framed_subject(response, frame, &digest).expect("enrich refusal");
+        let parsed: Value = serde_json::from_str(&enriched).expect("enriched refusal parses");
+        let subject = &parsed["result"]["framed_subject"];
+        assert_eq!(subject["encoding"], "base64");
+        assert_eq!(subject["length"], frame.len());
+        assert_eq!(subject["sha256"], digest);
+        assert_eq!(
+            STANDARD
+                .decode(subject["base64"].as_str().expect("base64 string"))
+                .expect("base64 decodes"),
+            frame
+        );
+        assert_eq!(
+            parsed["result"]["content"][0]["text"],
+            concat!(
+                "approval required: ",
+                "58309503cc30803da92ad66ba02f9b3e182d6513fad532dea18d37d3f25eb39d"
+            )
+        );
+    }
 
     #[test]
     fn production_preflight_requires_complete_private_state() {

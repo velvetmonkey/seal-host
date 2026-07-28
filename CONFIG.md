@@ -601,13 +601,15 @@ Ask Claude to call `execute_sql` with exactly:
 DROP TABLE receipt_sandbox
 ```
 
-Seal returns `approval required: <64 lowercase hex target>`. The target binds
-the configured server literal, tool, and complete SQL value. Sign it:
+Seal returns `approval required: <64 lowercase hex target>` plus a structured
+`result.framed_subject` object containing the exact request frame as base64,
+its byte length, and SHA-256 digest. Save that one-line JSON refusal, then sign
+the exact framed subject it carries:
 
 ```bash
 python3 demo/approve_cli.py \
   --token-file .seal/approval-tokens.ndjson \
-  --target <PASTE_64_HEX_TARGET> \
+  --refusal-file /tmp/blocked-response.json \
   --key-file .seal/approval.key \
   --approve --yes
 ```
@@ -624,7 +626,7 @@ For expiry without waiting, mint a deliberately stale token:
 ```bash
 python3 demo/approve_cli.py \
   --token-file .seal/approval-tokens.ndjson \
-  --target <PASTE_64_HEX_TARGET> \
+  --refusal-file /tmp/blocked-response.json \
   --key-file .seal/approval.key \
   --issued-at 1 --approve --yes
 ```
