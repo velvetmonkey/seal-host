@@ -402,9 +402,9 @@ def grants_text() -> str:
     return "\n".join(lines) + "\n"
 
 
-def signed_token(key: Path, target: str, tool: str) -> dict:
+def signed_token(key: Path, refusal: dict, tool: str) -> dict:
     return gp.approval_token(
-        key, target, f"c7-{tool.replace('.', '-')}-{uuid.uuid4().hex}",
+        key, refusal, f"c7-{tool.replace('.', '-')}-{uuid.uuid4().hex}",
     )
 
 
@@ -480,31 +480,23 @@ def require_cert(record: dict, kernel: str, verdict: str, reason: str | None = N
 def hero_series(trusted: Path, config_pub: str, approval_key: Path, approval_pub: str,
                 approvals: Path, votes: Path, work: Path, adapter: Path) -> dict:
     arguments = [arguments_for(tool) for tool in ORDERED_TOOLS]
-    mint_tokens = work / "approval-target-mint-tokens.ndjson"
-    mint_tokens.write_text("", encoding="utf-8")
-    targets = [
-        gp.mint_approval_target(
-            host_command(
-                trusted, config_pub, approval_pub, mint_tokens,
-                work / f"approval-target-mint-{index}-receipts", adapter,
-            ),
-            tool,
-            args,
-        )
-        for index, (tool, args) in enumerate(zip(ORDERED_TOOLS, arguments), 1)
-    ]
     session = HostSession(trusted, config_pub, approval_pub, approvals, work, adapter)
     try:
-        for tool, target in zip(ORDERED_TOOLS, targets):
-            if tool != DENY_TOOLS["safety"]:
-                session.append(signed_token(approval_key, target, tool))
-
         receipts = []
+        discovery_receipts = []
         records = []
         responses = []
         for index, (role, tool, args, expected_deny) in enumerate(
                 zip(ROLES, ORDERED_TOOLS, arguments, DENY_KERNELS), 1):
             votes.write_text(votes_for(tool), encoding="utf-8")
+            if expected_deny != "safety":
+                refusal, discovery = session.call(tool, args)
+                if not gp.is_block(refusal):
+                    raise gp.DemoFailure(f"{role} did not mint a pending approval: {refusal}")
+                discovery_receipts.append(discovery)
+                session.append(signed_token(approval_key, refusal, tool))
+            else:
+                discovery_receipts.append(None)
             response, receipt = session.call(tool, args)
             record = json.loads(receipt.read_text(encoding="utf-8"))
             expected_verdict = "ALLOW" if expected_deny is None else "BLOCK"
@@ -548,6 +540,7 @@ def hero_series(trusted: Path, config_pub: str, approval_key: Path, approval_pub
             )
         return {
             "receipt_root": session.receipts,
+            "discovery_receipts": discovery_receipts,
             "receipts": receipts,
             "records": records,
             "arguments": arguments,
@@ -565,24 +558,37 @@ def replay_input(record: dict, approvals: list[dict], votes: str, grants: str) -
 
 
 def build_transcript(artifact_dir: Path, flow: dict) -> tuple[Path, str]:
-    records = flow["records"]
-    receipts = flow["receipts"]
+    records = []
+    receipts = []
+    roles = []
+    for index, role in enumerate(ROLES):
+        discovery = flow["discovery_receipts"][index]
+        if discovery is not None:
+            receipts.append(discovery)
+            records.append(json.loads(discovery.read_text(encoding="utf-8")))
+            roles.append(gp.APPROVAL_SUBJECT_ROLE)
+        receipts.append(flow["receipts"][index])
+        records.append(flow["records"][index])
+        roles.append(role)
     if any(record.get("signed_config") != records[0].get("signed_config") for record in records[1:]):
         raise gp.DemoFailure("C7 receipts disagree on the one signed config")
     wasm_sha = records[0].get("kernel_identity", {}).get("wasm_sha256")
     if any(record.get("kernel_identity", {}).get("wasm_sha256") != wasm_sha for record in records[1:]):
         raise gp.DemoFailure("C7 receipts disagree on vendored WASM identity")
     steps = []
-    for sequence, (role, receipt, record) in enumerate(zip(ROLES, receipts, records), 1):
+    for sequence, (role, receipt, record) in enumerate(
+            zip(roles, receipts, records), 1):
         receipt_bytes = receipt.read_bytes()
         approvals = [{"target": item["target"]} for item in record.get("granted_capabilities", [])]
         steps.append({
             "sequence": sequence,
             "role": role,
+            "commit": role != gp.APPROVAL_SUBJECT_ROLE,
             "canonical_request": record["canonical_request"],
             "canonical_request_sha256": record["canonical_request_sha256"],
             "step_input": replay_input(
-                record, approvals, votes_for(record["tool"]), grants_text() if sequence == 1 else "",
+                record, approvals, votes_for(record["tool"]),
+                grants_text() if sequence <= 2 else "",
             ),
             "raw_kernel_output": record["emitted_bytes"],
             "receipt_path": f"receipts/step-{sequence:02d}-{receipt.name}",
@@ -612,10 +618,10 @@ def replay_command(transcript: Path, *extra: str) -> list[str]:
 
 def exercise_trace_controls(transcript: Path, transcript_sha: str) -> dict:
     full = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=7" not in full.stdout:
-        raise gp.DemoFailure("C7 full transcript replay did not pass all seven steps")
+    if "PASS trace transcript steps=13" not in full.stdout:
+        raise gp.DemoFailure("C7 full transcript replay did not pass all thirteen calls")
 
-    dropped = gp.run(replay_command(transcript, "--drop-trigger"), expect=1)
+    dropped = gp.run(replay_command(transcript, "--drop-sequence", "2"), expect=1)
     dropped_output = (dropped.stdout or "") + (dropped.stderr or "")
     if "byte mismatch" not in dropped_output:
         raise gp.DemoFailure("C7 drop-trigger control did not change the transcript bytes")
@@ -639,7 +645,7 @@ def exercise_trace_controls(transcript: Path, transcript_sha: str) -> dict:
     if restored_sha != transcript_sha or transcript.read_bytes() != original:
         raise gp.DemoFailure("C7 transcript did not restore byte-exact")
     restored = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=7" not in restored.stdout:
+    if "PASS trace transcript steps=13" not in restored.stdout:
         raise gp.DemoFailure("restored C7 transcript did not replay")
     check(
         "trace transcript controls",
@@ -808,10 +814,14 @@ def execute(artifact_dir: Path, color: str) -> int:
         )
         transcript, transcript_sha = build_transcript(artifact_dir, flow)
         control = exercise_trace_controls(transcript, transcript_sha)
-        standalone = [
-            standalone_scope(seal, receipt, "ALLOW" if index == 0 else "BLOCK")
-            for index, receipt in enumerate(flow["receipts"])
-        ]
+        standalone = []
+        for index, receipt in enumerate(flow["receipts"]):
+            discovery = flow["discovery_receipts"][index]
+            if discovery is not None:
+                standalone.append(standalone_scope(seal, discovery, "BLOCK"))
+            standalone.append(
+                standalone_scope(seal, receipt, "ALLOW" if index == 0 else "BLOCK")
+            )
 
         trace = DemoTrace(artifact_dir, "c7", seal, C7_THEOREMS, color)
         trace.configure(
@@ -824,13 +834,28 @@ def execute(artifact_dir: Path, color: str) -> int:
                 "harness": "demo/trace_replay.cjs", "status": "PASS",
                 "lanes": {
                     "standalone": "not applicable: every receipt includes omitted votes/grants evidence",
-                    "trace": "one init plus seven ordered requests/events; raw outputs byte-compared",
+                    "trace": "thirteen ordered calls; approval-subject BLOCKs replayed then discarded; raw outputs byte-compared",
                 },
             },
         )
+        discovery_theorems = [
+            "Host.pureCommit_deny_of_member",
+            "Host.registry_deny_no_capability_consumed",
+            "Host.registry_deny_no_budget_spend",
+        ]
+        standalone_index = 0
         for index, (role, tool, deny_kernel, receipt) in enumerate(
                 zip(ROLES, ORDERED_TOOLS, DENY_KERNELS, flow["receipts"])
         ):
+            discovery = flow["discovery_receipts"][index]
+            if discovery is not None:
+                trace.record_receipt(
+                    discovery, role=gp.APPROVAL_SUBJECT_ROLE,
+                    theorem_ids=discovery_theorems,
+                    verification_lane="trace", requires_trace=transcript_sha,
+                    standalone_failure=standalone[standalone_index],
+                )
+                standalone_index += 1
             trace.record_receipt(
                 receipt, role=role, theorem_ids=theorem_ids_for(index, deny_kernel),
                 budget=budget_evidence(index, deny_kernel),
@@ -839,13 +864,14 @@ def execute(artifact_dir: Path, color: str) -> int:
                 linear=linear_evidence(tool, index, deny_kernel),
                 convergence=convergence_evidence(tool, deny_kernel),
                 verification_lane="trace", requires_trace=transcript_sha,
-                standalone_failure=standalone[index],
+                standalone_failure=standalone[standalone_index],
             )
+            standalone_index += 1
         trace.emit({
             "schema": "seal-demo-trace/v1", "event": "trace_replay", "status": "PASS",
             "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
             "wasm_sha256": flow["records"][0]["kernel_identity"]["wasm_sha256"],
-            "steps": 7, "harness": "demo/trace_replay.cjs",
+            "steps": 13, "harness": "demo/trace_replay.cjs",
         })
         for name, expected, evidence in [
             ("drop-trigger", "BYTE-MISMATCH", "without COMPOSED-ALLOW, approval/grant/Temporal state differs"),

@@ -14,6 +14,22 @@ import doctrine  # noqa: E402
 
 
 class DoctrineUnitTests(unittest.TestCase):
+    @staticmethod
+    def approval_subject(tool, arguments, theorem_ids, lane):
+        return (
+            {
+                "role": doctrine.APPROVAL_SUBJECT_ROLE,
+                "tool": tool,
+                "verdict": "DENY",
+                "verification_lane": lane,
+                "proof_refs": [
+                    {"theorem_id": theorem_id}
+                    for theorem_id in theorem_ids
+                ],
+            },
+            {"arguments": arguments},
+        )
+
     def test_every_demo_theorem_is_sourced_from_an_existing_pin(self):
         theorem_ids = [
             "Seal.shell_rm_rf_blocks_on_fresh_state",
@@ -92,7 +108,9 @@ class DoctrineUnitTests(unittest.TestCase):
 
     def test_c5_c6_order_is_allow_trigger_then_deny_without_weakening_c4(self):
         c6_steps = [
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "LEGIT-TRIGGER", "verdict": "ALLOW"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "ATTACK-DENY", "verdict": "DENY"},
         ]
         doctrine.validate_step_order({"demo_id": "c5"}, c6_steps)
@@ -102,7 +120,9 @@ class DoctrineUnitTests(unittest.TestCase):
         with self.assertRaises(doctrine.DoctrineFailure):
             doctrine.validate_step_order({"demo_id": "c4"}, c6_steps)
         doctrine.validate_step_order({"demo_id": "c4"}, [
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "ATTACK-DENY", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "LEGIT", "verdict": "ALLOW"},
         ])
         for demo_id in ["c1", "c2", "c4"]:
@@ -114,8 +134,11 @@ class DoctrineUnitTests(unittest.TestCase):
 
     def test_c3_order_and_lane_are_receipt_properties(self):
         c3_steps = [
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "QUORUM-SHORT", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "DEPLOY-OK", "verdict": "ALLOW"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
             {"role": "REPLAY-DENY", "verdict": "DENY"},
         ]
         doctrine.validate_step_order({"demo_id": "c3"}, c3_steps)
@@ -123,15 +146,26 @@ class DoctrineUnitTests(unittest.TestCase):
         with self.assertRaises(doctrine.DoctrineFailure):
             doctrine.validate_step_order({"demo_id": "c3"}, c3_steps[:2])
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine.validate_step_order({"demo_id": "c3"}, [c3_steps[1], c3_steps[0], c3_steps[2]])
+            doctrine.validate_step_order(
+                {"demo_id": "c3"},
+                [c3_steps[1], c3_steps[0], *c3_steps[2:]],
+            )
 
     def test_c7_order_is_composed_allow_then_each_kernel_veto(self):
         steps = [
-            {"role": role, "verdict": "ALLOW" if index == 0 else "DENY"}
-            for index, role in enumerate([
-                "COMPOSED-ALLOW", "S-DENY", "T-DENY", "C-DENY",
-                "V-DENY", "L-DENY", "B-DENY",
-            ])
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
+            {"role": "COMPOSED-ALLOW", "verdict": "ALLOW"},
+            {"role": "S-DENY", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
+            {"role": "T-DENY", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
+            {"role": "C-DENY", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
+            {"role": "V-DENY", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
+            {"role": "L-DENY", "verdict": "DENY"},
+            {"role": doctrine.APPROVAL_SUBJECT_ROLE, "verdict": "DENY"},
+            {"role": "B-DENY", "verdict": "DENY"},
         ]
         doctrine.validate_step_order({"demo_id": "c7"}, steps)
         drifted = copy.deepcopy(steps)
@@ -208,20 +242,29 @@ class DoctrineUnitTests(unittest.TestCase):
                 },
                 "consensus": consensus[index], "linear": linear[index],
             })
-        doctrine._validate_c3(metadata, steps, records, manifest)
+        narrative_steps = []
+        narrative_records = []
+        discovery_theorems = theorem_sets[0]
+        for step, record in zip(steps, records):
+            discovery_step, discovery_record = self.approval_subject(
+                "deploy", record["arguments"], discovery_theorems, "trace",
+            )
+            narrative_steps.extend([discovery_step, step])
+            narrative_records.extend([discovery_record, record])
+        doctrine._validate_c3(metadata, narrative_steps, narrative_records, manifest)
 
-        drifted = copy.deepcopy(steps)
-        drifted[0]["kernel_fired"].pop()
+        drifted = copy.deepcopy(narrative_steps)
+        drifted[1]["kernel_fired"].pop()
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c3(metadata, drifted, records, manifest)
-        drifted = copy.deepcopy(steps)
-        drifted[2]["linear"]["remaining_before"] = 1
+            doctrine._validate_c3(metadata, drifted, narrative_records, manifest)
+        drifted = copy.deepcopy(narrative_steps)
+        drifted[5]["linear"]["remaining_before"] = 1
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c3(metadata, drifted, records, manifest)
-        drifted = copy.deepcopy(steps)
-        drifted[1]["verification_lane"] = "standalone"
+            doctrine._validate_c3(metadata, drifted, narrative_records, manifest)
+        drifted = copy.deepcopy(narrative_steps)
+        drifted[3]["verification_lane"] = "standalone"
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c3(metadata, drifted, records, manifest)
+            doctrine._validate_c3(metadata, drifted, narrative_records, manifest)
 
     def test_c5_validator_locks_stateless_lanes_operations_and_certificates(self):
         theorem_sets = [
@@ -305,20 +348,30 @@ class DoctrineUnitTests(unittest.TestCase):
                     "stateful": False, "claim_scope": scope,
                 },
             })
-        doctrine._validate_c5(metadata, steps, records, manifest)
+        narrative_steps = []
+        narrative_records = []
+        discovery_theorems = theorem_sets[1]
+        for index, (step, record) in enumerate(zip(steps, records)):
+            discovery_step, discovery_record = self.approval_subject(
+                "store.update", record["arguments"], discovery_theorems,
+                "standalone" if index == 0 else "trace",
+            )
+            narrative_steps.extend([discovery_step, step])
+            narrative_records.extend([discovery_record, record])
+        doctrine._validate_c5(metadata, narrative_steps, narrative_records, manifest)
 
-        drifted = copy.deepcopy(steps)
-        drifted[1]["verification_lane"] = "standalone"
+        drifted = copy.deepcopy(narrative_steps)
+        drifted[3]["verification_lane"] = "standalone"
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c5(metadata, drifted, records, manifest)
-        drifted = copy.deepcopy(records)
-        drifted[1]["certs"][2]["reason"] = "universal convergence denied"
+            doctrine._validate_c5(metadata, drifted, narrative_records, manifest)
+        drifted = copy.deepcopy(narrative_records)
+        drifted[3]["certs"][2]["reason"] = "universal convergence denied"
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c5(metadata, steps, drifted, manifest)
-        drifted = copy.deepcopy(steps)
-        drifted[0]["convergence"]["stateful"] = True
+            doctrine._validate_c5(metadata, narrative_steps, drifted, manifest)
+        drifted = copy.deepcopy(narrative_steps)
+        drifted[1]["convergence"]["stateful"] = True
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c5(metadata, drifted, records, manifest)
+            doctrine._validate_c5(metadata, drifted, narrative_records, manifest)
 
     def test_c6_temporal_deny_renders_scope_and_theorem_backed_state(self):
         event = {
@@ -374,6 +427,7 @@ class DoctrineUnitTests(unittest.TestCase):
         kernel_config = {"temporal": {"policies": [policy]}}
         records = [
             {
+                "arguments": {"session": "demo-session-c6"},
                 "deny_kernel": None, "kernel_config": kernel_config,
                 "certs": [
                     {"kernel": "safety", "verdict": "allow", "reason": "a" * 64},
@@ -381,6 +435,7 @@ class DoctrineUnitTests(unittest.TestCase):
                 ],
             },
             {
+                "arguments": {"record": "audit-record-c6"},
                 "deny_kernel": "temporal", "kernel_config": kernel_config,
                 "certs": [
                     {"kernel": "safety", "verdict": "allow", "reason": "b" * 64},
@@ -437,20 +492,33 @@ class DoctrineUnitTests(unittest.TestCase):
                 },
             },
         ]
-        doctrine._validate_c6(metadata, steps, records, manifest)
+        narrative_steps = []
+        narrative_records = []
+        discovery_theorems = {
+            "Host.registry_deny_temporal_frozen",
+            "Host.registry_deny_no_capability_consumed",
+        }
+        for index, (step, record) in enumerate(zip(steps, records)):
+            discovery_step, discovery_record = self.approval_subject(
+                step["tool"], record["arguments"], discovery_theorems,
+                "standalone" if index == 0 else "trace",
+            )
+            narrative_steps.extend([discovery_step, step])
+            narrative_records.extend([discovery_record, record])
+        doctrine._validate_c6(metadata, narrative_steps, narrative_records, manifest)
 
-        drifted = copy.deepcopy(steps)
-        drifted[1]["temporal"]["wall_clock_claim"] = True
+        drifted = copy.deepcopy(narrative_steps)
+        drifted[3]["temporal"]["wall_clock_claim"] = True
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c6(metadata, drifted, records, manifest)
-        drifted = copy.deepcopy(records)
-        drifted[1]["certs"].pop()
+            doctrine._validate_c6(metadata, drifted, narrative_records, manifest)
+        drifted = copy.deepcopy(narrative_records)
+        drifted[3]["certs"].pop()
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c6(metadata, steps, drifted, manifest)
+            doctrine._validate_c6(metadata, narrative_steps, drifted, manifest)
         drifted = copy.deepcopy(manifest)
         drifted["proofs"]["Invented.extra"] = {}
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c6(metadata, steps, records, drifted)
+            doctrine._validate_c6(metadata, narrative_steps, narrative_records, drifted)
 
     def test_c7_validator_locks_six_active_kernels_and_isolated_denials(self):
         tools = [
@@ -518,7 +586,11 @@ class DoctrineUnitTests(unittest.TestCase):
                 }
                 for kernel in kernels
             ]
-            records.append({"deny_kernel": deny_kernel, "kernel_config": config, "certs": certs})
+            arguments = {"tool": tool}
+            records.append({
+                "arguments": arguments,
+                "deny_kernel": deny_kernel, "kernel_config": config, "certs": certs,
+            })
             steps.append({
                 "tool": tool,
                 "receipt_verdict": "ALLOW" if index == 0 else "BLOCK",
@@ -539,19 +611,31 @@ class DoctrineUnitTests(unittest.TestCase):
             "policy_recipe": "init+add-kernel-T+C+V+L+B",
             "active": kernels, "present_but_inactive": [], "experimental": [],
         }
-        doctrine._validate_c7(metadata, steps, records, manifest)
+        narrative_steps = []
+        narrative_records = []
+        for index, (step, record) in enumerate(zip(steps, records)):
+            if index != 1:
+                discovery_step, discovery_record = self.approval_subject(
+                    step["tool"], record["arguments"], deny_proofs, "trace",
+                )
+                narrative_steps.append(discovery_step)
+                narrative_records.append(discovery_record)
+            narrative_steps.append(step)
+            narrative_records.append(record)
+        doctrine._validate_c7(metadata, narrative_steps, narrative_records, manifest)
 
-        drifted = copy.deepcopy(records)
-        drifted[4]["certs"][0]["verdict"] = "deny"
+        drifted = copy.deepcopy(narrative_records)
+        drifted[8]["certs"][0]["verdict"] = "deny"
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c7(metadata, steps, drifted, manifest)
+            doctrine._validate_c7(metadata, narrative_steps, drifted, manifest)
         drifted = copy.deepcopy(config)
         drifted["calibration"] = {"enabled": True}
-        records_with_k = copy.deepcopy(records)
+        records_with_k = copy.deepcopy(narrative_records)
         for record in records_with_k:
-            record["kernel_config"] = drifted
+            if "kernel_config" in record:
+                record["kernel_config"] = drifted
         with self.assertRaises(doctrine.DoctrineFailure):
-            doctrine._validate_c7(metadata, steps, records_with_k, manifest)
+            doctrine._validate_c7(metadata, narrative_steps, records_with_k, manifest)
 
     def test_fixed_non_claims_cover_all_three_boundaries(self):
         text = " ".join(doctrine.NON_CLAIMS).lower()
