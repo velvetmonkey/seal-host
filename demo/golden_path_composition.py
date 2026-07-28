@@ -402,19 +402,9 @@ def grants_text() -> str:
     return "\n".join(lines) + "\n"
 
 
-def stable_hash_parts(parts: list[str]) -> str:
-    framed = "".join(f"{len(part)}:{part}" for part in parts)
-    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
-
-
-def approval_target(tool: str, arguments: dict) -> str:
-    canonical_args = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return stable_hash_parts([SERVER_IDENTITY, tool, canonical_args])
-
-
-def signed_token(key: Path, tool: str, arguments: dict) -> dict:
+def signed_token(key: Path, target: str, tool: str) -> dict:
     return gp.approval_token(
-        key, approval_target(tool, arguments), f"c7-{tool.replace('.', '-')}-{uuid.uuid4().hex}",
+        key, target, f"c7-{tool.replace('.', '-')}-{uuid.uuid4().hex}",
     )
 
 
@@ -490,11 +480,24 @@ def require_cert(record: dict, kernel: str, verdict: str, reason: str | None = N
 def hero_series(trusted: Path, config_pub: str, approval_key: Path, approval_pub: str,
                 approvals: Path, votes: Path, work: Path, adapter: Path) -> dict:
     arguments = [arguments_for(tool) for tool in ORDERED_TOOLS]
+    mint_tokens = work / "approval-target-mint-tokens.ndjson"
+    mint_tokens.write_text("", encoding="utf-8")
+    targets = [
+        gp.mint_approval_target(
+            host_command(
+                trusted, config_pub, approval_pub, mint_tokens,
+                work / f"approval-target-mint-{index}-receipts", adapter,
+            ),
+            tool,
+            args,
+        )
+        for index, (tool, args) in enumerate(zip(ORDERED_TOOLS, arguments), 1)
+    ]
     session = HostSession(trusted, config_pub, approval_pub, approvals, work, adapter)
     try:
-        for tool, args in zip(ORDERED_TOOLS, arguments):
+        for tool, target in zip(ORDERED_TOOLS, targets):
             if tool != DENY_TOOLS["safety"]:
-                session.append(signed_token(approval_key, tool, args))
+                session.append(signed_token(approval_key, target, tool))
 
         receipts = []
         records = []

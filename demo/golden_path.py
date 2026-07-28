@@ -416,6 +416,26 @@ def target_from(response: dict) -> str:
     return found.group(1)
 
 
+def mint_approval_target(command: list[str], name: str, arguments: dict) -> str:
+    """Ask the real host/kernel to mint the approval target for this exact call."""
+    proc = LineProcess(command)
+    try:
+        proc.send(request(100, "initialize", {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "seal-approval-target-mint", "version": "1"},
+        }))
+        json.loads(proc.line())
+        proc.send(request(101, "tools/list"))
+        json.loads(proc.line())
+        proc.send(request(1, "tools/call", {"name": name, "arguments": arguments}))
+        blocked = json.loads(proc.line())
+        if blocked.get("result", {}).get("isError") is not True:
+            raise DemoFailure(f"approval-target mint call was not blocked: {blocked}")
+        return target_from(blocked)
+    finally:
+        proc.close()
+
+
 def raw_gate(trusted: Path, config_pub: str, approval_key: Path, approval_pub: str,
              work: Path, server: Path, trace: DemoTrace | None = None) -> Path:
     tokens = work / "raw-approval-tokens.ndjson"; tokens.write_text("", encoding="utf-8")
