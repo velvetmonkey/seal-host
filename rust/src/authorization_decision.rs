@@ -44,6 +44,10 @@ pub struct SignedConfig {
 #[derive(Debug)]
 pub struct DecisionInput<'a> {
     pub line: &'a str,
+    /// Exact delimiter-bearing request frame used by ApprovalRecord v2
+    /// admission. This can differ from `line` by LF/CRLF framing (and, for a
+    /// principal envelope, by the outer envelope).
+    pub framed_subject: &'a [u8],
     /// Boot-scoped host runtime context. Authorization-decision-only: this is not supplied
     /// to Lean and has no role in authorization or freshness.
     pub session: &'a str,
@@ -328,11 +332,23 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
             Value::String(sha256_hex(canonical_text.as_bytes())),
         );
     }
-    // Hash of the exact wire line as judged by the kernel — present on every
-    // authorization decision, and the only request identity when the line is unparseable.
+    // Hash of the terminator-stripped body judged by the kernel — present on
+    // every authorization decision, and the only body identity when the line
+    // is unparseable. This established field is intentionally unchanged.
     // Cross-checked above against the kernel-attested hash in the audit, so
     // this value is kernel-backed, not merely host-asserted.
     receipt.insert("request_sha256".into(), Value::String(host_request_sha256));
+    // ApprovalRecord v2 binds the raw delimiter-bearing frame, not the body
+    // above. Keep both identities adjacent and explicitly named so operators
+    // cannot mistake one digest for the other.
+    receipt.insert(
+        "framed_subject_sha256".into(),
+        Value::String(sha256_hex(input.framed_subject)),
+    );
+    receipt.insert(
+        "framed_subject_length".into(),
+        Value::from(input.framed_subject.len() as u64),
+    );
     // V2.1 authenticated principal — copied ONLY from the authoritative Lean
     // step output (the parse-path `Host.verifyEnvelope` value; this is the
     // whole Rust half of the R-PRINC seam: one producer, zero derivation).
@@ -620,6 +636,7 @@ mod tests {
     }
 
     fn build(line: &str, step: &str) -> Result<Value, String> {
+        let framed_subject = format!("{line}\n");
         let kernel_config = serde_json::json!({"epoch": 1});
         let signed_config = SignedConfig {
             payload: "p".into(),
@@ -632,6 +649,7 @@ mod tests {
         };
         authorization_decision_from_step(&DecisionInput {
             line,
+            framed_subject: framed_subject.as_bytes(),
             session: "test-session",
             now: 1000,
             emitted_bytes: step,
@@ -656,6 +674,11 @@ mod tests {
             receipt["request_sha256"],
             Value::String(sha256_hex(line.as_bytes()))
         );
+        assert_eq!(
+            receipt["framed_subject_sha256"],
+            Value::String(sha256_hex(format!("{line}\n").as_bytes()))
+        );
+        assert_eq!(receipt["framed_subject_length"], line.len() + 1);
         assert!(receipt["request_parse_error"]
             .as_str()
             .expect("parse error named")
@@ -687,6 +710,11 @@ mod tests {
             receipt["request_sha256"],
             Value::String(sha256_hex(line.as_bytes()))
         );
+        assert_eq!(
+            receipt["framed_subject_sha256"],
+            Value::String(sha256_hex(format!("{line}\n").as_bytes()))
+        );
+        assert_eq!(receipt["framed_subject_length"], line.len() + 1);
         assert!(receipt.get("request_parse_error").is_none());
     }
 
