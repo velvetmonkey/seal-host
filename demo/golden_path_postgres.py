@@ -428,8 +428,8 @@ def assert_allow(response: dict) -> None:
         raise gp.DemoFailure(f"expected forwarded success, got {response}")
 
 
-def signed_token(key: Path, target: str, label: str) -> dict:
-    return gp.approval_token(key, target, f"postgres-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"postgres-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -485,8 +485,7 @@ def approval_tamper(name: str, seal: Path, trusted: Path, config_pub: str,
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        target = gp.target_from(first)
-        token = signed_token(approval_key, target, "bad-signature")
+        token = signed_token(approval_key, first, "bad-signature")
         signature = token["signature"]
         token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
         session.append(token)
@@ -525,8 +524,7 @@ def doctrine_path(name: str, seal: Path, trusted: Path, config_pub: str,
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        target = gp.target_from(blocked)
-        token = signed_token(approval_key, target, "one-shot")
+        token = signed_token(approval_key, blocked, "one-shot")
         session.append(token)
         allowed, allow_receipt = session.call("execute_sql", args); assert_allow(allowed)
         if table_exists(name, table): raise gp.DemoFailure("approved DROP did not execute")
@@ -562,7 +560,7 @@ def budget_control(name: str, seal: Path, trusted: Path, config_pub: str,
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        session.append(signed_token(approval_key, gp.target_from(blocked), "over-cap"))
+        session.append(signed_token(approval_key, blocked, "over-cap"))
         denied, terminal = session.call("execute_sql", args); assert_block(denied, "over budget")
         verify_receipt(seal, terminal, "BLOCK")
         record = receipt_json(terminal)
@@ -603,7 +601,7 @@ def invalid_cost_controls(name: str, seal: Path, trusted: Path, config_pub: str,
                     discovery, role="CONTROL",
                     theorem_ids=["Host.registry_deny_no_budget_spend"],
                 )
-            session.append(signed_token(approval_key, gp.target_from(blocked), f"cost-{label}"))
+            session.append(signed_token(approval_key, blocked, f"cost-{label}"))
             denied, terminal = session.call("execute_sql", args); assert_block(denied, "missing cost field")
             verify_receipt(seal, terminal, "BLOCK")
             if trace:

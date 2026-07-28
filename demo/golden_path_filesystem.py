@@ -434,7 +434,7 @@ def forwarded(response: dict)->None:
     if response.get("result",{}).get("isError") is not False: raise gp.DemoFailure(f"expected forwarded success: {response}")
 
 
-def token(key: Path,target: str,label: str)->dict: return gp.approval_token(key,target,f"filesystem-{label}-{uuid.uuid4().hex}")
+def token(key: Path,refusal: dict,label: str)->dict: return gp.approval_token(key,refusal,f"filesystem-{label}-{uuid.uuid4().hex}")
 def receipt(path: Path)->dict: return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -482,7 +482,7 @@ def verify_receipt(seal: Path,path: Path,verdict: str)->None:
 
 
 def approved_retry(session: HostSession,key: Path,tool: str,args: dict,label: str):
-    first,_=session.call(tool,args); block(first); session.append(token(key,gp.target_from(first),label)); return session.call(tool,args)
+    first,_=session.call(tool,args); block(first); session.append(token(key,first,label)); return session.call(tool,args)
 
 
 def read_leg(name: str,seal: Path,trusted: Path,config_pub: str,approval_pub: str,work: Path)->None:
@@ -513,7 +513,7 @@ def policy_tamper(name: str,trusted: Path,config_pub: str,approval_pub: str,work
 def approval_tamper(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path)->None:
     path="/workspace/demo_approval_tamper.txt"; session=HostSession("approval-tamper",name,trusted,config_pub,approval_pub,work)
     try:
-        args={"path":path,"content":"must not exist"}; first,_=session.call("write_file",args); block(first); bad=token(key,gp.target_from(first),"bad-signature"); sig=bad["signature"]; bad["signature"]=sig[:-1]+("0" if sig[-1]!="0" else "1"); session.append(bad)
+        args={"path":path,"content":"must not exist"}; first,_=session.call("write_file",args); block(first); bad=token(key,first,"bad-signature"); sig=bad["signature"]; bad["signature"]=sig[:-1]+("0" if sig[-1]!="0" else "1"); session.append(bad)
         second,record=session.call("write_file",args); block(second); session.wait_stderr("bad_signature")
         if file_exists(name,path) or session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=0: raise gp.DemoFailure("tampered approval wrote file")
         verify_receipt(seal,record,"BLOCK")
@@ -547,7 +547,7 @@ def path_escape_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_p
 def one_shot(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path)->None:
     path="/workspace/demo_approved_once.txt"; args={"path":path,"content":"written exactly once\n"}; session=HostSession("one-shot",name,trusted,config_pub,approval_pub,work)
     try:
-        first,block_record=session.call("write_file",args); block(first); verify_receipt(seal,block_record,"BLOCK"); signed=token(key,gp.target_from(first),"one-shot"); session.append(signed)
+        first,block_record=session.call("write_file",args); block(first); verify_receipt(seal,block_record,"BLOCK"); signed=token(key,first,"one-shot"); session.append(signed)
         allowed,allow_record=session.call("write_file",args); forwarded(allowed)
         if read_file(name,path)!=args["content"] or session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("approved write observation mismatch")
         verify_receipt(seal,allow_record,"ALLOW"); session.append(signed); replay,_=session.call("write_file",args); block(replay); session.wait_stderr("replayed_nonce")

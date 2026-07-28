@@ -319,8 +319,8 @@ class HostSession:
         self.proc.close()
 
 
-def signed_token(key: Path, target: str, label: str) -> dict:
-    return gp.approval_token(key, target, f"c6-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"c6-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -381,47 +381,29 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
               approval_pub: str, work: Path, adapter: Path) -> dict:
     trigger_args = {"session": "demo-session-c6"}
     forbidden_args = {"record": "audit-record-c6"}
-    mint_tokens = work / "approval-target-mint-tokens.ndjson"
-    mint_tokens.write_text("", encoding="utf-8")
-    trigger_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-trigger-receipts", adapter,
-        ),
-        TRIGGER_TOOL,
-        trigger_args,
-    )
-    forbidden_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-forbidden-receipts", adapter,
-        ),
-        FORBIDDEN_TOOL,
-        forbidden_args,
-    )
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        # Mint both exact full-argument approvals before either mediated call.
-        # The first recorded call is therefore the executed Temporal trigger,
-        # not an approval-discovery probe.
-        session.append(signed_token(approval_key, trigger_target, "trigger"))
-        session.append(signed_token(approval_key, forbidden_target, "forbidden"))
-
+        trigger_refusal, _ = session.call(TRIGGER_TOOL, trigger_args)
+        assert_block(trigger_refusal, "approval required")
+        session.append(signed_token(approval_key, trigger_refusal, "trigger"))
         allowed, trigger_receipt = session.call(TRIGGER_TOOL, trigger_args)
         assert_allow(allowed)
         trigger_record = inspect_receipt(seal, trigger_receipt, "ALLOW", standalone=True)
-        require_cert(trigger_record, "safety", "allow", trigger_target)
+        require_cert(trigger_record, "safety", "allow", gp.target_from(trigger_refusal))
         require_cert(trigger_record, "temporal", "allow", "trace ok (1 events)")
         session.wait_stderr(f"SEAL_TEMPORAL_EXECUTED tool={TRIGGER_TOOL}")
         if session.marker_count(TRIGGER_TOOL) != 1 or session.marker_count(FORBIDDEN_TOOL) != 0:
             raise gp.DemoFailure("trigger must execute exactly once before the forbidden call")
 
+        forbidden_refusal, _ = session.call(FORBIDDEN_TOOL, forbidden_args)
+        assert_block(forbidden_refusal, "approval required")
+        session.append(signed_token(approval_key, forbidden_refusal, "forbidden"))
         denied, deny_receipt = session.call(FORBIDDEN_TOOL, forbidden_args)
         assert_block(denied, "temporal policy violated")
         deny_record = inspect_receipt(seal, deny_receipt, "BLOCK", standalone=False)
         if deny_record.get("deny_kernel") != "temporal":
             raise gp.DemoFailure(f"forbidden call deny_kernel is not Temporal: {deny_record.get('deny_kernel')}")
-        require_cert(deny_record, "safety", "allow", forbidden_target)
+        require_cert(deny_record, "safety", "allow", gp.target_from(forbidden_refusal))
         require_cert(
             deny_record, "temporal", "deny",
             "temporal policy violated: freeze-destructive-after-trigger",

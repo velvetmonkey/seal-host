@@ -293,8 +293,8 @@ class HostSession:
         self.proc.close()
 
 
-def signed_token(key: Path, target: str, label: str) -> dict:
-    return gp.approval_token(key, target, f"c4-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"c4-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -335,38 +335,17 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     prompt = "Summarize the ratified demo doctrine in one sentence."
     over_args = {"prompt": prompt, "usage": {"tokens": OVER_COST}}
     retry_args = {"prompt": prompt, "usage": {"tokens": RETRY_COST}}
-    mint_tokens = work / "approval-target-mint-tokens.ndjson"
-    mint_tokens.write_text("", encoding="utf-8")
-    over_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-over-receipts", adapter,
-        ),
-        TOOL,
-        over_args,
-    )
-    retry_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-retry-receipts", adapter,
-        ),
-        TOOL,
-        retry_args,
-    )
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        # Mint both exact full-argument approvals before either mediated call.
-        # This keeps the first human-visible receipt on the required Budget deny,
-        # with no hidden approval-discovery tool call.
-        session.append(signed_token(approval_key, over_target, "over-cap"))
-        session.append(signed_token(approval_key, retry_target, "retry"))
-
+        over_refusal, _ = session.call(over_args)
+        assert_block(over_refusal, "approval required")
+        session.append(signed_token(approval_key, over_refusal, "over-cap"))
         denied, deny_receipt = session.call(over_args)
         assert_block(denied, "over budget token-usage (0+11>10)")
         deny_record = verify_receipt(seal, deny_receipt, "BLOCK")
         if deny_record.get("deny_kernel") != "budget":
             raise gp.DemoFailure(f"first call deny_kernel is not budget: {deny_record.get('deny_kernel')}")
-        require_cert(deny_record, "safety", "allow", over_target)
+        require_cert(deny_record, "safety", "allow", gp.target_from(over_refusal))
         require_cert(deny_record, "budget", "deny", "over budget token-usage (0+11>10): llm_call")
         if session.marker_count() != 0:
             raise gp.DemoFailure("over-budget llm_call reached the adapter")
@@ -379,10 +358,13 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
             },
         )
 
+        retry_refusal, _ = session.call(retry_args)
+        assert_block(retry_refusal, "approval required")
+        session.append(signed_token(approval_key, retry_refusal, "retry"))
         allowed, allow_receipt = session.call(retry_args)
         assert_allow(allowed)
         allow_record = verify_receipt(seal, allow_receipt, "ALLOW")
-        require_cert(allow_record, "safety", "allow", retry_target)
+        require_cert(allow_record, "safety", "allow", gp.target_from(retry_refusal))
         require_cert(allow_record, "budget", "allow", "within budget: llm_call")
         if session.marker_count() != 1:
             raise gp.DemoFailure(f"in-budget retry downstream count != 1: {session.marker_count()}")

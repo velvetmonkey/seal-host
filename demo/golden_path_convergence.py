@@ -314,8 +314,8 @@ class HostSession:
         self.proc.close()
 
 
-def signed_token(key: Path, target: str, label: str) -> dict:
-    return gp.approval_token(key, target, f"c5-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"c5-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -359,47 +359,29 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
               approval_pub: str, work: Path, adapter: Path) -> dict:
     allowed_args = {"op": CONVERGENT_OP, "key": "team/c5", "value": "member-a"}
     denied_args = {"op": NONCONVERGENT_OP, "key": "team/c5", "value": "blind-overwrite"}
-    mint_tokens = work / "approval-target-mint-tokens.ndjson"
-    mint_tokens.write_text("", encoding="utf-8")
-    allowed_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-allow-receipts", adapter,
-        ),
-        TOOL,
-        allowed_args,
-    )
-    denied_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-deny-receipts", adapter,
-        ),
-        TOOL,
-        denied_args,
-    )
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        # Both exact approvals are real and live before the first mediated call.
-        # This also lets the trace pin the actual approval-event ordering:
-        # two events on step one, none on step two.
-        session.append(signed_token(approval_key, allowed_target, "convergent"))
-        session.append(signed_token(approval_key, denied_target, "nonconvergent"))
-
+        allowed_refusal, _ = session.call(allowed_args)
+        assert_block(allowed_refusal, "approval required")
+        session.append(signed_token(approval_key, allowed_refusal, "convergent"))
         allowed, allow_receipt = session.call(allowed_args)
         assert_allow(allowed)
         allow_record = inspect_receipt(seal, allow_receipt, "ALLOW", standalone=True)
-        require_cert(allow_record, "safety", "allow", allowed_target)
+        require_cert(allow_record, "safety", "allow", gp.target_from(allowed_refusal))
         require_cert(allow_record, "convergence", "allow", f"convergent op admitted: {CONVERGENT_OP}")
         session.wait_stderr(f"SEAL_CONVERGENCE_EXECUTED tool={TOOL} op={CONVERGENT_OP}")
         if session.marker_count(CONVERGENT_OP) != 1 or session.marker_count(NONCONVERGENT_OP) != 0:
             raise gp.DemoFailure("proven-convergent update must execute exactly once before the denied call")
 
+        denied_refusal, _ = session.call(denied_args)
+        assert_block(denied_refusal, "approval required")
+        session.append(signed_token(approval_key, denied_refusal, "nonconvergent"))
         denied, deny_receipt = session.call(denied_args)
         assert_block(denied, f"op not in the proven-convergent set: {NONCONVERGENT_OP}")
         deny_record = inspect_receipt(seal, deny_receipt, "BLOCK", standalone=False)
         if deny_record.get("deny_kernel") != "convergence":
             raise gp.DemoFailure(f"non-convergent call deny_kernel is not Convergence: {deny_record.get('deny_kernel')}")
-        require_cert(deny_record, "safety", "allow", denied_target)
+        require_cert(deny_record, "safety", "allow", gp.target_from(denied_refusal))
         require_cert(
             deny_record, "convergence", "deny",
             f"op not in the proven-convergent set: {NONCONVERGENT_OP}",

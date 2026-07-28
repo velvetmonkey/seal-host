@@ -312,8 +312,8 @@ class HostSession:
         self.proc.close()
 
 
-def signed_token(key: Path, target: str, label: str) -> dict:
-    return gp.approval_token(key, target, f"c3-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"c3-{label}-{uuid.uuid4().hex}")
 
 
 def assert_block(response: dict, text: str) -> None:
@@ -360,52 +360,40 @@ def hero_flow(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         "release": "release-c3-approved", "environment": "production",
         "capability": {"id": CAPABILITY},
     }
-    mint_tokens = work / "approval-target-mint-tokens.ndjson"
-    mint_tokens.write_text("", encoding="utf-8")
-    short_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-short-receipts", adapter,
-        ),
-        DEPLOY_TOOL,
-        short_args,
-    )
-    deploy_target = gp.mint_approval_target(
-        host_command(
-            trusted, config_pub, approval_pub, mint_tokens,
-            work / "approval-target-mint-deploy-receipts", adapter,
-        ),
-        DEPLOY_TOOL,
-        deploy_args,
-    )
     session = HostSession(trusted, config_pub, approval_pub, approvals, votes, work, adapter)
     try:
-        session.append_token(signed_token(approval_key, short_target, "quorum-short"))
+        short_refusal, _ = session.call(short_args)
+        assert_block(short_refusal, "approval required")
+        session.append_token(signed_token(approval_key, short_refusal, "quorum-short"))
         denied, short_receipt = session.call(short_args)
         assert_block(denied, "quorum missing (1/3)")
         short_record = receipt_json(short_receipt)
-        require_cert(short_record, "safety", "allow", short_target)
+        require_cert(short_record, "safety", "allow", gp.target_from(short_refusal))
         require_cert(short_record, "consensus", "deny", "quorum missing (1/3): deploy")
         require_cert(short_record, "linear", "allow", f"capability spent (0 uses left): {CAPABILITY}")
         if short_record.get("deny_kernel") != "consensus" or session.deploy_count() != 0:
             raise gp.DemoFailure("QUORUM-SHORT did not veto before downstream execution")
 
         session.reach_quorum()
-        session.append_token(signed_token(approval_key, deploy_target, "deploy-ok"))
+        deploy_refusal, _ = session.call(deploy_args)
+        assert_block(deploy_refusal, "approval required")
+        session.append_token(signed_token(approval_key, deploy_refusal, "deploy-ok"))
         allowed, ok_receipt = session.call(deploy_args)
         assert_allow(allowed)
         ok_record = receipt_json(ok_receipt)
-        require_cert(ok_record, "safety", "allow", deploy_target)
+        require_cert(ok_record, "safety", "allow", gp.target_from(deploy_refusal))
         require_cert(ok_record, "consensus", "allow", "quorum ok (2/3): deploy")
         require_cert(ok_record, "linear", "allow", f"capability spent (0 uses left): {CAPABILITY}")
         if session.deploy_count() != 1:
             raise gp.DemoFailure("DEPLOY-OK did not execute exactly once")
 
-        session.append_token(signed_token(approval_key, deploy_target, "replay-deny"))
+        replay_refusal, _ = session.call(deploy_args)
+        assert_block(replay_refusal, "approval required")
+        session.append_token(signed_token(approval_key, replay_refusal, "replay-deny"))
         replay, replay_receipt = session.call(deploy_args)
         assert_block(replay, "capability exhausted")
         replay_record = receipt_json(replay_receipt)
-        require_cert(replay_record, "safety", "allow", deploy_target)
+        require_cert(replay_record, "safety", "allow", gp.target_from(replay_refusal))
         require_cert(replay_record, "consensus", "allow", "quorum ok (2/3): deploy")
         require_cert(replay_record, "linear", "deny", f"capability exhausted, double-spend denied: {CAPABILITY}")
         if replay_record.get("deny_kernel") != "linear" or session.deploy_count() != 1:

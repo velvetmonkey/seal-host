@@ -402,9 +402,9 @@ def grants_text() -> str:
     return "\n".join(lines) + "\n"
 
 
-def signed_token(key: Path, target: str, tool: str) -> dict:
+def signed_token(key: Path, refusal: dict, tool: str) -> dict:
     return gp.approval_token(
-        key, target, f"c7-{tool.replace('.', '-')}-{uuid.uuid4().hex}",
+        key, refusal, f"c7-{tool.replace('.', '-')}-{uuid.uuid4().hex}",
     )
 
 
@@ -480,31 +480,19 @@ def require_cert(record: dict, kernel: str, verdict: str, reason: str | None = N
 def hero_series(trusted: Path, config_pub: str, approval_key: Path, approval_pub: str,
                 approvals: Path, votes: Path, work: Path, adapter: Path) -> dict:
     arguments = [arguments_for(tool) for tool in ORDERED_TOOLS]
-    mint_tokens = work / "approval-target-mint-tokens.ndjson"
-    mint_tokens.write_text("", encoding="utf-8")
-    targets = [
-        gp.mint_approval_target(
-            host_command(
-                trusted, config_pub, approval_pub, mint_tokens,
-                work / f"approval-target-mint-{index}-receipts", adapter,
-            ),
-            tool,
-            args,
-        )
-        for index, (tool, args) in enumerate(zip(ORDERED_TOOLS, arguments), 1)
-    ]
     session = HostSession(trusted, config_pub, approval_pub, approvals, work, adapter)
     try:
-        for tool, target in zip(ORDERED_TOOLS, targets):
-            if tool != DENY_TOOLS["safety"]:
-                session.append(signed_token(approval_key, target, tool))
-
         receipts = []
         records = []
         responses = []
         for index, (role, tool, args, expected_deny) in enumerate(
                 zip(ROLES, ORDERED_TOOLS, arguments, DENY_KERNELS), 1):
             votes.write_text(votes_for(tool), encoding="utf-8")
+            if expected_deny != "safety":
+                refusal, _ = session.call(tool, args)
+                if not gp.is_block(refusal):
+                    raise gp.DemoFailure(f"{role} did not mint a pending approval: {refusal}")
+                session.append(signed_token(approval_key, refusal, tool))
             response, receipt = session.call(tool, args)
             record = json.loads(receipt.read_text(encoding="utf-8"))
             expected_verdict = "ALLOW" if expected_deny is None else "BLOCK"

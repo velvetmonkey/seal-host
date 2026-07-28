@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -24,6 +26,9 @@ from pathlib import Path
 from doctrine import DemoTrace
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "test" / "tools"))
+from sign_approval import sign_approval_v2_token  # noqa: E402
+
 SRC = ROOT.parent
 KIT = Path(os.environ.get("SEAL_ASSURANCE_KIT_ROOT", SRC / "seal-assurance-kit")).resolve()
 HOST = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
@@ -32,6 +37,15 @@ IMAGE = os.environ.get(
     "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4",
 )
 COMMAND = "rm -rf /"
+APPROVAL_RENDERER_NAME = "seal-golden-path-raw-mcp-frame"
+APPROVAL_RENDERER_VERSION = "1.0.0"
+APPROVAL_RENDERER_MANIFEST = (
+    b'{"name":"seal-golden-path-raw-mcp-frame","version":"1.0.0",'
+    b'"format":"heading, target line, then exact UTF-8 MCP request frame including delimiter"}'
+)
+APPROVAL_RENDERER_MANIFEST_SHA256 = hashlib.sha256(
+    APPROVAL_RENDERER_MANIFEST
+).hexdigest()
 C1_THEOREMS = [
     "Seal.shell_rm_rf_blocks_on_fresh_state",
     "Seal.shell_read_flows",
@@ -310,13 +324,45 @@ process.stdout.write(c.createPublicKey(k).export({format:"der",type:"spki"}).sub
     return run(["node", "-e", script, str(seed_path)]).stdout.strip()
 
 
-def approval_token(seed_path: Path, target: str, nonce: str) -> dict:
-    payload = compact({"target": target, "issuedAt": int(time.time() * 1000), "nonce": nonce})
-    script = r'''const c=require("crypto"),f=require("fs");const s=f.readFileSync(process.argv[1],"utf8").trim();
-const k=c.createPrivateKey({key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),Buffer.from(s,"hex")]),format:"der",type:"pkcs8"});
-process.stdout.write(c.sign(null,Buffer.from(process.argv[2]),k).toString("hex"));'''
-    signature = run(["node", "-e", script, str(seed_path), payload]).stdout.strip()
-    return {"payload": payload, "signature": signature}
+def framed_subject_from(response: dict) -> bytes:
+    try:
+        subject = response["result"]["framed_subject"]
+        if subject.get("encoding") != "base64":
+            raise ValueError("framed_subject.encoding is not base64")
+        framed_bytes = base64.b64decode(subject["base64"], validate=True)
+        if len(framed_bytes) != subject["length"]:
+            raise ValueError("framed_subject.length does not match decoded bytes")
+        if hashlib.sha256(framed_bytes).hexdigest() != subject["sha256"]:
+            raise ValueError("framed_subject.sha256 does not match decoded bytes")
+        return framed_bytes
+    except (KeyError, TypeError, ValueError, binascii.Error) as error:
+        raise DemoFailure(f"BLOCK response has invalid framed subject: {error}: {response}") from error
+
+
+def approval_token(seed_path: Path, refusal: dict, nonce: str) -> dict:
+    target = target_from(refusal)
+    framed_bytes = framed_subject_from(refusal)
+    shown = (
+        "Seal golden path scripted approval\n"
+        f"target: {target}\n"
+        "exact MCP request frame (including delimiter):\n"
+    ).encode("utf-8") + framed_bytes
+    authorized_at = int(time.time() * 1000)
+    line = sign_approval_v2_token(
+        seed_path.read_text(encoding="utf-8").strip(),
+        target=target,
+        authorized_at=authorized_at,
+        expiry=authorized_at + 120_000,
+        nonce=nonce,
+        session=f"seal-golden-path/{uuid.uuid4().hex}",
+        framed_bytes=framed_bytes,
+        shown_bytes=shown,
+        renderer_name=APPROVAL_RENDERER_NAME,
+        renderer_version=APPROVAL_RENDERER_VERSION,
+        renderer_manifest_sha256=APPROVAL_RENDERER_MANIFEST_SHA256,
+        approver="Seal golden path scripted operator",
+    )
+    return json.loads(line)
 
 
 def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool) -> tuple[Path, str, Path, str]:
@@ -416,26 +462,6 @@ def target_from(response: dict) -> str:
     return found.group(1)
 
 
-def mint_approval_target(command: list[str], name: str, arguments: dict) -> str:
-    """Ask the real host/kernel to mint the approval target for this exact call."""
-    proc = LineProcess(command)
-    try:
-        proc.send(request(100, "initialize", {
-            "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "seal-approval-target-mint", "version": "1"},
-        }))
-        json.loads(proc.line())
-        proc.send(request(101, "tools/list"))
-        json.loads(proc.line())
-        proc.send(request(1, "tools/call", {"name": name, "arguments": arguments}))
-        blocked = json.loads(proc.line())
-        if blocked.get("result", {}).get("isError") is not True:
-            raise DemoFailure(f"approval-target mint call was not blocked: {blocked}")
-        return target_from(blocked)
-    finally:
-        proc.close()
-
-
 def raw_gate(trusted: Path, config_pub: str, approval_key: Path, approval_pub: str,
              work: Path, server: Path, trace: DemoTrace | None = None) -> Path:
     tokens = work / "raw-approval-tokens.ndjson"; tokens.write_text("", encoding="utf-8")
@@ -500,19 +526,16 @@ def raw_gate(trusted: Path, config_pub: str, approval_key: Path, approval_pub: s
     produced = sorted(receipts.glob("receipt-*.json"))
     if len(produced) != 2: raise DemoFailure(f"raw gate expected DENY+ALLOW receipts: {produced}")
     approval_tamper_control(
-        trusted, config_pub, approval_key, approval_pub, work, server, target, trace,
+        trusted, config_pub, approval_key, approval_pub, work, server, trace,
     )
     return attack_receipt
 
 
 def approval_tamper_control(trusted: Path, config_pub: str, approval_key: Path,
-                            approval_pub: str, work: Path, server: Path, target: str,
+                            approval_pub: str, work: Path, server: Path,
                             trace: DemoTrace | None) -> None:
     tokens = work / "tamper-control-tokens.ndjson"
-    token = approval_token(approval_key, target, f"golden-path-tamper-{uuid.uuid4().hex}")
-    signature = token["signature"]
-    token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
-    tokens.write_text(compact(token) + "\n", encoding="utf-8")
+    tokens.write_text("", encoding="utf-8")
     receipts = work / "tamper-control-receipts"
     name = f"seal-gp-approval-tamper-{uuid.uuid4().hex[:10]}"
     proc = LineProcess(host_command(trusted, config_pub, approval_pub, tokens, receipts, name, server))
@@ -521,6 +544,17 @@ def approval_tamper_control(trusted: Path, config_pub: str, approval_key: Path,
         proc.send(request(10, "initialize", {"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"seal-tamper-control","version":"1"}}))
         json.loads(proc.line())
         proc.send(request(11, "tools/list")); json.loads(proc.line())
+        proc.send(request(1, "tools/call", {"name":"shell_exec", "arguments":{"command":COMMAND}}))
+        refusal = json.loads(proc.line())
+        if not is_block(refusal):
+            raise DemoFailure(f"tamper control did not mint a pending challenge: {refusal}")
+        token = approval_token(
+            approval_key, refusal, f"golden-path-tamper-{uuid.uuid4().hex}",
+        )
+        signature = token["signature"]
+        token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
+        with tokens.open("a", encoding="utf-8") as handle:
+            handle.write(compact(token) + "\n")
         before = set(receipts.glob("receipt-*.json")) if receipts.exists() else set()
         proc.send(request(1, "tools/call", {"name":"shell_exec", "arguments":{"command":COMMAND}}))
         response = json.loads(proc.line())
