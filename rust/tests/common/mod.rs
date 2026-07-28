@@ -123,11 +123,7 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
             in_value(r#""\udc00\ud800""#),
             RSU,
         ),
-        case(
-            "str-lone-surrogate-in-key",
-            in_value(r#"{"\ud800":1}"#),
-            WR,
-        ),
+        case("str-lone-surrogate-in-key", in_value(r#"{"\ud800":1}"#), WR),
         case("str-raw-nul", in_value("\"a\u{0}b\""), AU),
         case("str-raw-ctrl-0x01", in_value("\"a\u{1}b\""), AU),
         case(
