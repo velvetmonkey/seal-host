@@ -25,7 +25,7 @@ from doctrine import DemoTrace
 ROOT = gp.ROOT
 KIT = gp.KIT
 HOST = gp.HOST
-PHASE_B_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
+PHASE_B_KIT_REV = "bd1cf89ec5d6da6501299e0963f1ef9f5bd5d837"
 SERVER_IDENTITY = "seal-c7-composition-demo@1.0.0"
 ROSTER = [101, 202, 303]
 CAP = 20

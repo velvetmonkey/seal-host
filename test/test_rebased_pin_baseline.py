@@ -16,9 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # independent facts while publication is pending.
 FLEET_KERNEL_SHA256 = "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be"
 VERIFIED_WASM_SHA256 = "70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf"
-SOURCE_KIT_REV = "6c74b61382f8b7057cfb332a44a45e9e1b04e2b4"
+SOURCE_KIT_REV = "bd03bf7b5ef1d7d29792d08b14f90d0654954207"
 FLEET_ASSURANCE_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
-GOLDEN_PATH_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
+GOLDEN_PATH_KIT_REV = "bd1cf89ec5d6da6501299e0963f1ef9f5bd5d837"
 
 GOLDEN_PATH_DEMOS = (
     "golden_path_composition.py",
