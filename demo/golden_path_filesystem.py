@@ -550,9 +550,9 @@ def one_shot(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approv
         first,block_record=session.call("write_file",args); block(first); verify_receipt(seal,block_record,"BLOCK"); signed=token(key,first,"one-shot"); session.append(signed)
         allowed,allow_record=session.call("write_file",args); forwarded(allowed)
         if read_file(name,path)!=args["content"] or session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("approved write observation mismatch")
-        verify_receipt(seal,allow_record,"ALLOW"); session.append(signed); replay,_=session.call("write_file",args); block(replay); session.wait_stderr("replayed_nonce")
+        verify_receipt(seal,allow_record,"ALLOW"); session.append(signed); replay,_=session.call("write_file",args); block(replay); session.wait_stderr("target_or_subject_mismatch")
         if session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("replay reached filesystem")
-        check("approved one-shot real write","PASS","BLOCK→signed ALLOW→file observed; replayed_nonce BLOCK; one downstream write")
+        check("approved one-shot real write","PASS","BLOCK→signed ALLOW→file observed; v2 context-mismatch replay BLOCK; one downstream write")
         check("fresh write receipt verification","PASS","initial write BLOCK + first approved write ALLOW independently re-derived")
     finally: session.close()
 

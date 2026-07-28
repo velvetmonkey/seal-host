@@ -25,6 +25,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 PROOF_REFERENCE = ROOT / "docs" / "PROOF-REFERENCE.md"
 SCHEMA = "seal-demo-trace/v1"
+APPROVAL_SUBJECT_ROLE = "APPROVAL-SUBJECT-BLOCK"
 MANIFEST_SCHEMA = "seal-demo-proof-manifest/v1"
 CLAIM_SCOPE = (
     "Attests the mediation decision under policy P, not that no side effect "
@@ -778,33 +779,78 @@ def validate_step_order(metadata: dict, steps: list[dict]) -> None:
     """Enforce each demo's ratified narrative without weakening siblings."""
     if metadata.get("demo_id") == "c7":
         expected_roles = [
-            "COMPOSED-ALLOW", "S-DENY", "T-DENY", "C-DENY",
-            "V-DENY", "L-DENY", "B-DENY",
+            APPROVAL_SUBJECT_ROLE, "COMPOSED-ALLOW", "S-DENY",
+            APPROVAL_SUBJECT_ROLE, "T-DENY",
+            APPROVAL_SUBJECT_ROLE, "C-DENY",
+            APPROVAL_SUBJECT_ROLE, "V-DENY",
+            APPROVAL_SUBJECT_ROLE, "L-DENY",
+            APPROVAL_SUBJECT_ROLE, "B-DENY",
         ]
         if [step.get("role") for step in steps] != expected_roles:
-            raise DoctrineFailure("C7 order must be the composed ALLOW then isolated S/T/C/V/L/B vetoes")
-        if [step.get("verdict") for step in steps] != ["ALLOW", *(["DENY"] * 6)]:
-            raise DoctrineFailure("C7 verdict order must be ALLOW then six DENYs")
+            raise DoctrineFailure(
+                "C7 order must show each approval-subject BLOCK immediately before its "
+                "approved call, with the direct Safety veto in place"
+            )
+        if [step.get("verdict") for step in steps] != [
+                "DENY", "ALLOW", "DENY", *(["DENY"] * 10)]:
+            raise DoctrineFailure("C7 verdict order must retain one ALLOW and twelve DENYs")
         return
     if metadata.get("demo_id") == "c3":
-        if len(steps) != 3:
-            raise DoctrineFailure("C3 ordered narrative must contain exactly three steps")
-        if [step.get("role") for step in steps] != ["QUORUM-SHORT", "DEPLOY-OK", "REPLAY-DENY"]:
-            raise DoctrineFailure("C3 order must be QUORUM-SHORT, DEPLOY-OK, REPLAY-DENY")
-        if [step.get("verdict") for step in steps] != ["DENY", "ALLOW", "DENY"]:
-            raise DoctrineFailure("C3 verdict order must be DENY, ALLOW, DENY")
+        expected = [
+            APPROVAL_SUBJECT_ROLE, "QUORUM-SHORT",
+            APPROVAL_SUBJECT_ROLE, "DEPLOY-OK",
+            APPROVAL_SUBJECT_ROLE, "REPLAY-DENY",
+        ]
+        if [step.get("role") for step in steps] != expected:
+            raise DoctrineFailure("C3 must show each approval-subject BLOCK before its deploy call")
+        if [step.get("verdict") for step in steps] != [
+                "DENY", "DENY", "DENY", "ALLOW", "DENY", "DENY"]:
+            raise DoctrineFailure("C3 discovery/deploy verdict order drift")
         return
     if metadata.get("demo_id") in {"c5", "c6"}:
-        if len(steps) != 2:
-            raise DoctrineFailure(f"{metadata['demo_id'].upper()} ordered narrative must contain exactly two steps")
-        if [step.get("role") for step in steps] != ["LEGIT-TRIGGER", "ATTACK-DENY"]:
+        if [step.get("role") for step in steps] != [
+                APPROVAL_SUBJECT_ROLE, "LEGIT-TRIGGER",
+                APPROVAL_SUBJECT_ROLE, "ATTACK-DENY"]:
             raise DoctrineFailure(
-                f"{metadata['demo_id'].upper()} ordered narrative must be LEGIT-TRIGGER then ATTACK-DENY"
+                f"{metadata['demo_id'].upper()} must show each approval-subject BLOCK "
+                "immediately before its approved call"
             )
-        if [step.get("verdict") for step in steps] != ["ALLOW", "DENY"]:
+        if [step.get("verdict") for step in steps] != ["DENY", "ALLOW", "DENY", "DENY"]:
             raise DoctrineFailure(
-                f"{metadata['demo_id'].upper()} ordered narrative must be ALLOW trigger then DENY call"
+                f"{metadata['demo_id'].upper()} discovery/trigger/deny verdict order drift"
             )
+        return
+    if metadata.get("demo_id") == "c4":
+        if [step.get("role") for step in steps] != [
+                APPROVAL_SUBJECT_ROLE, "ATTACK-DENY",
+                APPROVAL_SUBJECT_ROLE, "LEGIT"]:
+            raise DoctrineFailure("C4 must show each approval-subject BLOCK before its approved call")
+        if [step.get("verdict") for step in steps] != ["DENY", "DENY", "DENY", "ALLOW"]:
+            raise DoctrineFailure("C4 discovery/Budget/allow verdict order drift")
+        return
+    if metadata.get("demo_id") == "c1":
+        if [step.get("role") for step in steps] != [
+                "ATTACK-DENY", "LEGIT", APPROVAL_SUBJECT_ROLE, "CONTROL"]:
+            raise DoctrineFailure("C1 must show the tamper approval-subject BLOCK before its control")
+        if [step.get("verdict") for step in steps] != ["DENY", "ALLOW", "DENY", "DENY"]:
+            raise DoctrineFailure("C1 discovery/control verdict order drift")
+        return
+    if metadata.get("demo_id") == "c2":
+        expected_roles = [
+            APPROVAL_SUBJECT_ROLE, "LEGIT",
+            APPROVAL_SUBJECT_ROLE, "CONTROL",
+            APPROVAL_SUBJECT_ROLE, "CONTROL",
+            APPROVAL_SUBJECT_ROLE, "CONTROL",
+            APPROVAL_SUBJECT_ROLE, "CONTROL",
+            APPROVAL_SUBJECT_ROLE, "CONTROL",
+        ]
+        if [step.get("role") for step in steps] != expected_roles:
+            raise DoctrineFailure(
+                "C2 must show each approval-subject BLOCK before its approved SQL call"
+            )
+        if [step.get("verdict") for step in steps] != [
+                "DENY", "ALLOW", *(["DENY"] * 10)]:
+            raise DoctrineFailure("C2 discovery/control verdict order drift")
         return
     if not steps or steps[0].get("verdict") != "DENY":
         raise DoctrineFailure("first persuasive step must be DENY")
@@ -883,6 +929,18 @@ def validate_trace(artifact_dir: Path) -> None:
             source = manifest["proofs"].get(proof["theorem_id"])
             if source is None or source["commit_pin"] != proof["commit_pin"]:
                 raise DoctrineFailure(f"step {index} proof reference is unresolved or unpinned")
+        if step.get("role") == APPROVAL_SUBJECT_ROLE:
+            certs = record.get("certs", [])
+            if (step.get("verdict") != "DENY"
+                    or step.get("receipt_verdict") != "BLOCK"
+                    or step.get("deny_kernel") != "safety"
+                    or record.get("deny_kernel") != "safety"
+                    or not certs
+                    or certs[0].get("kernel") != "safety"
+                    or certs[0].get("verdict") != "deny"):
+                raise DoctrineFailure(
+                    f"step {index} approval-subject role is not an unapproved Safety BLOCK"
+                )
         receipt_paths.add(receipt)
     on_disk = {path.resolve() for path in (artifact_dir / "receipts").glob("*.json")}
     if receipt_paths != on_disk:
@@ -893,13 +951,13 @@ def validate_trace(artifact_dir: Path) -> None:
     summaries = [event for event in events if event.get("event") == "verification_summary"]
     expected_summary = {"schema": SCHEMA, "event": "verification_summary", "receipts": len(steps), "status": "PASS"}
     if metadata.get("demo_id") == "c3":
-        expected_summary.update({"standalone_receipts": 0, "trace_scoped_receipts": 3})
+        expected_summary.update({"standalone_receipts": 0, "trace_scoped_receipts": 6})
     elif metadata.get("demo_id") == "c5":
-        expected_summary.update({"standalone_receipts": 1, "trace_scoped_receipts": 1})
+        expected_summary.update({"standalone_receipts": 2, "trace_scoped_receipts": 2})
     elif metadata.get("demo_id") == "c6":
-        expected_summary.update({"standalone_receipts": 1, "trace_scoped_receipts": 1})
+        expected_summary.update({"standalone_receipts": 2, "trace_scoped_receipts": 2})
     elif metadata.get("demo_id") == "c7":
-        expected_summary.update({"standalone_receipts": 0, "trace_scoped_receipts": 7})
+        expected_summary.update({"standalone_receipts": 0, "trace_scoped_receipts": 13})
     if summaries != [expected_summary]:
         raise DoctrineFailure("receipt verification summary mismatch")
     non_claims = [event for event in events if event.get("event") == "non_claims"]
@@ -924,8 +982,48 @@ def validate_trace(artifact_dir: Path) -> None:
         check_path.unlink(missing_ok=True)
 
 
+def _validate_approval_subject_pairs(
+        steps: list[dict], records: list[dict], pairs: list[tuple[int, int]],
+        *, theorem_ids: set[str], lanes: list[str], demo_id: str) -> None:
+    if len(pairs) != len(lanes):
+        raise DoctrineFailure(f"{demo_id} approval-subject lane contract malformed")
+    for pair_index, ((discovery_index, call_index), lane) in enumerate(
+            zip(pairs, lanes), 1):
+        discovery = steps[discovery_index]
+        call = steps[call_index]
+        discovery_record = records[discovery_index]
+        call_record = records[call_index]
+        proofs = {
+            proof.get("theorem_id")
+            for proof in discovery.get("proof_refs", [])
+        }
+        if discovery.get("role") != APPROVAL_SUBJECT_ROLE:
+            raise DoctrineFailure(f"{demo_id} approval-subject step {pair_index} role drift")
+        if discovery.get("verification_lane") != lane:
+            raise DoctrineFailure(f"{demo_id} approval-subject step {pair_index} lane drift")
+        if proofs != theorem_ids:
+            raise DoctrineFailure(f"{demo_id} approval-subject step {pair_index} theorem set drift")
+        if (discovery.get("tool") != call.get("tool")
+                or discovery_record.get("arguments") != call_record.get("arguments")):
+            raise DoctrineFailure(
+                f"{demo_id} approval-subject step {pair_index} does not bind its following call"
+            )
+
+
 def _validate_c3(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
                  events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    narrative_steps = steps
+    narrative_records = records
+    _validate_approval_subject_pairs(
+        steps, records, [(0, 1), (2, 3), (4, 5)],
+        theorem_ids={
+            "Host.pureCommit_deny_of_member",
+            "Host.registry_deny_no_capability_consumed",
+        },
+        lanes=["trace", "trace", "trace"], demo_id="C3",
+    )
+    steps = [steps[index] for index in [1, 3, 5]]
+    records = [records[index] for index in [1, 3, 5]]
     if metadata.get("policy_recipe") != "deploy":
         raise DoctrineFailure("C3 must use the shipped deploy recipe")
     if metadata.get("active") != ["safety", "consensus", "linear"]:
@@ -1042,14 +1140,15 @@ def _validate_c3(metadata: dict, steps: list[dict], records: list[dict], manifes
     if not transcript_path.is_file() or sha256_file(transcript_path) != transcript_sha:
         raise DoctrineFailure("C3 transcript missing or digest mismatch")
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
-    if transcript.get("schema") != "seal-demo-trace-transcript/v1" or transcript.get("demo_id") != "c3" or len(transcript.get("steps", [])) != 3:
+    if transcript.get("schema") != "seal-demo-trace-transcript/v1" or transcript.get("demo_id") != "c3" or len(transcript.get("steps", [])) != 6:
         raise DoctrineFailure("C3 transcript shape drift")
     if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
         raise DoctrineFailure("C3 transcript WASM pin drift")
     if transcript.get("signed_config") != records[0].get("signed_config"):
         raise DoctrineFailure("C3 transcript signed config differs from receipts")
 
-    for index, (step, record, transcript_step) in enumerate(zip(steps, records, transcript["steps"]), 1):
+    for index, (step, record, transcript_step) in enumerate(
+            zip(narrative_steps, narrative_records, transcript["steps"]), 1):
         if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
             raise DoctrineFailure(f"C3 transcript step {index} order/role drift")
         if transcript_step.get("canonical_request") != record.get("canonical_request") or transcript_step.get("raw_kernel_output") != record.get("emitted_bytes"):
@@ -1067,21 +1166,28 @@ def _validate_c3(metadata: dict, steps: list[dict], records: list[dict], manifes
             raise DoctrineFailure(f"C3 transcript step {index} replay input binding drift")
         vote_lines = [line for line in replay_input.get("votes", "").splitlines() if line.strip()]
         grant_lines = [line for line in replay_input.get("grants", "").splitlines() if line.strip()]
-        if len(vote_lines) != [1, 2, 2][index - 1] or len(grant_lines) != [1, 0, 0][index - 1]:
+        if (len(vote_lines) != [1, 1, 2, 2, 2, 2][index - 1]
+                or len(grant_lines) != [1, 1, 0, 0, 0, 0][index - 1]):
             raise DoctrineFailure(f"C3 transcript step {index} votes/grants evidence drift")
         if replay_input.get("forecasts") != "":
             raise DoctrineFailure(f"C3 transcript step {index} unexpectedly carries forecasts")
-    variants = transcript["steps"][0].get("input_variants", {})
-    if set(variants) != {"quorum-met"} or variants["quorum-met"].get("votes") != transcript["steps"][1]["step_input"]["votes"]:
+    variants = transcript["steps"][1].get("input_variants", {})
+    if set(variants) != {"quorum-met"} or variants["quorum-met"].get("votes") != transcript["steps"][3]["step_input"]["votes"]:
         raise DoctrineFailure("C3 quorum-met input variant drift")
-    if any(step.get("input_variants") for step in transcript["steps"][1:]):
+    if any(
+            step.get("input_variants")
+            for index, step in enumerate(transcript["steps"])
+            if index != 1):
         raise DoctrineFailure("C3 input variant must exist only on QUORUM-SHORT")
+    if [step.get("commit") for step in transcript["steps"]] != [
+            False, True, False, True, False, True]:
+        raise DoctrineFailure("C3 discovery commit-boundary markers drift")
 
     replay = [event for event in events if event.get("event") == "trace_replay"]
     if replay != [{
         "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
         "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
-        "wasm_sha256": transcript["wasm_sha256"], "steps": 3, "harness": "demo/trace_replay.cjs",
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 6, "harness": "demo/trace_replay.cjs",
     }]:
         raise DoctrineFailure("C3 full trace replay evidence drift")
     controls = [event for event in events if event.get("event") == "trace_negative_control"]
@@ -1091,7 +1197,7 @@ def _validate_c3(metadata: dict, steps: list[dict], records: list[dict], manifes
          "evidence": "1-of-3 Consensus BLOCK changed to 2-of-3 forward/ALLOW and mismatched receipt bytes"},
         {"schema": SCHEMA, "event": "trace_negative_control", "name": "drop-deploy-ok",
          "expected": "FAIL", "observed": "FAIL", "status": "PASS",
-         "evidence": "without DEPLOY-OK the one-use capability remained held and REPLAY-DENY re-derived forward/ALLOW"},
+         "evidence": "without DEPLOY-OK the later replay-discovery BLOCK carried different capability-state bytes"},
         {"schema": SCHEMA, "event": "trace_negative_control", "name": "byte-flip",
          "expected": "FAIL", "observed": "FAIL", "status": "PASS",
          "evidence": "one byte flipped in the REPLAY-DENY raw kernel output"},
@@ -1104,6 +1210,16 @@ def _validate_c3(metadata: dict, steps: list[dict], records: list[dict], manifes
 
 
 def _validate_c4(metadata: dict, steps: list[dict], records: list[dict], manifest: dict) -> None:
+    _validate_approval_subject_pairs(
+        steps, records, [(0, 1), (2, 3)],
+        theorem_ids={
+            "BudgetCore.over_budget_denied",
+            "Host.registry_deny_no_budget_spend",
+        },
+        lanes=["standalone", "standalone"], demo_id="C4",
+    )
+    steps = [steps[index] for index in [1, 3]]
+    records = [records[index] for index in [1, 3]]
     if metadata.get("policy_recipe") != "token-governor":
         raise DoctrineFailure("C4 must use the token-governor recipe")
     if metadata.get("active") != ["safety", "budget"]:
@@ -1162,6 +1278,18 @@ def _validate_c4(metadata: dict, steps: list[dict], records: list[dict], manifes
 
 def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
                  events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    narrative_steps = steps
+    narrative_records = records
+    _validate_approval_subject_pairs(
+        steps, records, [(0, 1), (2, 3)],
+        theorem_ids={
+            "Kernels.convergence_verdict_allow_iff",
+            "Host.pureCommit_deny_of_member",
+        },
+        lanes=["standalone", "trace"], demo_id="C5",
+    )
+    steps = [steps[index] for index in [1, 3]]
+    records = [records[index] for index in [1, 3]]
     if metadata.get("policy_recipe") != "mesh":
         raise DoctrineFailure("C5 must use the shipped mesh recipe")
     if metadata.get("active") != ["safety", "convergence"]:
@@ -1303,19 +1431,22 @@ def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifes
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     if (transcript.get("schema") != "seal-demo-trace-transcript/v1"
             or transcript.get("demo_id") != "c5"
-            or len(transcript.get("steps", [])) != 2):
+            or len(transcript.get("steps", [])) != 4):
         raise DoctrineFailure("C5 transcript shape drift")
     if transcript.get("wasm_sha256") != allowed_record.get("kernel_identity", {}).get("wasm_sha256"):
         raise DoctrineFailure("C5 transcript WASM pin differs from runtime receipt")
     if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
         raise DoctrineFailure("C5 trace metadata WASM pin differs from transcript")
-    if transcript.get("signed_config") != allowed_record.get("signed_config") or transcript.get("signed_config") != denied_record.get("signed_config"):
+    if any(
+            transcript.get("signed_config") != record.get("signed_config")
+            for record in narrative_records):
         raise DoctrineFailure("C5 transcript signed config differs from runtime receipts")
-    if denied.get("requires_trace") != transcript_sha:
-        raise DoctrineFailure("C5 trace-scoped deny dependency differs from transcript SHA")
+    if (narrative_steps[2].get("requires_trace") != transcript_sha
+            or narrative_steps[3].get("requires_trace") != transcript_sha):
+        raise DoctrineFailure("C5 trace-scoped discovery/deny dependencies differ from transcript SHA")
 
     for index, (step, record, transcript_step) in enumerate(
-            zip(steps, records, transcript["steps"]), 1):
+            zip(narrative_steps, narrative_records, transcript["steps"]), 1):
         if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
             raise DoctrineFailure(f"C5 transcript step {index} sequence/role drift")
         if transcript_step.get("canonical_request") != record.get("canonical_request"):
@@ -1343,22 +1474,28 @@ def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifes
                 or replay_input.get("grants") != ""
                 or replay_input.get("forecasts") != ""):
             raise DoctrineFailure(f"C5 transcript step {index} replay input binding drift")
-    first_approvals = transcript["steps"][0]["step_input"].get("approvals")
-    second_approvals = transcript["steps"][1]["step_input"].get("approvals")
-    expected_targets = {
-        item.get("target") for item in allowed_record.get("granted_capabilities", [])
-    }
-    if (not isinstance(first_approvals, list)
-            or {item.get("target") for item in first_approvals} != expected_targets
-            or len(first_approvals) != 2
-            or second_approvals != []):
-        raise DoctrineFailure("C5 trace must pin two approval events on step 1 and none on step 2")
+    approvals = [
+        transcript_step["step_input"].get("approvals")
+        for transcript_step in transcript["steps"]
+    ]
+    expected_approvals = [
+        [],
+        [{"target": item["target"]} for item in allowed_record.get("granted_capabilities", [])],
+        [],
+        [{"target": item["target"]} for item in denied_record.get("granted_capabilities", [])],
+    ]
+    if approvals != expected_approvals or any(
+            len(value) != expected
+            for value, expected in zip(approvals, [0, 1, 0, 1])):
+        raise DoctrineFailure("C5 trace must pin one just-in-time approval after each discovery")
+    if [step.get("commit") for step in transcript["steps"]] != [False, True, False, True]:
+        raise DoctrineFailure("C5 discovery commit-boundary markers drift")
 
     replay = [event for event in events if event.get("event") == "trace_replay"]
     if replay != [{
         "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
         "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
-        "wasm_sha256": transcript["wasm_sha256"], "steps": 2,
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 4,
         "harness": "demo/trace_replay.cjs",
     }]:
         raise DoctrineFailure("C5 full trace replay evidence missing or drifted")
@@ -1368,8 +1505,8 @@ def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifes
             "schema": SCHEMA, "event": "trace_negative_control", "name": "drop-trigger",
             "expected": "BYTE-MISMATCH", "observed": "BYTE-MISMATCH", "status": "PASS",
             "evidence": (
-                "without step 1's two approval events, step 2 Safety denies and raw bytes differ; "
-                "the stateless Convergence denial itself is unchanged"
+                "without step 1, step 2 keeps its own Safety approval but the trace-indexed "
+                "composite bytes differ; the stateless Convergence denial itself is unchanged"
             ),
         },
         {
@@ -1389,6 +1526,18 @@ def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifes
 
 def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
                  events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    narrative_steps = steps
+    narrative_records = records
+    _validate_approval_subject_pairs(
+        steps, records, [(0, 1), (2, 3)],
+        theorem_ids={
+            "Host.registry_deny_temporal_frozen",
+            "Host.registry_deny_no_capability_consumed",
+        },
+        lanes=["standalone", "trace"], demo_id="C6",
+    )
+    steps = [steps[index] for index in [1, 3]]
+    records = [records[index] for index in [1, 3]]
     if metadata.get("policy_recipe") != "init+add-kernel-T":
         raise DoctrineFailure("C6 must use the shipped init + add-kernel T authoring path")
     if metadata.get("active") != ["safety", "temporal"]:
@@ -1503,7 +1652,10 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
     transcript_sha = transcript_meta.get("sha256")
     if not isinstance(transcript_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha):
         raise DoctrineFailure("C6 trace transcript SHA-256 is malformed")
-    if denied.get("requires_trace") != transcript_sha or trigger.get("requires_trace") is not None:
+    if (narrative_steps[2].get("requires_trace") != transcript_sha
+            or narrative_steps[3].get("requires_trace") != transcript_sha
+            or narrative_steps[0].get("requires_trace") is not None
+            or narrative_steps[1].get("requires_trace") is not None):
         raise DoctrineFailure("C6 receipt-to-trace dependency drift")
     expected_lanes = {
         "standalone": "fresh-state receipt; plain seal verify required",
@@ -1517,16 +1669,19 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
     if not transcript_path.is_file() or sha256_file(transcript_path) != transcript_sha:
         raise DoctrineFailure("C6 trace transcript missing or digest mismatch")
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
-    if transcript.get("schema") != "seal-demo-trace-transcript/v1" or transcript.get("demo_id") != "c6" or len(transcript.get("steps", [])) != 2:
+    if transcript.get("schema") != "seal-demo-trace-transcript/v1" or transcript.get("demo_id") != "c6" or len(transcript.get("steps", [])) != 4:
         raise DoctrineFailure("C6 trace transcript shape drift")
     if transcript.get("wasm_sha256") != trigger_record.get("kernel_identity", {}).get("wasm_sha256"):
         raise DoctrineFailure("C6 transcript WASM pin differs from runtime receipt")
     if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
         raise DoctrineFailure("C6 trace metadata WASM pin differs from transcript")
-    if transcript.get("signed_config") != trigger_record.get("signed_config") or transcript.get("signed_config") != denied_record.get("signed_config"):
+    if any(
+            transcript.get("signed_config") != record.get("signed_config")
+            for record in narrative_records):
         raise DoctrineFailure("C6 transcript signed config differs from runtime receipts")
-    for index, (step, transcript_step) in enumerate(zip(steps, transcript["steps"]), 1):
-        record = records[index - 1]
+    for index, (step, transcript_step) in enumerate(
+            zip(narrative_steps, transcript["steps"]), 1):
+        record = narrative_records[index - 1]
         if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
             raise DoctrineFailure(f"C6 transcript step {index} sequence/role drift")
         if transcript_step.get("canonical_request") != record.get("canonical_request"):
@@ -1544,12 +1699,14 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
             raise DoctrineFailure(f"C6 transcript step {index} receipt is not byte-identical to the artifact")
         if transcript_step.get("receipt_path") != step["receipt_path"]:
             raise DoctrineFailure(f"C6 transcript step {index} receipt path drift")
+    if [step.get("commit") for step in transcript["steps"]] != [False, True, False, True]:
+        raise DoctrineFailure("C6 discovery commit-boundary markers drift")
 
     replay = [event for event in events if event.get("event") == "trace_replay"]
     if replay != [{
         "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
         "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
-        "wasm_sha256": transcript["wasm_sha256"], "steps": 2,
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 4,
         "harness": "demo/trace_replay.cjs",
     }]:
         raise DoctrineFailure("C6 full trace replay evidence missing or drifted")
@@ -1558,7 +1715,7 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
         {
             "schema": SCHEMA, "event": "trace_negative_control", "name": "drop-trigger",
             "expected": "FAIL", "observed": "FAIL", "status": "PASS",
-            "evidence": "fresh-state audit.destroy re-derived forward/ALLOW, mismatching live-session BLOCK bytes",
+            "evidence": "without the committed trigger, the later approval-subject BLOCK has different trace-indexed bytes",
         },
         {
             "schema": SCHEMA, "event": "trace_negative_control", "name": "byte-flip",
@@ -1577,6 +1734,19 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
 
 def _validate_c7(metadata: dict, steps: list[dict], records: list[dict], manifest: dict,
                  events: list[dict] | None = None, artifact_dir: Path | None = None) -> None:
+    narrative_steps = steps
+    narrative_records = records
+    _validate_approval_subject_pairs(
+        steps, records, [(0, 1), (3, 4), (5, 6), (7, 8), (9, 10), (11, 12)],
+        theorem_ids={
+            "Host.pureCommit_deny_of_member",
+            "Host.registry_deny_no_capability_consumed",
+            "Host.registry_deny_no_budget_spend",
+        },
+        lanes=["trace"] * 6, demo_id="C7",
+    )
+    steps = [steps[index] for index in [1, 2, 4, 6, 8, 10, 12]]
+    records = [records[index] for index in [1, 2, 4, 6, 8, 10, 12]]
     expected_active = ["safety", "temporal", "consensus", "convergence", "linear", "budget"]
     if metadata.get("policy_recipe") != "init+add-kernel-T+C+V+L+B":
         raise DoctrineFailure("C7 must use the shipped incremental non-experimental kernel path")
@@ -1701,7 +1871,7 @@ def _validate_c7(metadata: dict, steps: list[dict], records: list[dict], manifes
     transcript_meta = metadata.get("trace_transcript")
     expected_lanes = {
         "standalone": "not applicable: every receipt includes omitted votes/grants evidence",
-        "trace": "one init plus seven ordered requests/events; raw outputs byte-compared",
+        "trace": "thirteen ordered calls; approval-subject BLOCKs replayed then discarded; raw outputs byte-compared",
     }
     if (not isinstance(transcript_meta, dict)
             or transcript_meta.get("path") != "trace-transcript.json"
@@ -1712,7 +1882,7 @@ def _validate_c7(metadata: dict, steps: list[dict], records: list[dict], manifes
     transcript_sha = transcript_meta.get("sha256")
     if not isinstance(transcript_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha):
         raise DoctrineFailure("C7 transcript SHA-256 malformed")
-    if any(step.get("requires_trace") != transcript_sha for step in steps):
+    if any(step.get("requires_trace") != transcript_sha for step in narrative_steps):
         raise DoctrineFailure("C7 receipt-to-transcript dependency drift")
     transcript_path = artifact_dir / "trace-transcript.json"
     if not transcript_path.is_file() or sha256_file(transcript_path) != transcript_sha:
@@ -1720,12 +1890,12 @@ def _validate_c7(metadata: dict, steps: list[dict], records: list[dict], manifes
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     if (transcript.get("schema") != "seal-demo-trace-transcript/v1"
             or transcript.get("demo_id") != "c7"
-            or len(transcript.get("steps", [])) != 7):
+            or len(transcript.get("steps", [])) != 13):
         raise DoctrineFailure("C7 transcript shape drift")
     if transcript_meta.get("wasm_sha256") != transcript.get("wasm_sha256"):
         raise DoctrineFailure("C7 transcript WASM metadata drift")
     for index, (step, record, transcript_step) in enumerate(
-            zip(steps, records, transcript["steps"]), 1):
+            zip(narrative_steps, narrative_records, transcript["steps"]), 1):
         if transcript_step.get("sequence") != index or transcript_step.get("role") != step.get("role"):
             raise DoctrineFailure(f"C7 transcript step {index} order/role drift")
         if transcript_step.get("canonical_request") != record.get("canonical_request"):
@@ -1739,11 +1909,15 @@ def _validate_c7(metadata: dict, steps: list[dict], records: list[dict], manifes
         artifact_receipt = (artifact_dir / step["receipt_path"]).read_bytes()
         if receipt_bytes != artifact_receipt or sha256_bytes(receipt_bytes) != transcript_step.get("receipt_sha256"):
             raise DoctrineFailure(f"C7 transcript step {index} receipt pin drift")
+    if [step.get("commit") for step in transcript["steps"]] != [
+            False, True, True, False, True, False, True,
+            False, True, False, True, False, True]:
+        raise DoctrineFailure("C7 discovery commit-boundary markers drift")
     replay = [event for event in events if event.get("event") == "trace_replay"]
     if replay != [{
         "schema": SCHEMA, "event": "trace_replay", "status": "PASS",
         "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
-        "wasm_sha256": transcript["wasm_sha256"], "steps": 7,
+        "wasm_sha256": transcript["wasm_sha256"], "steps": 13,
         "harness": "demo/trace_replay.cjs",
     }]:
         raise DoctrineFailure("C7 full trace replay evidence drift")

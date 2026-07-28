@@ -361,7 +361,7 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     denied_args = {"op": NONCONVERGENT_OP, "key": "team/c5", "value": "blind-overwrite"}
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        allowed_refusal, _ = session.call(allowed_args)
+        allowed_refusal, allowed_discovery = session.call(allowed_args)
         assert_block(allowed_refusal, "approval required")
         session.append(signed_token(approval_key, allowed_refusal, "convergent"))
         allowed, allow_receipt = session.call(allowed_args)
@@ -373,7 +373,7 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         if session.marker_count(CONVERGENT_OP) != 1 or session.marker_count(NONCONVERGENT_OP) != 0:
             raise gp.DemoFailure("proven-convergent update must execute exactly once before the denied call")
 
-        denied_refusal, _ = session.call(denied_args)
+        denied_refusal, denied_discovery = session.call(denied_args)
         assert_block(denied_refusal, "approval required")
         session.append(signed_token(approval_key, denied_refusal, "nonconvergent"))
         denied, deny_receipt = session.call(denied_args)
@@ -398,12 +398,16 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         )
         return {
             "receipt_root": session.receipts,
+            "allow_discovery": allowed_discovery,
+            "allow_discovery_record": receipt_json(allowed_discovery),
             "allow_receipt": allow_receipt,
             "allow_record": allow_record,
+            "deny_discovery": denied_discovery,
+            "deny_discovery_record": receipt_json(denied_discovery),
             "deny_receipt": deny_receipt,
             "deny_record": deny_record,
-            "allow_target": allowed_target,
-            "deny_target": denied_target,
+            "allow_target": gp.target_from(allowed_refusal),
+            "deny_target": gp.target_from(denied_refusal),
         }
     finally:
         session.close()
@@ -432,22 +436,31 @@ def build_transcript(artifact_dir: Path, pair: dict) -> tuple[Path, str]:
     if not isinstance(wasm_sha, str) or deny_record.get("kernel_identity", {}).get("wasm_sha256") != wasm_sha:
         raise gp.DemoFailure("runtime receipts disagree on the vendored WASM identity")
 
-    approvals = [{"target": item["target"]} for item in allow_record.get("granted_capabilities", [])]
-    expected_targets = {
-        pair["allow_target"],
-        pair["deny_target"],
-    }
-    if {item["target"] for item in approvals} != expected_targets:
-        raise gp.DemoFailure("first receipt does not pin both live Safety approvals")
+    allow_approvals = [
+        {"target": item["target"]}
+        for item in allow_record.get("granted_capabilities", [])
+    ]
+    deny_approvals = [
+        {"target": item["target"]}
+        for item in deny_record.get("granted_capabilities", [])
+    ]
+    if ({item["target"] for item in allow_approvals} != {pair["allow_target"]}
+            or {item["target"] for item in deny_approvals} != {pair["deny_target"]}):
+        raise gp.DemoFailure("receipts do not each pin their just-in-time Safety approval")
     steps = []
     for sequence, role, receipt, record, step_approvals in [
-        (1, "LEGIT-TRIGGER", allow_receipt, allow_record, approvals),
-        (2, "ATTACK-DENY", deny_receipt, deny_record, []),
+        (1, gp.APPROVAL_SUBJECT_ROLE, pair["allow_discovery"],
+         pair["allow_discovery_record"], []),
+        (2, "LEGIT-TRIGGER", allow_receipt, allow_record, allow_approvals),
+        (3, gp.APPROVAL_SUBJECT_ROLE, pair["deny_discovery"],
+         pair["deny_discovery_record"], []),
+        (4, "ATTACK-DENY", deny_receipt, deny_record, deny_approvals),
     ]:
         receipt_bytes = receipt.read_bytes()
         steps.append({
             "sequence": sequence,
             "role": role,
+            "commit": role != gp.APPROVAL_SUBJECT_ROLE,
             "canonical_request": record["canonical_request"],
             "canonical_request_sha256": record["canonical_request_sha256"],
             "step_input": replay_input(record, step_approvals),
@@ -479,10 +492,10 @@ def replay_command(transcript: Path, *extra: str) -> list[str]:
 
 def exercise_trace_controls(transcript: Path, transcript_sha: str) -> None:
     full = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=2" not in full.stdout:
-        raise gp.DemoFailure("full transcript replay did not report both byte-identical steps")
+    if "PASS trace transcript steps=4" not in full.stdout:
+        raise gp.DemoFailure("full transcript replay did not report all four byte-identical calls")
 
-    dropped = gp.run(replay_command(transcript, "--drop-trigger"), expect=1)
+    dropped = gp.run(replay_command(transcript, "--drop-sequence", "2"), expect=1)
     dropped_output = (dropped.stdout or "") + (dropped.stderr or "")
     if "byte mismatch" not in dropped_output or "actual_route=block" not in dropped_output:
         raise gp.DemoFailure("drop-trigger control did not change the second call's raw decision bytes")
@@ -507,7 +520,7 @@ def exercise_trace_controls(transcript: Path, transcript_sha: str) -> None:
     if restored_sha != transcript_sha or transcript.read_bytes() != original:
         raise gp.DemoFailure("trace transcript did not restore byte-exact")
     restored = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=2" not in restored.stdout:
+    if "PASS trace transcript steps=4" not in restored.stdout:
         raise gp.DemoFailure("restored transcript did not replay byte-identically")
     check(
         "trace transcript controls",
@@ -600,6 +613,7 @@ def execute(artifact_dir: Path, color: str) -> int:
         transcript, transcript_sha = build_transcript(artifact_dir, pair)
         exercise_trace_controls(transcript, transcript_sha)
         trace_scope = standalone_trace_scope(seal, pair["deny_receipt"])
+        discovery_trace_scope = standalone_trace_scope(seal, pair["deny_discovery"])
         trace = DemoTrace(artifact_dir, "c5", seal, C5_THEOREMS, color)
         trace.configure(
             "mesh", policy,
@@ -620,9 +634,19 @@ def execute(artifact_dir: Path, color: str) -> int:
             },
         )
         trace.record_receipt(
+            pair["allow_discovery"], role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=["Kernels.convergence_verdict_allow_iff", "Host.pureCommit_deny_of_member"],
+        )
+        trace.record_receipt(
             pair["allow_receipt"], role="LEGIT-TRIGGER",
             theorem_ids=["Host.composed_convergent", "Host.registry_closed_algebra"],
             convergence=convergence_evidence(CONVERGENT_OP, True),
+        )
+        trace.record_receipt(
+            pair["deny_discovery"], role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=["Kernels.convergence_verdict_allow_iff", "Host.pureCommit_deny_of_member"],
+            verification_lane="trace", requires_trace=transcript_sha,
+            standalone_failure=discovery_trace_scope,
         )
         trace.record_receipt(
             pair["deny_receipt"], role="ATTACK-DENY",
@@ -635,14 +659,14 @@ def execute(artifact_dir: Path, color: str) -> int:
             "schema": "seal-demo-trace/v1", "event": "trace_replay", "status": "PASS",
             "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
             "wasm_sha256": pair["allow_record"]["kernel_identity"]["wasm_sha256"],
-            "steps": 2, "harness": "demo/trace_replay.cjs",
+            "steps": 4, "harness": "demo/trace_replay.cjs",
         })
         trace.emit({
             "schema": "seal-demo-trace/v1", "event": "trace_negative_control",
             "name": "drop-trigger", "expected": "BYTE-MISMATCH", "observed": "BYTE-MISMATCH", "status": "PASS",
             "evidence": (
-                "without step 1's two approval events, step 2 Safety denies and raw bytes differ; "
-                "the stateless Convergence denial itself is unchanged"
+                "without step 1, step 2 keeps its own Safety approval but the trace-indexed "
+                "composite bytes differ; the stateless Convergence denial itself is unchanged"
             ),
         })
         trace.emit({

@@ -383,7 +383,7 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     forbidden_args = {"record": "audit-record-c6"}
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        trigger_refusal, _ = session.call(TRIGGER_TOOL, trigger_args)
+        trigger_refusal, trigger_discovery = session.call(TRIGGER_TOOL, trigger_args)
         assert_block(trigger_refusal, "approval required")
         session.append(signed_token(approval_key, trigger_refusal, "trigger"))
         allowed, trigger_receipt = session.call(TRIGGER_TOOL, trigger_args)
@@ -395,7 +395,7 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         if session.marker_count(TRIGGER_TOOL) != 1 or session.marker_count(FORBIDDEN_TOOL) != 0:
             raise gp.DemoFailure("trigger must execute exactly once before the forbidden call")
 
-        forbidden_refusal, _ = session.call(FORBIDDEN_TOOL, forbidden_args)
+        forbidden_refusal, forbidden_discovery = session.call(FORBIDDEN_TOOL, forbidden_args)
         assert_block(forbidden_refusal, "approval required")
         session.append(signed_token(approval_key, forbidden_refusal, "forbidden"))
         denied, deny_receipt = session.call(FORBIDDEN_TOOL, forbidden_args)
@@ -420,8 +420,12 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         )
         return {
             "receipt_root": session.receipts,
+            "trigger_discovery": trigger_discovery,
+            "trigger_discovery_record": receipt_json(trigger_discovery),
             "trigger_receipt": trigger_receipt,
             "trigger_record": trigger_record,
+            "forbidden_discovery": forbidden_discovery,
+            "forbidden_discovery_record": receipt_json(forbidden_discovery),
             "deny_receipt": deny_receipt,
             "deny_record": deny_record,
         }
@@ -441,13 +445,18 @@ def build_transcript(artifact_dir: Path, pair: dict) -> tuple[Path, str]:
         raise gp.DemoFailure("runtime receipts disagree on the vendored WASM identity")
     steps = []
     for sequence, role, receipt, record in [
-        (1, "LEGIT-TRIGGER", trigger_receipt, trigger_record),
-        (2, "ATTACK-DENY", deny_receipt, deny_record),
+        (1, gp.APPROVAL_SUBJECT_ROLE, pair["trigger_discovery"],
+         pair["trigger_discovery_record"]),
+        (2, "LEGIT-TRIGGER", trigger_receipt, trigger_record),
+        (3, gp.APPROVAL_SUBJECT_ROLE, pair["forbidden_discovery"],
+         pair["forbidden_discovery_record"]),
+        (4, "ATTACK-DENY", deny_receipt, deny_record),
     ]:
         receipt_bytes = receipt.read_bytes()
         steps.append({
             "sequence": sequence,
             "role": role,
+            "commit": role != gp.APPROVAL_SUBJECT_ROLE,
             "canonical_request": record["canonical_request"],
             "canonical_request_sha256": record["canonical_request_sha256"],
             "raw_kernel_output": record["emitted_bytes"],
@@ -478,13 +487,13 @@ def replay_command(transcript: Path, *extra: str) -> list[str]:
 
 def exercise_trace_controls(transcript: Path, transcript_sha: str) -> None:
     full = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=2" not in full.stdout:
-        raise gp.DemoFailure("full transcript replay did not report both byte-identical steps")
+    if "PASS trace transcript steps=4" not in full.stdout:
+        raise gp.DemoFailure("full transcript replay did not report all four byte-identical calls")
 
-    dropped = gp.run(replay_command(transcript, "--drop-trigger"), expect=1)
+    dropped = gp.run(replay_command(transcript, "--drop-sequence", "2"), expect=1)
     dropped_output = (dropped.stdout or "") + (dropped.stderr or "")
-    if "expected_route=block actual_route=forward" not in dropped_output:
-        raise gp.DemoFailure("drop-trigger control did not exhibit fresh-state ALLOW versus live-session BLOCK")
+    if "byte mismatch" not in dropped_output or "actual_route=block" not in dropped_output:
+        raise gp.DemoFailure("drop-trigger control did not change the post-trigger discovery bytes")
 
     original = transcript.read_bytes()
     marker = b'\\"route\\":\\"block\\"'
@@ -505,11 +514,11 @@ def exercise_trace_controls(transcript: Path, transcript_sha: str) -> None:
     if restored_sha != transcript_sha or transcript.read_bytes() != original:
         raise gp.DemoFailure("trace transcript did not restore byte-exact")
     restored = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=2" not in restored.stdout:
+    if "PASS trace transcript steps=4" not in restored.stdout:
         raise gp.DemoFailure("restored transcript did not replay byte-identically")
     check(
         "trace transcript controls",
-        "full replay PASS; drop-trigger FAIL (fresh ALLOW vs live BLOCK); byte-flip FAIL; restore SHA match + PASS",
+        "full replay PASS; drop-trigger discovery byte mismatch; byte-flip FAIL; restore SHA match + PASS",
     )
 
 
@@ -528,6 +537,26 @@ def standalone_trace_scope(seal: Path, receipt: Path) -> dict:
     return {
         "command": "seal verify", "status": "TRACE-SCOPED", "exit_code": result.returncode,
         "fresh_state_verdict": "ALLOW", "live_session_verdict": "BLOCK",
+    }
+
+
+def standalone_block_trace_scope(seal: Path, receipt: Path) -> dict:
+    result = subprocess.run(
+        [str(seal), "verify", str(receipt)], cwd=ROOT, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    output = (result.stdout or "") + (result.stderr or "")
+    if (result.returncode == 0
+            or "re-derived BLOCK / claimed BLOCK" not in output
+            or "emitted decision bytes byte-identical" not in output
+            or "FAIL  NOT VERIFIED" not in output):
+        raise gp.DemoFailure(
+            "post-trigger approval-subject receipt did not exhibit its trace-indexed byte boundary"
+        )
+    return {
+        "command": "seal verify", "status": "TRACE-SCOPED",
+        "exit_code": result.returncode,
+        "fresh_state_verdict": "BLOCK", "live_session_verdict": "BLOCK",
     }
 
 
@@ -575,6 +604,9 @@ def execute(artifact_dir: Path, color: str) -> int:
         transcript, transcript_sha = build_transcript(artifact_dir, pair)
         exercise_trace_controls(transcript, transcript_sha)
         trace_scope = standalone_trace_scope(seal, pair["deny_receipt"])
+        discovery_trace_scope = standalone_block_trace_scope(
+            seal, pair["forbidden_discovery"],
+        )
         trace = DemoTrace(artifact_dir, "c6", seal, C6_THEOREMS, color)
         trace.configure(
             "init+add-kernel-T", policy,
@@ -592,12 +624,28 @@ def execute(artifact_dir: Path, color: str) -> int:
             },
         )
         trace.record_receipt(
+            pair["trigger_discovery"], role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=[
+                "Host.registry_deny_temporal_frozen",
+                "Host.registry_deny_no_capability_consumed",
+            ],
+        )
+        trace.record_receipt(
             pair["trigger_receipt"], role="LEGIT-TRIGGER",
             theorem_ids=["Host.composed_temporal_safety", "Host.registry_closed_algebra"],
             temporal=temporal_evidence(
                 before=0, after=1, evidence="runtime-certificate:trace ok (1 events)",
                 scope="session.revoke armed the trigger-driven freeze",
             ),
+        )
+        trace.record_receipt(
+            pair["forbidden_discovery"], role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=[
+                "Host.registry_deny_temporal_frozen",
+                "Host.registry_deny_no_capability_consumed",
+            ],
+            verification_lane="trace", requires_trace=transcript_sha,
+            standalone_failure=discovery_trace_scope,
         )
         trace.record_receipt(
             pair["deny_receipt"], role="ATTACK-DENY",
@@ -622,12 +670,12 @@ def execute(artifact_dir: Path, color: str) -> int:
             "schema": "seal-demo-trace/v1", "event": "trace_replay", "status": "PASS",
             "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
             "wasm_sha256": pair["trigger_record"]["kernel_identity"]["wasm_sha256"],
-            "steps": 2, "harness": "demo/trace_replay.cjs",
+            "steps": 4, "harness": "demo/trace_replay.cjs",
         })
         trace.emit({
             "schema": "seal-demo-trace/v1", "event": "trace_negative_control",
             "name": "drop-trigger", "expected": "FAIL", "observed": "FAIL", "status": "PASS",
-            "evidence": "fresh-state audit.destroy re-derived forward/ALLOW, mismatching live-session BLOCK bytes",
+            "evidence": "without the committed trigger, the later approval-subject BLOCK has different trace-indexed bytes",
         })
         trace.emit({
             "schema": "seal-demo-trace/v1", "event": "trace_negative_control",

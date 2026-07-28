@@ -480,7 +480,7 @@ def approval_tamper(name: str, seal: Path, trusted: Path, config_pub: str,
         verify_receipt(seal, first_receipt, "BLOCK")
         if trace:
             trace.record_receipt(
-                first_receipt, role="CONTROL",
+                first_receipt, role=gp.APPROVAL_SUBJECT_ROLE,
                 theorem_ids=["Host.registry_deny_no_budget_spend"],
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
@@ -519,7 +519,7 @@ def doctrine_path(name: str, seal: Path, trusted: Path, config_pub: str,
         verify_receipt(seal, block_receipt, "BLOCK")
         if trace:
             trace.record_receipt(
-                block_receipt, role="ATTACK-DENY",
+                block_receipt, role=gp.APPROVAL_SUBJECT_ROLE,
                 theorem_ids=["Host.registry_deny_no_budget_spend"],
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
@@ -555,7 +555,7 @@ def budget_control(name: str, seal: Path, trusted: Path, config_pub: str,
         verify_receipt(seal, first_receipt, "BLOCK")
         if trace:
             trace.record_receipt(
-                first_receipt, role="CONTROL",
+                first_receipt, role=gp.APPROVAL_SUBJECT_ROLE,
                 theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
@@ -598,7 +598,7 @@ def invalid_cost_controls(name: str, seal: Path, trusted: Path, config_pub: str,
             verify_receipt(seal, discovery, "BLOCK")
             if trace:
                 trace.record_receipt(
-                    discovery, role="CONTROL",
+                    discovery, role=gp.APPROVAL_SUBJECT_ROLE,
                     theorem_ids=["Host.registry_deny_no_budget_spend"],
                 )
             session.append(signed_token(approval_key, blocked, f"cost-{label}"))

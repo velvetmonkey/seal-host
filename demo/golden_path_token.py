@@ -337,8 +337,12 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     retry_args = {"prompt": prompt, "usage": {"tokens": RETRY_COST}}
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        over_refusal, _ = session.call(over_args)
+        over_refusal, over_discovery = session.call(over_args)
         assert_block(over_refusal, "approval required")
+        trace.record_receipt(
+            over_discovery, role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
+        )
         session.append(signed_token(approval_key, over_refusal, "over-cap"))
         denied, deny_receipt = session.call(over_args)
         assert_block(denied, "over budget token-usage (0+11>10)")
@@ -358,8 +362,12 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
             },
         )
 
-        retry_refusal, _ = session.call(retry_args)
+        retry_refusal, retry_discovery = session.call(retry_args)
         assert_block(retry_refusal, "approval required")
+        trace.record_receipt(
+            retry_discovery, role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
+        )
         session.append(signed_token(approval_key, retry_refusal, "retry"))
         allowed, allow_receipt = session.call(retry_args)
         assert_allow(allowed)

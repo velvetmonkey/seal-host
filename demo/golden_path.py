@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
-from doctrine import DemoTrace
+from doctrine import APPROVAL_SUBJECT_ROLE, DemoTrace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test" / "tools"))
@@ -548,6 +548,12 @@ def approval_tamper_control(trusted: Path, config_pub: str, approval_key: Path,
         refusal = json.loads(proc.line())
         if not is_block(refusal):
             raise DemoFailure(f"tamper control did not mint a pending challenge: {refusal}")
+        discovery_receipt = wait_for_receipt(receipts, set(), "shell_exec")
+        if trace:
+            trace.record_receipt(
+                discovery_receipt, role=APPROVAL_SUBJECT_ROLE,
+                theorem_ids=["SealV2.tampered_approvals_deny"],
+            )
         token = approval_token(
             approval_key, refusal, f"golden-path-tamper-{uuid.uuid4().hex}",
         )
