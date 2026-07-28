@@ -12,7 +12,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.lake/build/lib/libsealffi.so"
 TMP="$ROOT/.lake/build/ffi-archives"
-LEANBUILD="${LEANBUILD:-/home/monkey/bin/leanbuild}"
+# Build command resolution: explicit LEANBUILD wins, then a `leanbuild`
+# wrapper on PATH (the dev box installs one that serializes builds and caps
+# memory — box protections, not build semantics), else bare `lake` (CI
+# runners are ephemeral and single-build, so the wrapper adds nothing there).
+# The wrapper forwards its arguments to lake, so both spellings take the
+# same argument list.
+if [ -z "${LEANBUILD:-}" ]; then
+  if command -v leanbuild >/dev/null 2>&1; then
+    LEANBUILD=leanbuild
+  else
+    LEANBUILD=lake
+  fi
+fi
 LEAN_PREFIX="$(lean --print-prefix)"
 MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
 if [ "$MCP_TYPE" = "path" ]; then
