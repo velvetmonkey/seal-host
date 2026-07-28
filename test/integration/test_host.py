@@ -9,7 +9,7 @@ non-canonical tools/call is blocked, and a tampered config refuses to start.
 """
 
 import json
-import hashlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,12 +21,6 @@ from process_witness import raise_with_child_stderr  # noqa: E402
 from sign_config import generate_keypair, sign_payload  # noqa: E402
 
 CONFIG_SK, PUBKEY = generate_keypair()
-
-
-def stable_hash(parts) -> str:
-    """Mirror of Seal.stableHashParts: SHA-256 over Lean's netstring encoding."""
-    framed = "".join(f"{len([*part])}:{part}" for part in parts)
-    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
 
 
 def safety_section(approval_file: Path) -> dict:
@@ -194,18 +188,35 @@ def run_case(messages, approval_records=(), raw_lines=None):
         return lines
 
 
+def extract_approval_target(response) -> str:
+    """Read the target minted by the real kernel from a blocked response."""
+    for content in response.get("result", {}).get("content", []):
+        match = re.search(r"approval required: ([0-9a-f]{64})", content.get("text", ""))
+        if match:
+            return match.group(1)
+    raise AssertionError(f"kernel block response did not contain an approval target: {response}")
+
+
+def mint_approval_target(name: str, arguments: dict) -> str:
+    """Ask the real host/kernel to mint the approval target for this exact call."""
+    blocked = run_case([rpc(0, name, arguments)])
+    assert blocked[0]["result"]["isError"] is True
+    return extract_approval_target(blocked[0])
+
+
 def main() -> int:
     # 1. Guarded destructive call without approval -> blocked.
-    blocked = run_case([rpc(1, "db.execute", {"database": "prod", "sql": "drop table users"})])
+    destructive = {"database": "prod", "sql": "drop table users"}
+    blocked = run_case([rpc(1, "db.execute", destructive)])
     assert blocked[0]["result"]["isError"] is True
     assert "approval required" in blocked[0]["result"]["content"][0]["text"]
 
     # 2. Approval allows exactly once; replay is consumed -> blocked.
-    target = stable_hash(["db.execute", "db", "prod", "write", "drop table users"])
+    target = extract_approval_target(blocked[0])
     approved = run_case(
         [
-            rpc(1, "db.execute", {"database": "prod", "sql": "drop table users"}),
-            rpc(2, "db.execute", {"database": "prod", "sql": "drop table users"}),
+            rpc(1, "db.execute", destructive),
+            rpc(2, "db.execute", destructive),
         ],
         approval_records=[{"target": target}],
     )
@@ -238,9 +249,8 @@ def main() -> int:
 
     # 5. Temporal kernel T: no destructive call after revoke, even with a
     #    fresh, valid approval (S allows; T denies; AND is fail-closed).
-    db_target = stable_hash(["db.execute", "db", "prod", "write", "drop table users"])
-    assert db_target == target, "python stable_hash drifted from Seal.Hash"
-    revoke_target = stable_hash(["session.revoke", "revoke"])
+    db_target = target
+    revoke_target = mint_approval_target("session.revoke", {})
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
@@ -254,7 +264,6 @@ def main() -> int:
             proc.stdin.flush()
             return json.loads(proc.stdout.readline())
 
-        destructive = {"database": "prod", "sql": "drop table users"}
         # Approved destructive call before revoke: allowed.
         r1 = call(1, "db.execute", destructive)
         assert r1["result"]["isError"] is False
@@ -275,7 +284,8 @@ def main() -> int:
     # 6. Consensus kernel C: high-stakes tool needs a ratified 2-of-3 quorum,
     #    not just an approval. Also exercises the two-phase state commit: the
     #    approval is NOT consumed by the quorum-blocked first call.
-    pay_target = stable_hash(["payments.send", "pay"])
+    payment = {"amount": 10}
+    pay_target = mint_approval_target("payments.send", payment)
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
@@ -291,7 +301,7 @@ def main() -> int:
             return json.loads(proc.stdout.readline())
 
         # Approved but no quorum: C denies.
-        r1 = call(1, "payments.send", {"amount": 10})
+        r1 = call(1, "payments.send", payment)
         assert r1["result"]["isError"] is True
         assert "quorum missing" in r1["result"]["content"][0]["text"]
         # 2-of-3 quorum ratified: allowed — and the approval survived the
@@ -301,7 +311,7 @@ def main() -> int:
             + json.dumps({"acceptor": 2, "value": "payments.send"}) + "\n",
             encoding="utf-8",
         )
-        r2 = call(2, "payments.send", {"amount": 10})
+        r2 = call(2, "payments.send", payment)
         assert r2["result"]["isError"] is False
         # Rogue quorum (acceptor outside roster) with a fresh approval: denied.
         with approvals.open("a", encoding="utf-8") as f:
@@ -311,7 +321,7 @@ def main() -> int:
             + json.dumps({"acceptor": 1, "value": "payments.send"}) + "\n",
             encoding="utf-8",
         )
-        r3 = call(3, "payments.send", {"amount": 10})
+        r3 = call(3, "payments.send", payment)
         assert r3["result"]["isError"] is True
         assert "quorum missing" in r3["result"]["content"][0]["text"]
         proc.stdin.close()
@@ -319,11 +329,14 @@ def main() -> int:
 
     # 7. Convergence kernel V: only proven-convergent ops admitted on
     #    replicated stores.
-    store_target = stable_hash(["store.update", "store"])
+    convergent_update = {"op": "orset.add", "key": "k1"}
+    divergent_update = {"op": "assign", "key": "k1"}
+    convergent_target = mint_approval_target("store.update", convergent_update)
+    divergent_target = mint_approval_target("store.update", divergent_update)
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
-        approvals.write_text(json.dumps({"target": store_target}) + "\n", encoding="utf-8")
+        approvals.write_text(json.dumps({"target": convergent_target}) + "\n", encoding="utf-8")
         config = write_config(tmp, approvals)
         proc = spawn(config)
         assert proc.stdin is not None and proc.stdout is not None
@@ -334,12 +347,12 @@ def main() -> int:
             return json.loads(proc.stdout.readline())
 
         # Convergent op (OR-Set add): allowed.
-        r1 = call(1, "store.update", {"op": "orset.add", "key": "k1"})
+        r1 = call(1, "store.update", convergent_update)
         assert r1["result"]["isError"] is False
         # LWW assignment: refused, divergent-replica risk (approval is fresh).
         with approvals.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"target": store_target}) + "\n")
-        r2 = call(2, "store.update", {"op": "assign", "key": "k1"})
+            f.write(json.dumps({"target": divergent_target}) + "\n")
+        r2 = call(2, "store.update", divergent_update)
         assert r2["result"]["isError"] is True
         assert "proven-convergent" in r2["result"]["content"][0]["text"]
         proc.stdin.close()
@@ -347,7 +360,8 @@ def main() -> int:
 
     # 8. Calibration kernel K (experimental flag on): confidence-conditioned
     #    tool gated on the empirical Hoeffding calibration bound.
-    act_target = stable_hash(["model.act", "act"])
+    model_action = {"action": "send"}
+    act_target = mint_approval_target("model.act", model_action)
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
@@ -370,7 +384,7 @@ def main() -> int:
             proc.stdin.flush()
             return json.loads(proc.stdout.readline())
 
-        r1 = call(1, "model.act", {"action": "send"})
+        r1 = call(1, "model.act", model_action)
         assert r1["result"]["isError"] is False
         # Overconfident forecaster: every prediction 0.9, nothing happened.
         forecasts.write_text(
@@ -379,7 +393,7 @@ def main() -> int:
         )
         with approvals.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"target": act_target}) + "\n")
-        r2 = call(2, "model.act", {"action": "send"})
+        r2 = call(2, "model.act", model_action)
         assert r2["result"]["isError"] is True
         assert "uncalibrated" in r2["result"]["content"][0]["text"]
         proc.stdin.close()
@@ -400,7 +414,6 @@ def main() -> int:
             proc.stdin.flush()
             return json.loads(proc.stdout.readline())
 
-        destructive = {"database": "prod", "sql": "drop table users"}
         r1 = call(1, "db.execute", destructive)
         assert r1["result"]["isError"] is False
         for n in (2, 3):
@@ -417,7 +430,8 @@ def main() -> int:
 
     # 10. Linear kernel L: a capability granted one use spends exactly once;
     #     the second approved call is a double-spend and is denied.
-    key_target = stable_hash(["key.use", "key"])
+    key_use = {"key": "deploy-key-7"}
+    key_target = mint_approval_target("key.use", key_use)
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
@@ -433,11 +447,11 @@ def main() -> int:
             proc.stdin.flush()
             return json.loads(proc.stdout.readline())
 
-        r1 = call(1, "key.use", {"key": "deploy-key-7"})
+        r1 = call(1, "key.use", key_use)
         assert r1["result"]["isError"] is False
         with approvals.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"target": key_target}) + "\n")
-        r2 = call(2, "key.use", {"key": "deploy-key-7"})
+        r2 = call(2, "key.use", key_use)
         assert r2["result"]["isError"] is True
         assert "double-spend" in r2["result"]["content"][0]["text"]
         proc.stdin.close()
