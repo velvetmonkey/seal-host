@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 
 sys.path.insert(0, str(ROOT / "test" / "tools"))
+from process_witness import raise_with_child_stderr  # noqa: E402
 from sign_config import generate_keypair, sign_payload  # noqa: E402
 from test_host import safety_section, temporal_section, stable_hash  # noqa: E402
 
@@ -99,9 +100,12 @@ def test_file_channel_all_kernels():
         proc = spawn(config)
 
         # Passthrough of non-tools/call.
-        proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
-        proc.stdin.flush()
-        assert json.loads(proc.stdout.readline())["method"] == "initialize"
+        try:
+            proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
+            proc.stdin.flush()
+            assert json.loads(proc.stdout.readline())["method"] == "initialize"
+        except Exception as error:
+            raise_with_child_stderr(proc, error)
 
         # S: guarded without approval -> blocked.
         r = call(proc, 1, "db.execute", DESTRUCTIVE)

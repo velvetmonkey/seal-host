@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test" / "tools"))
+from process_witness import raise_with_child_stderr  # noqa: E402
 from sign_config import generate_keypair, sign_payload  # noqa: E402
 
 CONFIG_SK, PUBKEY = generate_keypair()
@@ -179,10 +180,13 @@ def run_case(messages, approval_records=(), raw_lines=None):
         wire = raw_lines if raw_lines is not None else [
             json.dumps(m, separators=(",", ":")) for m in messages
         ]
-        for line in wire:
-            proc.stdin.write(line + "\n")
-            proc.stdin.flush()
-            lines.append(json.loads(proc.stdout.readline()))
+        try:
+            for line in wire:
+                proc.stdin.write(line + "\n")
+                proc.stdin.flush()
+                lines.append(json.loads(proc.stdout.readline()))
+        except Exception as error:
+            raise_with_child_stderr(proc, error)
         proc.stdin.close()
         proc.wait(timeout=5)
         return lines
