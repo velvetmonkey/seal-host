@@ -23,7 +23,10 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
+import mcp_eras
 from doctrine import APPROVAL_SUBJECT_ROLE, DemoTrace
+
+MCP_ERAS = mcp_eras.declared_eras(__file__)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test" / "tools"))
@@ -812,15 +815,26 @@ def main() -> int:
         choices=["shell", "postgres", "filesystem", "deploy", "token", "convergence", "temporal", "composition"],
     )
     parser.add_argument("--deterministic", action="store_true", help="no-model injected-call regression mode")
+    parser.add_argument("--era", choices=[era.value for era in mcp_eras.McpEra], help="explicit MCP era (required for the dual-era filesystem demo)")
     parser.add_argument("--receipt-output", help="preserve selected deterministic filesystem receipts")
     parser.add_argument("--artifact-dir", type=Path, help="write doctrine trace, receipts, manifest, and renderings")
     parser.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     args = parser.parse_args()
     if args.demo in {"postgres", "filesystem", "deploy", "token", "convergence", "temporal", "composition"}:
+        if args.demo == "filesystem" and args.era is None:
+            parser.error("filesystem requires --era 2025 or --era 2026")
+        script = ROOT / "demo" / f"golden_path_{args.demo}.py"
+        declared = mcp_eras.declared_eras(script)
+        if args.era is not None:
+            try:
+                mcp_eras.parse_era(args.era, declared)
+            except ValueError as error:
+                parser.error(str(error))
         if args.receipt_output and (args.demo != "filesystem" or not args.deterministic):
             parser.error("--receipt-output requires filesystem --deterministic")
-        command = [sys.executable, str(ROOT / "demo" / f"golden_path_{args.demo}.py")]
+        command = [sys.executable, str(script)]
         if args.deterministic: command.append("--deterministic")
+        if args.demo == "filesystem": command.extend(["--era", args.era])
         if args.receipt_output: command.extend(["--receipt-output", args.receipt_output])
         if args.artifact_dir: command.extend(["--artifact-dir", str(args.artifact_dir)])
         command.extend(["--color", args.color])
