@@ -18,7 +18,10 @@ from difflib import unified_diff
 from pathlib import Path
 
 import golden_path as gp
+import mcp_eras
 from doctrine import DemoTrace
+
+MCP_ERAS = mcp_eras.declared_eras(__file__)
 
 ROOT = gp.ROOT
 KIT = gp.KIT

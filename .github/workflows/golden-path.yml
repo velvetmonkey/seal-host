@@ -273,7 +273,10 @@ jobs:
 
       - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
-          python3 demo/golden_path.py filesystem --deterministic | tee /tmp/golden-path-filesystem.txt
+          python3 demo/golden_path.py filesystem --deterministic --era 2025 | tee /tmp/golden-path-filesystem.txt
+          grep -F "MCP_DEMO_ERA=2025 revision=2025-06-18 entry=initialize" /tmp/golden-path-filesystem.txt
+          grep -F "ERA_ATTRIBUTION=2025 declared=2025-06-18 observed=initialize; alternate-entry-count=0" /tmp/golden-path-filesystem.txt
+          grep -F "legacy request and receipt carry no 2026 _meta" /tmp/golden-path-filesystem.txt
           grep -F "containment preflight" /tmp/golden-path-filesystem.txt
           grep -F "only /workspace writable" /tmp/golden-path-filesystem.txt
           grep -F "init + add-kernel B policy" /tmp/golden-path-filesystem.txt
@@ -297,6 +300,10 @@ jobs:
           grep -F "receipt not called independently verified" /tmp/golden-path-filesystem.txt
           grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-filesystem.txt
           grep -F "operator-untested until run by Ben" /tmp/golden-path-filesystem.txt
+          python3 demo/golden_path.py filesystem --deterministic --era 2026 | tee /tmp/golden-path-filesystem-2026.txt
+          grep -F "MCP_DEMO_ERA=2026 revision=2026-07-28 entry=server/discover" /tmp/golden-path-filesystem-2026.txt
+          grep -F "ERA_ATTRIBUTION=2026 declared=2026-07-28 observed=server/discover; alternate-entry-count=0" /tmp/golden-path-filesystem-2026.txt
+          grep -F "request _meta equals receipt._meta and effect_view.effect._meta" /tmp/golden-path-filesystem-2026.txt
 
       - name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
         if: always()
