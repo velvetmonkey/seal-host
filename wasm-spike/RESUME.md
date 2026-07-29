@@ -35,7 +35,8 @@ Two stacked bugs, the second masked by the first:
    (build-spec/*.o, DCE keeps only the needed symbol).
 
 ## BUILD (reproduce from a clean tree)
-    source ./emsdk/emsdk_env.sh           # emsdk/ + lean4-src/ via earlier fetch
+    ./provision_toolchain.sh              # 0. verified emsdk + Lean source trees
+    source ./emsdk/emsdk_env.sh
     ./build_runtime_wasm.sh               # 1. Lean runtime -> build-wasm-rt/libleanrt.a
     ./build_core.sh                       # 2. current host + mcp-seal Lean-C -> wasm objects
     ./build_base.sh                       # 3. runtime package/stdlib/specialization objects

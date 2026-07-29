@@ -16,7 +16,11 @@ Host source      : seal-host main
                    (raw-wire guards including Unicode-canonical key identity)
 Build date       : 2026-07-26
 Lean toolchain   : leanprover/lean4:v4.28.0
-Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
+                   commit 7e01a1bf5c70fc6167d49c345d3bf80596e9a79b
+                   with the checked-in interrupt.cpp compatibility patch
+                   (the source tree used for this build was not pristine)
+Emscripten       : 6.0.0 (wasm-spike/emsdk)
+                   emsdk commit d223ae73c6998296e3ab27cf81dc2c2c9fd383de
 
 Artifact sha256:
   seal.wasm  70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf  (5701292 bytes)
@@ -60,9 +64,9 @@ That build superseded
 fail-closed), which superseded d3067bc0 (Lane C divergence, closed), which
 superseded the fleet pin df42cbad.
 
-Reproduce (from wasm-spike/, after provisioning the ignored Emscripten,
-Lean-source, runtime, package, stdlib, specialization and closure directories
-described in RESUME.md):
+Reproduce (from wasm-spike/; the first command provisions and verifies the
+ignored Emscripten and Lean-source trees, including the recorded Lean patch):
+  ./provision_toolchain.sh
   source ./emsdk/emsdk_env.sh
   (cd .. && /home/monkey/bin/leanbuild build)
                                   # emit HEAD project C -> .lake/build/ir/*.c
