@@ -210,6 +210,8 @@ jobs:
         run: node --test test/pins_gate_meta.test.mjs
       - name: Rebased pin baseline matches live consumers
         run: python3 test/test_rebased_pin_baseline.py -v
+      - name: Documented key generation fails closed on import failure
+        run: python3 -m unittest discover -s test -p 'test_key_generation.py' -v
       - name: V2.3 contract must match its review baseline and freeze manifest
         run: python3 scripts/contract_freeze_gate.py
       - name: Freeze gate fail-closed self-tests

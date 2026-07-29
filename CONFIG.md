@@ -455,17 +455,12 @@ touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
 Generate separate config-signing and approval-signing keys:
 
 ```bash
-read CONFIG_PRIVATE CONFIG_PUBLIC <<EOF
-$(python3 -c 'from test.tools.sign_config import generate_keypair; print(*generate_keypair())')
-EOF
-read APPROVAL_PRIVATE APPROVAL_PUBLIC <<EOF
-$(python3 -c 'from test.tools.sign_approval import generate_approval_keypair; print(*generate_approval_keypair())')
-EOF
-printf '%s\n' "$APPROVAL_PRIVATE" > .seal/approval.key
-printf '%s\n' "$CONFIG_PRIVATE" > .seal/config.key
-printf '%s\n' "$CONFIG_PUBLIC" > .seal/config.pub
-printf '%s\n' "$APPROVAL_PUBLIC" > .seal/approval.pub
+python3 scripts/generate_keys.py --out-dir .seal
 ```
+
+The generator validates both Ed25519 pairs before publishing any key. It exits
+non-zero without leaving a key file if its imports, generation, validation, or
+write fails, and refuses to overwrite an existing key.
 
 Render and sign the starter policy:
 
@@ -474,8 +469,11 @@ sed "s#/ABS/PATH#$PWD#g" \
   profiles/policies-v1/sqlite-sandbox.payload.json > .seal/payload.json
 node ../seal-assurance-kit/bin/seal policy sign .seal/payload.json \
   --key .seal/config.key --out .seal/trusted.json
-unset CONFIG_PRIVATE APPROVAL_PRIVATE
 ```
+
+The signer displays the effective kernel participation and asks you to
+acknowledge it with `y` before signing. Review that summary. For non-interactive
+CI only, add `--yes` after the same review to record the acknowledgement.
 
 The signer validates the policy shape, signs the exact compact payload, and
 prints the policy hash and public key. Compare the printed public key with
@@ -540,7 +538,8 @@ fills the checkout path and public keys from `.seal`, performs the merge
 atomically, and prints its rollback:
 
 ```bash
-node ../seal-assurance-kit/bin/seal connect --client claude
+node ../seal-assurance-kit/bin/seal connect --client claude \
+  --profile profiles/hosts/claude-code.json
 # printed rollback:
 node ../seal-assurance-kit/bin/seal disconnect --client claude
 ```
@@ -581,7 +580,8 @@ project's Desktop instructions and log locations are at
 The automated equivalent is:
 
 ```bash
-node ../seal-assurance-kit/bin/seal connect --client claude --desktop
+node ../seal-assurance-kit/bin/seal connect --client claude --desktop \
+  --profile profiles/hosts/claude-desktop.json
 # printed rollback:
 node ../seal-assurance-kit/bin/seal disconnect --client claude --desktop
 ```

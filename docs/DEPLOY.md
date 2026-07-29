@@ -59,24 +59,21 @@ cd rust && cargo build && cd ..
 # binary: rust/target/debug/seal-host-rs
 ```
 
-## 2. Generate a config-signing keypair
+## 2. Generate separate signing keypairs
 
-seal-host only loads a config that carries a valid Ed25519 signature. Mint a keypair once:
+seal-host only loads a config that carries a valid Ed25519 signature, and its
+approval channel uses a separate trust root. Mint both keypairs once:
 
 ```sh
-python3 - <<'PY'
-from test.tools.sign_config import generate_keypair
-priv, pub = generate_keypair()
-print("SEAL_CONFIG_SIGNING_KEY_HEX=", priv)   # 32-byte seed — keep secret, never commit
-print("config pubkey (--pubkey)   =", pub)    # give this to the host at run time
-PY
+umask 077
+python3 scripts/generate_keys.py --out-dir .seal
 ```
 
-The private seed signs your config; the public hex is what the host verifies against. The
-signing key is **separate** from any approval-channel key.
-
-> Run this from the **repo root** (same for step 4): `test.tools.sign_config` is imported
-> as a package path, so `python3` must see `test/` on its path or the import fails.
+The generator validates both Ed25519 pairs before publishing any file and
+refuses to overwrite an existing key. `.seal/config.key` signs your config;
+`.seal/config.pub` is the host's `--pubkey`. The separate approval-channel pair
+is `.seal/approval.key` and `.seal/approval.pub`. Keep both private files secret
+and never commit them.
 
 ## 3. Write your policy (`payload.json`)
 
@@ -127,7 +124,7 @@ Key facts (from the schema reference, not invented here):
 ## 4. Sign it into `trusted.json`
 
 ```sh
-SEAL_CONFIG_SIGNING_KEY_HEX=<the-32-byte-seed> \
+SEAL_CONFIG_SIGNING_KEY_HEX="$(tr -d '\r\n' < .seal/config.key)" \
   python3 test/tools/sign_config.py payload.json > trusted.json
 ```
 
