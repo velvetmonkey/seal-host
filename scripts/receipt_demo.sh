@@ -15,7 +15,11 @@
 # theorem (H = SHA-256). No mocks.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOST="$ROOT/rust/target/release/seal-host-rs"
 SEAL="$ROOT/scripts/seal_log.mjs"
 WORK="$(mktemp -d)"
@@ -69,16 +73,30 @@ echo "  agent → 3 destructive db.execute calls (drop / delete / truncate on pr
 
 # Drive the real gate. stdout = client-facing responses; stderr = audit certs.
 "$HOST" --insecure-development-mode --config "$WORK/trusted.json" --pubkey "$PK" -- /bin/cat \
-  < "$WORK/agent.jsonl" > "$WORK/response.jsonl" 2> "$WORK/audit.raw" || true
+  < "$WORK/agent.jsonl" > "$WORK/response.jsonl" 2> "$WORK/audit.raw"
 
-BLOCKS="$(grep -c 'approval required' "$WORK/response.jsonl" || true)"
+if BLOCKS="$(grep -c 'approval required' "$WORK/response.jsonl")"; then
+  :
+else
+  grep_status=$?
+  if [ "$grep_status" -gt 1 ]; then
+    exit "$grep_status"
+  fi
+fi
 echo "  seal  → $BLOCKS/3 BLOCKED by default-deny (nothing reached the database)."
 if [ "$BLOCKS" -ne 3 ]; then
   echo "DEMO FAIL: expected 3 BLOCK responses"; cat "$WORK/response.jsonl"; exit 1
 fi
 
 # The audit certificates, one per decision (kernel certs, per-gate verdicts).
-grep -E '"certs":\[.*"verdict":' "$WORK/audit.raw" > "$WORK/audit.lines" || true
+if grep -E '"certs":\[.*"verdict":' "$WORK/audit.raw" > "$WORK/audit.lines"; then
+  :
+else
+  grep_status=$?
+  if [ "$grep_status" -gt 1 ]; then
+    exit "$grep_status"
+  fi
+fi
 NENTRIES="$(wc -l < "$WORK/audit.lines" | tr -d ' ')"
 if [ "$NENTRIES" -lt 3 ]; then
   echo "DEMO FAIL: expected 3 audit certificates, got $NENTRIES"; exit 1

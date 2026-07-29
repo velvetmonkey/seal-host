@@ -20,7 +20,11 @@
 # the binary); any unexpected agreement class fails this script.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 BIN="${SEAL_HOST_BIN:-rust/target/debug/seal-host-rs}"
 ARTIFACT=".lake/packages/mcp-seal/docs/policy-bundle.schema.json"
