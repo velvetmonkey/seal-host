@@ -135,6 +135,13 @@ The signer compacts the payload to canonical JSON and wraps it as
 `{"payload": "...", "signature": "<ed25519 hex>"}`. The host rejects any config whose
 signature does not verify against `--pubkey`.
 
+The checked-in [`trusted.example.json`](../config/trusted.example.json) is a real
+signed envelope. Its out-of-band example trust root is
+[`trusted.example.pub`](../config/trusted.example.pub), and
+`scripts/policy_schema_gate.sh` verifies the signature over the exact payload
+bytes. The example public key is only a verification specimen: generate your
+own keypair for deployment; no matching private key is shipped.
+
 ## 5. Run the host in front of your server
 
 ```sh
