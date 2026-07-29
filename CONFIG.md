@@ -60,7 +60,12 @@ consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
     "server": "optional/server-identity",
     "approval": {
       "control_file": "/path/to/approvals.ndjson",
-      "ttl_seconds": 120
+      "ttl_seconds": 120,
+      "replay_store": {
+        "sqlite_path": "/var/lib/seal-host/replay.sqlite",
+        "schema_version": 1,
+        "namespace_encoding_version": 1
+      }
     },
     "tools": [
       {
@@ -77,6 +82,16 @@ consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
 - `approval`, `approval.control_file` (string), and `tools` (array) are
   required. `ttl_seconds` is an optional natural, defaults to 120, and is
   clamped to at most 300 seconds by the parser.
+- The production Ed25519 channel requires `replay_store`. Its
+  `schema_version` and `namespace_encoding_version` are expected lineage from
+  the authority-signed payload; this release supports exactly `1` and `1`.
+  The SQLite store carries the same pair in its singleton
+  `replay_store_lineage` metadata table. Missing, unsupported, transitional,
+  or unequal values refuse startup.
+- Normal startup never creates or stamps a replay database. On a genuinely
+  absent path, an operator must first run the host with the signed config,
+  trust-root `--pubkey`, and `--initialize-replay-store`. Initialization
+  refuses any existing path, including an empty or legacy unstamped file.
 - `safety.server` is an optional string. If both top-level `server` and
   `safety.server` are present they must be equal. If only the top-level value
   is present, the host supplies it to Safety.

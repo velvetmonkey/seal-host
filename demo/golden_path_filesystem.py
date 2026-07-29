@@ -444,7 +444,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     before=policy.read_text(encoding="utf-8"); value=json.loads(before)
     approvals=work/"unused-control-approvals.ndjson"; approvals.write_text("",encoding="utf-8")
     value["safety"]["approval"]["control_file"]=str(approvals)
-    value["safety"]["approval"]["replay_store"]={"sqlite_path":str(work/"approval-replay.sqlite")}
+    value["safety"]["approval"]["replay_store"]={
+        "sqlite_path":str(work/"approval-replay.sqlite"),
+        "schema_version":1,
+        "namespace_encoding_version":1,
+    }
     # The a3790181 parser hard-errors on unknown keys inside kernel sections and
     # entries; display metadata (_comment, _seal_demo_tier) may only ride inside
     # a safety RULE interior (rule-level strictness is a named kit follow-up).
@@ -472,6 +476,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     if deterministic:
         output=(signed.stdout or "")+(signed.stderr or "")
         if "ACTIVE (2)" not in output or "PRESENT-BUT-INACTIVE (0)" not in output: raise gp.DemoFailure("sign ack not ACTIVE {S,B}")
+    gp.initialize_replay_store(trusted,config_pub,host=HOST)
     check("init + add-kernel B policy","PASS","ACTIVE {S,B}; cap=2 over four destructive tools; zero vacuity/placeholders")
     return policy,trusted,config_pub,approval_key,approval_pub
 

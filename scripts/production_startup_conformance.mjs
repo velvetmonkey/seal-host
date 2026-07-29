@@ -45,7 +45,11 @@ const payload = JSON.stringify({
     approval: {
       control_file: approvals,
       ttl_seconds: 120,
-      replay_store: { sqlite_path: replay },
+      replay_store: {
+        sqlite_path: replay,
+        schema_version: 1,
+        namespace_encoding_version: 1,
+      },
     },
     tools: [{
       name: "db.execute",
@@ -60,6 +64,19 @@ writeFileSync(trusted, JSON.stringify({
   signature: sign(null, Buffer.from(payload), configKeys.privateKey).toString("hex"),
 }));
 chmodSync(trusted, 0o600);
+
+const initRun = spawnSync(HOST, [
+  "--config", trusted,
+  "--pubkey", configPubkey,
+  "--initialize-replay-store",
+], { encoding: "utf8" });
+if (initRun.error) throw initRun.error;
+if (initRun.status !== 0) {
+  throw new Error(
+    `replay-store initialization exited ${initRun.status}` +
+    `\nstdout:\n${initRun.stdout}\nstderr:\n${initRun.stderr}`,
+  );
+}
 
 const initialize = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" });
 const guarded = JSON.stringify({
@@ -112,7 +129,11 @@ const narrowPayload = JSON.stringify({
     approval: {
       control_file: approvals,
       ttl_seconds: 120,
-      replay_store: { sqlite_path: replay },
+      replay_store: {
+        sqlite_path: replay,
+        schema_version: 1,
+        namespace_encoding_version: 1,
+      },
     },
     tools: [{
       name: "db.execute",

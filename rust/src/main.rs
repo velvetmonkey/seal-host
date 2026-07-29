@@ -58,7 +58,7 @@ use seal_host_rs::limits::{
 use seal_host_rs::output::{OutputQueue, OutputSender};
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
-use seal_host_rs::replay_store::SqliteReplayStore;
+use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::{
     numeric_agreement_refusal_response, route_of_classify, route_of_step_output, ClassifyRoute,
     Route, RESOURCE_LIMIT_RESPONSE, SEAM_ERROR_RESPONSE,
@@ -110,6 +110,7 @@ struct Args {
     health: bool,
     health_listen: String,
     health_token_file: Option<String>,
+    initialize_replay_store: bool,
     cmd: Vec<String>,
 }
 
@@ -132,6 +133,7 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     let mut health = false;
     let mut health_listen = "127.0.0.1:9464".to_string();
     let mut health_token_file = None;
+    let mut initialize_replay_store = false;
     let mut cmd = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -187,6 +189,10 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
                 health_token_file = argv.get(i + 1).cloned();
                 i += 2
             }
+            "--initialize-replay-store" => {
+                initialize_replay_store = true;
+                i += 1
+            }
             "--" => {
                 cmd = argv[i + 1..].to_vec();
                 break;
@@ -196,6 +202,12 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     }
     if production_requested && insecure_development_mode {
         return Err("--production conflicts with --insecure-development-mode".into());
+    }
+    if initialize_replay_store && !cmd.is_empty() {
+        return Err("--initialize-replay-store conflicts with a server command".into());
+    }
+    if !initialize_replay_store && cmd.is_empty() {
+        return Err("server command required after --".into());
     }
     Ok(Args {
         config: config.ok_or("--config required")?,
@@ -209,11 +221,8 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
         health,
         health_listen,
         health_token_file,
-        cmd: if cmd.is_empty() {
-            return Err("server command required after --".into());
-        } else {
-            cmd
-        },
+        initialize_replay_store,
+        cmd,
     })
 }
 
@@ -414,16 +423,18 @@ fn consume_pending_approval(records: &mut Vec<providers::ApprovalRecord>, target
     }
 }
 
-fn replay_store_path_from_envelope(envelope: &str) -> Result<Option<String>, String> {
-    let envelope_json: Value =
-        serde_json::from_str(envelope).map_err(|e| format!("bad envelope JSON: {e}"))?;
-    let payload_text = envelope_json
-        .get("payload")
-        .and_then(Value::as_str)
-        .ok_or("missing string payload")?;
-    let payload_json: Value =
-        serde_json::from_str(payload_text).map_err(|e| format!("bad payload JSON: {e}"))?;
-    let Some(replay_store) = payload_json.pointer("/safety/approval/replay_store") else {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplayStoreConfig {
+    sqlite_path: String,
+    expected_lineage: ReplayStoreLineage,
+}
+
+/// Extract the replay-store contract from the already authority-verified
+/// payload. The store never supplies its own expected lineage.
+fn replay_store_config_from_signed_payload(
+    kernel_config: &Value,
+) -> Result<Option<ReplayStoreConfig>, String> {
+    let Some(replay_store) = kernel_config.pointer("/safety/approval/replay_store") else {
         return Ok(None);
     };
     if replay_store.is_null() {
@@ -439,7 +450,40 @@ fn replay_store_path_from_envelope(envelope: &str) -> Result<Option<String>, Str
     if path.is_empty() {
         return Err("safety.approval.replay_store.sqlite_path must be non-empty".to_string());
     }
-    Ok(Some(path.to_string()))
+    let schema_version = obj
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .ok_or("safety.approval.replay_store.schema_version must be an unsigned integer")?;
+    let namespace_encoding_version = obj
+        .get("namespace_encoding_version")
+        .and_then(Value::as_u64)
+        .ok_or(
+            "safety.approval.replay_store.namespace_encoding_version \
+             must be an unsigned integer",
+        )?;
+    let schema_version = u32::try_from(schema_version)
+        .map_err(|_| "safety.approval.replay_store.schema_version is out of range")?;
+    let namespace_encoding_version = u32::try_from(namespace_encoding_version)
+        .map_err(|_| "safety.approval.replay_store.namespace_encoding_version is out of range")?;
+    for key in obj.keys() {
+        if !matches!(
+            key.as_str(),
+            "sqlite_path" | "schema_version" | "namespace_encoding_version"
+        ) {
+            return Err(format!("unknown safety.approval.replay_store key: {key}"));
+        }
+    }
+    let expected_lineage = ReplayStoreLineage {
+        schema_version,
+        namespace_encoding_version,
+    };
+    expected_lineage
+        .require_supported()
+        .map_err(|error| error.to_string())?;
+    Ok(Some(ReplayStoreConfig {
+        sqlite_path: path.to_string(),
+        expected_lineage,
+    }))
 }
 
 struct GrantsCursor {
@@ -936,7 +980,7 @@ fn run() -> i32 {
                 [--approval-pubkey <hex>] [--receipt-dir <path>] \
                 [--production|--insecure-development-mode] [--envelope-v23] \
                 [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
-                -- <server-cmd> <args...>\nerror: {e}"
+                (--initialize-replay-store | -- <server-cmd> <args...>)\nerror: {e}"
             );
             return 2;
         }
@@ -1007,14 +1051,50 @@ fn run() -> i32 {
     let approval_file = summary["approval_file"].as_str().unwrap_or("").to_string();
     let votes_file = summary["votes_file"].as_str().unwrap_or("").to_string();
     let forecasts_file = summary["forecasts_file"].as_str().unwrap_or("").to_string();
-    let replay_store_path = match replay_store_path_from_envelope(&envelope) {
-        Ok(path) => path,
+    let replay_store_config = match replay_store_config_from_signed_payload(&kernel_config) {
+        Ok(config) => config,
         Err(e) => {
             eprintln!("trusted config rejected: replay store config: {e}");
             return 3;
         }
     };
-    if let Err(error) = production_preflight(&args, replay_store_path.as_deref()) {
+    if args.initialize_replay_store {
+        if let Err(error) =
+            secure_fs::validate_private_file(std::path::Path::new(&args.config), "trusted config")
+        {
+            eprintln!("replay store initialization refused: {error}");
+            return 3;
+        }
+        let Some(config) = replay_store_config else {
+            eprintln!(
+                "replay store initialization refused: signed config has no \
+                 safety.approval.replay_store"
+            );
+            return 3;
+        };
+        match SqliteReplayStore::initialize(&config.sqlite_path, config.expected_lineage) {
+            Ok(()) => {
+                eprintln!(
+                    "replay store initialized: {} \
+                     (schema_version={}, namespace_encoding_version={})",
+                    config.sqlite_path,
+                    config.expected_lineage.schema_version,
+                    config.expected_lineage.namespace_encoding_version
+                );
+                return 0;
+            }
+            Err(error) => {
+                eprintln!("replay store initialization refused: {error}");
+                return 3;
+            }
+        }
+    }
+    if let Err(error) = production_preflight(
+        &args,
+        replay_store_config
+            .as_ref()
+            .map(|config| config.sqlite_path.as_str()),
+    ) {
         eprintln!("production startup refused: {error}");
         return 3;
     }
@@ -1093,14 +1173,14 @@ fn run() -> i32 {
         }
     };
     let mut a3 = if args.channel == "ed25519" {
-        let Some(path) = replay_store_path else {
+        let Some(config) = replay_store_config else {
             eprintln!(
                 "trusted config rejected: ed25519 channel requires \
-                safety.approval.replay_store.sqlite_path"
+                safety.approval.replay_store with sqlite_path and lineage versions"
             );
             return 3;
         };
-        let store = match SqliteReplayStore::open(&path) {
+        let store = match SqliteReplayStore::open(&config.sqlite_path, config.expected_lineage) {
             Ok(store) => store,
             Err(e) => {
                 eprintln!("trusted config rejected: cannot open replay store: {e}");
@@ -2002,6 +2082,7 @@ mod tests {
             health: false,
             health_listen: "127.0.0.1:9464".into(),
             health_token_file: None,
+            initialize_replay_store: false,
             cmd: vec!["/bin/cat".into()],
         };
         let replay = root.join("replay.sqlite");
@@ -2059,6 +2140,33 @@ mod tests {
         assert!(args.envelope_v23);
         assert!(args.production);
         assert_eq!(startup_mode_warning(&args), None);
+    }
+
+    #[test]
+    fn replay_store_initialization_is_a_separate_no_server_action() {
+        let args = parse_args_from(vec![
+            "--config".into(),
+            "config.json".into(),
+            "--pubkey".into(),
+            "00".repeat(32),
+            "--initialize-replay-store".into(),
+        ])
+        .unwrap();
+        assert!(args.initialize_replay_store);
+        assert!(args.cmd.is_empty());
+
+        let conflict = parse_args_from(vec![
+            "--config".into(),
+            "config.json".into(),
+            "--pubkey".into(),
+            "00".repeat(32),
+            "--initialize-replay-store".into(),
+            "--".into(),
+            "/bin/cat".into(),
+        ])
+        .err()
+        .expect("initializer with server command must be rejected");
+        assert!(conflict.contains("conflicts with a server command"));
     }
 
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON
@@ -2261,33 +2369,35 @@ mod tests {
         );
     }
 
-    fn envelope(payload: Value) -> String {
-        let payload = payload.to_string();
-        json!({"payload": payload, "signature": "00"}).to_string()
-    }
-
     #[test]
-    fn replay_store_path_reads_signed_payload_field() {
-        let env = envelope(json!({
+    fn replay_store_config_reads_signed_payload_fields() {
+        let payload = json!({
             "epoch": 1,
             "safety": {
                 "approval": {
                     "control_file": "/tmp/approvals.ndjson",
                     "ttl_seconds": 120,
-                    "replay_store": {"sqlite_path": "/tmp/replay.sqlite"}
+                    "replay_store": {
+                        "sqlite_path": "/tmp/replay.sqlite",
+                        "schema_version": 1,
+                        "namespace_encoding_version": 1
+                    }
                 },
                 "tools": []
             }
-        }));
+        });
         assert_eq!(
-            replay_store_path_from_envelope(&env).unwrap(),
-            Some("/tmp/replay.sqlite".to_string())
+            replay_store_config_from_signed_payload(&payload).unwrap(),
+            Some(ReplayStoreConfig {
+                sqlite_path: "/tmp/replay.sqlite".to_string(),
+                expected_lineage: ReplayStoreLineage::CURRENT,
+            })
         );
     }
 
     #[test]
-    fn replay_store_path_absent_is_none() {
-        let env = envelope(json!({
+    fn replay_store_config_absent_is_none() {
+        let payload = json!({
             "epoch": 1,
             "safety": {
                 "approval": {
@@ -2296,13 +2406,16 @@ mod tests {
                 },
                 "tools": []
             }
-        }));
-        assert_eq!(replay_store_path_from_envelope(&env).unwrap(), None);
+        });
+        assert_eq!(
+            replay_store_config_from_signed_payload(&payload).unwrap(),
+            None
+        );
     }
 
     #[test]
-    fn replay_store_path_rejects_malformed_field() {
-        let env = envelope(json!({
+    fn replay_store_config_rejects_missing_unknown_and_transitional_lineage() {
+        let mut payload = json!({
             "epoch": 1,
             "safety": {
                 "approval": {
@@ -2312,7 +2425,36 @@ mod tests {
                 },
                 "tools": []
             }
-        }));
-        assert!(replay_store_path_from_envelope(&env).is_err());
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("sqlite_path must be non-empty"));
+
+        payload["safety"]["approval"]["replay_store"] = json!({
+            "sqlite_path": "/tmp/replay.sqlite",
+            "schema_version": 1
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("namespace_encoding_version"));
+
+        payload["safety"]["approval"]["replay_store"] = json!({
+            "sqlite_path": "/tmp/replay.sqlite",
+            "schema_version": 0,
+            "namespace_encoding_version": 1
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("unsupported or transitional expected replay-store schema version 0"));
+
+        payload["safety"]["approval"]["replay_store"] = json!({
+            "sqlite_path": "/tmp/replay.sqlite",
+            "schema_version": 1,
+            "namespace_encoding_version": 1,
+            "typo": 1
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("unknown safety.approval.replay_store key: typo"));
     }
 }

@@ -196,7 +196,7 @@ impl A3Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::replay_store::{SqliteReplayStore, StoredNonce};
+    use crate::replay_store::{ReplayStoreLineage, SqliteReplayStore, StoredNonce};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -226,6 +226,10 @@ mod tests {
         if let Some(parent) = path.parent() {
             let _ = std::fs::remove_dir_all(parent);
         }
+    }
+
+    fn initialize_store(path: &std::path::Path) {
+        SqliteReplayStore::initialize(path, ReplayStoreLineage::CURRENT).unwrap();
     }
 
     #[test]
@@ -315,15 +319,18 @@ mod tests {
     fn sqlite_replay_survives_restart() {
         let path = temp_db_path("restart");
         let target = "0000000000000000000000000000000000000000000000000000000000000001";
+        initialize_store(&path);
         {
-            let store = Box::new(SqliteReplayStore::open(&path).unwrap());
+            let store =
+                Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
             let mut a3 = A3Filter::with_store(10_000, store, 1_000).unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(1_000), Some("nonce-1"))], 1_000);
             assert_eq!(ok.len(), 1);
             assert!(dropped.is_empty());
         }
         {
-            let store = Box::new(SqliteReplayStore::open(&path).unwrap());
+            let store =
+                Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
             let mut a3 = A3Filter::with_store(10_000, store, 2_000).unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(2_000), Some("nonce-1"))], 2_000);
             assert!(ok.is_empty());
@@ -337,14 +344,16 @@ mod tests {
     fn expired_sqlite_nonce_not_loaded_or_blocking_after_restart() {
         let path = temp_db_path("expired");
         let target = "0000000000000000000000000000000000000000000000000000000000000001";
+        initialize_store(&path);
         {
-            let mut store = SqliteReplayStore::open(&path).unwrap();
+            let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
             assert!(store
                 .insert_returning_is_new("nonce-1", 1_000, 2_000)
                 .unwrap());
         }
         {
-            let store = Box::new(SqliteReplayStore::open(&path).unwrap());
+            let store =
+                Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
             let mut a3 = A3Filter::with_store(1_000, store, 3_000).unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(3_000), Some("nonce-1"))], 3_000);
             assert_eq!(ok.len(), 1);

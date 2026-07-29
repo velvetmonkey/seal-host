@@ -28,7 +28,11 @@ def safety_section(approval_file: Path) -> dict:
         "approval": {
             "control_file": str(approval_file),
             "ttl_seconds": 120,
-            "replay_store": {"sqlite_path": str(approval_file.with_name("replay.sqlite"))},
+            "replay_store": {
+                "sqlite_path": str(approval_file.with_name("replay.sqlite")),
+                "schema_version": 1,
+                "namespace_encoding_version": 1,
+            },
         },
         "tools": [
             {

@@ -211,7 +211,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     votes.write_text(SHORT_VOTES + "\n", encoding="utf-8")
     grants.write_text(GRANT + "\n", encoding="utf-8")
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 1,
+        "namespace_encoding_version": 1,
+    }
     value["consensus"]["roster"] = ROSTER
     value["consensus"]["votes_file"] = str(votes)
     value["linear"]["grants_file"] = str(grants)
@@ -248,6 +252,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     signed_output = (signed.stdout or "") + (signed.stderr or "")
     if "ACTIVE (3)" not in signed_output or "PRESENT-BUT-INACTIVE (0)" not in signed_output:
         raise gp.DemoFailure("signed C3 policy did not report exactly three active kernels")
+    gp.initialize_replay_store(trusted, config_pub)
     check("deploy recipe review + signed policy", "ACTIVE {S,C,L}; real roster/votes/grant; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub, approvals, votes, grants
 

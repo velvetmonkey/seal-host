@@ -305,6 +305,8 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     value["safety"]["approval"]["control_file"] = str(approvals)
     value["safety"]["approval"]["replay_store"] = {
         "sqlite_path": str(work / "c7-approval-replay.sqlite"),
+        "schema_version": 1,
+        "namespace_encoding_version": 1,
     }
     rules = value["safety"]["tools"]
     if [rule.get("name") for rule in rules] != TOOLS or any(rule.get("mode") != "guard" for rule in rules):
@@ -367,6 +369,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     ]:
         if required not in signed_output:
             raise gp.DemoFailure(f"signed C7 participation missing {required!r}")
+    gp.initialize_replay_store(trusted, config_pub)
     active_line = "ACTIVE {S,T,C,V,L,B}; PRESENT-BUT-INACTIVE {}; K absent"
     check("six-kernel signed policy", f"{active_line}; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub, approvals, votes

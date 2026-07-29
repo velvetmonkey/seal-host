@@ -6,7 +6,7 @@
 //! implementation keeps legacy/demo/tests lightweight.
 
 use crate::secure_fs;
-use rusqlite::{params, Connection, ErrorCode};
+use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
@@ -53,6 +53,44 @@ pub struct StoredNonce {
     pub expiry_at: u64,
 }
 
+/// Database-wide replay-store lineage selected by authority-signed config.
+///
+/// `schema_version` covers the SQLite table contract. The namespace encoding
+/// version covers the byte/string encoding used to derive replay namespaces,
+/// which can change without changing the SQL columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayStoreLineage {
+    pub schema_version: u32,
+    pub namespace_encoding_version: u32,
+}
+
+impl ReplayStoreLineage {
+    pub const CURRENT: Self = Self {
+        schema_version: 1,
+        namespace_encoding_version: 1,
+    };
+
+    pub fn require_supported(self) -> Result<Self, ReplayStoreError> {
+        if self.schema_version != Self::CURRENT.schema_version {
+            return Err(ReplayStoreError::new(format!(
+                "unsupported or transitional expected replay-store schema version {}; \
+                 this host supports only {}",
+                self.schema_version,
+                Self::CURRENT.schema_version
+            )));
+        }
+        if self.namespace_encoding_version != Self::CURRENT.namespace_encoding_version {
+            return Err(ReplayStoreError::new(format!(
+                "unsupported or transitional expected replay-store namespace-encoding version {}; \
+                 this host supports only {}",
+                self.namespace_encoding_version,
+                Self::CURRENT.namespace_encoding_version
+            )));
+        }
+        Ok(self)
+    }
+}
+
 fn to_i64(label: &str, value: u64) -> Result<i64, ReplayStoreError> {
     i64::try_from(value).map_err(|_| ReplayStoreError::new(format!("{label} out of i64 range")))
 }
@@ -62,8 +100,76 @@ pub struct SqliteReplayStore {
 }
 
 impl SqliteReplayStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ReplayStoreError> {
+    /// Deliberately create and stamp a new replay store.
+    ///
+    /// This is separate from `open`: normal startup must never turn a missing
+    /// or unstamped store into an implicitly adopted empty replay history.
+    pub fn initialize(
+        path: impl AsRef<Path>,
+        expected: ReplayStoreLineage,
+    ) -> Result<(), ReplayStoreError> {
         let path = path.as_ref();
+        let expected = expected.require_supported()?;
+        secure_fs::validate_private_parent(path, "replay database directory")
+            .map_err(ReplayStoreError::new)?;
+        let reserved =
+            secure_fs::open_private_new(path, "replay database").map_err(ReplayStoreError::new)?;
+        drop(reserved);
+
+        let result = (|| {
+            let mut conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+            conn.pragma_update(None, "synchronous", "FULL")?;
+            let tx = conn.transaction()?;
+            tx.execute_batch(
+                "CREATE TABLE nonces (
+                    nonce TEXT PRIMARY KEY,
+                    issued_at INTEGER NOT NULL,
+                    expiry_at INTEGER NOT NULL
+                );
+                CREATE TABLE replay_store_lineage (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    schema_version INTEGER NOT NULL,
+                    namespace_encoding_version INTEGER NOT NULL
+                );",
+            )?;
+            tx.execute(
+                "INSERT INTO replay_store_lineage (
+                    singleton, schema_version, namespace_encoding_version
+                ) VALUES (1, ?1, ?2)",
+                params![
+                    i64::from(expected.schema_version),
+                    i64::from(expected.namespace_encoding_version)
+                ],
+            )?;
+            tx.commit()?;
+            conn.execute_batch("PRAGMA wal_checkpoint(FULL);")?;
+            secure_fs::validate_private_file(path, "replay database")
+                .map_err(ReplayStoreError::new)?;
+            secure_fs::sync_dir(
+                path.parent().unwrap_or_else(|| Path::new(".")),
+                "replay database directory",
+            )
+            .map_err(ReplayStoreError::new)?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+            let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        }
+        result
+    }
+
+    /// Open an already-stamped store and fail closed unless its lineage
+    /// exactly matches the authority-signed expected lineage.
+    pub fn open(
+        path: impl AsRef<Path>,
+        expected: ReplayStoreLineage,
+    ) -> Result<Self, ReplayStoreError> {
+        let path = path.as_ref();
+        let expected = expected.require_supported()?;
         // The file checks below (non-symlink, owner uid, mode 0600) constrain
         // the CONTENT at the signed path; they say nothing about who may
         // REPLACE it. On Unix, swapping a file is a directory-write
@@ -79,17 +185,58 @@ impl SqliteReplayStore {
         // Fail closed: an unreadable or non-conforming parent REFUSES.
         secure_fs::validate_private_parent(path, "replay database directory")
             .map_err(ReplayStoreError::new)?;
-        secure_fs::ensure_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
-        let conn = Connection::open(path)?;
+        secure_fs::validate_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS nonces (
-                nonce TEXT PRIMARY KEY,
-                issued_at INTEGER NOT NULL,
-                expiry_at INTEGER NOT NULL
-            );",
-        )?;
+        let lineage_table_exists = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master
+                 WHERE type = 'table' AND name = 'replay_store_lineage'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !lineage_table_exists {
+            return Err(ReplayStoreError::new(
+                "replay store lineage stamp is missing; refusing to adopt or initialize it",
+            ));
+        }
+        let row_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM replay_store_lineage", [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| {
+                ReplayStoreError::new(format!("replay store lineage format mismatch: {error}"))
+            })?;
+        if row_count != 1 {
+            return Err(ReplayStoreError::new(format!(
+                "replay store lineage format mismatch: expected exactly one row, found {row_count}"
+            )));
+        }
+        let actual = conn
+            .query_row(
+                "SELECT schema_version, namespace_encoding_version
+                 FROM replay_store_lineage WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map_err(|error| {
+                ReplayStoreError::new(format!("replay store lineage format mismatch: {error}"))
+            })?;
+        if actual.0 != i64::from(expected.schema_version) {
+            return Err(ReplayStoreError::new(format!(
+                "replay store schema version mismatch: expected {}, found {}",
+                expected.schema_version, actual.0
+            )));
+        }
+        if actual.1 != i64::from(expected.namespace_encoding_version) {
+            return Err(ReplayStoreError::new(format!(
+                "replay store namespace-encoding version mismatch: expected {}, found {}",
+                expected.namespace_encoding_version, actual.1
+            )));
+        }
         secure_fs::validate_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
         Ok(Self { conn })
     }
@@ -101,7 +248,6 @@ impl SqliteReplayStore {
     /// committing); tests must observe the store without mutating it.
     #[cfg(test)]
     fn contains_nonce(&self, nonce: &str) -> bool {
-        use rusqlite::OptionalExtension;
         self.conn
             .query_row(
                 "SELECT 1 FROM nonces WHERE nonce = ?1 LIMIT 1",
@@ -252,11 +398,16 @@ mod tests {
         }
     }
 
+    fn initialize(path: &std::path::Path) {
+        SqliteReplayStore::initialize(path, ReplayStoreLineage::CURRENT).unwrap();
+    }
+
     #[test]
     fn sqlite_reopens_unexpired_nonce() {
         let path = temp_db_path("reopen");
+        initialize(&path);
         {
-            let mut store = SqliteReplayStore::open(&path).unwrap();
+            let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
             assert!(store
                 .insert_returning_is_new("nonce-1", 1_000, 10_000)
                 .unwrap());
@@ -265,7 +416,7 @@ mod tests {
                 .unwrap());
         }
         {
-            let mut store = SqliteReplayStore::open(&path).unwrap();
+            let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
             assert!(store.contains_nonce("nonce-1"));
             assert_eq!(
                 store.load_unexpired(2_000).unwrap(),
@@ -281,7 +432,8 @@ mod tests {
     #[test]
     fn sqlite_prunes_expired_nonces() {
         let path = temp_db_path("prune");
-        let mut store = SqliteReplayStore::open(&path).unwrap();
+        initialize(&path);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
         assert!(store.insert_returning_is_new("old", 1_000, 2_000).unwrap());
         assert!(store
             .insert_returning_is_new("fresh", 3_000, 5_000)
@@ -297,6 +449,56 @@ mod tests {
         store.prune_expired(3_000).unwrap();
         assert!(!store.contains_nonce("old"));
         assert!(store.contains_nonce("fresh"));
+        remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn sqlite_refuses_missing_mismatched_and_unsupported_lineage() {
+        let path = temp_db_path("lineage");
+        secure_fs::ensure_private_file(&path, "test replay database").unwrap();
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nonces (
+                nonce TEXT PRIMARY KEY,
+                issued_at INTEGER NOT NULL,
+                expiry_at INTEGER NOT NULL
+            );
+            INSERT INTO nonces VALUES ('already-consumed', 1, 999999);",
+        )
+        .unwrap();
+        drop(conn);
+        let missing = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT)
+            .err()
+            .expect("unstamped populated store must refuse");
+        assert!(missing.to_string().contains("lineage stamp is missing"));
+
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE replay_store_lineage (
+                singleton INTEGER PRIMARY KEY,
+                schema_version INTEGER NOT NULL,
+                namespace_encoding_version INTEGER NOT NULL
+            );
+            INSERT INTO replay_store_lineage VALUES (1, 1, 2);",
+        )
+        .unwrap();
+        drop(conn);
+        let mismatch = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT)
+            .err()
+            .expect("namespace mismatch must refuse");
+        assert!(mismatch
+            .to_string()
+            .contains("namespace-encoding version mismatch: expected 1, found 2"));
+
+        let unsupported = ReplayStoreLineage {
+            schema_version: 0,
+            namespace_encoding_version: 1,
+        }
+        .require_supported()
+        .unwrap_err();
+        assert!(unsupported
+            .to_string()
+            .contains("unsupported or transitional expected replay-store schema version 0"));
         remove_sqlite_files(&path);
     }
 

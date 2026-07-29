@@ -93,8 +93,10 @@ approval-token key.
 - host NDJSON approval-provider path: real `ed25519-dalek` over exact
   `ApprovalRecord` JSON payload bytes; this is a separate channel, not the
   SealV2 canonical tuple
-- durable replay: trusted `replay_store.sqlite_path` is inside the signed
-  config payload; config key custody is therefore part of the TCB
+- durable replay: trusted `replay_store.sqlite_path`, `schema_version`, and
+  `namespace_encoding_version` are inside the signed config payload; config
+  key custody is therefore part of the TCB. The SQLite singleton lineage
+  stamp must match before the host serves
 
 ## Response egress
 

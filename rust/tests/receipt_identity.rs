@@ -20,6 +20,7 @@ use seal_host_rs::providers::{
     approval_v2_signature_preimage, canonical_approval_v2_payload, ApprovalRecordV2Payload,
     ApprovalRenderer,
 };
+use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -72,7 +73,9 @@ impl Host {
                     "control_file": approvals.to_str().unwrap(),
                     "ttl_seconds": 120,
                     "replay_store": {
-                        "sqlite_path": dir.join("replay.sqlite").to_str().unwrap()
+                        "sqlite_path": dir.join("replay.sqlite").to_str().unwrap(),
+                        "schema_version": 1,
+                        "namespace_encoding_version": 1
                     }
                 },
                 "tools": [
@@ -91,6 +94,8 @@ impl Host {
         let envelope = serde_json::json!({"payload": payload, "signature": sig}).to_string();
         let config = dir.join("trusted.json");
         std::fs::write(&config, envelope).unwrap();
+        SqliteReplayStore::initialize(dir.join("replay.sqlite"), ReplayStoreLineage::CURRENT)
+            .unwrap();
 
         let approval_pk = hex::encode(
             SigningKey::from_bytes(&approval_seed)
