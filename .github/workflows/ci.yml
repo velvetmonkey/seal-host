@@ -69,6 +69,10 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - run: lake exe dx_surface_tests
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: lake exe policy_server_identity_tests
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: lake exe sha256_selfcheck
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
 
   rust-conformance:
     runs-on: ubuntu-latest
@@ -131,6 +135,8 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
       - run: lake build
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - run: lake build downstream_parser_oracle
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - name: Build debug Rust host for Python integration entrypoint
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
