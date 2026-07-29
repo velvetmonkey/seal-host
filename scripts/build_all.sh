@@ -11,7 +11,11 @@
 # Result binary: rust/target/debug/seal-host-rs
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 echo "==> lake build +Ffi (runtime import closure)"
@@ -24,6 +28,9 @@ echo "==> scripts/build_ffi_so.sh"
 scripts/build_ffi_so.sh
 
 echo "==> cargo build (rust host)"
-cd rust && cargo build && cd ..
+(
+  cd rust
+  cargo build
+)
 
 echo "==> done: rust/target/debug/seal-host-rs"
