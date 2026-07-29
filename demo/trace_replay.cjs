@@ -25,6 +25,12 @@ function canonicalRequestFromReceipt(formatModule, receipt) {
   if (Object.prototype.hasOwnProperty.call(receipt, "_meta")) {
     value.params._meta = receipt._meta;
   }
+  if (Object.prototype.hasOwnProperty.call(receipt, "requestState")) {
+    value.params.requestState = receipt.requestState;
+  }
+  if (Object.prototype.hasOwnProperty.call(receipt, "inputResponses")) {
+    value.params.inputResponses = receipt.inputResponses;
+  }
   return JSON.stringify(value);
 }
 

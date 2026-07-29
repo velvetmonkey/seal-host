@@ -51,6 +51,8 @@ reject it as legacy, naming this spec.
 | `tool` | string | yes | mediated tool name (e.g. `"db.execute"`) |
 | `arguments` | object | yes | the tool-call arguments, verbatim; key order is fixed at production time and is significant (§2) |
 | `_meta` | object | optional | complete `params._meta` value, by value and in member order; absence means the request omitted `_meta`, while `{}` remains present-empty and distinct (§2) |
+| `requestState` | JSON value | optional | complete opaque `params.requestState` value; structural absence differs from every present value, including `{}` and `null`; consumers MUST NOT project or interpret its interior (§2) |
+| `inputResponses` | JSON value | optional | complete `params.inputResponses` value with every member retained; structural absence differs from every present value, including `{}` and `null` (§2) |
 | `now` | integer ≥ 0 | optional (default 1000) | the caller-supplied **logical clock** the kernel decided with — carried so re-derivation replays the same clock; NOT wall time |
 | `canonical_request` | string | optional | the exact canonical request line that was hashed; if present it MUST equal the line derived per §2 |
 | `canonical_request_sha256` | 64-hex string | yes | SHA-256 of the canonical request line (§2) |
@@ -77,7 +79,11 @@ The canonical request line is:
 ```js
 JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call",
                  params: { name: <tool>, arguments: <arguments>,
-                           ...(<_meta present> ? { _meta: <_meta> } : {}) } })
+                           ...(<_meta present> ? { _meta: <_meta> } : {}),
+                           ...(<requestState present>
+                                 ? { requestState: <requestState> } : {}),
+                           ...(<inputResponses present>
+                                 ? { inputResponses: <inputResponses> } : {}) } })
 ```
 
 with `<tool>` = the receipt's `tool` and `<arguments>` = the receipt's
@@ -86,8 +92,13 @@ preserve insertion order for non-integer-like keys; integer-like argument
 names are forbidden in v1 for this reason). When the receipt carries
 `_meta`, it is inserted after `arguments` and its complete object is
 serialised in stored member order. When `_meta` is absent, the historical
-two-member `params` bytes are unchanged. The hash is SHA-256 over the UTF-8
-bytes of that line, lowercase hex.
+two-member `params` bytes are unchanged unless an MRTR value follows it.
+Present `requestState` is inserted after `_meta` (or after `arguments` when
+metadata is absent) as one opaque complete JSON value. Present
+`inputResponses` follows `requestState` (or the last earlier present member)
+as one complete JSON value with every nested member retained. No present JSON
+value is an absence sentinel. The hash is SHA-256 over the UTF-8 bytes of that
+line, lowercase hex.
 
 This single function subsumes both prior dialects — the divergence was never
 the shape, only what was fed in:
@@ -98,10 +109,12 @@ the shape, only what was fed in:
   For every existing L receipt the bytes are unchanged.
 
 **Verifier obligation (closes drift (c)):** a verifier MUST derive this line
-from the SAME `(tool, arguments, _meta presence/value)` it feeds the kernel
-for re-derivation — never hash one stored string while re-deriving from a
-different field. If the receipt carries `canonical_request`, the verifier
-MUST check it equals the derived line before hashing.
+from the SAME `(tool, arguments, _meta presence/value, requestState
+presence/value, inputResponses presence/value)` it feeds the kernel for
+re-derivation — never hash one stored string while re-deriving from a
+different field. It MUST treat `requestState` opaquely and retain the complete
+`inputResponses` value. If the receipt carries `canonical_request`, the
+verifier MUST check it equals the derived line before hashing.
 
 Frozen test vectors (also enforced by `test/receipt-format.test.cjs` in
 seal-check and `test/format-check.cjs` in seal-assurance-kit):
@@ -217,8 +230,9 @@ item.)
 1. `kernel_identity.wasm_sha256` equals the verifier's own hash of the
    binary it will re-run, and that binary matches the audited pin.
 2. Derive the canonical line from the same
-   `(tool, arguments, _meta presence/value)` used for re-derivation; check
-   stored `canonical_request` (if present) equals it; hash and compare to
+   `(tool, arguments, _meta presence/value, requestState presence/value,
+   inputResponses presence/value)` used for re-derivation; check stored
+   `canonical_request` (if present) equals it; hash and compare to
    `canonical_request_sha256`.
 3. Resolve `granted_capabilities` per §3 (recompute un-hashed entries from
    the policy; count opaque entries); re-run the kernel with
@@ -511,7 +525,8 @@ v2 key order (extends the §1/`V1_KEY_ORDER` pattern; producers emit exactly
 this top-level order):
 
 ```
-record_type, record_version, tool, action, arguments, _meta, args_hash, now,
+record_type, record_version, tool, action, arguments, _meta, requestState,
+inputResponses, args_hash, now,
 canonical_request, canonical_request_sha256, request_sha256, request_parse_error,
 bypass, verdict, authorization, reason,
 deny_kernel, amount, merchant, currency, approval, certs, emitted_bytes,

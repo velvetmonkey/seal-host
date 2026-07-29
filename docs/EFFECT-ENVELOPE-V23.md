@@ -112,6 +112,37 @@ the submitted wrapper rather than relying on them being ignored.
 The tag changes from `seal.effect/v1\0` to `seal.effect/v2\0`, separating old
 signatures from the stripped and reconciled layout.
 
+### Phase-M metadata and MRTR staging
+
+The coordinated Phase-M repin extends a present effect claim after `args`
+with the complete metadata and multi-round-trip identities:
+
+```text
+optMeta(metadata) || optMrtr(requestState, inputResponses)
+
+optMeta(absent)              = 0x00
+optMeta(present canonical)   = 0x01 || frame(canonical)
+
+optMrtr(absent, absent)      = empty
+optMrtr(present s, absent)   = 0x01 || frame(s)
+optMrtr(absent, present i)   = 0x02 || frame(i)
+optMrtr(present s, present i)= 0x03 || frame(s) || frame(i)
+```
+
+Each present payload is the complete recursively canonicalized JSON value.
+`requestState` is opaque: the host performs no member lookup, token decode,
+or subfield projection. `inputResponses` is retained whole. Structural
+absence is not represented by a JSON sentinel, so absence, `{}`, and `null`
+remain three distinct signed identities.
+
+`rust/src/envelope_v23.rs::phase_m_effect_message` stages this exact encoder,
+and `rust/tests/mrtr_signed_shape.rs` compares it live with the Phase-M Lean
+`SealV2.Effect.effectMessage` over all four presence modes. The deployed
+`effect_message` remains on the manifest-pinned pre-Phase-M shape until the
+single coordinated repin. These layouts MUST NOT be dual-accepted under the
+unchanged `seal.effect/v2` tag: the repin atomically changes the trusted
+kernel, signatures/vectors, artifacts, and active Rust encoder.
+
 ## Exact signed bytes
 
 The Ed25519 message is the exact twin of the manifest-pinned

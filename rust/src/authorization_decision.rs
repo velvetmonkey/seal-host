@@ -96,12 +96,27 @@ fn canonical_json_sha256(value: &Value) -> Result<String, String> {
         .map_err(|e| format!("cannot serialize canonical JSON: {e}"))
 }
 
-fn canonical_request(tool: &str, arguments: &Value, metadata: Option<&Value>) -> Value {
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestParts {
+    pub tool: String,
+    pub arguments: Value,
+    pub metadata: Option<Value>,
+    pub request_state: Option<Value>,
+    pub input_responses: Option<Value>,
+}
+
+fn canonical_request(parts: &RequestParts) -> Value {
     let mut params = Map::new();
-    params.insert("name".into(), Value::String(tool.to_owned()));
-    params.insert("arguments".into(), arguments.clone());
-    if let Some(metadata) = metadata {
+    params.insert("name".into(), Value::String(parts.tool.clone()));
+    params.insert("arguments".into(), parts.arguments.clone());
+    if let Some(metadata) = &parts.metadata {
         params.insert("_meta".into(), metadata.clone());
+    }
+    if let Some(request_state) = &parts.request_state {
+        params.insert("requestState".into(), request_state.clone());
+    }
+    if let Some(input_responses) = &parts.input_responses {
+        params.insert("inputResponses".into(), input_responses.clone());
     }
     let mut request = Map::new();
     request.insert("jsonrpc".into(), Value::String("2.0".into()));
@@ -118,9 +133,7 @@ fn canonical_request(tool: &str, arguments: &Value, metadata: Option<&Value>) ->
 fn effect_view(
     input: &DecisionInput<'_>,
     step: &Value,
-    tool: &str,
-    arguments: &Value,
-    metadata: Option<&Value>,
+    parts: &RequestParts,
     request_sha256: &str,
     policy_hash: &str,
 ) -> Value {
@@ -148,11 +161,19 @@ fn effect_view(
     }
     view.insert("session".into(), Value::String(input.session.to_owned()));
     let mut effect = Map::new();
-    effect.insert("resource".into(), Value::String(tool.to_owned()));
+    effect.insert("resource".into(), Value::String(parts.tool.clone()));
     effect.insert("action".into(), Value::String("call".into()));
-    effect.insert("arguments".into(), arguments.clone());
-    if let Some(metadata) = metadata {
+    effect.insert("arguments".into(), parts.arguments.clone());
+    if let Some(metadata) = &parts.metadata {
         effect.insert("_meta".into(), metadata.clone());
+    }
+    if let Some(request_state) = &parts.request_state {
+        // Opaque by construction: copy the complete top-level value without
+        // member lookup, decoding, or semantic projection.
+        effect.insert("requestState".into(), request_state.clone());
+    }
+    if let Some(input_responses) = &parts.input_responses {
+        effect.insert("inputResponses".into(), input_responses.clone());
     }
     view.insert("effect".into(), Value::Object(effect));
     view.insert(
@@ -187,7 +208,7 @@ fn effect_view(
 /// Public so the parser-boundary conformance test (`tests/parser_boundary.rs`)
 /// exercises the SAME structured-view parser the authorization-decision layer runs — the
 /// lib.rs no-test-mirror rule.
-pub fn request_parts(line: &str) -> Result<(String, Value, Option<Value>), String> {
+pub fn request_parts(line: &str) -> Result<RequestParts, String> {
     let request: Value = serde_json::from_str(line.trim())
         .map_err(|e| format!("cannot parse mediated request for authorization decision: {e}"))?;
     let params = request
@@ -209,7 +230,18 @@ pub fn request_parts(line: &str) -> Result<(String, Value, Option<Value>), Strin
         Some(value) if value.is_object() => Some(value.clone()),
         Some(_) => return Err("mediated request has non-object params._meta".into()),
     };
-    Ok((tool, arguments, metadata))
+    // MRTR identity is complete-value identity. Unlike `_meta`, neither
+    // field has a semantic shape restriction at this descriptive boundary:
+    // preserve structural absence and clone every present JSON value whole.
+    let request_state = params.get("requestState").cloned();
+    let input_responses = params.get("inputResponses").cloned();
+    Ok(RequestParts {
+        tool,
+        arguments,
+        metadata,
+        request_state,
+        input_responses,
+    })
 }
 
 fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
@@ -312,32 +344,30 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
         Value::String("seal.authorization-decision".into()),
     );
     receipt.insert("record_version".into(), Value::from(2));
-    if let Ok((tool, arguments, metadata)) = &request_material {
-        receipt.insert("tool".into(), Value::String(tool.clone()));
-        receipt.insert("arguments".into(), arguments.clone());
-        if let Some(metadata) = metadata {
+    if let Ok(parts) = &request_material {
+        receipt.insert("tool".into(), Value::String(parts.tool.clone()));
+        receipt.insert("arguments".into(), parts.arguments.clone());
+        if let Some(metadata) = &parts.metadata {
             receipt.insert("_meta".into(), metadata.clone());
+        }
+        if let Some(request_state) = &parts.request_state {
+            receipt.insert("requestState".into(), request_state.clone());
+        }
+        if let Some(input_responses) = &parts.input_responses {
+            receipt.insert("inputResponses".into(), input_responses.clone());
         }
         receipt.insert(
             "args_hash".into(),
-            Value::String(canonical_json_sha256(arguments)?),
+            Value::String(canonical_json_sha256(&parts.arguments)?),
         );
         receipt.insert(
             "effect_view".into(),
-            effect_view(
-                input,
-                &step,
-                tool,
-                arguments,
-                metadata.as_ref(),
-                &host_request_sha256,
-                &policy_hash,
-            ),
+            effect_view(input, &step, parts, &host_request_sha256, &policy_hash),
         );
     }
     receipt.insert("now".into(), Value::from(input.now));
-    if let Ok((tool, arguments, metadata)) = &request_material {
-        let canonical = canonical_request(tool, arguments, metadata.as_ref());
+    if let Ok(parts) = &request_material {
+        let canonical = canonical_request(parts);
         let canonical_text = serde_json::to_string(&canonical)
             .map_err(|e| format!("cannot serialize canonical request: {e}"))?;
         receipt.insert(
@@ -802,7 +832,14 @@ mod tests {
     #[test]
     fn canonical_request_preserves_argument_order() {
         let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
-        let line = serde_json::to_string(&canonical_request("x", &args, None)).unwrap();
+        let line = serde_json::to_string(&canonical_request(&RequestParts {
+            tool: "x".into(),
+            arguments: args,
+            metadata: None,
+            request_state: None,
+            input_responses: None,
+        }))
+        .unwrap();
         assert_eq!(
             line,
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2}}}"#
@@ -906,15 +943,229 @@ mod tests {
         );
     }
 
+    /// M.4 stage 3 control. Each field-specific negative pair changes only
+    /// one complete MRTR value and is preceded by an exact positive twin.
+    /// The host's canonical projection and the kernel-attested raw request
+    /// commitment must give the same changed/not-changed answer.
+    #[test]
+    fn mrtr_identity_controls_receipt_projection_and_kernel_agree() {
+        let request = |request_state: Option<&str>, input_responses: Option<&str>| {
+            let mut raw = String::from(
+                r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"select 1"}"#,
+            );
+            if let Some(value) = request_state {
+                raw.push_str(",\"requestState\":");
+                raw.push_str(value);
+            }
+            if let Some(value) = input_responses {
+                raw.push_str(",\"inputResponses\":");
+                raw.push_str(value);
+            }
+            raw.push_str("}}");
+            raw
+        };
+
+        let kernel_commitment = |field: &str, receipt: &Value| -> String {
+            let step: Value =
+                serde_json::from_str(receipt["emitted_bytes"].as_str().unwrap()).unwrap();
+            let audit: Value = serde_json::from_str(step["audit"].as_str().unwrap()).unwrap();
+            let kernel = audit["request_sha256"].as_str().unwrap();
+            assert_eq!(
+                Some(kernel),
+                receipt["request_sha256"].as_str(),
+                "MRTR-RAW-HASH-SEAM RED field={field}: kernel and host request commitments disagree"
+            );
+            kernel.to_owned()
+        };
+
+        let checked = |field: &str, raw: &str| {
+            let first = build(raw, &allow_step_output(raw)).expect("MRTR authorization decision");
+            let twin = build(raw, &allow_step_output(raw)).expect("MRTR positive-twin decision");
+            assert_eq!(
+                serde_json::to_vec(&first).unwrap(),
+                serde_json::to_vec(&twin).unwrap(),
+                "MRTR-POSITIVE-TWIN RED field={field}: byte-identical requests produced different receipts"
+            );
+            println!(
+                "MRTR-POSITIVE-TWIN GREEN field={field} request=byte-identical receipt=byte-identical"
+            );
+            first
+        };
+
+        let check_discrimination = |field: &str,
+                                    left_raw: String,
+                                    right_raw: String,
+                                    left_value: Value,
+                                    right_value: Value| {
+            let left = checked(&format!("{field}.left"), &left_raw);
+            let right = checked(&format!("{field}.right"), &right_raw);
+
+            assert_eq!(
+                left.get(field),
+                Some(&left_value),
+                "MRTR-RECEIPT-VISIBILITY RED field={field}: left complete value missing"
+            );
+            assert_eq!(
+                right.get(field),
+                Some(&right_value),
+                "MRTR-RECEIPT-VISIBILITY RED field={field}: right complete value missing"
+            );
+            assert_eq!(
+                left["effect_view"]["effect"].get(field),
+                Some(&left_value),
+                "MRTR-EFFECT-VIEW RED field={field}: left complete value missing"
+            );
+            assert_eq!(
+                right["effect_view"]["effect"].get(field),
+                Some(&right_value),
+                "MRTR-EFFECT-VIEW RED field={field}: right complete value missing"
+            );
+
+            let host_changed =
+                left["canonical_request_sha256"] != right["canonical_request_sha256"];
+            assert!(
+                host_changed,
+                "HOST-PROJECTION RED field={field}: canonical_request_sha256 ignored MRTR mutation"
+            );
+            let left_canonical: Value =
+                serde_json::from_str(left["canonical_request"].as_str().unwrap()).unwrap();
+            let right_canonical: Value =
+                serde_json::from_str(right["canonical_request"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                left_canonical["params"].get(field),
+                Some(&left_value),
+                "MRTR-CANONICAL-VISIBILITY RED field={field}: left complete value missing"
+            );
+            assert_eq!(
+                right_canonical["params"].get(field),
+                Some(&right_value),
+                "MRTR-CANONICAL-VISIBILITY RED field={field}: right complete value missing"
+            );
+            let kernel_left = kernel_commitment(field, &left);
+            let kernel_right = kernel_commitment(field, &right);
+            let kernel_changed = kernel_left != kernel_right;
+            assert_eq!(
+                    host_changed, kernel_changed,
+                    "HOST-KERNEL-AGREEMENT RED field={field}: host projection and kernel commitment disagree about identity change"
+                );
+            assert_ne!(
+                    serde_json::to_vec(&left).unwrap(),
+                    serde_json::to_vec(&right).unwrap(),
+                    "RECEIPT-DISTINGUISHABILITY RED field={field}: mutation produced identical receipt bytes"
+                );
+            println!(
+                    "MRTR-RECEIPT-DISTINGUISHABILITY GREEN field={field} complete-value=visible receipt=different"
+                );
+            println!(
+                    "MRTR-HOST-KERNEL-AGREEMENT GREEN field={field} host_projection_changed={host_changed} kernel_request_commitment_changed={kernel_changed}"
+                );
+        };
+
+        let state_left = serde_json::json!({
+            "opaque": {"token": "state-a", "ignoredSemantics": [1, null, false]},
+            "sibling": "retained"
+        });
+        let state_right = serde_json::json!({
+            "opaque": {"token": "state-b", "ignoredSemantics": [1, null, false]},
+            "sibling": "retained"
+        });
+        check_discrimination(
+            "requestState",
+            request(Some(&state_left.to_string()), None),
+            request(Some(&state_right.to_string()), None),
+            state_left,
+            state_right,
+        );
+
+        let responses_left = serde_json::json!({
+            "confirm": {"action": "accept", "content": true},
+            "survey": {"score": 5},
+            "extension": ["one", "two"]
+        });
+        let responses_right = serde_json::json!({
+            "confirm": {"action": "decline", "content": false},
+            "survey": {"score": 5},
+            "extension": ["one", "two"]
+        });
+        check_discrimination(
+            "inputResponses",
+            request(None, Some(&responses_left.to_string())),
+            request(None, Some(&responses_right.to_string())),
+            responses_left,
+            responses_right,
+        );
+
+        for field in ["requestState", "inputResponses"] {
+            let raw_for = |value: Option<&str>| match field {
+                "requestState" => request(value, None),
+                "inputResponses" => request(None, value),
+                _ => unreachable!(),
+            };
+            let absent = checked(&format!("{field}.absent"), &raw_for(None));
+            let empty = checked(&format!("{field}.present-empty"), &raw_for(Some("{}")));
+            let null = checked(&format!("{field}.present-null"), &raw_for(Some("null")));
+            let identities = [
+                &absent["canonical_request_sha256"],
+                &empty["canonical_request_sha256"],
+                &null["canonical_request_sha256"],
+            ];
+            assert!(
+                identities[0] != identities[1]
+                    && identities[0] != identities[2]
+                    && identities[1] != identities[2],
+                "MRTR-ABSENCE RED field={field}: absent/present-empty/present-null collapsed"
+            );
+            assert!(
+                absent.get(field).is_none()
+                    && empty.get(field) == Some(&serde_json::json!({}))
+                    && null.get(field) == Some(&Value::Null),
+                "MRTR-ABSENCE RED field={field}: receipt presence rendering is dishonest"
+            );
+            println!(
+                "MRTR-ABSENCE GREEN field={field} absent/present-empty/present-null=three-distinct-receipt-identities"
+            );
+        }
+    }
+
     #[test]
     fn canonical_request_carries_metadata_in_member_order() {
         let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
         let metadata: Value =
             serde_json::from_str(r#"{"traceparent":"00-a","example.com/invocation":"7"}"#).unwrap();
-        let line = serde_json::to_string(&canonical_request("x", &args, Some(&metadata))).unwrap();
+        let line = serde_json::to_string(&canonical_request(&RequestParts {
+            tool: "x".into(),
+            arguments: args,
+            metadata: Some(metadata),
+            request_state: None,
+            input_responses: None,
+        }))
+        .unwrap();
         assert_eq!(
             line,
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2},"_meta":{"traceparent":"00-a","example.com/invocation":"7"}}}"#
+        );
+    }
+
+    #[test]
+    fn canonical_request_carries_complete_mrtr_values_in_fixed_member_order() {
+        let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
+        let metadata: Value = serde_json::from_str(r#"{"traceparent":"00-a"}"#).unwrap();
+        let request_state: Value =
+            serde_json::from_str(r#"{"opaque":{"nested":[1,null]},"sibling":"kept"}"#).unwrap();
+        let input_responses: Value =
+            serde_json::from_str(r#"{"first":{"action":"accept"},"second":{"content":{"x":1}}}"#)
+                .unwrap();
+        let line = serde_json::to_string(&canonical_request(&RequestParts {
+            tool: "x".into(),
+            arguments: args,
+            metadata: Some(metadata),
+            request_state: Some(request_state),
+            input_responses: Some(input_responses),
+        }))
+        .unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2},"_meta":{"traceparent":"00-a"},"requestState":{"opaque":{"nested":[1,null]},"sibling":"kept"},"inputResponses":{"first":{"action":"accept"},"second":{"content":{"x":1}}}}}"#
         );
     }
 }
