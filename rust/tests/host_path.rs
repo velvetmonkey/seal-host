@@ -536,6 +536,110 @@ fn meta_identity_live_host_projection_and_kernel_commitment_agree() {
     );
 }
 
+/// M.4 stage 3 live host-versus-kernel agreement. The shipped kernel's exact
+/// request commitment observes each complete MRTR value independently of the
+/// Rust projection. Every field-specific discrimination has a byte-identical
+/// positive twin before the negative pair is compared.
+#[test]
+fn mrtr_identity_live_host_projection_and_kernel_commitment_agree() {
+    let mut o = Oracle::spawn_numeric_observer("mrtr-host-kernel-agreement");
+    let request_state_a = r#"{"opaque":{"token":"state-a","nested":[1,null]},"sibling":"kept"}"#;
+    let request_state_b = r#"{"opaque":{"token":"state-b","nested":[1,null]},"sibling":"kept"}"#;
+    let responses_a = r#"{"confirm":{"action":"accept","content":true},"survey":{"score":5},"extension":["one","two"]}"#;
+    let responses_b = r#"{"confirm":{"action":"decline","content":false},"survey":{"score":5},"extension":["one","two"]}"#;
+    let line = |id: u64, field: &str, value: &str| {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"numeric.observer","arguments":{{"v":1}},"{field}":{value}}}}}"#
+        )
+    };
+    let probes = [
+        (
+            "requestState",
+            line(72, "requestState", request_state_a),
+            line(72, "requestState", request_state_b),
+        ),
+        (
+            "inputResponses",
+            line(73, "inputResponses", responses_a),
+            line(73, "inputResponses", responses_b),
+        ),
+    ];
+
+    for (_, left, right) in &probes {
+        for raw in [left, left, right] {
+            o.send(raw);
+            let response: serde_json::Value = serde_json::from_str(&o.expect_line()).unwrap();
+            assert_eq!(
+                response
+                    .pointer("/result/content/0/raw")
+                    .and_then(|value| value.as_str()),
+                Some(raw.as_str()),
+                "live MRTR control must reach the observer byte-identically"
+            );
+        }
+    }
+
+    let receipts = o.receipts();
+    assert_eq!(receipts.len(), 6, "three live receipts per MRTR field");
+    let kernel_commitment = |field: &str, receipt: &serde_json::Value| -> String {
+        let step: serde_json::Value =
+            serde_json::from_str(receipt["emitted_bytes"].as_str().unwrap()).unwrap();
+        let audit: serde_json::Value =
+            serde_json::from_str(step["audit"].as_str().unwrap()).unwrap();
+        let kernel = audit["request_sha256"].as_str().unwrap();
+        assert_eq!(
+            Some(kernel),
+            receipt["request_sha256"].as_str(),
+            "LIVE-MRTR-RAW-HASH-SEAM RED field={field}: kernel audit and receipt disagree"
+        );
+        kernel.to_owned()
+    };
+
+    for (index, (field, _, _)) in probes.iter().enumerate() {
+        let left = &receipts[index * 3];
+        let twin = &receipts[index * 3 + 1];
+        let right = &receipts[index * 3 + 2];
+        assert_eq!(
+            left["canonical_request"], twin["canonical_request"],
+            "LIVE-MRTR-POSITIVE-TWIN RED field={field}: identical projections differ"
+        );
+        assert_eq!(
+            left["canonical_request_sha256"], twin["canonical_request_sha256"],
+            "LIVE-MRTR-POSITIVE-TWIN RED field={field}: identical projection commitments differ"
+        );
+        assert_eq!(
+            left["request_sha256"], twin["request_sha256"],
+            "LIVE-MRTR-POSITIVE-TWIN RED field={field}: identical kernel commitments differ"
+        );
+        println!(
+            "LIVE-MRTR-POSITIVE-TWIN GREEN field={field} request=byte-identical host-projection=kernel-commitment=same"
+        );
+
+        let host_changed = left["canonical_request_sha256"] != right["canonical_request_sha256"];
+        assert!(
+            host_changed,
+            "LIVE-HOST-PROJECTION RED field={field}: canonical projection ignored MRTR mutation"
+        );
+        let kernel_left = kernel_commitment(field, left);
+        let kernel_right = kernel_commitment(field, right);
+        let kernel_changed = kernel_left != kernel_right;
+        assert_eq!(
+            host_changed, kernel_changed,
+            "LIVE-HOST-KERNEL-AGREEMENT RED field={field}: host projection and shipped kernel disagree about identity change"
+        );
+        assert!(
+            left.get(field).is_some()
+                && right.get(field).is_some()
+                && left["effect_view"]["effect"].get(field) == left.get(field)
+                && right["effect_view"]["effect"].get(field) == right.get(field),
+            "LIVE-MRTR-RECEIPT-VISIBILITY RED field={field}: complete values not exposed"
+        );
+        println!(
+            "LIVE-MRTR-HOST-KERNEL-AGREEMENT GREEN field={field} positive_twin=byte-identical host_projection_changed={host_changed} kernel_request_commitment_changed={kernel_changed}"
+        );
+    }
+}
+
 fn is_block(line: &str) -> bool {
     line.contains("\"isError\":true") && line.contains("approval required: ")
 }
