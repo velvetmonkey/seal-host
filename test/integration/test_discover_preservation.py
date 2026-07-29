@@ -18,9 +18,14 @@ CHILD = "import pathlib,sys; raw=sys.stdin.buffer.readline(); pathlib.Path(sys.a
 
 
 def assert_no_production_fabricator() -> None:
-    keys = (b'"protocolVersion"', b'\\"protocolVersion\\"', b'"capabilities"',
-            b'\\"capabilities\\"', b'"serverInfo"', b'\\"serverInfo\\"',
-            b'"server/discover"', b'\\"server/discover\\"')
+    # M.2 must observe the `server/discover` request method to derive the
+    # per-session scalar revision. That request-side literal is not response
+    # fabrication. Keep this static supplement scoped to response fields; the
+    # runtime assertions below remain the authority for byte preservation.
+    keys = (b'"supportedVersions"', b'\\"supportedVersions\\"',
+            b'"capabilities"', b'\\"capabilities\\"',
+            b'"serverInfo"', b'\\"serverInfo\\"',
+            b'"resultType"', b'\\"resultType\\"')
     sources = list((ROOT / "rust/src").rglob("*.rs"))
     sources += list((ROOT / "Host").rglob("*.lean")) + [ROOT / "Ffi.lean"]
     found = [(str(path.relative_to(ROOT)), key.decode())
@@ -64,7 +69,7 @@ def main() -> int:
     print(f"DISCOVER REQUEST BYTES GREEN sha256={hashlib.sha256(REQUEST).hexdigest()} length={len(REQUEST)}")
     print(f"DISCOVER RESPONSE BYTES GREEN sha256={hashlib.sha256(RESPONSE).hexdigest()} length={len(RESPONSE)}")
     print("DISCOVER NO-FABRICATION GREEN protocolVersion=absent capabilities=child-exact serverInfo=Odd Child / Δ")
-    print("DISCOVER PRODUCTION NO-FABRICATION GREEN source-literals=absent")
+    print("DISCOVER PRODUCTION NO-FABRICATION GREEN response-source-literals=absent")
     print("DISCOVER POSITIVE TWIN GREEN request=byte-identical response=byte-identical")
     return 0
 

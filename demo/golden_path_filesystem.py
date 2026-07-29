@@ -62,7 +62,9 @@ SERVER_SOURCE = r'''const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 const ROOT = "/workspace";
+const LEGACY_REVISION = "2025-06-18";
 const MODERN_REVISION = "2026-07-28";
+const SUPPORTED_REVISIONS = [LEGACY_REVISION, MODERN_REVISION];
 const SERVER_INFO = {name:"seal-filesystem-demo",version:"1.0.0"};
 
 const send = value => { process.stdout.write(JSON.stringify(value) + "\n"); };
@@ -120,10 +122,10 @@ rl.on("line", line => {
   const modern = message.params?._meta?.["io.modelcontextprotocol/protocolVersion"] === MODERN_REVISION;
   if (method === "initialize") {
     console.error("SEAL_FILESYSTEM_INITIALIZE_RECEIVED");
-    send({jsonrpc:"2.0",id,result:{protocolVersion:"2025-06-18",capabilities:{tools:{}},serverInfo:SERVER_INFO}});
+    send({jsonrpc:"2.0",id,result:{protocolVersion:LEGACY_REVISION,capabilities:{tools:{}},serverInfo:SERVER_INFO}});
   } else if (method === "server/discover") {
     console.error("SEAL_FILESYSTEM_DISCOVER_RECEIVED");
-    send({jsonrpc:"2.0",id,result:success({supportedVersions:[MODERN_REVISION],capabilities:{tools:{}}},true)});
+    send({jsonrpc:"2.0",id,result:success({supportedVersions:SUPPORTED_REVISIONS,capabilities:{tools:{}}},true)});
   } else if (method === "tools/list") {
     console.error("SEAL_FILESYSTEM_TOOLS_LIST_RECEIVED");
     send({jsonrpc:"2.0",id,result:success({tools},modern)});
@@ -244,7 +246,7 @@ def begin_protocol(
     ))
     discovered = json.loads(proc.line())["result"]
     assert_result_era(discovered, era)
-    if discovered.get("supportedVersions") != [era.revision]:
+    if discovered.get("supportedVersions") != list(mcp_eras.SUPPORTED_REVISIONS):
         raise gp.DemoFailure(f"2026 discovery advertised wrong revisions: {discovered}")
     return discovered["_meta"]["io.modelcontextprotocol/serverInfo"]
 

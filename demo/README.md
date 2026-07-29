@@ -14,6 +14,12 @@ There is intentionally no default. The 2025 path performs the
 `server/discover`, never sends `initialize`, and attaches the `2026-07-28`
 request metadata to every request.
 
+The filesystem child advertises the duplicate-free supported set
+`["2025-06-18", "2026-07-28"]` in its own `server/discover` response. The
+transparent host forwards that response byte-for-byte; it does not inject,
+merge, translate, or normalize the child's discovery bytes. Each signed
+effect still carries only the scalar revision selected for that session.
+
 ## Remaining conversion inventory
 
 | Demo | Still needed for a 2026 path |
