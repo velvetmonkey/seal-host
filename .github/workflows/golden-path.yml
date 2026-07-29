@@ -132,9 +132,13 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 2, lines
-          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  llm_call"), lines[0]
-          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT  llm_call"), lines[1]
+          assert len(lines) == 4, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  llm_call"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  llm_call"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  llm_call"), lines[2]
+          assert lines[3].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT  llm_call"), lines[3]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "deny_kernel=budget" "$RUNNER_TEMP/golden-path-c4.txt"
           grep -F "budget=token-usage costArg=usage.tokens cost=11 cap=10 remaining=10→would-exceed (unchanged=10)" "$RUNNER_TEMP/golden-path-c4.txt"
@@ -168,10 +172,15 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 3, lines
-          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m QUORUM-SHORT  deploy"), lines[0]
-          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m DEPLOY-OK  deploy"), lines[1]
-          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m REPLAY-DENY  deploy"), lines[2]
+          assert len(lines) == 6, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  deploy"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m QUORUM-SHORT  deploy"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  deploy"), lines[2]
+          assert lines[3].startswith("\x1b[32;1mALLOW\x1b[0m DEPLOY-OK  deploy"), lines[3]
+          assert lines[4].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  deploy"), lines[4]
+          assert lines[5].startswith("\x1b[31;1mDENY\x1b[0m REPLAY-DENY  deploy"), lines[5]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:DENY[ACTIVE], linear:ALLOW[ACTIVE]; deny_kernel=consensus" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:ALLOW[ACTIVE], linear:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c3.txt"
@@ -207,9 +216,13 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 2, lines
-          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  store.update"), lines[0]
-          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  store.update"), lines[1]
+          assert len(lines) == 4, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  store.update"), lines[0]
+          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  store.update"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  store.update"), lines[2]
+          assert lines[3].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  store.update"), lines[3]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], convergence:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c5.txt"
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], convergence:DENY[ACTIVE]; deny_kernel=convergence" "$RUNNER_TEMP/golden-path-c5.txt"
@@ -247,9 +260,13 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 2, lines
-          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[0]
-          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[1]
+          assert len(lines) == 4, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  session.revoke"), lines[0]
+          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  audit.destroy"), lines[2]
+          assert lines[3].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[3]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c6.txt"
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:DENY[ACTIVE]; deny_kernel=temporal" "$RUNNER_TEMP/golden-path-c6.txt"
