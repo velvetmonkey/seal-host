@@ -136,6 +136,9 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: cargo build --bins
         working-directory: rust
+      - name: Prove server/discover request and response byte preservation
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 test/integration/test_discover_preservation.py
       - name: Run Python host integration entrypoints
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
