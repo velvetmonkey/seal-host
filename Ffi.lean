@@ -8,6 +8,8 @@ import Host.Registry
 import Host.Audit
 import Host.Evidence
 import Seal.Block
+-- M.7 branch dependency: requires kernel commit 564c21f (or its merge) and
+-- cannot build against the current pin before the single repin.
 import SealV2.McpVersionGate
 import Kernels
 
