@@ -69,6 +69,7 @@ extern "C" {
     fn seal_host_init(envelope: LeanObj, pubkey: LeanObj) -> LeanObj;
     fn seal_host_step(input: LeanObj) -> LeanObj;
     fn seal_host_classify(line: LeanObj) -> c_uint;
+    fn seal_host_mcp_version_gate(line: LeanObj, selected_revision: LeanObj) -> LeanObj;
     fn seal_host_first_agreement_unsafe_number(line: LeanObj) -> LeanObj;
     fn seal_policy_schema(unit: LeanObj) -> LeanObj;
     fn seal_policy_validate(payload: LeanObj) -> LeanObj;
@@ -225,6 +226,17 @@ impl LeanHost {
             seal_host_classify(to_lean_string(line))
         }))
         .map_err(|_| SeamError::Panic)
+    }
+
+    /// Opaque call into the Lean-owned M.7 request gate.
+    pub fn mcp_version_gate(
+        &self,
+        line: &str,
+        selected_revision: &str,
+    ) -> Result<String, SeamError> {
+        self.call_string(|| unsafe {
+            seal_host_mcp_version_gate(to_lean_string(line), to_lean_string(selected_revision))
+        })
     }
 
     /// Return the first raw numeric literal whose exact Lean value is not

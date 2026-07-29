@@ -54,6 +54,13 @@ pub enum ClassifyRoute {
     Refuse,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionGateRoute {
+    Continue,
+    Reject { response: String },
+    SeamFailure { reason: String },
+}
+
 /// Total mapping from the classify seam result. Only the exact healthy
 /// values route; garbage and errors refuse.
 pub fn route_of_classify(c: Result<u32, SeamError>) -> ClassifyRoute {
@@ -61,6 +68,32 @@ pub fn route_of_classify(c: Result<u32, SeamError>) -> ClassifyRoute {
         Ok(0) => ClassifyRoute::Passthrough,
         Ok(1) => ClassifyRoute::Mediate,
         Ok(_) | Err(_) => ClassifyRoute::Refuse,
+    }
+}
+
+/// Total fail-closed mapping of the kernel's opaque M.7 output. This function
+/// contains no MCP metadata or version predicate: only the exact kernel route
+/// literal can continue, and Rust emits only a kernel-supplied rejection.
+pub fn route_of_version_gate(out: Result<String, SeamError>) -> VersionGateRoute {
+    let failure = |reason| VersionGateRoute::SeamFailure { reason };
+    let text = match out {
+        Ok(text) => text,
+        Err(error) => return failure(format!("version-gate seam error: {error}")),
+    };
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => return failure(format!("version-gate output unparseable: {error}")),
+    };
+    match value.get("route").and_then(Value::as_str) {
+        Some("continue") => VersionGateRoute::Continue,
+        Some("reject") => match value.get("response").and_then(Value::as_str) {
+            Some(response) => VersionGateRoute::Reject {
+                response: response.to_owned(),
+            },
+            None => failure("version-gate rejection without response".to_owned()),
+        },
+        Some(other) => failure(format!("unknown version-gate route: {other}")),
+        None => failure("missing version-gate route".to_owned()),
     }
 }
 

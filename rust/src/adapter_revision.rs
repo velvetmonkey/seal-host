@@ -106,4 +106,14 @@ impl McpRevisionSession {
             ),
         }
     }
+
+    /// Lossless M.2 state input for the Lean-owned M.7 gate. Rust never
+    /// compares request metadata with this value.
+    pub fn version_gate_input(self) -> &'static str {
+        match self.selection {
+            McpRevisionSelection::Undetermined => "",
+            McpRevisionSelection::Selected(revision) => revision.as_str(),
+            McpRevisionSelection::ConflictingEntryCalls => "conflicting-entry-calls",
+        }
+    }
 }

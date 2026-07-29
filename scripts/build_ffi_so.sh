@@ -65,7 +65,7 @@ MCP_MODULES=(
   Seal.Block Seal.Channel Seal.Classify Seal.Hash Seal.JsonUtil Seal.Policy
   Seal.PolicyBundle
   SealV2.Canonical SealV2.Crypto SealV2.Decide SealV2.Escape SealV2.Parser
-  SealV2.Serialization SealV2.Validation
+  SealV2.McpVersionGate SealV2.Serialization SealV2.Validation
 )
 PROJECT_MODULES=(
   Ffi
