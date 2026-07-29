@@ -20,6 +20,14 @@ function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
+function canonicalRequestFromReceipt(formatModule, receipt) {
+  const value = JSON.parse(formatModule.canonicalRequest(receipt.tool, receipt.arguments));
+  if (Object.prototype.hasOwnProperty.call(receipt, "_meta")) {
+    value.params._meta = receipt._meta;
+  }
+  return JSON.stringify(value);
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2);
   const transcript = args.shift();
@@ -171,7 +179,7 @@ async function main() {
     if (!isDeepStrictEqual(receipt.signed_config, transcript.signed_config))
       fail(`step ${step.sequence} signed config differs from transcript pin`);
 
-    const canonical = formatModule.canonicalRequest(receipt.tool, receipt.arguments);
+    const canonical = canonicalRequestFromReceipt(formatModule, receipt);
     if (canonical !== step.canonical_request || canonical !== receipt.canonical_request)
       fail(`step ${step.sequence} canonical request mismatch`);
     const canonicalSha = sha256(Buffer.from(canonical));

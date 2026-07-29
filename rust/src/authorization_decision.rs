@@ -96,10 +96,13 @@ fn canonical_json_sha256(value: &Value) -> Result<String, String> {
         .map_err(|e| format!("cannot serialize canonical JSON: {e}"))
 }
 
-fn canonical_request(tool: &str, arguments: &Value) -> Value {
+fn canonical_request(tool: &str, arguments: &Value, metadata: Option<&Value>) -> Value {
     let mut params = Map::new();
     params.insert("name".into(), Value::String(tool.to_owned()));
     params.insert("arguments".into(), arguments.clone());
+    if let Some(metadata) = metadata {
+        params.insert("_meta".into(), metadata.clone());
+    }
     let mut request = Map::new();
     request.insert("jsonrpc".into(), Value::String("2.0".into()));
     request.insert("id".into(), Value::from(1));
@@ -117,6 +120,7 @@ fn effect_view(
     step: &Value,
     tool: &str,
     arguments: &Value,
+    metadata: Option<&Value>,
     request_sha256: &str,
     policy_hash: &str,
 ) -> Value {
@@ -143,14 +147,14 @@ fn effect_view(
         );
     }
     view.insert("session".into(), Value::String(input.session.to_owned()));
-    view.insert(
-        "effect".into(),
-        serde_json::json!({
-            "resource": tool,
-            "action": "call",
-            "arguments": arguments,
-        }),
-    );
+    let mut effect = Map::new();
+    effect.insert("resource".into(), Value::String(tool.to_owned()));
+    effect.insert("action".into(), Value::String("call".into()));
+    effect.insert("arguments".into(), arguments.clone());
+    if let Some(metadata) = metadata {
+        effect.insert("_meta".into(), metadata.clone());
+    }
+    view.insert("effect".into(), Value::Object(effect));
     view.insert(
         "raw_preimage_sha256".into(),
         Value::String(request_sha256.to_owned()),
@@ -183,9 +187,13 @@ fn effect_view(
 /// Public so the parser-boundary conformance test (`tests/parser_boundary.rs`)
 /// exercises the SAME structured-view parser the authorization-decision layer runs — the
 /// lib.rs no-test-mirror rule.
-pub fn request_parts(line: &str) -> Result<(String, Value), String> {
+pub fn request_parts(line: &str) -> Result<(String, Value, Option<Value>), String> {
     let request: Value = serde_json::from_str(line.trim())
         .map_err(|e| format!("cannot parse mediated request for authorization decision: {e}"))?;
+    let params = request
+        .pointer("/params")
+        .and_then(Value::as_object)
+        .ok_or("mediated request lacks object params")?;
     let tool = request
         .pointer("/params/name")
         .and_then(Value::as_str)
@@ -196,7 +204,12 @@ pub fn request_parts(line: &str) -> Result<(String, Value), String> {
         .filter(|v| v.is_object())
         .ok_or("mediated request lacks object params.arguments")?
         .clone();
-    Ok((tool, arguments))
+    let metadata = match params.get("_meta") {
+        None => None,
+        Some(value) if value.is_object() => Some(value.clone()),
+        Some(_) => return Err("mediated request has non-object params._meta".into()),
+    };
+    Ok((tool, arguments, metadata))
 }
 
 fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, String> {
@@ -299,9 +312,12 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
         Value::String("seal.authorization-decision".into()),
     );
     receipt.insert("record_version".into(), Value::from(2));
-    if let Ok((tool, arguments)) = &request_material {
+    if let Ok((tool, arguments, metadata)) = &request_material {
         receipt.insert("tool".into(), Value::String(tool.clone()));
         receipt.insert("arguments".into(), arguments.clone());
+        if let Some(metadata) = metadata {
+            receipt.insert("_meta".into(), metadata.clone());
+        }
         receipt.insert(
             "args_hash".into(),
             Value::String(canonical_json_sha256(arguments)?),
@@ -313,14 +329,15 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
                 &step,
                 tool,
                 arguments,
+                metadata.as_ref(),
                 &host_request_sha256,
                 &policy_hash,
             ),
         );
     }
     receipt.insert("now".into(), Value::from(input.now));
-    if let Ok((tool, arguments)) = &request_material {
-        let canonical = canonical_request(tool, arguments);
+    if let Ok((tool, arguments, metadata)) = &request_material {
+        let canonical = canonical_request(tool, arguments, metadata.as_ref());
         let canonical_text = serde_json::to_string(&canonical)
             .map_err(|e| format!("cannot serialize canonical request: {e}"))?;
         receipt.insert(
@@ -785,10 +802,119 @@ mod tests {
     #[test]
     fn canonical_request_preserves_argument_order() {
         let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
-        let line = serde_json::to_string(&canonical_request("x", &args)).unwrap();
+        let line = serde_json::to_string(&canonical_request("x", &args, None)).unwrap();
         assert_eq!(
             line,
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2}}}"#
+        );
+    }
+
+    /// M.1 stage 3 cross-layer control. The host's reader-facing projection
+    /// and the kernel-emitted raw request commitment need not have the same
+    /// digest (their preimages are deliberately different), but they MUST
+    /// agree on the identity question: did changing only `_meta` change the
+    /// committed request? The exact positive twin rules out time/config/test
+    /// noise as the source of the negative pair's difference.
+    #[test]
+    fn meta_identity_controls_receipt_projection_and_kernel_agree() {
+        let line_a = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"select 1"},"_meta":{"example.com/invocation":"a"}}}"#;
+        let line_b = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"select 1"},"_meta":{"example.com/invocation":"b"}}}"#;
+
+        let receipt_a =
+            build(line_a, &allow_step_output(line_a)).expect("metadata A authorization decision");
+        let receipt_a_twin =
+            build(line_a, &allow_step_output(line_a)).expect("metadata A positive twin");
+        let receipt_b =
+            build(line_b, &allow_step_output(line_b)).expect("metadata B authorization decision");
+
+        let bytes_a = serde_json::to_vec(&receipt_a).unwrap();
+        let bytes_a_twin = serde_json::to_vec(&receipt_a_twin).unwrap();
+        let bytes_b = serde_json::to_vec(&receipt_b).unwrap();
+        assert_eq!(
+            bytes_a, bytes_a_twin,
+            "POSITIVE-TWIN RED key=_meta: identical input did not produce a byte-identical receipt"
+        );
+        println!("RECEIPT-POSITIVE-TWIN GREEN key=_meta bytes=byte-identical");
+
+        assert_eq!(
+            receipt_a["_meta"]["example.com/invocation"], "a",
+            "RECEIPT-VISIBILITY RED key=_meta: receipt omitted metadata A"
+        );
+        assert_eq!(
+            receipt_b["_meta"]["example.com/invocation"], "b",
+            "RECEIPT-VISIBILITY RED key=_meta: receipt omitted metadata B"
+        );
+        assert_eq!(
+            receipt_a["effect_view"]["effect"]["_meta"],
+            receipt_a["_meta"]
+        );
+        assert_eq!(
+            receipt_b["effect_view"]["effect"]["_meta"],
+            receipt_b["_meta"]
+        );
+        assert_ne!(
+            bytes_a, bytes_b,
+            "RECEIPT-DISTINGUISHABILITY RED key=_meta: metadata-only mutation produced identical receipt bytes"
+        );
+
+        let host_projection_changed =
+            receipt_a["canonical_request_sha256"] != receipt_b["canonical_request_sha256"];
+        assert!(
+            host_projection_changed,
+            "HOST-PROJECTION RED key=_meta: canonical_request_sha256 ignored the metadata-only mutation"
+        );
+        let canonical_a: Value =
+            serde_json::from_str(receipt_a["canonical_request"].as_str().unwrap()).unwrap();
+        let canonical_b: Value =
+            serde_json::from_str(receipt_b["canonical_request"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            canonical_a.pointer("/params/_meta"),
+            Some(&receipt_a["_meta"])
+        );
+        assert_eq!(
+            canonical_b.pointer("/params/_meta"),
+            Some(&receipt_b["_meta"])
+        );
+        println!(
+            "RECEIPT-DISTINGUISHABILITY GREEN key=_meta canonical_sha_a={} canonical_sha_b={}",
+            receipt_a["canonical_request_sha256"].as_str().unwrap(),
+            receipt_b["canonical_request_sha256"].as_str().unwrap()
+        );
+
+        let kernel_commitment = |receipt: &Value| -> String {
+            let step: Value =
+                serde_json::from_str(receipt["emitted_bytes"].as_str().unwrap()).unwrap();
+            let audit: Value = serde_json::from_str(step["audit"].as_str().unwrap()).unwrap();
+            let kernel = audit["request_sha256"].as_str().unwrap();
+            assert_eq!(
+                Some(kernel),
+                receipt["request_sha256"].as_str(),
+                "RAW-HASH-SEAM RED key=_meta: kernel and host request commitments disagree"
+            );
+            kernel.to_owned()
+        };
+        let kernel_a = kernel_commitment(&receipt_a);
+        let kernel_b = kernel_commitment(&receipt_b);
+        let kernel_commitment_changed = kernel_a != kernel_b;
+        assert_eq!(
+            host_projection_changed, kernel_commitment_changed,
+            "HOST-KERNEL-AGREEMENT RED key=_meta: host projection and kernel commitment disagree about identity change"
+        );
+        println!(
+            "HOST-KERNEL-AGREEMENT GREEN key=_meta host_projection_changed={} kernel_request_commitment_changed={} kernel_sha_a={} kernel_sha_b={}",
+            host_projection_changed, kernel_commitment_changed, kernel_a, kernel_b
+        );
+    }
+
+    #[test]
+    fn canonical_request_carries_metadata_in_member_order() {
+        let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
+        let metadata: Value =
+            serde_json::from_str(r#"{"traceparent":"00-a","example.com/invocation":"7"}"#).unwrap();
+        let line = serde_json::to_string(&canonical_request("x", &args, Some(&metadata))).unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2},"_meta":{"traceparent":"00-a","example.com/invocation":"7"}}}"#
         );
     }
 }

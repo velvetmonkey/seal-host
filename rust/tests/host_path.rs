@@ -454,6 +454,88 @@ fn guarded_call(id: u64, sql: &str) -> String {
     )
 }
 
+/// M.1 stage 3 live cross-layer control. The shipped Lean FFI supplies the
+/// audit's raw request commitment; Rust supplies the reader-facing canonical
+/// projection. A metadata-only mutation must move both identities, while the
+/// identical twin must leave both byte strings unchanged.
+#[test]
+fn meta_identity_live_host_projection_and_kernel_commitment_agree() {
+    let mut o = Oracle::spawn_numeric_observer("meta-host-kernel-agreement");
+    let line_a = r#"{"jsonrpc":"2.0","id":71,"method":"tools/call","params":{"name":"numeric.observer","arguments":{"v":1},"_meta":{"example.com/invocation":"a"}}}"#;
+    let line_b = r#"{"jsonrpc":"2.0","id":71,"method":"tools/call","params":{"name":"numeric.observer","arguments":{"v":1},"_meta":{"example.com/invocation":"b"}}}"#;
+
+    for line in [line_a, line_a, line_b] {
+        o.send(line);
+        let response: serde_json::Value = serde_json::from_str(&o.expect_line()).unwrap();
+        assert_eq!(
+            response
+                .pointer("/result/content/0/raw")
+                .and_then(|v| v.as_str()),
+            Some(line),
+            "live metadata control must reach the observer byte-identically"
+        );
+    }
+
+    let receipts = o.receipts();
+    assert_eq!(receipts.len(), 3, "one live receipt per metadata probe");
+    let [receipt_a, receipt_a_twin, receipt_b] = receipts.as_slice() else {
+        unreachable!("receipt count checked above")
+    };
+
+    assert_eq!(
+        receipt_a["canonical_request"], receipt_a_twin["canonical_request"],
+        "LIVE-POSITIVE-TWIN RED key=_meta: identical request projections differ"
+    );
+    assert_eq!(
+        receipt_a["canonical_request_sha256"], receipt_a_twin["canonical_request_sha256"],
+        "LIVE-POSITIVE-TWIN RED key=_meta: identical projection commitments differ"
+    );
+    assert_eq!(
+        receipt_a["request_sha256"], receipt_a_twin["request_sha256"],
+        "LIVE-POSITIVE-TWIN RED key=_meta: identical kernel request commitments differ"
+    );
+
+    let kernel_commitment = |receipt: &serde_json::Value| -> String {
+        let step: serde_json::Value =
+            serde_json::from_str(receipt["emitted_bytes"].as_str().unwrap()).unwrap();
+        let audit: serde_json::Value =
+            serde_json::from_str(step["audit"].as_str().unwrap()).unwrap();
+        let kernel = audit["request_sha256"].as_str().unwrap();
+        assert_eq!(
+            Some(kernel),
+            receipt["request_sha256"].as_str(),
+            "LIVE-RAW-HASH-SEAM RED key=_meta: kernel audit and receipt disagree"
+        );
+        kernel.to_owned()
+    };
+
+    let kernel_a = kernel_commitment(receipt_a);
+    let kernel_b = kernel_commitment(receipt_b);
+    let host_changed =
+        receipt_a["canonical_request_sha256"] != receipt_b["canonical_request_sha256"];
+    let kernel_changed = kernel_a != kernel_b;
+    assert!(
+        host_changed,
+        "LIVE-HOST-PROJECTION RED key=_meta: canonical projection ignored metadata mutation"
+    );
+    assert_eq!(
+        host_changed, kernel_changed,
+        "LIVE-HOST-KERNEL-AGREEMENT RED key=_meta: host projection and shipped kernel disagree about identity change"
+    );
+    assert_eq!(
+        receipt_a["_meta"]["example.com/invocation"], "a",
+        "LIVE-RECEIPT-VISIBILITY RED key=_meta: receipt omitted metadata A"
+    );
+    assert_eq!(
+        receipt_b["_meta"]["example.com/invocation"], "b",
+        "LIVE-RECEIPT-VISIBILITY RED key=_meta: receipt omitted metadata B"
+    );
+    println!(
+        "LIVE-HOST-KERNEL-AGREEMENT GREEN key=_meta positive_twin=byte-identical-projections host_projection_changed={} kernel_request_commitment_changed={} kernel_sha_a={} kernel_sha_b={}",
+        host_changed, kernel_changed, kernel_a, kernel_b
+    );
+}
+
 fn is_block(line: &str) -> bool {
     line.contains("\"isError\":true") && line.contains("approval required: ")
 }
