@@ -10,7 +10,11 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/seal-v1-refusal-ablation.XXXXXX")"
 MUTANT="$SCRATCH/source"
 ARCHIVE="$SCRATCH/source.tar"

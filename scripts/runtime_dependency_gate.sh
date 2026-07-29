@@ -6,14 +6,21 @@ STAGE=${1:?usage: runtime_dependency_gate.sh RELEASE_DIRECTORY}
 BIN="$STAGE/bin/seal-host-rs"
 test -x "$BIN"
 
-if readelf -d "$BIN" "$STAGE"/lib/*.so | grep -E 'RPATH|RUNPATH' | grep -E '/home/|\.lake|mcp-seal|github\.com'; then
-  echo "release has a private or build-workspace runtime path" >&2
-  exit 1
-fi
-if LD_LIBRARY_PATH="$STAGE/lib" ldd "$BIN" | grep -E 'not found|/home/|\.lake|mcp-seal'; then
-  echo "release has an unresolved or private runtime dependency" >&2
-  exit 1
-fi
+READELF_OUTPUT="$(readelf -d "$BIN" "$STAGE"/lib/*.so)"
+while IFS= read -r line; do
+  if [[ "$line" =~ (RPATH|RUNPATH) ]] &&
+     [[ "$line" =~ /home/|\.lake|mcp-seal|github\.com ]]; then
+    echo "release has a private or build-workspace runtime path" >&2
+    exit 1
+  fi
+done <<< "$READELF_OUTPUT"
+LDD_OUTPUT="$(LD_LIBRARY_PATH="$STAGE/lib" ldd "$BIN")"
+while IFS= read -r line; do
+  if [[ "$line" =~ not\ found|/home/|\.lake|mcp-seal ]]; then
+    echo "release has an unresolved or private runtime dependency" >&2
+    exit 1
+  fi
+done <<< "$LDD_OUTPUT"
 set +e
 SMOKE=$(LD_LIBRARY_PATH="$STAGE/lib" "$BIN" 2>&1)
 STATUS=$?

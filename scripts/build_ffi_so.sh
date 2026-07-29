@@ -9,7 +9,11 @@
 # libleanrt.a cannot enter a shared object).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT="$ROOT/.lake/build/lib/libsealffi.so"
 TMP="$ROOT/.lake/build/ffi-archives"
 # Build command resolution: explicit LEANBUILD wins, then a `leanbuild`
@@ -159,7 +163,16 @@ archive_package_ir() {
     exit 1
   fi
   archive="$TMP/lib_${pkg}.a"
-  if [ "$force" = "1" ] || [ ! -f "$archive" ] || [ "$(find "$irdir" -name '*.c.o.export' -newer "$archive" | head -1)" ]; then
+  rebuild=0
+  if [ "$force" = "1" ] || [ ! -f "$archive" ]; then
+    rebuild=1
+  else
+    newer_object="$(find "$irdir" -name '*.c.o.export' -newer "$archive" -print -quit)"
+    if [ -n "$newer_object" ]; then
+      rebuild=1
+    fi
+  fi
+  if [ "$rebuild" = "1" ]; then
     rm -f "$archive"
     # Thin archive built by chunked quick-append (q), then indexed (s) once
     # at the end — replace-mode chunking silently truncated earlier.
@@ -225,7 +238,13 @@ nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
 # false-fail correct artifacts the way a blanket "no undefined symbols"
 # nm check would. Anything still unresolved means a module object was
 # dropped from the link — refuse to call that "built".
-UNRESOLVED="$(ldd -r "$OUT" 2>&1 | grep -F 'undefined symbol' || true)"
+LDD_OUTPUT="$(ldd -r "$OUT" 2>&1)"
+UNRESOLVED=""
+while IFS= read -r line; do
+  if [[ "$line" == *"undefined symbol"* ]]; then
+    UNRESOLVED+="${UNRESOLVED:+$'\n'}$line"
+  fi
+done <<< "$LDD_OUTPUT"
 if [ -n "$UNRESOLVED" ]; then
   echo "FATAL: $OUT has unresolved symbols after load-time resolution:" >&2
   echo "$UNRESOLVED" | head -20 >&2

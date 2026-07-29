@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION=${1:?usage: package_release.sh VERSION OUTPUT_DIR}
 OUTPUT=${2:?usage: package_release.sh VERSION OUTPUT_DIR}
 ARCH=$(uname -m)
