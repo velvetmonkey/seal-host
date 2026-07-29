@@ -4,6 +4,7 @@
 //! (no test-mirror differential). The binary entry point is `main.rs`.
 
 pub mod a3;
+pub mod adapter_revision;
 pub mod authorization_decision;
 pub(crate) mod ed25519;
 pub mod envelope_v23;

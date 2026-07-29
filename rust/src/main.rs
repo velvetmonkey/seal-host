@@ -41,12 +41,13 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use seal_host_rs::a3;
+use seal_host_rs::adapter_revision::McpRevisionSession;
 use seal_host_rs::authorization_decision::{
     request_parts, sha256_hex, ApprovalIdentity, AuthorizationDecisionWriter, DecisionInput,
     SignedConfig,
 };
 use seal_host_rs::envelope_v23::{
-    self, AdapterClaim, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
+    self, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
 };
 use seal_host_rs::health::HealthServer;
 use seal_host_rs::lean;
@@ -1134,6 +1135,10 @@ fn run() -> i32 {
     };
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
     let mut approval_context_drop_counter: u64 = 0;
+    // M.2/M.2a: select the transparent MCP era from the received entry-call
+    // shape. There is intentionally no legacy default; a V2.3 mediated call
+    // before selection (or after conflicting entry calls) refuses below.
+    let mut mcp_revision_session = McpRevisionSession::default();
     // ApprovalRecord v2 is admitted only while an exact-frame challenge for
     // its target is outstanding. One slot is enough for this lockstep stdio
     // protocol; a later block replaces it and a forward clears it.
@@ -1364,6 +1369,10 @@ fn run() -> i32 {
                 continue;
             }
         }
+        // Observe only the entry method. M.7 owns per-request validation of
+        // protocolVersion/clientCapabilities and its JSON-RPC error mapping.
+        // Observation never changes the bytes sent to or returned by child.
+        mcp_revision_session.observe_received_call(line);
         // Numeric agreement is independent of the parse-cost guard already
         // inside `seal_host_classify`: ask the pinned Lean kernel for the
         // exact first literal BEFORE the classify fast path can admit this
@@ -1463,14 +1472,27 @@ fn run() -> i32 {
                     }
                     continue;
                 };
-                let deployed_adapter = AdapterClaim::deployed_mcp();
+                let actual_revision = match mcp_revision_session.actual_revision() {
+                    Ok(revision) => revision,
+                    Err(reason) => {
+                        eprintln!(
+                            "{}",
+                            json!({"error": format!("V2.3 envelope refused: {reason}")})
+                        );
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let actual_adapter = actual_revision.adapter_claim();
                 match envelope_v23::verify(
                     envelope,
                     line,
                     &EnvelopeHostContext {
                         authority_hex: &args.pubkey,
                         session,
-                        adapter: &deployed_adapter,
+                        adapter: &actual_adapter,
                         kernel_config: &kernel_config,
                     },
                 ) {

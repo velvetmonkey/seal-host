@@ -28,6 +28,16 @@ class McpEraDeclarationsTest(unittest.TestCase):
         for name, eras in mcp_eras.DEMO_ERAS.items():
             self.assertIn(mcp_eras.McpEra.MCP_2025, eras, name)
 
+    def test_discovery_revisions_are_the_ruled_set(self):
+        self.assertEqual(
+            mcp_eras.SUPPORTED_REVISIONS,
+            ("2025-06-18", "2026-07-28"),
+        )
+        self.assertEqual(
+            len(mcp_eras.SUPPORTED_REVISIONS),
+            len(set(mcp_eras.SUPPORTED_REVISIONS)),
+        )
+
     def test_2025_request_retains_legacy_shape(self):
         request = mcp_eras.request(
             mcp_eras.McpEra.MCP_2025,

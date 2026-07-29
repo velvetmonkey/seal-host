@@ -28,6 +28,11 @@ class McpEra(str, Enum):
         }[self]
 
 
+# Discovery capability only. The signed effect continues to carry one
+# `McpEra.revision`, selected for the call; this set never enters a signature.
+SUPPORTED_REVISIONS: tuple[str, ...] = tuple(era.revision for era in McpEra)
+
+
 # This is the harness-readable declaration of which wire contract each checked-in
 # golden-path program speaks. Adding a demo without declaring it is a test failure.
 DEMO_ERAS: dict[str, tuple[McpEra, ...]] = {
