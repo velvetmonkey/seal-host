@@ -501,15 +501,25 @@ function checkIssuedTimeUnit(ctx, row) {
   }
   const main = fs.readFileSync(mainFile, "utf8");
   const envelope = fs.readFileSync(envelopeFile, "utf8");
+  const envelopeCode = stripSourceComments(envelope, ".lean");
+  const flattenedEnvelopeCode = envelopeCode.replaceAll("\n", " ");
   const actual = [];
   if (main.includes("toMillisecondsSinceUnixEpoch")) {
     actual.push("Unix-epoch milliseconds");
   }
-  if (
+  const directTimePair =
     /u64be e\.issuedAt\s*\+\+\s*u64be e\.expiresAt/.test(
-      envelope.replaceAll("\n", " "),
-    )
-  ) {
+      flattenedEnvelopeCode,
+    );
+  const unixSecondsWrapper =
+    /def\s+unixSecondsBE\s*\(\s*t\s*:\s*UnixSeconds\s*\)\s*:\s*ByteArray\s*:=\s*u64be\s+t\b/.test(
+      flattenedEnvelopeCode,
+    );
+  const wrappedTimePair =
+    /unixSecondsBE e\.issuedAt\s*\+\+\s*unixSecondsBE e\.expiresAt/.test(
+      flattenedEnvelopeCode,
+    );
+  if (directTimePair || (unixSecondsWrapper && wrappedTimePair)) {
     actual.push("u64be(issuedAt), u64be(expiresAt)");
   }
   if (actual.length !== 2) {
