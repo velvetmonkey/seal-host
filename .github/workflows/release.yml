@@ -8,21 +8,41 @@ on:
 permissions:
   contents: read
 
+# Control steps report independently and aggregate before any irreversible
+# publication. A failed fleet gate does not hide build evidence, but it still
+# prevents the publish job from starting.
 jobs:
   fleet-gate:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions/setup-node@v7.0.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         with: { node-version: "22" }
-      - name: Gate the generated kernel-hash footprint
+      - id: control_03
+        continue-on-error: true
+        name: Gate the generated kernel-hash footprint
         run: node scripts/kernel_hash_footprint.mjs --check
-      - name: Prove every locked repository is scanned
+      - id: control_04
+        continue-on-error: true
+        name: Prove every locked repository is scanned
         run: node --test test/kernel_hash_footprint_meta.test.mjs
-      - name: Gate the locked verifier fleet
+      - id: control_05
+        continue-on-error: true
+        name: Gate the locked verifier fleet
         run: python3 scripts/fleet_release_gate.py
 
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   build:
+    if: ${{ !cancelled() }}
     needs: fleet-gate
     name: linux-${{ matrix.arch }}
     strategy:
@@ -42,48 +62,81 @@ jobs:
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
         with: { fetch-depth: 0 }
-      - name: Require an exact release tag and private build access
+      - id: control_02
+        continue-on-error: true
+        name: Require an exact release tag and private build access
         run: |
           test "${GITHUB_REF_NAME}" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml | head -1)"
           test -n "$SEAL_CI_READ_TOKEN"
-      - name: Configure private build dependency access
+      - id: control_03
+        continue-on-error: true
+        name: Configure private build dependency access
         run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         with: { use-github-cache: false, build: false }
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_05
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: "1.96.0", cache: false }
-      - name: Install release tooling
+      - id: control_06
+        continue-on-error: true
+        name: Install release tooling
         run: sudo apt-get update && sudo apt-get install -y patchelf
-      - run: test -d .lake/packages/mcp-seal || lake update
-      - run: bash .lake/packages/mcp-seal/c/build.sh
-      - run: lake build +Ffi:c.o.export
-      - run: scripts/build_ffi_so.sh
-      - run: cargo build --locked --release --bins
+      - id: control_07
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_08
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_09
+        continue-on-error: true
+        run: lake build +Ffi:c.o.export
+      - id: control_10
+        continue-on-error: true
+        run: scripts/build_ffi_so.sh
+      - id: control_11
+        continue-on-error: true
+        run: cargo build --locked --release --bins
         working-directory: rust
-      - run: python3 scripts/release_policy_gate.py
-      - name: Package the complete runtime closure
+      - id: control_12
+        continue-on-error: true
+        run: python3 scripts/release_policy_gate.py
+      - id: control_13
+        continue-on-error: true
+        name: Package the complete runtime closure
         run: scripts/package_release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"
-      - name: Build and smoke-test the non-root container
+      - id: control_14
+        continue-on-error: true
+        name: Build and smoke-test the non-root container
         run: |
           stage="$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
           docker build -f deploy/container/Dockerfile.release -t "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}" "$stage"
           test "$(docker image inspect --format '{{.Config.User}}' "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}")" = "65532:65532"
-      - name: Generate CycloneDX SBOM
+      - id: control_15
+        continue-on-error: true
+        name: Generate CycloneDX SBOM
         run: |
           cargo install cargo-cyclonedx --locked
           cargo cyclonedx --format json --override-filename seal-host-rust.cdx
           cp seal-host-rust.cdx.json "$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}.cdx.json"
         working-directory: rust
-      - name: Attest package and SBOM provenance
-        id: attest
+      - id: attest
+        continue-on-error: true
+        name: Attest package and SBOM provenance
         uses: actions/attest@v4
         with:
           subject-path: |
             ${{ runner.temp }}/release/*.tar.gz
             ${{ runner.temp }}/release/*.cdx.json
-      - name: Verify emitted attestations and reject a tampered subject
+      - id: control_17
+        continue-on-error: true
+        name: Verify emitted attestations and reject a tampered subject
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -107,7 +160,9 @@ jobs:
             exit 1
           fi
           echo "PASS tampered attestation subject rejected"
-      - uses: actions/upload-artifact@v7
+      - id: control_18
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: seal-host-${{ github.ref_name }}-linux-${{ matrix.arch }}
           path: |
@@ -115,20 +170,46 @@ jobs:
             ${{ runner.temp }}/release/*.sha256
             ${{ runner.temp }}/release/*.cdx.json
 
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   publish:
-    needs: build
+    needs:
+      - fleet-gate
+      - build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - name: Require the promoted moving v1 Action tag
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Require the promoted moving v1 Action tag
         run: |
           actual=$(git ls-remote https://github.com/velvetmonkey/seal-verify-action.git refs/tags/v1 | awk '{print $1}')
           test "$actual" = "81077e5ee2c042c17ff73de2c00670d4857d7cee"
-      - uses: actions/download-artifact@v8
+      - id: control_03
+        continue-on-error: true
+        uses: actions/download-artifact@v8
         with: { path: release, merge-multiple: true }
-      - name: Consolidate SHA-256 checksums
+      - id: control_04
+        continue-on-error: true
+        name: Consolidate SHA-256 checksums
         run: cd release && sha256sum *.tar.gz *.cdx.json > SHA256SUMS
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
+      # Publication is an effect, not a control. It runs only after every
+      # pre-publication control above and both prerequisite jobs succeeded.
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}

@@ -27,7 +27,7 @@ def main() -> int:
     controls = {
         name: value
         for name, value in steps.items()
-        if name.startswith("control_")
+        if name.startswith("control_") or name == "attest"
     }
     if not controls:
         print("::error::no control results were reported; refusing to pass vacuously")

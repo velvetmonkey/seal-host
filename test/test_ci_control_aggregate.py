@@ -51,6 +51,17 @@ class CiControlAggregateTests(unittest.TestCase):
         self.assertIn("control_01", result.stdout)
         self.assertIn("1 failed", result.stdout)
 
+    def test_semantic_attestation_id_is_aggregated(self) -> None:
+        result = self.run_aggregate(
+            {
+                "control_15": {"outcome": "success", "conclusion": "success"},
+                "attest": {"outcome": "failure", "conclusion": "success"},
+                "control_17": {"outcome": "success", "conclusion": "success"},
+            }
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("attest", result.stdout)
+
     def test_missing_or_vacuous_results_fail_closed(self) -> None:
         for steps in (None, {}, {"setup": {"outcome": "success"}}):
             with self.subTest(steps=steps):

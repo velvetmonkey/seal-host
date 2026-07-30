@@ -13,6 +13,8 @@ WORKFLOWS = (
     ROOT / ".github/workflows/ci.yml",
     ROOT / ".github/workflows/security.yml",
     ROOT / ".github/workflows/golden-path.yml",
+    ROOT / ".github/workflows/public-export.yml",
+    ROOT / ".github/workflows/release.yml",
 )
 AGGREGATE_NAME = "Require every isolated CI step to pass"
 
@@ -59,7 +61,14 @@ class CiControlReportingTests(unittest.TestCase):
                 self.assertTrue(jobs, f"no jobs parsed from {workflow}")
                 for job, steps in jobs.items():
                     with self.subTest(workflow=workflow.name, job=job):
-                        aggregate = "\n".join(steps[-1])
+                        reporting_steps = steps
+                        if workflow.name == "release.yml" and job == "publish":
+                            publication = "\n".join(steps[-1])
+                            self.assertIn("name: Publish immutable release assets", publication)
+                            self.assertNotIn("continue-on-error", publication)
+                            reporting_steps = steps[:-1]
+
+                        aggregate = "\n".join(reporting_steps[-1])
                         self.assertIn(f"name: {AGGREGATE_NAME}", aggregate)
                         self.assertIn("if: ${{ always() }}", aggregate)
                         self.assertIn("SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}", aggregate)
@@ -67,9 +76,11 @@ class CiControlReportingTests(unittest.TestCase):
                         self.assertNotIn("continue-on-error", aggregate)
 
                         ids: list[str] = []
-                        for step in steps[:-1]:
+                        for step in reporting_steps[:-1]:
                             text = "\n".join(step)
-                            match = re.search(r"^\s*- id: (control_[0-9]+)$", text, re.MULTILINE)
+                            match = re.search(
+                                r"^\s*- id: (control_[0-9]+|attest)$", text, re.MULTILINE
+                            )
                             self.assertIsNotNone(match, text)
                             ids.append(match.group(1))
                             self.assertIn("continue-on-error: true", text)
@@ -87,12 +98,29 @@ class CiControlReportingTests(unittest.TestCase):
                 'test -n "$SEAL_CI_READ_TOKEN" || {',
                 "exit 1",
             ),
+            "public-export.yml": (
+                'run: test -n "$SEAL_CI_READ_TOKEN"',
+            ),
+            "release.yml": (
+                'test -n "$SEAL_CI_READ_TOKEN"',
+            ),
         }
         for workflow in WORKFLOWS:
             text = workflow.read_text(encoding="utf-8")
             for required in expected[workflow.name]:
                 with self.subTest(workflow=workflow.name, required=required):
                     self.assertIn(required, text)
+
+    def test_release_build_reports_after_fleet_failure_but_publish_stays_gated(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertRegex(
+            workflow,
+            r"(?m)^  build:\n    if: \$\{\{ !cancelled\(\) \}\}\n    needs: fleet-gate$",
+        )
+        self.assertRegex(
+            workflow,
+            r"(?m)^  publish:\n    needs:\n      - fleet-gate\n      - build$",
+        )
 
 
 if __name__ == "__main__":
