@@ -5,6 +5,9 @@ name: Golden Path - deterministic shell + Postgres + deploy + token governor + t
 on:
   push:
 
+# Every step reports independently. The final aggregate converts any recorded
+# failure back into a failing job; never remove that aggregate while
+# continue-on-error is present.
 jobs:
   deterministic-shell:
     runs-on: ubuntu-latest
@@ -15,11 +18,15 @@ jobs:
       SEAL_POSTGRES_IMAGE: postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
       SEAL_ASSURANCE_KIT_ROOT: ${{ github.workspace }}/seal-assurance-kit
     steps:
-      - uses: actions/checkout@v6.0.3
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
 
-      - name: Require private dependency access
+      - id: control_02
+        continue-on-error: true
+        name: Require private dependency access
         run: |
           test -n "$SEAL_CI_READ_TOKEN" || {
             echo "::error::SEAL_CI_READ_TOKEN is required; deterministic acceptance was not run."
@@ -33,7 +40,9 @@ jobs:
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
       # by hand. bd1cf89 carries kernel d7d81e27 and descends from the current
       # 7-kernel policy bundle lineage.
-      - name: Check out pinned assurance kit
+      - id: control_03
+        continue-on-error: true
+        name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
@@ -41,18 +50,24 @@ jobs:
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
-      - name: Configure private Lake dependency auth
+      - id: control_04
+        continue-on-error: true
+        name: Configure private Lake dependency auth
         run: |
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
 
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_05
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         with:
           use-github-cache: false
           build: false
 
-      - name: Changed proven Lean surface must re-prove axiom-clean
+      - id: control_06
+        continue-on-error: true
+        name: Changed proven Lean surface must re-prove axiom-clean
         run: |
           PUSH_BASE="${{ github.event.before }}"
           if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
@@ -71,25 +86,37 @@ jobs:
           lake exe host_unit_tests
           lake exe dx_surface_tests
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_07
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false
 
-      - uses: actions/setup-node@v7.0.0
+      - id: control_08
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
 
-      - name: Stage pinned container image
+      - id: control_09
+        continue-on-error: true
+        name: Stage pinned container image
         run: docker pull "$SEAL_GOLDEN_PATH_IMAGE"
 
-      - name: Stage pinned Postgres image
+      - id: control_10
+        continue-on-error: true
+        name: Stage pinned Postgres image
         run: docker pull "$SEAL_POSTGRES_IMAGE"
 
-      - name: Doctrine spine unit checks
+      - id: control_11
+        continue-on-error: true
+        name: Doctrine spine unit checks
         run: python3 -m unittest discover -s demo/tests -v
 
-      - name: Deterministic shell acceptance (no model, no operator auth)
+      - id: control_12
+        continue-on-error: true
+        name: Deterministic shell acceptance (no model, no operator auth)
         run: |
           C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
           ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
@@ -103,10 +130,14 @@ jobs:
 
       # Runs after C1 because golden_path.py's named-target build is what
       # produces rust/target/debug/seal-host-rs on the runner.
-      - name: Policy schema anti-drift gate (codec single source)
+      - id: control_13
+        continue-on-error: true
+        name: Policy schema anti-drift gate (codec single source)
         run: ./scripts/policy_schema_gate.sh
 
-      - name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
+      - id: control_14
+        continue-on-error: true
+        name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
         run: |
           C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"
           ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
@@ -120,7 +151,9 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c2.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c2.txt"
 
-      - name: Deterministic token-governor S+B acceptance (no model, no operator auth)
+      - id: control_15
+        continue-on-error: true
+        name: Deterministic token-governor S+B acceptance (no model, no operator auth)
         run: |
           C4_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c4"
           ./demo/run c4 --output-dir "$C4_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c4.txt"
@@ -148,7 +181,9 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c4.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c4.txt"
 
-      - name: Deterministic deploy S+C+L acceptance (no model, no operator auth)
+      - id: control_16
+        continue-on-error: true
+        name: Deterministic deploy S+C+L acceptance (no model, no operator auth)
         run: |
           C3_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c3"
           ./demo/run c3 --output-dir "$C3_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c3.txt"
@@ -197,7 +232,9 @@ jobs:
           grep -F "deploy executed exactly once; capability 1->0" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c3.txt"
 
-      - name: Deterministic replicated-store S+V convergence acceptance (no model, no operator auth)
+      - id: control_17
+        continue-on-error: true
+        name: Deterministic replicated-store S+V convergence acceptance (no model, no operator auth)
         run: |
           C5_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c5"
           ./demo/run c5 --output-dir "$C5_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c5.txt"
@@ -241,7 +278,9 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c5.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c5.txt"
 
-      - name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
+      - id: control_18
+        continue-on-error: true
+        name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
         run: |
           C6_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c6"
           ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
@@ -288,7 +327,9 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c6.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c6.txt"
 
-      - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
+      - id: control_19
+        continue-on-error: true
+        name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
           python3 demo/golden_path.py filesystem --deterministic --era 2025 | tee /tmp/golden-path-filesystem.txt
           grep -F "MCP_DEMO_ERA=2025 revision=2025-06-18 entry=initialize" /tmp/golden-path-filesystem.txt
@@ -322,7 +363,9 @@ jobs:
           grep -F "ERA_ATTRIBUTION=2026 declared=2026-07-28 observed=server/discover; alternate-entry-count=0" /tmp/golden-path-filesystem-2026.txt
           grep -F "request _meta equals receipt._meta and effect_view.effect._meta" /tmp/golden-path-filesystem-2026.txt
 
-      - name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
+      - id: control_20
+        continue-on-error: true
+        name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -334,3 +377,9 @@ jobs:
             ${{ runner.temp }}/seal-doctrine-c4
             ${{ runner.temp }}/seal-doctrine-c5
             ${{ runner.temp }}/seal-doctrine-c6
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

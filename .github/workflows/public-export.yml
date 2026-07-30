@@ -8,38 +8,71 @@ permissions:
   contents: read
   id-token: write
 
+# Every step reports independently. The final aggregate converts any recorded
+# failure back into a failing job; never remove that aggregate while
+# continue-on-error is present.
 jobs:
   export:
     runs-on: ubuntu-24.04
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
         with: { fetch-depth: 0 }
-      - name: Require private build dependency access
+      - id: control_02
+        continue-on-error: true
+        name: Require private build dependency access
         run: test -n "$SEAL_CI_READ_TOKEN"
-      - name: Configure private build dependency access
+      - id: control_03
+        continue-on-error: true
+        name: Configure private build dependency access
         run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         with: { use-github-cache: false, build: false }
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_05
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: "1.96.0", cache: false }
-      - uses: actions/setup-node@v7.0.0
+      - id: control_06
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         with: { node-version: "22" }
-      - uses: sigstore/cosign-installer@v4.1.2
+      - id: control_07
+        continue-on-error: true
+        uses: sigstore/cosign-installer@v4.1.2
         with: { cosign-release: v3.0.6 }
-      - run: cargo install cargo-cyclonedx --locked
-      - name: Run and verify first export
+      - id: control_08
+        continue-on-error: true
+        run: cargo install cargo-cyclonedx --locked
+      - id: control_09
+        continue-on-error: true
+        name: Run and verify first export
         run: |
           scripts/export_public.sh "$RUNNER_TEMP/public-export-a"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-a"
-      - name: Run and verify independent second export
+      - id: control_10
+        continue-on-error: true
+        name: Run and verify independent second export
         run: |
           scripts/export_public.sh "$RUNNER_TEMP/public-export-b"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-b"
-      - name: Compare deterministic payloads across separate runs
+      - id: control_11
+        continue-on-error: true
+        name: Compare deterministic payloads across separate runs
         run: scripts/compare_public_exports.sh "$RUNNER_TEMP/public-export-a" "$RUNNER_TEMP/public-export-b"
-      - uses: actions/upload-artifact@v7
+      - id: control_12
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: signed-public-export-${{ github.sha }}
           path: ${{ runner.temp }}/public-export-a
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

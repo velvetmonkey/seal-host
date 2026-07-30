@@ -6,6 +6,9 @@ on:
   push:
   pull_request:
 
+# Every step in each job reports independently. The final aggregate converts
+# any recorded failure back into a failing job; never remove that aggregate
+# while continue-on-error is present.
 jobs:
   kernel-hash-footprint:
     runs-on: ubuntu-latest
@@ -14,112 +17,190 @@ jobs:
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions/setup-node@v7.0.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
       # The footprint gate fetches every repository in the fleet lock, and five
       # of the six are private. Without credentials each fetch dies with
       # "could not read Username", the gate reports UNKNOWN REPOSITORY and
       # refuses to write a manifest. Same two steps as public-export.yml.
-      - name: Require private build dependency access
+      - id: control_03
+        continue-on-error: true
+        name: Require private build dependency access
         run: test -n "$SEAL_CI_READ_TOKEN"
-      - name: Configure private build dependency access
+      - id: control_04
+        continue-on-error: true
+        name: Configure private build dependency access
         run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
-      - name: Gate the generated kernel-hash footprint
+      - id: control_05
+        continue-on-error: true
+        name: Gate the generated kernel-hash footprint
         run: node scripts/kernel_hash_footprint.mjs --check
-      - name: Prove every locked repository is scanned
+      - id: control_06
+        continue-on-error: true
+        name: Prove every locked repository is scanned
         run: node --test test/kernel_hash_footprint_meta.test.mjs
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   build:
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Skip private Lean build without dependency token
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Skip private Lean build without dependency token
         if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
         run: |
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean build."
-      - name: Configure private Lake dependency auth
+      - id: control_03
+        continue-on-error: true
+        name: Configure private Lake dependency auth
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           use-github-cache: false
           build: false
-      - run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_05
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - name: PINS ledger anti-drift gate
+      - id: control_06
+        continue-on-error: true
+        name: PINS ledger anti-drift gate
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: node scripts/pins_gate.mjs --check
-      - run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_07
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake build
+      - id: control_08
+        continue-on-error: true
+        run: lake build
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
+      - id: control_09
+        continue-on-error: true
+        run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
+      - id: control_10
+        continue-on-error: true
+        run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe host_unit_tests
+      - id: control_11
+        continue-on-error: true
+        run: lake exe host_unit_tests
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe dx_surface_tests
+      - id: control_12
+        continue-on-error: true
+        run: lake exe dx_surface_tests
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe policy_server_identity_tests
+      - id: control_13
+        continue-on-error: true
+        run: lake exe policy_server_identity_tests
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe sha256_selfcheck
+      - id: control_14
+        continue-on-error: true
+        run: lake exe sha256_selfcheck
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   rust-conformance:
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Skip private conformance without dependency token
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Skip private conformance without dependency token
         if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
         run: |
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean/Rust conformance."
-      - name: Configure private Lake dependency auth
+      - id: control_03
+        continue-on-error: true
+        name: Configure private Lake dependency auth
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_04
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           toolchain: "1.96.0"
           components: rustfmt, clippy
           cache: false
-      - run: cargo fmt --check
+      - id: control_05
+        continue-on-error: true
+        run: cargo fmt --check
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_06
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           use-github-cache: false
           build: false
-      - uses: actions/setup-node@v7.0.0
+      - id: control_07
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           node-version: "22"
-      - name: Verify tracked wasm conformance artifact is present
+      - id: control_08
+        continue-on-error: true
+        name: Verify tracked wasm conformance artifact is present
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: test -s wasm-spike/verified/seal.js && test -s wasm-spike/verified/seal.wasm
-      - run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_09
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_10
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake build +Ffi:c.o.export
+      - id: control_11
+        continue-on-error: true
+        run: lake build +Ffi:c.o.export
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: scripts/build_ffi_so.sh
+      - id: control_12
+        continue-on-error: true
+        run: scripts/build_ffi_so.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: cargo clippy --all-targets -- -D warnings
+      - id: control_13
+        continue-on-error: true
+        run: cargo clippy --all-targets -- -D warnings
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
       # --no-fail-fast: a test binary that dies on a signal instead of
@@ -128,36 +209,58 @@ jobs:
       # (observed: 44 of 60 reported). The libunwind/libgcc DT_NEEDED tie that
       # caused it is fixed in build.rs; this is the belt to its braces, so a
       # partial run can never again be mistaken for a whole one.
-      - run: cargo test --no-fail-fast
+      - id: control_14
+        continue-on-error: true
+        run: cargo test --no-fail-fast
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - run: cargo build --release --bins
+      - id: control_15
+        continue-on-error: true
+        run: cargo build --release --bins
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - run: lake build
+      - id: control_16
+        continue-on-error: true
+        run: lake build
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake build downstream_parser_oracle
+      - id: control_17
+        continue-on-error: true
+        run: lake build downstream_parser_oracle
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - name: Build debug Rust host for Python integration entrypoint
+      - id: control_18
+        continue-on-error: true
+        name: Build debug Rust host for Python integration entrypoint
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: cargo build --bins
         working-directory: rust
-      - name: Prove server/discover request and response byte preservation
+      - id: control_19
+        continue-on-error: true
+        name: Prove server/discover request and response byte preservation
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: python3 test/integration/test_discover_preservation.py
-      - name: Run Python host integration entrypoints
+      - id: control_20
+        continue-on-error: true
+        name: Run Python host integration entrypoints
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
           set -euo pipefail
           python3 test/integration/test_host.py
           python3 test/integration/test_host_rs.py
-      - run: lake exe honesty_matrix > /tmp/honesty.json
+      - id: control_21
+        continue-on-error: true
+        run: lake exe honesty_matrix > /tmp/honesty.json
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
+      - id: control_22
+        continue-on-error: true
+        run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: node scripts/conformance_bridge.mjs --wasm
+      - id: control_23
+        continue-on-error: true
+        run: node scripts/conformance_bridge.mjs --wasm
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - name: Exercise deployed production startup and record emission
+      - id: control_24
+        continue-on-error: true
+        name: Exercise deployed production startup and record emission
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: node scripts/production_startup_conformance.mjs
       # Three-way differential at CI volume: native .so ≡ pinned seal.wasm ≡
@@ -166,10 +269,14 @@ jobs:
       # curated families ≈ 30 s wall measured locally. This is differential
       # EVIDENCE over the cases tried — never a universal binary≡model claim
       # (Lane C stays a trusted compile). Soak knobs: rust/tests/three_way.rs.
-      - run: SEAL_THREE_WAY_CASES=25000 cargo test --test three_way three_way_agreement -- --nocapture
+      - id: control_25
+        continue-on-error: true
+        run: SEAL_THREE_WAY_CASES=25000 cargo test --test three_way three_way_agreement -- --nocapture
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - run: bash scripts/receipt_demo.sh
+      - id: control_26
+        continue-on-error: true
+        run: bash scripts/receipt_demo.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       # V2.3 byte-twin guard, named so nobody has to trust that the generic
       # `cargo test` above covered it: the Rust encoder must reproduce the
@@ -190,11 +297,21 @@ jobs:
       #   error: object file '.../SealV2/EffectEnvelope.olean' ... does not exist
       # which reads like a byte divergence and is not one. Observed on main at
       # 23c3c03 (RUN twin-red-2026-07-26).
-      - run: lake build SealV2.EffectEnvelope
+      - id: control_27
+        continue-on-error: true
+        run: lake build SealV2.EffectEnvelope
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: cargo test --test envelope_v23_twin
+      - id: control_28
+        continue-on-error: true
+        run: cargo test --test envelope_v23_twin
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   # Runs on EVERY push and pull request, with no dependency token and no
   # Lean/cargo toolchain: the `cargo test --test envelope_v23_twin` step above
@@ -211,54 +328,106 @@ jobs:
       # Explicit belt-and-braces signal: --refreeze is never legitimate here.
       CONTRACT_FREEZE_CI: "1"
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions/setup-python@v6.0.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        uses: actions/setup-python@v6.0.0
         with:
           python-version: "3.12.11"
-      - name: Install key-generation test dependency
+      - id: control_03
+        continue-on-error: true
+        name: Install key-generation test dependency
         run: python3 -m pip install cryptography==45.0.5
-      - name: PINS gated-row registry matches the ledger, checker, and CI
+      - id: control_04
+        continue-on-error: true
+        name: PINS gated-row registry matches the ledger, checker, and CI
         run: node --test test/pins_gate_meta.test.mjs
-      - name: Rebased pin baseline matches live consumers
+      - id: control_05
+        continue-on-error: true
+        name: Rebased pin baseline matches live consumers
         run: python3 test/test_rebased_pin_baseline.py -v
-      - name: Documented key generation fails closed on import failure
+      - id: control_06
+        continue-on-error: true
+        name: Documented key generation fails closed on import failure
         run: python3 -m unittest discover -s test -p 'test_key_generation.py' -v
-      - name: V2.3 contract must match its review baseline and freeze manifest
+      - id: control_07
+        continue-on-error: true
+        name: V2.3 contract must match its review baseline and freeze manifest
         run: python3 scripts/contract_freeze_gate.py
-      - name: Freeze gate fail-closed self-tests
+      - id: control_08
+        continue-on-error: true
+        name: Freeze gate fail-closed self-tests
         run: python3 -m unittest discover -s test -p 'test_contract_freeze_gate.py' -v
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   cargo-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings
+      - id: control_03
+        continue-on-error: true
+        run: cargo install cargo-audit --locked
+      - id: control_04
+        continue-on-error: true
+        run: cargo audit --deny warnings
         working-directory: rust
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   rust-sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false
-      - run: cargo install cargo-cyclonedx --locked
-      - name: Generate CycloneDX SBOM
+      - id: control_03
+        continue-on-error: true
+        run: cargo install cargo-cyclonedx --locked
+      - id: control_04
+        continue-on-error: true
+        name: Generate CycloneDX SBOM
         run: |
           cargo cyclonedx --format json --override-filename seal-host-rust.cdx
           mkdir -p target/sbom
           mv seal-host-rust.cdx.json target/sbom/seal-host-rust.cdx.json
         working-directory: rust
-      - uses: actions/upload-artifact@v7
+      - id: control_05
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: seal-host-rust-sbom
           path: rust/target/sbom/seal-host-rust.cdx.json
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   release-evidence:
     if: ${{ always() }}
@@ -272,9 +441,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Require every security-relevant job to succeed
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Require every security-relevant job to succeed
         env:
           RELEASE_EVIDENCE_NEEDS: ${{ toJSON(needs) }}
           RELEASE_EVIDENCE_PRIVATE_TOKEN_CONFIGURED: ${{ secrets.SEAL_CI_READ_TOKEN != '' }}
         run: python3 scripts/release_evidence_gate.py
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
