@@ -189,7 +189,7 @@ jobs:
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→1 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→0 consumed=true" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=0→0 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
-          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 3
+          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 6
           grep -F "TRACE-CONTROL quorum-met expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "TRACE-CONTROL drop-deploy-ok expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
@@ -208,7 +208,7 @@ jobs:
           node demo/trace_replay.cjs "$C5_ARTIFACT/trace-transcript.json" \
             --kit "$SEAL_ASSURANCE_KIT_ROOT"
           if node demo/trace_replay.cjs "$C5_ARTIFACT/trace-transcript.json" \
-            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-sequence 2; then
             echo "::error::dropping the C5 first call unexpectedly preserved transcript bytes"
             exit 1
           fi
@@ -252,7 +252,7 @@ jobs:
           node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
             --kit "$SEAL_ASSURANCE_KIT_ROOT"
           if node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
-            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-sequence 2; then
             echo "::error::dropping the Temporal trigger unexpectedly preserved transcript bytes"
             exit 1
           fi
@@ -308,7 +308,7 @@ jobs:
           grep -F "path escape rejection" /tmp/golden-path-filesystem.txt
           grep -F "PATH_REJECTED both before filesystem access" /tmp/golden-path-filesystem.txt
           grep -F "approved one-shot real write" /tmp/golden-path-filesystem.txt
-          grep -F "replayed_nonce BLOCK" /tmp/golden-path-filesystem.txt
+          grep -F "v2 context-mismatch replay BLOCK" /tmp/golden-path-filesystem.txt
           grep -F "accumulated Budget cap" /tmp/golden-path-filesystem.txt
           grep -F "Budget stateful evidence" /tmp/golden-path-filesystem.txt
           grep -F "fresh write receipt verification" /tmp/golden-path-filesystem.txt
