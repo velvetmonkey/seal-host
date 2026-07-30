@@ -206,6 +206,11 @@ jobs:
       CONTRACT_FREEZE_CI: "1"
     steps:
       - uses: actions/checkout@v6.0.3
+      - uses: actions/setup-python@v6.0.0
+        with:
+          python-version: "3.12.11"
+      - name: Install key-generation test dependency
+        run: python3 -m pip install cryptography==45.0.5
       - name: PINS gated-row registry matches the ledger, checker, and CI
         run: node --test test/pins_gate_meta.test.mjs
       - name: Rebased pin baseline matches live consumers

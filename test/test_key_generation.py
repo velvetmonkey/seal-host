@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import shutil
 import stat
@@ -19,9 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GENERATOR = Path(
-    os.environ.get("SEAL_KEYGEN_SCRIPT", str(ROOT / "scripts" / "generate_keys.py"))
-).resolve()
+GENERATOR = ROOT / "scripts" / "generate_keys.py"
 KEY_FILENAMES = (
     "approval.key",
     "config.key",
@@ -103,38 +100,88 @@ class KeyGenerationTests(unittest.TestCase):
                 )
             self.assertEqual(list(output_dir.glob(".seal-keygen-*")), [])
 
-    def test_real_generator_emits_matching_ed25519_keypairs(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="seal-keygen-real-") as directory:
-            output_dir = Path(directory) / ".seal"
+    def test_private_key_mode_observation_distinguishes_0644(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="seal-keygen-mode-check-") as directory:
+            fixture = Path(directory)
+            script = self._copy_generator(fixture)
+            source = script.read_text(encoding="utf-8")
+            private_mode_setting = "os.chmod(path, 0o600)"
+            self.assertEqual(source.count(private_mode_setting), 1)
+            script.write_text(
+                source.replace(private_mode_setting, "os.chmod(path, 0o644)"),
+                encoding="utf-8",
+            )
+            tools = fixture / "test" / "tools"
+            tools.mkdir(parents=True)
+            self._write_fake_signer(tools / "sign_config.py", "1", "2")
+            self._write_fake_signer(tools / "sign_approval.py", "3", "4", approval=True)
+            output_dir = fixture / ".seal"
 
             result = subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "scripts" / "generate_keys.py"),
-                    "--out-dir",
-                    str(output_dir),
-                ],
-                cwd=ROOT,
+                [sys.executable, str(script), "--out-dir", str(output_dir)],
+                cwd=fixture,
                 text=True,
                 capture_output=True,
                 check=False,
             )
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            private_keys: list[str] = []
-            for label in ("config", "approval"):
-                private = (output_dir / f"{label}.key").read_text(encoding="ascii").strip()
-                public = (output_dir / f"{label}.pub").read_text(encoding="ascii").strip()
-                derived = Ed25519PrivateKey.from_private_bytes(
-                    bytes.fromhex(private)
-                ).public_key().public_bytes(
-                    serialization.Encoding.Raw,
-                    serialization.PublicFormat.Raw,
-                ).hex()
-                self.assertEqual(public, derived)
-                self.assertNotEqual(private, "0" * 64)
-                private_keys.append(private)
-            self.assertNotEqual(private_keys[0], private_keys[1])
+            for name in KEY_FILENAMES:
+                path = output_dir / name
+                self.assertEqual(
+                    stat.S_IMODE(path.stat().st_mode),
+                    0o644,
+                    f"{path} mode",
+                )
+
+    def test_real_generator_emits_matching_ed25519_keypairs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="seal-keygen-real-") as directory:
+            keysets: list[dict[str, str]] = []
+            for run in range(2):
+                output_dir = Path(directory) / f".seal-{run}"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(GENERATOR),
+                        "--out-dir",
+                        str(output_dir),
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                keyset: dict[str, str] = {}
+                private_keys: list[str] = []
+                for label in ("config", "approval"):
+                    private = (
+                        output_dir / f"{label}.key"
+                    ).read_text(encoding="ascii").strip()
+                    public = (
+                        output_dir / f"{label}.pub"
+                    ).read_text(encoding="ascii").strip()
+                    derived = Ed25519PrivateKey.from_private_bytes(
+                        bytes.fromhex(private)
+                    ).public_key().public_bytes(
+                        serialization.Encoding.Raw,
+                        serialization.PublicFormat.Raw,
+                    ).hex()
+                    self.assertEqual(public, derived)
+                    self.assertNotEqual(private, "0" * 64)
+                    keyset[f"{label}.key"] = private
+                    keyset[f"{label}.pub"] = public
+                    private_keys.append(private)
+                self.assertNotEqual(private_keys[0], private_keys[1])
+                keysets.append(keyset)
+
+            for name in KEY_FILENAMES:
+                self.assertNotEqual(
+                    keysets[0][name],
+                    keysets[1][name],
+                    f"{name} was repeated across independent generator runs",
+                )
 
     def test_stale_staging_directories_are_removed_on_startup(self) -> None:
         with tempfile.TemporaryDirectory(prefix="seal-keygen-stale-") as directory:
