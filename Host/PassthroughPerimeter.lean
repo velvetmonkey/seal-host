@@ -25,14 +25,15 @@ the router/byte-class correspondence is a THEOREM
 `classifyLine_refuse_iff`), not a definition:
 
 * `inPerimeter` — **S, the mediation perimeter**: the trimmed line passes
-  all four pre-parse raw-wire guards (`wireSafe`), `Lean.Json.parse`
+  all five pre-parse raw-wire guards (`wireSafe`), `Lean.Json.parse`
   accepts it, and the JSON has the strict `tools/call` shape
   (`toolsCallShape`: method is byte-exactly `"tools/call"` and
   `params.name` is a string). These lines are gate-decided before anything
   is forwarded.
-* `refusedClass` — **R**: any of the four pre-parse raw-wire guards rejects
+* `refusedClass` — **R**: any of the five pre-parse raw-wire guards rejects
   the line (`wireSafe = false`: monster exponent, duplicate/escaped object
-  key, Unicode canonical-equivalent key, or over-long mantissa). Blocked;
+  key, Unicode canonical-equivalent key, over-long mantissa, or a number
+  outside binary64 round-trip agreement). Blocked;
   never forwarded, never gate-decided.
 * `escapes` — **the complement**: everything else. Forwarded child-bound
   with NO decision. This class is non-empty (witnesses below) — the
@@ -92,10 +93,11 @@ def toolsCallShape (j : Json) : Bool :=
     && ((j.getObjVal? "params").toOption.bind
           (fun p => (p.getObjVal? "name").toOption.bind (·.getStr?.toOption))).isSome
 
-/-- **The pre-parse stage.** All FOUR raw-wire guards the router runs before
+/-- **The pre-parse stage.** All FIVE raw-wire guards the router runs before
     `Json.parse`, in its order: the monster-exponent number guard, the
     byte-level duplicate/escaped object-key guard, the Unicode
-    canonical-equivalence key guard, and the pinned significant-digit bound.
+    canonical-equivalence key guard, the pinned significant-digit bound, and
+    the binary64 round-trip agreement guard.
     A line reaches the parser iff every one of them passes.
 
     Originally this module modelled `wireNumbersSafe` ALONE, which was the
@@ -108,8 +110,9 @@ def wireSafe (line : String) : Bool :=
     && Seal.JsonUtil.wireKeysSafe (trimmed line)
     && UnicodeKeys.wireKeysSafe (trimmed line)
     && Seal.JsonUtil.wireDigitsSafe (trimmed line)
+    && Seal.JsonUtil.wireNumbersAgreementSafe (trimmed line)
 
-/-- **R — the refused class.** Any of the four pre-parse raw-wire guards
+/-- **R — the refused class.** Any of the five pre-parse raw-wire guards
     rejects the line. A pure fold over the characters — bytes in, Bool out.
     These lines are blocked: never forwarded, never gate-decided. -/
 def refusedClass (line : String) : Bool :=
@@ -117,7 +120,7 @@ def refusedClass (line : String) : Bool :=
 
 /-- **S — the mediation perimeter.** A decidable predicate on the input
     bytes, stated independently of the adapter: the trimmed line passes all
-    four pre-parse raw-wire guards (`wireSafe`), `Lean.Json.parse` accepts
+    five pre-parse raw-wire guards (`wireSafe`), `Lean.Json.parse` accepts
     it, and the value has the strict
     `tools/call` shape. The characterisation theorems prove: a line is
     gate-decided before forwarding IFF it lies in S. -/
@@ -402,7 +405,9 @@ theorem classifyLine_refuse_iff (line : String) :
     cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
       cases hu : UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
         cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          simp
+          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe
+              line.trimAscii.toString <;>
+            simp
   cases hp : Json.parse line.trimAscii.toString with
   | error e => simp
   | ok j =>
@@ -418,7 +423,9 @@ theorem classifyLine_act_iff (line : String) :
     cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
       cases hu : UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
         cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          simp
+          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe
+              line.trimAscii.toString <;>
+            simp
   cases hp : Json.parse line.trimAscii.toString with
   | error e => simp
   | ok j =>
@@ -436,7 +443,9 @@ theorem classifyLine_passthrough_iff (line : String) :
     cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
       cases hu : UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
         cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          simp
+          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe
+              line.trimAscii.toString <;>
+            simp
   cases hp : Json.parse line.trimAscii.toString with
   | error e => simp
   | ok j =>

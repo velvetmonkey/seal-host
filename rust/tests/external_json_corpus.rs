@@ -249,6 +249,17 @@ fn json_test_suite_parser_boundary() {
     let host = LeanHost::new();
     let mut failures = Vec::new();
     let mut divergences = 0;
+    let mut lean_act = 0;
+    let mut lean_passthrough = 0;
+    let mut lean_refuse = 0;
+    let mut lean_non_utf8_refuse = 0;
+    let mut lean_seam_error = 0;
+    let mut lean_contract_violation = 0;
+    let mut y_lean_act = 0;
+    let mut y_lean_refuse = 0;
+    let mut y_number_count = 0;
+    let mut y_number_lean_act = 0;
+    let mut y_number_lean_refuse = 0;
     for vector in vectors {
         let bytes = match fs::read(&vector.path) {
             Ok(bytes) => bytes,
@@ -258,6 +269,14 @@ fn json_test_suite_parser_boundary() {
             }
         };
         let observation = observe(&host, &bytes);
+        match &observation.lean {
+            LeanView::Act => lean_act += 1,
+            LeanView::Passthrough => lean_passthrough += 1,
+            LeanView::Refuse => lean_refuse += 1,
+            LeanView::NonUtf8Refuse => lean_non_utf8_refuse += 1,
+            LeanView::SeamError(_) => lean_seam_error += 1,
+            LeanView::ContractViolation(_) => lean_contract_violation += 1,
+        }
         match vector.class {
             VectorClass::No => {
                 if observation.rust == RustView::Act || is_lean_act(&observation.lean) {
@@ -269,6 +288,20 @@ fn json_test_suite_parser_boundary() {
                 }
             }
             VectorClass::Yes => {
+                y_lean_act += usize::from(matches!(observation.lean, LeanView::Act));
+                y_lean_refuse += usize::from(matches!(observation.lean, LeanView::Refuse));
+                if vector.name.starts_with("y_number") {
+                    y_number_count += 1;
+                    y_number_lean_act += usize::from(matches!(observation.lean, LeanView::Act));
+                    y_number_lean_refuse +=
+                        usize::from(matches!(observation.lean, LeanView::Refuse));
+                }
+                if !is_lean_act(&observation.lean) {
+                    eprintln!(
+                        "JSONTestSuite y_* {} lean={:?}",
+                        vector.name, observation.lean
+                    );
+                }
                 let repeated = observe(&host, &bytes);
                 if observation != repeated {
                     failures.push(format!(
@@ -309,6 +342,18 @@ fn json_test_suite_parser_boundary() {
     eprintln!(
         "JSONTestSuite complete: total={total} y_={y_count} n_={n_count} \
          i_={i_count} i_divergences={divergences}"
+    );
+    eprintln!(
+        "JSONTestSuite Lean classifications: act={lean_act} \
+         passthrough={lean_passthrough} refuse={lean_refuse} \
+         non_utf8_refuse={lean_non_utf8_refuse} seam_error={lean_seam_error} \
+         contract_violation={lean_contract_violation}"
+    );
+    eprintln!(
+        "JSONTestSuite accepted controls: y_act={y_lean_act}/{y_count} \
+         y_refuse={y_lean_refuse}/{y_count} \
+         y_number_act={y_number_lean_act}/{y_number_count} \
+         y_number_refuse={y_number_lean_refuse}/{y_number_count}"
     );
     if !failures.is_empty() {
         panic!(
