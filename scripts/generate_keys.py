@@ -111,6 +111,9 @@ def _write_complete_keyset(output_dir: Path, values: dict[str, str]) -> None:
 
 
 def generate_keys(output_dir: Path) -> tuple[Path, ...]:
+    for staging_dir in output_dir.glob(".seal-keygen-*"):
+        shutil.rmtree(staging_dir)
+
     (
         generate_config,
         derive_config_public,

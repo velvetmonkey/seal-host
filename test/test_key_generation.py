@@ -4,16 +4,24 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 
 ROOT = Path(__file__).resolve().parents[1]
+GENERATOR = Path(
+    os.environ.get("SEAL_KEYGEN_SCRIPT", str(ROOT / "scripts" / "generate_keys.py"))
+).resolve()
 KEY_FILENAMES = (
     "approval.key",
     "config.key",
@@ -81,7 +89,76 @@ class KeyGenerationTests(unittest.TestCase):
                 {name: (output_dir / name).read_text(encoding="ascii") for name in KEY_FILENAMES},
                 expected,
             )
+            self.assertEqual(
+                stat.S_IMODE(output_dir.stat().st_mode),
+                0o700,
+                f"{output_dir} mode",
+            )
+            for name in KEY_FILENAMES:
+                path = output_dir / name
+                self.assertEqual(
+                    stat.S_IMODE(path.stat().st_mode),
+                    0o600,
+                    f"{path} mode",
+                )
             self.assertEqual(list(output_dir.glob(".seal-keygen-*")), [])
+
+    def test_real_generator_emits_matching_ed25519_keypairs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="seal-keygen-real-") as directory:
+            output_dir = Path(directory) / ".seal"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "generate_keys.py"),
+                    "--out-dir",
+                    str(output_dir),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            private_keys: list[str] = []
+            for label in ("config", "approval"):
+                private = (output_dir / f"{label}.key").read_text(encoding="ascii").strip()
+                public = (output_dir / f"{label}.pub").read_text(encoding="ascii").strip()
+                derived = Ed25519PrivateKey.from_private_bytes(
+                    bytes.fromhex(private)
+                ).public_key().public_bytes(
+                    serialization.Encoding.Raw,
+                    serialization.PublicFormat.Raw,
+                ).hex()
+                self.assertEqual(public, derived)
+                self.assertNotEqual(private, "0" * 64)
+                private_keys.append(private)
+            self.assertNotEqual(private_keys[0], private_keys[1])
+
+    def test_stale_staging_directories_are_removed_on_startup(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="seal-keygen-stale-") as directory:
+            fixture = Path(directory)
+            script = self._copy_generator(fixture)
+            tools = fixture / "test" / "tools"
+            tools.mkdir(parents=True)
+            self._write_fake_signer(tools / "sign_config.py", "1", "2")
+            self._write_fake_signer(tools / "sign_approval.py", "3", "4", approval=True)
+            output_dir = fixture / ".seal"
+            stale_dir = output_dir / ".seal-keygen-abandoned"
+            stale_dir.mkdir(parents=True)
+            (stale_dir / "value-0.tmp").write_text("private\n", encoding="ascii")
+
+            result = subprocess.run(
+                [sys.executable, str(script), "--out-dir", str(output_dir)],
+                cwd=fixture,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(stale_dir.exists())
 
     def _assert_import_failure(
         self,
@@ -110,7 +187,7 @@ class KeyGenerationTests(unittest.TestCase):
         scripts = fixture / "scripts"
         scripts.mkdir()
         script = scripts / "generate_keys.py"
-        shutil.copy2(ROOT / "scripts" / "generate_keys.py", script)
+        shutil.copy2(GENERATOR, script)
         return script
 
     @staticmethod
