@@ -315,7 +315,7 @@ jobs:
       - id: control_29
         continue-on-error: true
         name: M.4a namespace encoding-version (format stamp) ablation
-        run: bash scripts/test_replay_store_lineage_ablation.sh
+        run: bash scripts/test_replay_store_format_stamp_ablation.sh
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
