@@ -57,7 +57,10 @@ The canonical AST is audit input for kernels, not the mediation gate.
   approval reaches Lean, with WAL plus `synchronous=FULL`. The legacy
   control-file/interactive demo channels keep in-memory replay state and do
   not claim cross-restart replay protection.
-- **A7 (replay-store instance integrity) PROPOSED, NOT RULED ON.** A6 claims
+- **A7 (replay-store instance integrity) RULED AND ACCEPTED by Ben 2026-07-30**
+  (council `5c3845e7`, shape (D): application-layer instance binding is not
+  achievable against an attacker holding write access to the store path, so this
+  is a documented limitation, not a guard). A6 claims
   that accepted nonces are durably recorded; it does NOT claim that the store
   the host opens is the same store instance it last wrote. The host
   authenticates the store's PATH and file properties — non-symlink, host-euid
