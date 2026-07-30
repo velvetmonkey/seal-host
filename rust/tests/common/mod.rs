@@ -78,12 +78,23 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
     // there is no serde view to compare against and nothing is forwarded. Not
     // folded into AU: "neither side routes this" and "we refused to look" are
     // different facts, and collapsing them would hide the guard entirely.
+    //
+    // Recut 2026-07-31 for the seven-guard stack (binary64 agreement,
+    // unpaired-surrogate-escape, nesting-depth guards wired into
+    // classifyLine): twelve cases moved to WR — the huge-exponent family in
+    // EVERY position (the guards are pre-parse, so non-tools/call lines
+    // refuse too), 1e-999999 (binary64 agreement: serde reads 0.0, the exact
+    // reading disagrees), the lone/reversed surrogate escapes, and nesting
+    // 200/300. nesting-125 (total 129) stays reduced-scope-unparseable:
+    // serde rejects at total depth 129 while the Lean depth guard still
+    // mediates — the one-deep boundary divergence is a recorded finding, not
+    // an allowlisted drift.
     const WR: &str = "wire-refused";
     vec![
         // -- numeric limits in value position
-        case("num-overflow-1e309", in_value("1e309"), RSU),
-        case("num-overflow-neg-1e309", in_value("-1e309"), RSU),
-        case("num-overflow-1e999999", in_value("1e999999"), RSU),
+        case("num-overflow-1e309", in_value("1e309"), WR),
+        case("num-overflow-neg-1e309", in_value("-1e309"), WR),
+        case("num-overflow-1e999999", in_value("1e999999"), WR),
         case(
             "num-overflow-int-400-digits",
             in_value(&"9".repeat(400)),
@@ -94,7 +105,7 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case("num-neg-zero", in_value("-0"), AR),
         case("num-neg-zero-float", in_value("-0.0"), AR),
         case("num-subnormal-1e-309", in_value("1e-309"), AR),
-        case("num-underflow-1e-999999", in_value("1e-999999"), AR),
+        case("num-underflow-1e-999999", in_value("1e-999999"), WR),
         case("num-exp-forms", in_value("1E+02"), AR),
         // -- malformed numerics (invalid JSON): both sides should reject
         case("num-leading-zero", in_value("0123"), AU),
@@ -106,22 +117,22 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case("num-nan", in_value("NaN"), AU),
         case("num-infinity", in_value("Infinity"), AU),
         // -- overflow OUTSIDE the mediated shape: divergence must not create routing
-        case("num-overflow-in-name", as_name("1e309"), AU),
+        case("num-overflow-in-name", as_name("1e309"), WR),
         case(
             "num-overflow-in-initialize",
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"v":1e309}}"#.to_string(),
-            AU,
+            WR,
         ),
-        case("num-overflow-as-method", as_method("1e309"), AU),
+        case("num-overflow-as-method", as_method("1e309"), WR),
         // -- strings: escapes, surrogates, NUL, size
         case("str-escaped-nul", in_value(r#""a\u0000b""#), AR),
-        case("str-lone-high-surrogate", in_value(r#""\ud800""#), RSU),
-        case("str-lone-low-surrogate", in_value(r#""\udc00""#), RSU),
+        case("str-lone-high-surrogate", in_value(r#""\ud800""#), WR),
+        case("str-lone-low-surrogate", in_value(r#""\udc00""#), WR),
         case("str-surrogate-pair", in_value(r#""\ud83d\ude00""#), AR),
         case(
             "str-reversed-surrogates",
             in_value(r#""\udc00\ud800""#),
-            RSU,
+            WR,
         ),
         case("str-lone-surrogate-in-key", in_value(r#"{"\ud800":1}"#), WR),
         case("str-raw-nul", in_value("\"a\u{0}b\""), AU),
@@ -159,8 +170,8 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case("nesting-123", nested(123), AR),
         case("nesting-124", nested(124), AR),
         case("nesting-125", nested(125), RSU), // total 128, first serde-reject
-        case("nesting-200", nested(200), RSU),
-        case("nesting-300", nested(300), RSU),
+        case("nesting-200", nested(200), WR),
+        case("nesting-300", nested(300), WR),
         case("bom-prefix", format!("\u{FEFF}{}", in_value("1")), AU),
         case("trailing-garbage", format!("{} x", in_value("1")), AU),
         case(
