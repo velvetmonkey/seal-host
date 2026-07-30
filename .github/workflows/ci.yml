@@ -306,6 +306,16 @@ jobs:
         run: cargo test --test envelope_v23_twin
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
+      # M.4a mutation control. Deliberately has no `if:`: skipped controls fail
+      # the aggregate unless their exact workflow/job/id is explicitly
+      # allowlisted, and control_29 is intentionally not allowlisted. Keeping
+      # it unconditional prevents this ablation from becoming an allowed
+      # invisible orphan. It needs the FFI .so and cargo toolchain produced
+      # above; if those are missing the script fails loudly.
+      - id: control_29
+        continue-on-error: true
+        name: M.4a namespace encoding-version (format stamp) ablation
+        run: bash scripts/test_replay_store_lineage_ablation.sh
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}

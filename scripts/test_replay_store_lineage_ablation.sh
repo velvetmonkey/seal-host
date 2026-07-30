@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Mutation control for the M.4a replay-store lineage startup gate.
+# Mutation control for the M.4a replay-store namespace encoding-version (format
+# stamp) startup gate.
 #
-# A committed tree is copied to a disposable directory, the namespace-lineage
-# comparison is removed there, and the real-host mismatch control must fail by
-# reporting that the mismatched store served a request.
+# A committed tree is copied to a disposable directory, the namespace
+# encoding-version (format stamp) comparison is removed there, and the real-host
+# mismatch control must fail by reporting that the mismatched store served a
+# request.
 
 set -euo pipefail
 
@@ -14,7 +16,7 @@ if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
     SCRIPT_DIR=.
 fi
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/seal-replay-lineage-ablation.XXXXXX")"
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/seal-replay-namespace-version-ablation.XXXXXX")"
 MUTANT="$SCRATCH/source"
 ARCHIVE="$SCRATCH/source.tar"
 BUILD_LOG="$SCRATCH/build.log"
@@ -40,7 +42,7 @@ git -C "$MUTANT" apply <<'PATCH'
 -                expected.namespace_encoding_version, actual.1
 -            )));
 -        }
-+        // ABLATION: namespace lineage comparison deliberately removed.
++        // ABLATION: namespace encoding-version (format stamp) comparison removed.
          secure_fs::validate_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
 PATCH
 
