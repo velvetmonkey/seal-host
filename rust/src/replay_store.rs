@@ -64,6 +64,21 @@ pub struct SqliteReplayStore {
 impl SqliteReplayStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ReplayStoreError> {
         let path = path.as_ref();
+        // The file checks below (non-symlink, owner uid, mode 0600) constrain
+        // the CONTENT at the signed path; they say nothing about who may
+        // REPLACE it. On Unix, swapping a file is a directory-write
+        // operation, so a writable parent lets anyone holding that write bit
+        // `rename()` an already host-owned 0600 store — a backup, a prior
+        // init, a blue/green leftover — into this path, and every nonce the
+        // live store had consumed comes back. Requiring the parent to be a
+        // non-symlink, host-owned, 0700 directory narrows the
+        // substitution-capable set to {host euid, root}, which is already
+        // inside the declared TCB. It does NOT detect substitution by those
+        // two principals: see `store_substitution_is_not_detected` in
+        // `tests/replay_store_substitution.rs` and residual A7 in CLAIMS.md.
+        // Fail closed: an unreadable or non-conforming parent REFUSES.
+        secure_fs::validate_private_parent(path, "replay database directory")
+            .map_err(ReplayStoreError::new)?;
         secure_fs::ensure_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -212,21 +227,29 @@ impl ReplayStore for InMemoryReplayStore {
 mod tests {
     use super::*;
 
+    /// A store path under a CONFORMING parent: a fresh 0700 host-owned
+    /// directory. `SqliteReplayStore::open` requires this — the shared temp
+    /// directory itself is 1777 and is refused, which is the point of the
+    /// parent guard.
     fn temp_db_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "seal-replay-{tag}-{}-{}.sqlite",
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "seal-replay-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ))
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        dir.join("replay.sqlite")
     }
 
     fn remove_sqlite_files(path: &std::path::Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
-        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
     }
 
     #[test]

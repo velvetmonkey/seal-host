@@ -22,6 +22,7 @@ use seal_host_rs::providers::{
 };
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -52,6 +53,11 @@ impl Host {
             tag
         ));
         std::fs::create_dir_all(&dir).unwrap();
+        // The replay store lives directly in this directory, and
+        // `SqliteReplayStore::open` requires a 0700 host-owned parent — the
+        // guard that bounds who can substitute the store. `create_dir_all`
+        // honours the umask (0775 on the dev box), so mode it explicitly.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let approvals = dir.join("approvals.ndjson");
         std::fs::write(&approvals, b"").unwrap();
         let token_file = dir.join("tokens.ndjson");

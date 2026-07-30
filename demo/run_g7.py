@@ -198,6 +198,9 @@ def part_a() -> None:
     say("DEMO", "── Part A: six blocks under one fail-closed host ──")
     tmp = WORK / "part-a"
     tmp.mkdir(parents=True)
+    # The signed-token replay store lives here; the host requires a 0700
+    # host-owned parent for it (bounds who can substitute the store).
+    os.chmod(tmp, 0o700)
     votes = tmp / "votes.ndjson"
     host = Host(tmp)
     destructive = {"database": "prod", "sql": "drop table users"}
@@ -275,6 +278,7 @@ def part_a() -> None:
     # New session for the T replay (budget cap already consumed above).
     tmp2 = WORK / "part-a-replay"
     tmp2.mkdir(parents=True)
+    os.chmod(tmp2, 0o700)
     host2 = Host(tmp2)
     r = host2.call("session.revoke", {})
     assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
@@ -295,6 +299,7 @@ def part_a() -> None:
     # a legit retry through a swappable channel (and A3 rejects its replay).
     tmp3 = WORK / "part-a-ed25519"
     tmp3.mkdir(parents=True)
+    os.chmod(tmp3, 0o700)
     host3 = Host(tmp3)
     r = host3.call("db.execute", destructive)
     assert blocked(r)
@@ -344,6 +349,7 @@ def main() -> int:
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True)
+    os.chmod(WORK, 0o700)
 
     part_a()
     part_b()

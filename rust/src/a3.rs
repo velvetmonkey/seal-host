@@ -204,21 +204,28 @@ mod tests {
         ApprovalRecord::legacy(target.to_string(), issued, nonce.map(String::from))
     }
 
+    /// A store path under a CONFORMING parent: a fresh 0700 host-owned
+    /// directory, as `SqliteReplayStore::open`'s parent guard requires. The
+    /// shared temp directory itself is 1777 and is refused.
     fn temp_db_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "seal-a3-{tag}-{}-{}.sqlite",
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "seal-a3-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ))
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        dir.join("replay.sqlite")
     }
 
     fn remove_sqlite_files(path: &std::path::Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
-        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
     }
 
     #[test]
