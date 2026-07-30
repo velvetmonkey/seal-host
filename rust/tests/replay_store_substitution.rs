@@ -18,7 +18,7 @@
 
 use seal_host_rs::a3::A3Filter;
 use seal_host_rs::providers::ApprovalRecord;
-use seal_host_rs::replay_store::SqliteReplayStore;
+use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -70,7 +70,7 @@ fn substitute(from: &Path, to: &Path) {
 /// Consume `nonce` in the store at `path`, then close it. Returns nothing:
 /// the observable effect is durable state in the store.
 fn consume(path: &Path, nonce: &str, now_ms: u64) {
-    let store = Box::new(SqliteReplayStore::open(path).unwrap());
+    let store = Box::new(SqliteReplayStore::open(path, ReplayStoreLineage::CURRENT).unwrap());
     let mut a3 = A3Filter::with_store(TTL_MS, store, now_ms).unwrap();
     let (ok, dropped) = a3.filter(vec![record(nonce, now_ms)], now_ms);
     assert_eq!(ok.len(), 1, "first use of {nonce} must be accepted");
@@ -88,6 +88,7 @@ fn substitution_capable_parent_is_refused() {
     // init, a blue/green leftover). The attacker forges nothing.
     let staging = dir_with_mode(&root, "staging", 0o700);
     let stale = staging.join("replay.sqlite");
+    SqliteReplayStore::initialize(&stale, ReplayStoreLineage::CURRENT).unwrap();
     consume(&stale, "nonce-1", 1_000);
 
     // The victim path's parent is 0755: any uid can traverse it and the
@@ -105,7 +106,7 @@ fn substitution_capable_parent_is_refused() {
     assert!(metadata.is_file());
     assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
 
-    let error = SqliteReplayStore::open(&victim)
+    let error = SqliteReplayStore::open(&victim, ReplayStoreLineage::CURRENT)
         .err()
         .expect("open must refuse a store whose parent is not 0700")
         .to_string();
@@ -144,12 +145,13 @@ fn store_substitution_is_not_detected() {
     // conforming too: the attacker here IS the host euid.
     let backup_dir = dir_with_mode(&root, "backup", 0o700);
     let pristine = backup_dir.join("replay.sqlite");
-    drop(SqliteReplayStore::open(&pristine).unwrap());
+    SqliteReplayStore::initialize(&pristine, ReplayStoreLineage::CURRENT).unwrap();
 
     // Baseline: durable replay protection works across a restart.
+    SqliteReplayStore::initialize(&live, ReplayStoreLineage::CURRENT).unwrap();
     consume(&live, "nonce-1", 1_000);
     {
-        let store = Box::new(SqliteReplayStore::open(&live).unwrap());
+        let store = Box::new(SqliteReplayStore::open(&live, ReplayStoreLineage::CURRENT).unwrap());
         let mut a3 = A3Filter::with_store(TTL_MS, store, 2_000).unwrap();
         let (ok, dropped) = a3.filter(vec![record("nonce-1", 2_000)], 2_000);
         assert!(ok.is_empty(), "replay must be blocked before substitution");
@@ -162,7 +164,7 @@ fn store_substitution_is_not_detected() {
 
     // ACCEPTED — the analogue of the host exiting 0 and running on.
     let store = Box::new(
-        SqliteReplayStore::open(&live)
+        SqliteReplayStore::open(&live, ReplayStoreLineage::CURRENT)
             .expect("a conforming parent must still open: the guard is not over-broad"),
     );
 

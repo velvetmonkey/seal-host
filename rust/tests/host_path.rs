@@ -26,6 +26,7 @@ use seal_host_rs::providers::{
     approval_v2_signature_preimage, canonical_approval_v2_payload, ApprovalRecordV2Payload,
     ApprovalRenderer,
 };
+use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
@@ -156,7 +157,9 @@ impl Oracle {
         });
         if signed {
             approval["replay_store"] = serde_json::json!({
-                "sqlite_path": dir.join("replay.sqlite").to_str().unwrap()
+                "sqlite_path": dir.join("replay.sqlite").to_str().unwrap(),
+                "schema_version": 1,
+                "namespace_encoding_version": 1
             });
         }
         let mut tools = vec![
@@ -200,6 +203,8 @@ impl Oracle {
         std::fs::write(&config, envelope).unwrap();
         if signed {
             std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+            SqliteReplayStore::initialize(dir.join("replay.sqlite"), ReplayStoreLineage::CURRENT)
+                .unwrap();
         }
 
         let mut args = Vec::new();

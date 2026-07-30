@@ -212,7 +212,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     approvals.write_text("", encoding="utf-8")
     replay = work / "convergence-approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 1,
+        "namespace_encoding_version": 1,
+    }
     value["convergence"]["tools"][0]["op_arg"] = "op"
     rules = value["safety"]["tools"]
     if len(rules) != 1 or rules[0].get("name") != TOOL or rules[0].get("mode") != "guard":
@@ -250,6 +254,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     signed_output = (signed.stdout or "") + (signed.stderr or "")
     if "ACTIVE (2)" not in signed_output or "PRESENT-BUT-INACTIVE (0)" not in signed_output:
         raise gp.DemoFailure("sign acknowledgement did not report exactly two active kernels")
+    gp.initialize_replay_store(trusted, config_pub)
     check("mesh recipe review + signed policy", "ACTIVE {S,V}; store.update opArg=op; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub
 

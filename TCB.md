@@ -53,7 +53,10 @@ for deployability.** Everything in Shape 1, plus:
   SQLite durable nonce persistence for the Ed25519 signed-token production
   channel, TTL freshness, future-skew rejection, and the wall clock itself.
   SQLite runs with WAL and `synchronous=FULL`; the nonce insert is
-  write-ahead before an approval reaches Lean. The Lean kernels prove
+  write-ahead before an approval reaches Lean. A database-wide metadata stamp
+  must match the schema and namespace-encoding lineage selected by the
+  authority-signed config before startup can serve; normal startup does not
+  create or adopt a store. The Lean kernels prove
   properties *given* the `now` and the evidence the host hands them — A3 is
   exactly the host-side state and clock the proofs assume. The legacy
   control-file/interactive demo channels keep in-memory replay state only.

@@ -327,6 +327,18 @@ process.stdout.write(c.createPublicKey(k).export({format:"der",type:"spki"}).sub
     return run(["node", "-e", script, str(seed_path)]).stdout.strip()
 
 
+def initialize_replay_store(
+    trusted: Path, config_pub: str, *, host: Path = HOST
+) -> None:
+    os.chmod(trusted, 0o600)
+    run([
+        str(host),
+        "--config", str(trusted),
+        "--pubkey", config_pub,
+        "--initialize-replay-store",
+    ])
+
+
 def framed_subject_from(response: dict) -> bytes:
     try:
         subject = response["result"]["framed_subject"]
@@ -377,7 +389,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool) 
     approvals.write_text("", encoding="utf-8")
     replay = work / "approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 1,
+        "namespace_encoding_version": 1,
+    }
     # Safety is the only non-vacuous C1 kernel. Temporal remains visibly
     # registered but explicitly inactive, so the receipt strip cannot count
     # its vacuous allow certificate in the hero ACTIVE set.
@@ -416,6 +432,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool) 
         if not sys.stdin.isatty() or not sys.stderr.isatty():
             raise DemoSkip("live interactive signing requires a controlling TTY")
         run(sign, visible=True)
+    initialize_replay_store(trusted, config_pub)
     check("visible review + signed policy", "PASS", f"distinct policy={config_pub[:16]} approval={approval_pub[:16]} keys")
     return trusted, config_pub, approval_key, approval_pub
 

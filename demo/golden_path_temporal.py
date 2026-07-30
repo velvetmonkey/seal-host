@@ -214,7 +214,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     approvals.write_text("", encoding="utf-8")
     replay = work / "temporal-approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 1,
+        "namespace_encoding_version": 1,
+    }
     rules = value["safety"]["tools"]
     if [rule.get("name") for rule in rules] != TOOLS or any(rule.get("mode") != "guard" for rule in rules):
         raise gp.DemoFailure(f"unexpected Safety scaffold: {rules}")
@@ -252,6 +256,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     signed_output = (signed.stdout or "") + (signed.stderr or "")
     if "ACTIVE (2)" not in signed_output or "PRESENT-BUT-INACTIVE (0)" not in signed_output:
         raise gp.DemoFailure("sign acknowledgement did not report exactly two active kernels")
+    gp.initialize_replay_store(trusted, config_pub)
     check(
         "init + add-kernel T review + signed policy",
         "ACTIVE {S,T}; freeze-destructive-after-trigger/no_after; zero placeholders",

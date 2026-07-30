@@ -91,7 +91,11 @@ Minimal shape:
     "approval": {
       "control_file": "/tmp/seal-approvals.ndjson",
       "ttl_seconds": 120,
-      "replay_store": { "sqlite_path": "/tmp/seal-host-replay.sqlite" }
+      "replay_store": {
+        "sqlite_path": "/var/lib/seal-host/replay.sqlite",
+        "schema_version": 1,
+        "namespace_encoding_version": 1
+      }
     },
     "tools": [
       {
@@ -105,10 +109,23 @@ Minimal shape:
 }
 ```
 
-`sqlite_path` here points at `/tmp` so the walkthrough runs on a fresh box with no
-`sudo`/`mkdir`. For a real deployment use a durable, service-owned path (e.g.
-`/var/lib/seal-host/replay.sqlite`); the durable store is what makes replay survive a
-host restart.
+`sqlite_path` must be in a durable, service-owned directory with mode `0700`;
+the durable store is what makes replay survive a host restart.
+
+Before the first ordinary start, deliberately initialize a genuinely absent
+store from the authority-signed config:
+
+```sh
+rust/target/debug/seal-host-rs \
+  --config trusted.json \
+  --pubkey <config-pubkey-hex> \
+  --initialize-replay-store
+```
+
+This action creates both the nonce schema and its lineage stamp, then exits.
+It refuses if the path already exists. Ordinary host startup never creates,
+adopts, or stamps a store, so deleting the SQLite file and redeploying does
+not silently create an empty replay history.
 
 For production mode, put the config, approval-token file, authorization-decision directory,
 and replay database in a service-owned directory with mode `0700`; files must

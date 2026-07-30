@@ -76,7 +76,11 @@ def config_payload(tmp: Path) -> dict:
             "approval": {
                 "control_file": str(tmp / "approvals.ndjson"),
                 "ttl_seconds": 120,
-                "replay_store": {"sqlite_path": str(tmp / "replay.sqlite")},
+                "replay_store": {
+                    "sqlite_path": str(tmp / "replay.sqlite"),
+                    "schema_version": 1,
+                    "namespace_encoding_version": 1,
+                },
             },
             "tools": [
                 {"name": "db.execute", "mode": "guarded",
@@ -108,13 +112,26 @@ def config_payload(tmp: Path) -> dict:
 
 class Host:
     def __init__(self, tmp: Path):
+        tmp.chmod(0o700)
         config = tmp / "trusted.json"
         config.write_text(sign_payload(config_payload(tmp), CONFIG_SK), encoding="utf-8")
+        config.chmod(0o600)
         (tmp / "approvals.ndjson").touch()
         self.tokens = tmp / "tokens.ndjson"
         self.tokens.touch()
         self.approval_sk, approval_pub = generate_approval_keypair()
         self.approval_session = f"g7/{tmp.name}/{uuid.uuid4().hex}"
+        initialized = subprocess.run(
+            [
+                str(BIN), "--config", str(config), "--pubkey", PUBKEY,
+                "--initialize-replay-store",
+            ],
+            text=True, capture_output=True,
+        )
+        if initialized.returncode != 0:
+            raise RuntimeError(
+                f"replay-store initialization failed:\n{initialized.stderr}"
+            )
         self.proc = subprocess.Popen(
             [
                 str(BIN), "--insecure-development-mode", "--config", str(config),
