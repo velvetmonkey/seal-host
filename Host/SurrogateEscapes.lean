@@ -161,15 +161,15 @@ theorem scan_surrogate (mode : Bool) (l : List Char) :
       intro h; exact contains_cons _ (ih h)
   | case3 => -- false, []
       intro h; exact absurd h (by simp [scan])
-  | case4 c1 c2 c3 c4 rest v hv hhigh d1 d2 d3 d4 rest' w hw hlow ih =>
+  | case4 c1 c2 c3 c4 v hv hhigh d1 d2 d3 d4 rest' w hw hlow ih =>
       -- high surrogate escape, paired with a low escape: recursion
       intro _
       exact contains_of_head (by simp [surrogateEscapeHead, hv, isSurrogate, hhigh])
-  | case5 c1 c2 c3 c4 rest v hv hhigh d1 d2 d3 d4 rest' w hw hlow =>
+  | case5 c1 c2 c3 c4 v hv hhigh d1 d2 d3 d4 rest' w hw hlow =>
       -- high surrogate escape, follower escape not low: head is a surrogate
       intro _
       exact contains_of_head (by simp [surrogateEscapeHead, hv, isSurrogate, hhigh])
-  | case6 c1 c2 c3 c4 rest v hv hhigh d1 d2 d3 d4 rest' hw =>
+  | case6 c1 c2 c3 c4 v hv hhigh d1 d2 d3 d4 rest' hw =>
       -- high surrogate escape, follower escape body not hex
       intro _
       exact contains_of_head (by simp [surrogateEscapeHead, hv, isSurrogate, hhigh])
@@ -196,7 +196,7 @@ theorem scan_surrogate (mode : Bool) (l : List Char) :
       exact contains_cons _ (contains_cons _ (ih h))
   | case12 rest ih => -- closing quote
       intro h; exact contains_cons _ (ih h)
-  | case13 c rest _ _ ih => -- ordinary in-string char
+  | case13 c rest _ _ _ ih => -- ordinary in-string char
       intro h; exact contains_cons _ (ih h)
   | case14 => -- true, []
       intro h; exact absurd h (by simp [scan])
@@ -255,7 +255,8 @@ theorem scan_uescape_transparent (c1 c2 c3 c4 : Char) (rest : List Char)
     cases hb : isLowSurrogate v with
     | false => rfl
     | true => simp [isSurrogate, hb] at hns
-  simp [scan, hv, hh, hl]
+  rw [scan.eq_def]
+  simp [hv, hh, hl]
 
 /-- A simple escape (`\n`, `\"`, `\\`, `\t`, …: anything but `u`) is
     transparent. In particular `\"` does NOT close the string and `\\` does
@@ -265,12 +266,10 @@ theorem scan_simple_escape_transparent (e : Char) (rest : List Char)
     scan true ('\\' :: e :: rest) = scan true rest := by
   rw [scan.eq_def]
   split
-  · rename_i heq _ _ _ _ _ _ _
-    injection heq with h1 h2
-    injection h2 with h2 _
-    exact absurd h2.symm he
-  · rfl
-  all_goals simp_all
+  all_goals try simp_all
+  all_goals
+    rename_i hall _ heq
+    exact absurd heq.2.symm (hall e rest heq.1.symm)
 
 /-- An ordinary in-string character (not `\`, not `"`) is transparent. -/
 theorem scan_char_transparent (c : Char) (rest : List Char)

@@ -42,18 +42,17 @@ decouple the judged event from the executed one:
   child's execution of the raw forwarded bytes is bound to `a` only by
   assumption A2 — the exact gap the assumption names.
 
-Of the eighteen recorded divergences, FOURTEEN are fail-closed at this
-revision and four remain consequential. History: at `8933c2b` the split was
+Of the eighteen recorded divergences, ALL EIGHTEEN are fail-closed at this
+revision and none remain consequential. History: at `8933c2b` the split was
 4/14 — the four number-guard refusals fail-closed, everything else
-consequential. On 2026-07-30 the class-(a) unpaired-surrogate-escape guard
+consequential. On 2026-07-30 the class-(b) binary64 round-trip agreement
+guard (`Seal.JsonUtil.wireNumbersAgreementSafe`, rows 5–8), the class-(a)
+unpaired-surrogate-escape guard
 (`Host.SurrogateEscapes.wireSurrogatesSafe`, rows 10–18) and the class-(c)
 nesting-depth guard (`Host.NestingDepth.wireDepthSafe`, row 9) were wired
-into `Host.classifyLine`, moving those ten rows to fail-closed. The four
-still consequential are rows 5–8 (`rust=NotAct lean=Act`, huge-exponent
-numbers): the closing guard `Seal.JsonUtil.wireNumbersAgreementSafe` exists
-at the pinned kernel but is not yet wired (see the finding below; a sibling
-branch closes it). The inert class is EMPTY: every recorded case is an
-act/non-act split, never a representational difference.
+into `Host.classifyLine`, moving those fourteen rows to fail-closed. The
+inert class is EMPTY: every recorded case is an act/non-act split, never a
+representational difference.
 
 ## Proof discipline on this toolchain
 
@@ -136,8 +135,8 @@ def veryBigNegLine : String := envelope
   "[-237462374673276894279832749832423479823246327846]"
 
 -- The fourteen lines recorded `rust=NotAct lean=Act` at `8933c2b`. Rows 5-8
--- (huge exponents) still classify `.act`; rows 9-18 are refused since the
--- class-(a)/(c) guards landed.
+-- (huge exponents) are refused since the class-(b) agreement guard landed;
+-- rows 9-18 are refused since the class-(a)/(c) guards landed.
 def negIntHugeExpLine    : String := envelope "[-1e+9999]"
 def posDoubleHugeExpLine : String := envelope "[1.5e+9999]"
 def realNegOverflowLine  : String := envelope "[-123123e100000]"
@@ -212,17 +211,56 @@ theorem act_refuse_divergences_fail_closed
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_digits _ h3)
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_digits _ h4)
 
-/-! ## Per-line pins, remaining consequential class (rows 5-8)
+/-! ## Per-line pins, class-(b) huge-exponent lines (rows 5-8)
 
-Each of the four huge-exponent lines still classifies `.act` on tool
-`external.json_corpus`: the kernel judges an event and, under an all-allow
-verdict list, the raw bytes forward (`stepRoute_act_forward_iff`), while
-serde rejects the same bytes (`number out of range`). -/
+Each of the four huge-exponent lines is refused by the binary64 round-trip
+agreement guard: serde rejects the same bytes (`number out of range`), so a
+mainstream binary64 reader cannot agree with the exact Lean reading, and the
+guard fails closed before `Json.parse` runs. -/
 
-#guard isActOn "external.json_corpus" (classifyLine negIntHugeExpLine)
-#guard isActOn "external.json_corpus" (classifyLine posDoubleHugeExpLine)
-#guard isActOn "external.json_corpus" (classifyLine realNegOverflowLine)
-#guard isActOn "external.json_corpus" (classifyLine realPosOverflowLine)
+#guard Seal.JsonUtil.wireNumbersAgreementSafe
+    negIntHugeExpLine.trimAscii.toString = false
+#guard Seal.JsonUtil.wireNumbersAgreementSafe
+    posDoubleHugeExpLine.trimAscii.toString = false
+#guard Seal.JsonUtil.wireNumbersAgreementSafe
+    realNegOverflowLine.trimAscii.toString = false
+#guard Seal.JsonUtil.wireNumbersAgreementSafe
+    realPosOverflowLine.trimAscii.toString = false
+
+#guard isRefuse (classifyLine negIntHugeExpLine)
+#guard isRefuse (classifyLine posDoubleHugeExpLine)
+#guard isRefuse (classifyLine realNegOverflowLine)
+#guard isRefuse (classifyLine realPosOverflowLine)
+
+/-- The four class-(b) huge-exponent lines (rows 5-8). -/
+def agreementLines : List String :=
+  [negIntHugeExpLine, posDoubleHugeExpLine, realNegOverflowLine,
+   realPosOverflowLine]
+
+/-- **Every class-(b) huge-exponent divergence line is fail-closed.** The four
+    guard hypotheses are the exact `Bool` facts pinned by the `#guard`s above
+    (build-time evaluation of the production guard on the exact wire lines);
+    given them, each line is blocked under every verdict list — never
+    forwarded, never passed through. Before 2026-07-30 these four lines were
+    the residual consequential class; the class-(b) agreement guard moved
+    them here. -/
+theorem agreement_divergences_fail_closed
+    (h5 : Seal.JsonUtil.wireNumbersAgreementSafe
+      negIntHugeExpLine.trimAscii.toString = false)
+    (h6 : Seal.JsonUtil.wireNumbersAgreementSafe
+      posDoubleHugeExpLine.trimAscii.toString = false)
+    (h7 : Seal.JsonUtil.wireNumbersAgreementSafe
+      realNegOverflowLine.trimAscii.toString = false)
+    (h8 : Seal.JsonUtil.wireNumbersAgreementSafe
+      realPosOverflowLine.trimAscii.toString = false) :
+    ∀ line ∈ agreementLines, FailClosed line := by
+  intro line hmem
+  simp only [agreementLines, List.mem_cons, List.not_mem_nil, or_false] at hmem
+  rcases hmem with h | h | h | h <;> subst h
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_agreement _ h5)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_agreement _ h6)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_agreement _ h7)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_agreement _ h8)
 
 #guard Host.SurrogateEscapes.wireSurrogatesSafe
     surrogate2ndMissingLine.trimAscii.toString = false
@@ -306,24 +344,10 @@ theorem surrogate_depth_divergences_fail_closed
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h18)
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_depth _ h9)
 
-/-! ## Finding: the binary64 agreement guard exists at this pin but is unwired
-
-The pinned `mcp-seal` kernel already ships
-`Seal.JsonUtil.wireNumbersAgreementSafe` — the raw-wire scan that asks whether
-a mainstream binary64 JSON reader would choose the same decimal value the
-exact `Lean.Json` reader sees. It REFUSES all four huge-exponent vectors, but
-`Host.classifyLine` does not call it at this revision, so those four lines
-still classify `.act`. Wiring it in is a code change outside this lane's
-scope; the two pins below make the gap executable: the guard says unsafe, the
-classifier still acts. -/
-
-#guard Seal.JsonUtil.wireNumbersAgreementSafe
-    negIntHugeExpLine.trimAscii.toString = false
-#guard isActOn "external.json_corpus" (classifyLine negIntHugeExpLine)
-
 /-! ## Axiom footprints -/
 
 #print axioms act_refuse_divergences_fail_closed
+#print axioms agreement_divergences_fail_closed
 #print axioms surrogate_depth_divergences_fail_closed
 #print axioms refuse_fail_closed
 #print axioms failClosed_never_forwards

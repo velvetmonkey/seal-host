@@ -54,10 +54,11 @@ parser is:
 
 ## Result
 
-**14 fail-closed, 4 consequential, 0 inert** (as of the class-(a)/(c) guard
-wiring on `feat/wire-surrogates-agreement`, 2026-07-30 — see the addendum
-below the table). At the originally classified revision `8933c2b` the split
-was **4 fail-closed, 14 consequential, 0 inert**; the table below records
+**18 fail-closed, 0 consequential, 0 inert** (as of the stacked class-(b)
+and class-(a)/(c) guard wiring on `feat/wire-surrogates-agreement` rebased
+onto `feat/wire-numeric-agreement`, 2026-07-30 — see the addendum below the
+table). At the originally classified revision `8933c2b` the split was
+**4 fail-closed, 14 consequential, 0 inert**; the table below records
 that revision.
 
 The inert class is empty because every recorded case is an act/non-act split
@@ -83,7 +84,7 @@ kernel allows.
 | 2 | `i_number_too_big_pos_int` `[100000000000000000000]` | **accepts, rewrites**: `[1e+20]` (Act) | `.refuse` — 21 significant digits > 18 (`wireDigitsSafe`) | **fail-closed** | `Seal/JsonUtil.lean:537`, bound `:503`; `Host/Canonical.lean:72` |
 | 3 | `i_number_too_big_neg_int` `[-123123123123123123123123123123]` | **accepts, rewrites**: `[-1.2312312312312312e+29]` (Act) | `.refuse` — 30 digits (`wireDigitsSafe`) | **fail-closed** | same as 2 |
 | 4 | `i_number_very_big_negative_int` (48-digit) | **accepts, rewrites**: `[-2.3746237467327687e+47]` (Act) | `.refuse` — 48 digits (`wireDigitsSafe`) | **fail-closed** | same as 2 |
-| 5 | `i_number_neg_int_huge_exp` `[-1e+9999]` | rejects: `number out of range` (NotAct) | `.act`, args = exact integer −10^9999 (expanded) | **consequential** | `Lean.JsonNumber` exact vs binary64; agreement guard exists but unwired (below) |
+| 5 | `i_number_neg_int_huge_exp` `[-1e+9999]` | rejects: `number out of range` (NotAct) | `.act`, args = exact integer −10^9999 (expanded) | **consequential** at `8933c2b`; **fail-closed** since the class-(b) agreement guard was wired (addendum) | `Lean.JsonNumber` exact vs binary64; `Seal.JsonUtil.wireNumbersAgreementSafe` wired via `feat/wire-numeric-agreement` |
 | 6 | `i_number_pos_double_huge_exp` `[1.5e+9999]` | rejects: `number out of range` (NotAct) | `.act`, exact expanded integer | **consequential** | same as 5 |
 | 7 | `i_number_real_neg_overflow` `[-123123e100000]` | rejects: `number out of range` (NotAct) | `.act`, exact expanded integer (serializing it crashed the oracle; see Unverified) | **consequential** | same as 5 |
 | 8 | `i_number_real_pos_overflow` `[123123e100000]` | rejects: `number out of range` (NotAct) | `.act`, exact expanded integer (same oracle crash) | **consequential** | same as 5 |
@@ -103,7 +104,14 @@ rewrites the numeric value under binary64), and the Lean guards refuse
 precisely because a mainstream binary64 reader would disagree with the exact
 reader. The refusal is the guard doing its designed job.
 
-## Addendum, 2026-07-30: classes (a) and (c) closed
+## Addendum, 2026-07-30: classes (a), (b) and (c) closed
+
+`feat/wire-numeric-agreement` wires the pinned kernel's
+`Seal.JsonUtil.wireNumbersAgreementSafe` into `Host.classifyLine` as the
+fifth pre-parse guard — class (b). Rows 5-8 now classify `.refuse`:
+fail-closed (`agreement_divergences_fail_closed`,
+`Test/A2DivergenceClassification.lean`). This branch is rebased on top of
+it, so the stacked router runs all seven guards.
 
 `feat/wire-surrogates-agreement` wires two new pre-parse raw-wire guards into
 `Host.classifyLine`, in the `wireKeysSafe` style (total scans on the raw
@@ -123,9 +131,9 @@ bytes, before `Json.parse`):
   shallowest recorded downstream bound; brackets inside strings do not
   count). Row 9 now classifies `.refuse`: fail-closed.
 
-Rows 9-18 in the table above therefore read **fail-closed** at this branch;
-the serde/Lean *parser* views still differ (the harness still counts rows
-1-4 and 9-18 as recorded divergences), but the Lean side of each is now
+Rows 5-18 in the table above therefore read **fail-closed** at this branch;
+the serde/Lean *parser* views still differ (the harness still counts all
+eighteen as recorded divergences), but the Lean side of each is now
 `.refuse`, so the divergence can only move the outcome toward refusal.
 
 ## What is proven
@@ -148,12 +156,13 @@ the serde/Lean *parser* views still differ (the harness still counts rows
   toolchain without `native_decide` — `String` functions do not kernel-reduce
   (same limitation documented in `Seal/NumberGuardTheorems.lean`).
 
-## The consequential set, in full
+## The consequential set, in full (historical, at `8933c2b`)
 
-Rows 5-18. For every one of the fourteen: the host can judge and (policy
-permitting) approve an event parsed from bytes that a strict conformant
-reader rejects outright, and the raw bytes — not the judged event — are what
-the child receives. For the nine surrogate rows the decoupling is WITNESSED,
+Rows 5-18, before the 2026-07-30 guard wirings. For every one of the
+fourteen: the host could judge and (policy permitting) approve an event
+parsed from bytes that a strict conformant reader rejects outright, and the
+raw bytes — not the judged event — are what the child receives. All fourteen
+are refused pre-parse at this branch. For the nine surrogate rows the decoupling is WITNESSED,
 not hypothetical: the judged `CanonicalAction` contains U+FFFD where the wire
 contains unpaired surrogate escapes, and
 `docs/V31-DOWNSTREAM-PARSER-AGREEMENT.md` records four real downstream
@@ -162,28 +171,22 @@ frame — nine false receipts among nine forwarded vectors.
 
 ## Residual A2 (quotable)
 
-> **A2 residual (2026-07-30, after the class-(a)/(c) guard wiring on
-> `feat/wire-surrogates-agreement`).** Of the 18 recorded Rust/Lean parser
-> disagreements, fourteen are proven fail-closed (refused and blocked under
-> every verdict list; `act_refuse_divergences_fail_closed` and
+> **A2 residual (2026-07-30, after the stacked class-(a)/(b)/(c) guard
+> wiring on `feat/wire-surrogates-agreement` rebased onto
+> `feat/wire-numeric-agreement`).** Of the 18 recorded Rust/Lean parser
+> disagreements, all eighteen are proven fail-closed (refused and blocked
+> under every verdict list; `act_refuse_divergences_fail_closed`,
+> `agreement_divergences_fail_closed` and
 > `surrogate_depth_divergences_fail_closed`,
 > `Test/A2DivergenceClassification.lean`) and the inert class is empty: the
-> four binary64 silent-rewrite lines, the nine unpaired-surrogate-escape
-> lines (class (a), refused pre-parse by
+> four binary64 silent-rewrite lines, the four huge-exponent lines (class
+> (b), refused pre-parse by `Seal.JsonUtil.wireNumbersAgreementSafe`), the
+> nine unpaired-surrogate-escape lines (class (a), refused pre-parse by
 > `Host.SurrogateEscapes.wireSurrogatesSafe`), and the over-deep nesting
 > line (class (c), refused pre-parse by
-> `Host.NestingDepth.wireDepthSafe`, bound 128). What remains assumed is
-> exactly the four-line consequential class (b): wire lines carrying an
-> unquoted number outside binary64 round-trip agreement, which
-> `Host.classifyLine` judges as acts (the exact expanded integer) while a
-> binary64 reader rejects the same bytes. A2 therefore reduces to: every
-> deployed downstream server's parser either rejects, or agrees with
-> `Lean.Json.parse` on the judged `(tool, arguments)`, for every forwarded
-> class-(b) line. The pinned kernel already ships the closing guard
-> (`Seal.JsonUtil.wireNumbersAgreementSafe`, refuses all four class-(b)
-> vectors — pinned executable in `Test/A2DivergenceClassification.lean`),
-> but `Host.classifyLine` does not call it at this revision; a sibling
-> branch wires it.
+> `Host.NestingDepth.wireDepthSafe`, bound 128). No recorded divergence
+> remains consequential; what A2 still assumes is confined to divergences
+> not in this recorded set.
 
 ## Findings (report only — no code changed here)
 
@@ -192,7 +195,8 @@ frame — nine false receipts among nine forwarded vectors.
    four huge-exponent vectors, but `classifyLine` (`Host/Canonical.lean:43`)
    never calls it. Wiring it would move rows 5-8 to fail-closed. (The b83
    kernel line used in the V3.1 experiment wired it; the checked-in pin
-   `bd03bf7b` does not.)
+   `bd03bf7b` does not.) *(Closed 2026-07-30: `feat/wire-numeric-agreement`
+   wires it, and this branch is rebased on top.)*
 2. **No raw-wire guard for unpaired surrogate escapes** (rows 10-18) or
    **nesting depth** (row 9). Both are scan-detectable pre-parse, in the
    exact style of `wireKeysSafe`/`wireNumbersSafe`. Until guarded (or the

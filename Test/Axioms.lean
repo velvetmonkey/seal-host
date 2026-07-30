@@ -1026,6 +1026,29 @@ info: 'Host.classifyLine_refuse_of_unsafe_agreement' depends on axioms: [propext
 #guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_agreement
 
 /--
+info: 'Host.classifyLine_refuse_of_unsafe_surrogates' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_surrogates
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_depth' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_depth
+
+/--
+info: 'Host.SurrogateEscapes.unsafe_implies_surrogateEscape' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.SurrogateEscapes.unsafe_implies_surrogateEscape
+
+/--
+info: 'Host.SurrogateEscapes.safe_of_no_surrogateEscape' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.SurrogateEscapes.safe_of_no_surrogateEscape
+
+/-- info: 'Host.NestingDepth.wireDepthSafe_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.NestingDepth.wireDepthSafe_iff
+
+/--
 info: 'Host.stepRoute_refuse_ne_forward' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.stepRoute_refuse_ne_forward
