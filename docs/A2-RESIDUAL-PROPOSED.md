@@ -61,13 +61,19 @@ Two defects in the current text, beyond vagueness:
 >   off `i_divergences=18` without a classifier change, refutes it and means
 >   A2 is worse than classified. For class (a) per-server agreement is
 >   already FALSE of 4/5 tested servers; treat any policy that forwards
->   class-(a) bytes as unsound today. CONDITIONAL — NOT landed, NOT built:
+>   class-(a) bytes as unsound today. CONDITIONAL — NOT merged to main:
 >   `feat/wire-numeric-agreement` (`c1a7332`) wires the already-pinned
 >   `Seal.JsonUtil.wireNumbersAgreementSafe` (kernel `Seal/JsonUtil.lean:402`)
->   into `classifyLine`, which would move class (b) to fail-closed;
->   `feat/wire-surrogates-agreement` (`5b4b2f1`) adds pre-parse surrogate and
->   depth guards for (a) and (c). Both branches self-declare "NOT YET BUILT";
->   nothing in this row may be read as if they had landed. RETIREMENT: A2
+>   into `classifyLine`, closing class (b); the stacked
+>   `feat/wire-surrogates-agreement` (HEAD `3e8b464`; surrogate/depth feature
+>   commit `7367dc1`, numeric guard restacked as `ac5145e`) adds pre-parse
+>   guards for (a) and (c). The guardstack lane reports the stack built green
+>   and corpus-measured all-18 fail-closed at in-stack commit `26d71bf`
+>   (`i_divergences` 18→5, every remaining one refusal-direction, one NEW:
+>   `[123.456e-789]`, serde accepts / agreement guard refuses — the numeric
+>   guard's declared availability cost); the branch HEAD was recut after
+>   that build and the build at HEAD is unverified. Nothing in this row may
+>   be read as if the stack had landed. RETIREMENT: A2
 >   cannot be retired by anything available to us — it quantifies over the
 >   parsers of arbitrary present and future downstream servers, which the
 >   host does not control (same shape as A7's ruled impossibility:
@@ -155,12 +161,23 @@ list, which is exactly what an attacker would probe.
 
 | Class | Closed by | Branch @ commit | Status |
 |---|---|---|---|
-| (b) numeric agreement | wiring `Seal.JsonUtil.wireNumbersAgreementSafe` (exists at pin `bd03bf7b`, `Seal/JsonUtil.lean:402`; refuses all four vectors — pinned `#guard`, main) into `classifyLine` | `feat/wire-numeric-agreement` @ `c1a7332` | unmerged; commit message: "NOT YET BUILT" |
-| (a) surrogates, (c) depth | new `Host/SurrogateEscapes.lean` + `Host/NestingDepth.lean` pre-parse guards | `feat/wire-surrogates-agreement` @ `5b4b2f1` | unmerged; commit message: "NOT YET BUILT"; also reclassifies rows in `Test/A2DivergenceClassification.lean` — that reclassification is claimable only after a green build |
+| (b) numeric agreement | wiring `Seal.JsonUtil.wireNumbersAgreementSafe` (exists at pin `bd03bf7b`, `Seal/JsonUtil.lean:402`; refuses all four vectors — pinned `#guard`, main) into `classifyLine` | `feat/wire-numeric-agreement` @ `c1a7332`; restacked as `ac5145e` inside the surrogates branch | unmerged |
+| (a) surrogates, (c) depth | new `Host/SurrogateEscapes.lean` + `Host/NestingDepth.lean` pre-parse guards | `feat/wire-surrogates-agreement` @ `3e8b464` (feature commit `7367dc1`; reclassification `537a23c`; test recut `3e8b464`) | unmerged |
 
-Until both merge green, the deployed classifier forwards all fourteen
-consequential lines under an all-allow verdict list. No wording that
-presumes the guards may enter the claim surface before then.
+Build status, reported by the guardstack lane (worktree `wt/surrogates`,
+2026-07-30), NOT independently verified by this lane: the full seven-guard
+stack compiled green (`leanbuild` exit 0) at in-stack commit `26d71bf`, and
+the corpus harness measured both sides (same binary, swapped `.so`):
+`y_` acceptance unchanged at 91/95 (identical vectors), `i_divergences`
+18→5, all five remaining refusal-direction, one NEW
+(`i_number_double_huge_neg_exp` `[123.456e-789]`: serde accepts, agreement
+guard refuses — the numeric guard's declared availability cost). The branch
+HEAD was recut after that build (`537a23c`, `3e8b464`); the build at HEAD is
+unverified.
+
+Until the stack merges green to main, the deployed classifier forwards all
+fourteen consequential lines under an all-allow verdict list. No wording
+that presumes the guards may enter the claim surface before then.
 
 ## What would retire A2
 
