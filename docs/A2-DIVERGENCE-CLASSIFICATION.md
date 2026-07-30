@@ -54,7 +54,11 @@ parser is:
 
 ## Result
 
-**4 fail-closed, 14 consequential, 0 inert.**
+**14 fail-closed, 4 consequential, 0 inert** (as of the class-(a)/(c) guard
+wiring on `feat/wire-surrogates-agreement`, 2026-07-30 — see the addendum
+below the table). At the originally classified revision `8933c2b` the split
+was **4 fail-closed, 14 consequential, 0 inert**; the table below records
+that revision.
 
 The inert class is empty because every recorded case is an act/non-act split
 — the harness records a divergence exactly when
@@ -99,6 +103,31 @@ rewrites the numeric value under binary64), and the Lean guards refuse
 precisely because a mainstream binary64 reader would disagree with the exact
 reader. The refusal is the guard doing its designed job.
 
+## Addendum, 2026-07-30: classes (a) and (c) closed
+
+`feat/wire-surrogates-agreement` wires two new pre-parse raw-wire guards into
+`Host.classifyLine`, in the `wireKeysSafe` style (total scans on the raw
+bytes, before `Json.parse`):
+
+* **`Host.SurrogateEscapes.wireSurrogatesSafe`** — class (a). Refuses a line
+  carrying an unpaired UTF-16 surrogate escape inside a string literal. Rows
+  10-18 now classify `.refuse`: fail-closed
+  (`surrogate_depth_divergences_fail_closed`,
+  `Test/A2DivergenceClassification.lean`). Exclusion is proven, not sampled:
+  `unsafe_implies_surrogateEscape` (kernel theorem) shows a refused line
+  literally contains the six raw characters `\uXXXX` with `XXXX` hex-reading
+  into `D800`-`DFFF`; transparency lemmas show valid surrogate pairs,
+  non-surrogate `\u` escapes and simple escapes are verdict-neutral.
+* **`Host.NestingDepth.wireDepthSafe`** — class (c). Refuses container
+  nesting beyond depth 128 (the serde_json default recursion limit, the
+  shallowest recorded downstream bound; brackets inside strings do not
+  count). Row 9 now classifies `.refuse`: fail-closed.
+
+Rows 9-18 in the table above therefore read **fail-closed** at this branch;
+the serde/Lean *parser* views still differ (the harness still counts rows
+1-4 and 9-18 as recorded divergences), but the Lean side of each is now
+`.refuse`, so the divergence can only move the outcome toward refusal.
+
 ## What is proven
 
 `Test/A2DivergenceClassification.lean`, built at `8933c2b`
@@ -133,26 +162,28 @@ frame — nine false receipts among nine forwarded vectors.
 
 ## Residual A2 (quotable)
 
-> **A2 residual (2026-07-30, divergence classification at `8933c2b`).** Of
-> the 18 recorded Rust/Lean parser disagreements, the four where a binary64
-> reader silently rewrites the numeric value are proven fail-closed (refused
-> and blocked under every verdict list;
-> `Test/A2DivergenceClassification.lean`), and the inert class is empty. What
-> remains assumed is exactly the fourteen-line consequential class: wire
-> lines that `Host.classifyLine` judges as acts while another parser rejects
-> the same bytes or reads different argument values, namely lines whose raw
-> bytes carry (a) an unpaired UTF-16 surrogate escape (judged as U+FFFD,
-> forwarded verbatim — decoupling witnessed downstream), (b) an unquoted
-> number outside binary64 round-trip agreement (judged as the exact expanded
-> integer), or (c) nesting beyond a downstream parser's depth limit. A2
-> therefore reduces to: every deployed downstream server's parser either
-> rejects, or agrees with `Lean.Json.parse` on the judged `(tool, arguments)`,
-> for every forwarded line in classes (a)-(c). The pinned kernel already
-> ships a raw-wire guard that would close (b)
+> **A2 residual (2026-07-30, after the class-(a)/(c) guard wiring on
+> `feat/wire-surrogates-agreement`).** Of the 18 recorded Rust/Lean parser
+> disagreements, fourteen are proven fail-closed (refused and blocked under
+> every verdict list; `act_refuse_divergences_fail_closed` and
+> `surrogate_depth_divergences_fail_closed`,
+> `Test/A2DivergenceClassification.lean`) and the inert class is empty: the
+> four binary64 silent-rewrite lines, the nine unpaired-surrogate-escape
+> lines (class (a), refused pre-parse by
+> `Host.SurrogateEscapes.wireSurrogatesSafe`), and the over-deep nesting
+> line (class (c), refused pre-parse by
+> `Host.NestingDepth.wireDepthSafe`, bound 128). What remains assumed is
+> exactly the four-line consequential class (b): wire lines carrying an
+> unquoted number outside binary64 round-trip agreement, which
+> `Host.classifyLine` judges as acts (the exact expanded integer) while a
+> binary64 reader rejects the same bytes. A2 therefore reduces to: every
+> deployed downstream server's parser either rejects, or agrees with
+> `Lean.Json.parse` on the judged `(tool, arguments)`, for every forwarded
+> class-(b) line. The pinned kernel already ships the closing guard
 > (`Seal.JsonUtil.wireNumbersAgreementSafe`, refuses all four class-(b)
-> vectors — pinned executable in `Test/A2DivergenceClassification.lean`), but
-> `Host.classifyLine` does not call it at this revision. No shipped guard
-> covers (a) or (c).
+> vectors — pinned executable in `Test/A2DivergenceClassification.lean`),
+> but `Host.classifyLine` does not call it at this revision; a sibling
+> branch wires it.
 
 ## Findings (report only — no code changed here)
 
@@ -166,7 +197,10 @@ frame — nine false receipts among nine forwarded vectors.
    **nesting depth** (row 9). Both are scan-detectable pre-parse, in the
    exact style of `wireKeysSafe`/`wireNumbersSafe`. Until guarded (or the
    per-server agreement obligation is discharged), these rows are the live
-   content of A2.
+   content of A2. *(Closed 2026-07-30 by the addendum above:
+   `Host.SurrogateEscapes.wireSurrogatesSafe` and
+   `Host.NestingDepth.wireDepthSafe` are wired at
+   `feat/wire-surrogates-agreement`.)*
 3. **Oracle serializer exception on rows 7-8** (`e100000`): the compiled
    classifier judged `.act`, then printing the expanded arguments raised an
    uncaught Lean exception in the oracle binary. Cause not diagnosed here;

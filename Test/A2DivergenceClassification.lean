@@ -42,9 +42,17 @@ decouple the judged event from the executed one:
   child's execution of the raw forwarded bytes is bound to `a` only by
   assumption A2 — the exact gap the assumption names.
 
-Of the eighteen recorded divergences at this revision, fourteen are
-consequential (`rust=NotAct lean=Act`) and four are fail-closed
-(`rust=Act lean=Refuse`). The inert class is EMPTY: every recorded case is an
+Of the eighteen recorded divergences, FOURTEEN are fail-closed at this
+revision and four remain consequential. History: at `8933c2b` the split was
+4/14 — the four number-guard refusals fail-closed, everything else
+consequential. On 2026-07-30 the class-(a) unpaired-surrogate-escape guard
+(`Host.SurrogateEscapes.wireSurrogatesSafe`, rows 10–18) and the class-(c)
+nesting-depth guard (`Host.NestingDepth.wireDepthSafe`, row 9) were wired
+into `Host.classifyLine`, moving those ten rows to fail-closed. The four
+still consequential are rows 5–8 (`rust=NotAct lean=Act`, huge-exponent
+numbers): the closing guard `Seal.JsonUtil.wireNumbersAgreementSafe` exists
+at the pinned kernel but is not yet wired (see the finding below; a sibling
+branch closes it). The inert class is EMPTY: every recorded case is an
 act/non-act split, never a representational difference.
 
 ## Proof discipline on this toolchain
@@ -127,7 +135,9 @@ def tooBigNegLine  : String := envelope "[-123123123123123123123123123123]"
 def veryBigNegLine : String := envelope
   "[-237462374673276894279832749832423479823246327846]"
 
--- The fourteen `rust=NotAct lean=Act` lines (the consequential class).
+-- The fourteen lines recorded `rust=NotAct lean=Act` at `8933c2b`. Rows 5-8
+-- (huge exponents) still classify `.act`; rows 9-18 are refused since the
+-- class-(a)/(c) guards landed.
 def negIntHugeExpLine    : String := envelope "[-1e+9999]"
 def posDoubleHugeExpLine : String := envelope "[1.5e+9999]"
 def realNegOverflowLine  : String := envelope "[-123123e100000]"
@@ -202,34 +212,99 @@ theorem act_refuse_divergences_fail_closed
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_digits _ h3)
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_digits _ h4)
 
-/-! ## Per-line pins, consequential class
+/-! ## Per-line pins, remaining consequential class (rows 5-8)
 
-Each of the fourteen lines classifies `.act` on tool `external.json_corpus`:
-the kernel judges an event and, under an all-allow verdict list, the raw bytes
-forward (`stepRoute_act_forward_iff`). For the nine lone-surrogate lines the
-JUDGED arguments are pinned exactly: every unpaired surrogate escape in the
-wire bytes appears as U+FFFD in the judged `CanonicalAction`, while the
-forwarded bytes still carry the original `\uD800`-family escapes —
-`docs/V31-DOWNSTREAM-PARSER-AGREEMENT.md` records four real downstream parsers
-extracting the raw surrogates and a fifth rejecting the frame outright. The
-judged-event/executed-event decoupling is therefore witnessed, not
-hypothesized. -/
+Each of the four huge-exponent lines still classifies `.act` on tool
+`external.json_corpus`: the kernel judges an event and, under an all-allow
+verdict list, the raw bytes forward (`stepRoute_act_forward_iff`), while
+serde rejects the same bytes (`number out of range`). -/
 
 #guard isActOn "external.json_corpus" (classifyLine negIntHugeExpLine)
 #guard isActOn "external.json_corpus" (classifyLine posDoubleHugeExpLine)
 #guard isActOn "external.json_corpus" (classifyLine realNegOverflowLine)
 #guard isActOn "external.json_corpus" (classifyLine realPosOverflowLine)
-#guard isActOn "external.json_corpus" (classifyLine nested500Line)
 
-#guard actArgs? (classifyLine surrogate2ndMissingLine)   == some "[\"\uFFFD\"]"
-#guard actArgs? (classifyLine surrogate2ndInvalidLine)   == some "[\"\uFFFD\u1234\"]"
-#guard actArgs? (classifyLine surrogateEscapeValidLine)  == some "[\"\uFFFD\\n\"]"
-#guard actArgs? (classifyLine surrogatePairLine)         == some "[\"\uFFFDa\"]"
-#guard actArgs? (classifyLine surrogatesEscapeValidLine) == some "[\"\uFFFD\uFFFD\\n\"]"
-#guard actArgs? (classifyLine lonelySurrogateLine)       == some "[\"\uFFFD\"]"
-#guard actArgs? (classifyLine invalidSurrogateLine)      == some "[\"\uFFFDabc\"]"
-#guard actArgs? (classifyLine invertedSurrogatesLine)    == some "[\"\uFFFD\uFFFD\"]"
-#guard actArgs? (classifyLine loneSecondSurrogateLine)   == some "[\"\uFFFD\"]"
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    surrogate2ndMissingLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    surrogate2ndInvalidLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    surrogateEscapeValidLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    surrogatePairLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    surrogatesEscapeValidLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    lonelySurrogateLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    invalidSurrogateLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    invertedSurrogatesLine.trimAscii.toString = false
+#guard Host.SurrogateEscapes.wireSurrogatesSafe
+    loneSecondSurrogateLine.trimAscii.toString = false
+#guard Host.NestingDepth.wireDepthSafe nested500Line.trimAscii.toString = false
+
+#guard isRefuse (classifyLine surrogate2ndMissingLine)
+#guard isRefuse (classifyLine surrogate2ndInvalidLine)
+#guard isRefuse (classifyLine surrogateEscapeValidLine)
+#guard isRefuse (classifyLine surrogatePairLine)
+#guard isRefuse (classifyLine surrogatesEscapeValidLine)
+#guard isRefuse (classifyLine lonelySurrogateLine)
+#guard isRefuse (classifyLine invalidSurrogateLine)
+#guard isRefuse (classifyLine invertedSurrogatesLine)
+#guard isRefuse (classifyLine loneSecondSurrogateLine)
+#guard isRefuse (classifyLine nested500Line)
+
+/-- The nine class-(a) lines and the class-(c) line. -/
+def surrogateDepthLines : List String :=
+  [surrogate2ndMissingLine, surrogate2ndInvalidLine, surrogateEscapeValidLine,
+   surrogatePairLine, surrogatesEscapeValidLine, lonelySurrogateLine,
+   invalidSurrogateLine, invertedSurrogatesLine, loneSecondSurrogateLine,
+   nested500Line]
+
+/-- **Every class-(a) and class-(c) divergence line is fail-closed.** The ten
+    guard hypotheses are the exact `Bool` facts pinned by the `#guard`s above
+    (build-time evaluation of the production guards on the exact wire lines);
+    given them, each line is blocked under every verdict list — never
+    forwarded, never passed through. Before 2026-07-30 these ten lines were
+    the witnessed bulk of the consequential class; the class-(a)/(c) guards
+    moved them here. -/
+theorem surrogate_depth_divergences_fail_closed
+    (h10 : Host.SurrogateEscapes.wireSurrogatesSafe
+      surrogate2ndMissingLine.trimAscii.toString = false)
+    (h11 : Host.SurrogateEscapes.wireSurrogatesSafe
+      surrogate2ndInvalidLine.trimAscii.toString = false)
+    (h12 : Host.SurrogateEscapes.wireSurrogatesSafe
+      surrogateEscapeValidLine.trimAscii.toString = false)
+    (h13 : Host.SurrogateEscapes.wireSurrogatesSafe
+      surrogatePairLine.trimAscii.toString = false)
+    (h14 : Host.SurrogateEscapes.wireSurrogatesSafe
+      surrogatesEscapeValidLine.trimAscii.toString = false)
+    (h15 : Host.SurrogateEscapes.wireSurrogatesSafe
+      lonelySurrogateLine.trimAscii.toString = false)
+    (h16 : Host.SurrogateEscapes.wireSurrogatesSafe
+      invalidSurrogateLine.trimAscii.toString = false)
+    (h17 : Host.SurrogateEscapes.wireSurrogatesSafe
+      invertedSurrogatesLine.trimAscii.toString = false)
+    (h18 : Host.SurrogateEscapes.wireSurrogatesSafe
+      loneSecondSurrogateLine.trimAscii.toString = false)
+    (h9 : Host.NestingDepth.wireDepthSafe
+      nested500Line.trimAscii.toString = false) :
+    ∀ line ∈ surrogateDepthLines, FailClosed line := by
+  intro line hmem
+  simp only [surrogateDepthLines, List.mem_cons, List.not_mem_nil, or_false]
+    at hmem
+  rcases hmem with h | h | h | h | h | h | h | h | h | h <;> subst h
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h10)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h11)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h12)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h13)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h14)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h15)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h16)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h17)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h18)
+  · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_depth _ h9)
 
 /-! ## Finding: the binary64 agreement guard exists at this pin but is unwired
 
@@ -249,6 +324,7 @@ classifier still acts. -/
 /-! ## Axiom footprints -/
 
 #print axioms act_refuse_divergences_fail_closed
+#print axioms surrogate_depth_divergences_fail_closed
 #print axioms refuse_fail_closed
 #print axioms failClosed_never_forwards
 #print axioms failClosed_never_passes_through
