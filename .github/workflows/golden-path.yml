@@ -189,7 +189,7 @@ jobs:
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→1 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→0 consumed=true" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=0→0 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
-          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 3
+          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 6
           grep -F "TRACE-CONTROL quorum-met expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "TRACE-CONTROL drop-deploy-ok expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
