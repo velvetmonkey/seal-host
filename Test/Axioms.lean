@@ -19,7 +19,8 @@ import Host.RecordReflection
 import Host.ReplayIsolation
 import Host.StatefulNI
 import Host.AuthorityFrontierBridge
-import Host.DeployedAdapter
+import Host.GatedSinkAdapter
+import Host.PassthroughPerimeter
 import Host.CapabilityAdequacy
 import Host.DispatchSpelled
 import Host.Principal
@@ -603,32 +604,65 @@ info: 'Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one'' depends on axi
 /-- info: 'Host.AuthorityFrontierBridge.sealv2_token_mesh_safe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_token_mesh_safe
 
--- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
--- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
+-- Gated-sink adapter conformance by name: O1∧O2 + non-vacuity at the alias
+-- (Host/GatedSinkAdapter.lean; model = W2-T6.1 sealAdapter, no duplication).
+-- Renamed from `deployed_*` (K3): the alias covers the gated child-input
+-- sink (P2/P3) only, not P1 passthrough (see Host/PassthroughPerimeter.lean).
 
-/-- info: 'Host.Channel.deployed_O1' depends on axioms: [propext] -/
-#guard_msgs in #print axioms Host.Channel.deployed_O1
+/-- info: 'Host.Channel.gatedSink_O1' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.gatedSink_O1
 
-/-- info: 'Host.Channel.deployed_O2' depends on axioms: [propext] -/
-#guard_msgs in #print axioms Host.Channel.deployed_O2
-
-/--
-info: 'Host.Channel.deployed_preserves_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms Host.Channel.deployed_preserves_non_bypass
-
-/-- info: 'Host.Channel.deployed_nonvacuous' does not depend on any axioms -/
-#guard_msgs in #print axioms Host.Channel.deployed_nonvacuous
+/-- info: 'Host.Channel.gatedSink_O2' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.gatedSink_O2
 
 /--
-info: 'Host.Channel.deployed_live_emit_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.Channel.gatedSink_preserves_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms Host.Channel.deployed_live_emit_of_allow
+#guard_msgs in #print axioms Host.Channel.gatedSink_preserves_non_bypass
+
+/-- info: 'Host.Channel.gatedSink_nonvacuous' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.gatedSink_nonvacuous
 
 /--
-info: 'Host.Channel.deployed_live_license_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.Channel.gatedSink_live_emit_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms Host.Channel.deployed_live_license_of_allow
+#guard_msgs in #print axioms Host.Channel.gatedSink_live_emit_of_allow
+
+/--
+info: 'Host.Channel.gatedSink_live_license_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.gatedSink_live_license_of_allow
+
+-- Passthrough perimeter (K4): the widened alphabet includes P1, the byte
+-- classes characterise the router, and non-bypass FAILS over the widening
+-- while the gated sink survives (Host/PassthroughPerimeter.lean; every
+-- theorem there is also pinned inline). Central-audit copies of the
+-- capstones:
+
+/--
+info: 'Host.Perimeter.mediation_perimeter' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.mediation_perimeter
+
+/--
+info: 'Host.Perimeter.widened_non_bypass_fails' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.widened_non_bypass_fails
+
+/--
+info: 'Host.Perimeter.widened_non_bypass_fails_live' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.widened_non_bypass_fails_live
+
+/--
+info: 'Host.Perimeter.wchannel_gated_sink_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.wchannel_gated_sink_non_bypass
+
+/--
+info: 'Host.Perimeter.toolsCallShape_eq_toolsCall?' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.toolsCallShape_eq_toolsCall?
 
 -- Capability adequacy, UNCONDITIONAL (Host/Encoding.lean +
 -- Host/CapabilityAdequacy.lean, ARIA S6): injective netstring encoding +

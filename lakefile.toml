@@ -115,3 +115,12 @@ root = "Test.RepinStep2Guards"
 [[lean_exe]]
 name = "downstream_parser_oracle"
 root = "Test.DownstreamParserOracle"
+
+# Passthrough-perimeter control: runs the compiled router + widened `wrun`
+# over the witness corpus and exits non-zero (RED) if any message inside the
+# mediation perimeter S is ever forwarded to the child undecided, or if a
+# witnessed escape stops escaping. The kernel cannot evaluate `Json.parse`
+# (partial), so this exit-status control complements the module's #guards.
+[[lean_exe]]
+name = "perimeter_probe"
+root = "Test.PerimeterProbe"

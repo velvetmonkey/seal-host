@@ -116,9 +116,9 @@ the **same** SHA-256 record head as the Lean model over corpus C.
 - **"Which recent proof gaps does this bridge name?"** It names the model
   theorems landed for single-request NI
   (`Host.NonInterference.observe_noninterference`), replay isolation
-  (`Host.ReplayIsolation.replay_isolation_trace`), and deployed-adapter O1/O2
-  plus non-vacuity (`Host.Channel.deployed_O1`, `deployed_O2`,
-  `deployed_nonvacuous`). The bridge tests binary correspondence on C; it does
+  (`Host.ReplayIsolation.replay_isolation_trace`), and gated-sink-adapter
+  O1/O2 plus non-vacuity (`Host.Channel.gatedSink_O1`, `gatedSink_O2`,
+  `gatedSink_nonvacuous`). The bridge tests binary correspondence on C; it does
   not turn those model theorems into a universal binary proof.
 
 ## TCB (named, not proven)
