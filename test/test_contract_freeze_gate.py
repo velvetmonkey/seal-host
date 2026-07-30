@@ -257,9 +257,25 @@ class ContractFreezeGateTests(unittest.TestCase):
             job,
             "the freeze gate must run without the private dependency token",
         )
-        self.assertNotIn("if:", job, "the freeze gate step must be unconditional")
-        self.assertNotIn(
-            "continue-on-error:", job, "freeze failures must fail the CI job"
+        gate_position = job.index("python3 scripts/contract_freeze_gate.py")
+        gate_start = job.rfind("\n      - ", 0, gate_position)
+        gate_end = job.find("\n      - ", gate_position)
+        gate_step = job[gate_start:gate_end]
+        self.assertNotIn("if:", gate_step, "the freeze gate step must be unconditional")
+        self.assertIn(
+            "continue-on-error: true",
+            gate_step,
+            "the freeze gate must report without masking later controls",
+        )
+        self.assertIn(
+            "name: Require every isolated CI step to pass",
+            job,
+            "isolated failures need a final fail-closed aggregate",
+        )
+        self.assertIn(
+            "SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}",
+            job,
+            "the final gate must inspect every isolated outcome",
         )
         self.assertIn(
             'CONTRACT_FREEZE_CI: "1"',
