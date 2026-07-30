@@ -114,6 +114,15 @@ For production mode, put the config, approval-token file, authorization-decision
 and replay database in a service-owned directory with mode `0700`; files must
 be mode `0600`. Do not place the replay database directly in `/tmp`.
 
+The replay database's parent directory mode is **enforced, not advised**: on every
+`--channel ed25519` launch the host refuses to start unless that directory is a
+non-symlink, host-owned, mode-`0700` directory (`rust/src/replay_store.rs`
+`SqliteReplayStore::open`). A writable parent would let any principal holding that
+write bit `rename()` a different — but equally host-owned and mode-`0600` — store
+into the signed path, handing back nonces the live store had already consumed.
+The guard bounds who can do that to `{host euid, root}`; it does not detect a
+substitution by those two (residual A7 in [`../CLAIMS.md`](../CLAIMS.md)).
+
 Key facts (from the schema reference, not invented here):
 - A tool **not listed** is blocked — the policy is a fail-closed allowlist for `tools/call`.
 - `mode: "guarded"` needs a live approval; `mode: "deny"` is always blocked.

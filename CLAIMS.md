@@ -47,7 +47,7 @@ The canonical AST is audit input for kernels, not the mediation gate.
 | W2-T1 hardening: A-ENC DISCHARGED: `TimedEntry.encCanonical` (length-prefixed, delimiter-safe) is injective by Lean proof (`encCanonical_injective`, pure structural, no crypto); `timed_tamper_evident_canonical` gives timed tamper-evidence under A-CR + A-GEN ALONE, exactly the landed L1 crypto TCB, no encoder side-condition | `Host/RecordTemporalCanonical.lean` | Lean theorem | A-CR + A-GEN only (the L1 crypto TCB); monotone-clock caveat as above | `TimedEntry.line` remains demonstration-grade (unused by this theorem) | yes |
 | Deployed receipt commitment: production audit certificates are chained with SHA-256 (`sha256(prevHeadHex || 0x1f || payload)`) by `rust/src/receipt.rs` and independently by `scripts/seal_log.mjs`; conformance checks a fresh deployed host's emitted head against the model-derived head. The host file-fsyncs and atomically replaces a private prior-head state file, directory-fsyncs it, and the first record after restart names the prior head and process session | Rust host + `scripts/seal_log.mjs` + `scripts/conformance_bridge.mjs` | code + differential evidence | SHA-256 collision resistance is A-CR TCB; `node:crypto`/Rust `sha2`, filesystem `fsync` behavior, OS ownership, and harness are TCB | no Lean proof of SHA-256 CR; evidence over corpus C only; process-session metadata cross-links records but is not itself an authenticated caller identity | yes, "A-CR is TCB, not proven" mandatory |
 
-## Assumptions and residuals (A1-A6)
+## Assumptions and residuals (A1-A7)
 
 - **A2 (numeric/parse fidelity)** minimised by construction (canonical strict subset), not eliminated. Per-server equivalence obligation remains.
 - **A4 (atomic consume)** discharged by the host `Mutex` carrying M6 atomic-consume; concurrency-tested 16->1 Allow.
@@ -57,6 +57,26 @@ The canonical AST is audit input for kernels, not the mediation gate.
   approval reaches Lean, with WAL plus `synchronous=FULL`. The legacy
   control-file/interactive demo channels keep in-memory replay state and do
   not claim cross-restart replay protection.
+- **A7 (replay-store instance integrity) RULED AND ACCEPTED by Ben 2026-07-30**
+  (council `5c3845e7`, shape (D): application-layer instance binding is not
+  achievable against an attacker holding write access to the store path, so this
+  is a documented limitation, not a guard). A6 claims
+  that accepted nonces are durably recorded; it does NOT claim that the store
+  the host opens is the same store instance it last wrote. The host
+  authenticates the store's PATH and file properties — non-symlink, host-euid
+  owner, mode 0600, and (added here) a non-symlink host-owned 0700 parent
+  directory, which narrows the set of principals able to `rename()` a
+  different but equally host-owned store into that path to {host euid, root}.
+  It does not authenticate the store's IDENTITY: no field of the
+  authority-signed config binds a store instance, so a substitution performed
+  by the host euid or by root — restoring a backup, a blue/green rollback, a
+  prior init left in place — is accepted and every nonce the displaced store
+  had consumed is re-accepted within its TTL. This residual is currently
+  dissolved into the "OS permissions" and "Rust replay-store TCB" assumptions
+  of the A6 row above; A7 names it directly. Pinned in executable form by
+  `rust/tests/replay_store_substitution.rs::store_substitution_is_not_detected`,
+  which asserts the ACCEPTANCE; retiring A7 requires editing that test in the
+  same commit.
 
 ## Trusted config signatures
 
