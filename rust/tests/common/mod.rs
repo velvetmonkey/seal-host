@@ -129,11 +129,7 @@ pub fn boundary_corpus() -> Vec<BoundaryCase> {
         case("str-lone-high-surrogate", in_value(r#""\ud800""#), WR),
         case("str-lone-low-surrogate", in_value(r#""\udc00""#), WR),
         case("str-surrogate-pair", in_value(r#""\ud83d\ude00""#), AR),
-        case(
-            "str-reversed-surrogates",
-            in_value(r#""\udc00\ud800""#),
-            WR,
-        ),
+        case("str-reversed-surrogates", in_value(r#""\udc00\ud800""#), WR),
         case("str-lone-surrogate-in-key", in_value(r#"{"\ud800":1}"#), WR),
         case("str-raw-nul", in_value("\"a\u{0}b\""), AU),
         case("str-raw-ctrl-0x01", in_value("\"a\u{1}b\""), AU),

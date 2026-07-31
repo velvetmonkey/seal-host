@@ -26,10 +26,12 @@ CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 # Ffi-reachable project modules (ir-relative paths, no .c). Output name = path
 # with '/' -> '_'. Host/Step is present because Ffi routes through Host.stepRoute;
 # Host/UnicodeKeys supplies the runtime NFD key-identity guard used by
-# Host/Canonical.
+# Host/Canonical. Host/SurrogateEscapes and Host/NestingDepth supply the A2
+# pre-parse guards reached through Host/Canonical.
 MODULES=(
   Ffi
   Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step Host/UnicodeKeys
+  Host/SurrogateEscapes Host/NestingDepth
   Host/Principal Host/Provenance
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
