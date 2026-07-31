@@ -175,7 +175,7 @@ def assert_no_production_fabricator() -> None:
 
 def run_once(root: Path, tag: str) -> tuple[bytes, bytes]:
     run = root / tag
-    run.mkdir()
+    run.mkdir(mode=0o700)
     approvals = run / "approvals.ndjson"
     approvals.write_bytes(b"")
     config = write_config(run, approvals)

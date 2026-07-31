@@ -20,10 +20,32 @@ import {
   ROOT,
   ciRunStepFloorFailure,
   matchingRows,
+  parseBuildGatedGuardCount,
   parseCiRunSteps,
   parseLedger,
   stripSourceComments,
 } from "../scripts/pins_gate.mjs";
+
+test("build-gated guard counts accept numerals and common number words", () => {
+  assert.deepEqual(parseBuildGatedGuardCount("9 build-gated guards"), {
+    count: 9,
+    error: null,
+  });
+  assert.deepEqual(parseBuildGatedGuardCount("nine build-gated guards"), {
+    count: 9,
+    error: null,
+  });
+  assert.deepEqual(parseBuildGatedGuardCount("twenty-one build-gated guards"), {
+    count: 21,
+    error: null,
+  });
+});
+
+test("unparseable build-gated guard counts are explicit failures", () => {
+  const parsed = parseBuildGatedGuardCount("many build-gated guards");
+  assert.equal(parsed.count, null);
+  assert.match(parsed.error, /unparseable claim: unknown number word `many`/);
+});
 
 test("specification-only search strips comments but preserves code strings", () => {
   const fixtures = new Map([
@@ -232,7 +254,7 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
     .join("\n");
   const normal = parseCiRunSteps(ci);
   const shifted = parseCiRunSteps(reindented);
-  assert.equal(normal.length, 59, "review the expected run-step inventory explicitly");
+  assert.equal(normal.length, 60, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,

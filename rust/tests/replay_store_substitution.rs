@@ -81,7 +81,7 @@ fn consume(path: &Path, nonce: &str, now_ms: u64) {
 /// signed path under a world-traversable, group/other-writable parent is
 /// REFUSED, and the refusal names the parent, not the file.
 #[test]
-fn substitution_capable_parent_is_refused() {
+fn parent_mode_0755_is_refused_by_strict_0700_whitelist() {
     let root = scratch_root("refused");
     // Where the attacker's store is MADE: conforming, because a store the
     // host itself once created is the realistic source (a backup, a prior

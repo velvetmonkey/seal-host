@@ -23,6 +23,39 @@ export const ROOT = path.resolve(
 );
 export const CI_RUN_STEP_MINIMUM = 50;
 
+const SMALL_NUMBER_WORDS = Object.freeze({
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+});
+const TENS_NUMBER_WORDS = Object.freeze({
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+});
+
 const PINS = path.join(ROOT, "PINS.md");
 const KERNEL = path.join(ROOT, ".lake", "packages", "mcp-seal");
 const SOURCE_EXTENSIONS = new Set([
@@ -497,6 +530,58 @@ export function ciRunStepFloorFailure(count) {
   );
 }
 
+function numberWordValue(token) {
+  if (Object.hasOwn(SMALL_NUMBER_WORDS, token)) {
+    return SMALL_NUMBER_WORDS[token];
+  }
+  if (Object.hasOwn(TENS_NUMBER_WORDS, token)) {
+    return TENS_NUMBER_WORDS[token];
+  }
+  const parts = token.split("-");
+  if (
+    parts.length === 2 &&
+    Object.hasOwn(TENS_NUMBER_WORDS, parts[0]) &&
+    Object.hasOwn(SMALL_NUMBER_WORDS, parts[1]) &&
+    SMALL_NUMBER_WORDS[parts[1]] > 0 &&
+    SMALL_NUMBER_WORDS[parts[1]] < 10
+  ) {
+    return TENS_NUMBER_WORDS[parts[0]] + SMALL_NUMBER_WORDS[parts[1]];
+  }
+  return null;
+}
+
+export function parseBuildGatedGuardCount(evidence) {
+  const claims = [
+    ...evidence.matchAll(/\b([A-Za-z]+(?:-[A-Za-z]+)?|[0-9]+)\s+build-gated\b/gi),
+  ];
+  if (claims.length !== 1) {
+    return {
+      count: null,
+      error:
+        claims.length === 0
+          ? "unparseable claim: expected exactly one count immediately before `build-gated`"
+          : `unparseable claim: found ${claims.length} counts before \`build-gated\``,
+    };
+  }
+  const token = claims[0][1].toLowerCase();
+  if (/^[0-9]+$/.test(token)) {
+    const count = Number(token);
+    if (Number.isSafeInteger(count)) return { count, error: null };
+    return {
+      count: null,
+      error: `unparseable claim: numeral ${token} is outside the safe integer range`,
+    };
+  }
+  const count = numberWordValue(token);
+  if (count !== null) return { count, error: null };
+  return {
+    count: null,
+    error:
+      `unparseable claim: unknown number word \`${token}\`; ` +
+      "use an ASCII numeral or a number word from zero to ninety-nine",
+  };
+}
+
 function markdownRowLabel(row) {
   return `PINS.md:${row.line} [${row.site.replaceAll("`", "")}]`;
 }
@@ -674,16 +759,19 @@ function checkLeanClassifyEncoding(ctx, row) {
   const file = path.join(ROOT, citation);
   const text = fs.readFileSync(file, "utf8");
   const guardCount = [...text.matchAll(/^#guard\b/gm)].length;
-  const countClaim = row.evidence.match(/\b(three|[0-9]+) build-gated/);
-  const claimedCount =
-    countClaim?.[1] === "three" ? 3 : Number(countClaim?.[1] ?? Number.NaN);
-  if (claimedCount !== guardCount) {
+  const countClaim = parseBuildGatedGuardCount(row.evidence);
+  if (countClaim.error) {
     reportMismatch(
       ctx,
       row,
-      Number.isNaN(claimedCount)
-        ? "no build-gated guard count"
-        : `${claimedCount} build-gated real-input guards`,
+      countClaim.error,
+      `${guardCount} #guard declarations in ${citation}`,
+    );
+  } else if (countClaim.count !== guardCount) {
+    reportMismatch(
+      ctx,
+      row,
+      `${countClaim.count} build-gated real-input guards`,
       `${guardCount} #guard declarations in ${citation}`,
     );
   }

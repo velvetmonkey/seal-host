@@ -60,6 +60,12 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_15
+        continue-on-error: true
+        name: Verify wasm project MODULES close over Lean imports
+        run: |
+          python3 scripts/wasm_module_closure_gate.py
+          python3 -m unittest discover -s test -p 'test_wasm_module_closure_gate.py' -v
       - id: control_02
         continue-on-error: true
         name: Skip private Lean build without dependency token

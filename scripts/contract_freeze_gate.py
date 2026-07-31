@@ -100,7 +100,7 @@ REVIEWED_HASHES = {
     "rust/tests/envelope_v23.rs":
         "5558a435d43c7947dcb990bf1a72447723fa65a100d204e46a985fd21e3e4581",
     "rust/tests/envelope_v23_twin.rs":
-        "6bab05228b6b42b10f3ded8361f580a60cd80d3512db7b6cb8c9bfadea2a090a",
+        "62616871b2e08c5024dbe0f87899494905f6405b99f1b3067062cfcc93e1c289",
     "rust/tests/vectors/envelope_v23_twin_corpus.json":
         "ce9048af3df4a2edc70c09b3bb9c6f7b920ac53775d0a0a1e8c5efc5b0075cd1",
     "rust/tests/vectors/envelope_v23_twin_expected.hex":
