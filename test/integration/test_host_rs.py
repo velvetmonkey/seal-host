@@ -67,6 +67,25 @@ def write_config(tmp: Path, approval_file: Path) -> Path:
     payload = config_payload(tmp, approval_file)
     path = tmp / "trusted.json"
     path.write_text(sign_payload(payload, CONFIG_SK), encoding="utf-8")
+    path.chmod(0o600)
+    initialized = subprocess.run(
+        [
+            str(BIN),
+            "--config",
+            str(path),
+            "--pubkey",
+            PUBKEY,
+            "--initialize-replay-store",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert initialized.returncode == 0, (
+        f"replay-store initialization exited {initialized.returncode}\n"
+        f"stdout:\n{initialized.stdout}\nstderr:\n{initialized.stderr}"
+    )
     return path
 
 

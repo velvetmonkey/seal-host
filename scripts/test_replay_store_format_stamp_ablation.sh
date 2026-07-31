@@ -50,7 +50,10 @@ export PATH="/home/monkey/.cargo/bin:$PATH"
 export SEAL_FFI_LIB_DIR="${SEAL_FFI_LIB_DIR:-$ROOT/.lake/build/lib}"
 export LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export CARGO_TARGET_DIR="$SCRATCH/target"
+# Reuse the already-populated CI target directory. The mutant source path still
+# gets its own package fingerprints and artifacts, while dependency artifacts
+# are not rebuilt into a second multi-gigabyte tree under /tmp.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/rust/target}"
 
 # Build separately, check its status, and only then execute the artifact.
 if ! (
@@ -84,5 +87,5 @@ if ! grep -Fq "ABLATION DETECTED: mismatched replay store served a request" "$TE
     exit 1
 fi
 
-echo "ABLATION ON: mismatched replay store served; refusal control failed"
+echo "ABLATION ON: mismatched replay store served; refusal control failed (test exit $status)"
 echo "ABLATION RESTORED: disposable mutant removed on exit"

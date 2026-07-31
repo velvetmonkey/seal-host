@@ -18,6 +18,7 @@ import {
   CHECKS,
   ROOT,
   matchingRows,
+  parseCiRunSteps,
   parseLedger,
   stripSourceComments,
 } from "../scripts/pins_gate.mjs";
@@ -186,5 +187,43 @@ test("CI runs the one checker door and this meta-test", () => {
       .length,
     1,
     "CI must invoke the PINS checker once, not copy-paste row checks",
+  );
+});
+
+test("CI Cargo controls are parsed from id-first workflow steps", () => {
+  const steps = parseCiRunSteps();
+  assert.ok(
+    steps.some(
+      (step) =>
+        step.run === "cargo test --no-fail-fast" &&
+        step.workingDirectory === "rust",
+    ),
+    "generic Cargo suite is missing from rust/",
+  );
+  assert.ok(
+    steps.some(
+      (step) =>
+        step.run === "cargo test --test envelope_v23_twin" &&
+        step.workingDirectory === "rust",
+    ),
+    "named envelope_v23_twin suite is missing from rust/",
+  );
+});
+
+test("the live Lean twin prerequisite precedes the generic Cargo suite", () => {
+  const steps = parseCiRunSteps();
+  const prerequisite = steps.findIndex(
+    (step) => step.run === "lake build SealV2.EffectEnvelope",
+  );
+  const genericSuite = steps.findIndex(
+    (step) =>
+      step.run === "cargo test --no-fail-fast" &&
+      step.workingDirectory === "rust",
+  );
+  assert.notEqual(prerequisite, -1, "EffectEnvelope build prerequisite is missing");
+  assert.notEqual(genericSuite, -1, "generic Cargo suite is missing");
+  assert.ok(
+    prerequisite < genericSuite,
+    "EffectEnvelope must be built before the generic Cargo suite",
   );
 });

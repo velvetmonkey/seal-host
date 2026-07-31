@@ -425,28 +425,30 @@ export function parseCiRunSteps(
 ) {
   const steps = [];
   let current = null;
+  const finishCurrent = () => {
+    if (current?.run !== null) steps.push(current);
+    current = null;
+  };
   for (const line of text.split(/\r?\n/)) {
-    const start = line.match(/^(\s*)-\s+run:\s*(.*)$/);
+    const start = line.match(/^(\s{6})-\s+(.*)$/);
     if (start) {
-      if (current) steps.push(current);
+      if (current && start[1].length === current.indent) finishCurrent();
       current = {
         indent: start[1].length,
-        run: start[2].trim(),
+        run: null,
         workingDirectory: null,
       };
+      const inlineRun = start[2].match(/^run:\s*(.*)$/);
+      if (inlineRun) current.run = inlineRun[1].trim();
       continue;
     }
     if (!current) continue;
-    const anotherItem = line.match(/^(\s*)-\s+/);
-    if (anotherItem && anotherItem[1].length === current.indent) {
-      steps.push(current);
-      current = null;
-      continue;
-    }
+    const run = line.match(/^\s+run:\s*(.*)$/);
+    if (run) current.run = run[1].trim();
     const working = line.match(/^\s+working-directory:\s*(\S+)\s*$/);
     if (working) current.workingDirectory = working[1];
   }
-  if (current) steps.push(current);
+  finishCurrent();
   return steps;
 }
 
