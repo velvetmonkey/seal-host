@@ -34,12 +34,18 @@ seam table (`rust/src/main.rs:13-21`, `RUST_BRIDGE.md:35-43`):
 
 ## What this module does NOT cover, stated loud
 
-* **P4 operator argv → `Command::new(...).spawn()`.** NOT modelled, and
-  deliberately so: the argv is consumed BEFORE the seam exists — it selects
-  WHICH child the run talks to. There is no run transition to attach it to;
-  any `spawnEv` would quantify over nothing the model constrains. P4 is a
-  TRUST ASSUMPTION (operator startup authority, `RUST_BRIDGE.md:148`), not a
-  theorem, and pretending otherwise would be fiction. NO-GO.
+* **P4 operator argv → `Command::new(...).spawn()`.** Not modelled HERE;
+  the no-go itself is now MACHINE-CHECKED in `Host/SpawnSeam.lean`, which
+  adds the `spawnEv` this paragraph calls pointless and proves the point:
+  the spawn precedes every event, so strict spawn mediation FAILS on every
+  run (`spawn_non_bypass_fails`), every candidate argv constraint is
+  VACUOUS — it holds even at `C := fun _ => False`
+  (`spawn_constraint_vacuous_false`) — and argv is a run PARAMETER the
+  trace semantics cannot observe (`srun_argv_parameter`), while the P5
+  capstone below transfers for every argv (`srun_client_block_mediated`):
+  argv buys the child selection and ONLY the child selection. P4 REMAINS a
+  TRUST ASSUMPTION (operator startup authority, `RUST_BRIDGE.md:148`) —
+  the theorems are the machine-checked reason WHY it can only be one.
 * **P7 stderr telemetry.** Not in the alphabet: stderr has no input edge
   into routing, so a faithful `audEv` would be no-effect by construction and
   prove nothing new. The CONTENT of audit records is governed model-level by
