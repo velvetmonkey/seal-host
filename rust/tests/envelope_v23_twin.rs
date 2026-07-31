@@ -230,9 +230,7 @@ fn live_lean_diff_over_shared_corpus() {
     };
     assert!(
         output.status.success(),
-        "lean lane failed (status {}):\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
+        "lean lane failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let lean_lines: Vec<&str> = std::str::from_utf8(&output.stdout)
