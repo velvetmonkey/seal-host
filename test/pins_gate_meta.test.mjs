@@ -20,10 +20,32 @@ import {
   ROOT,
   ciRunStepFloorFailure,
   matchingRows,
+  parseBuildGatedGuardCount,
   parseCiRunSteps,
   parseLedger,
   stripSourceComments,
 } from "../scripts/pins_gate.mjs";
+
+test("build-gated guard counts accept numerals and common number words", () => {
+  assert.deepEqual(parseBuildGatedGuardCount("9 build-gated guards"), {
+    count: 9,
+    error: null,
+  });
+  assert.deepEqual(parseBuildGatedGuardCount("nine build-gated guards"), {
+    count: 9,
+    error: null,
+  });
+  assert.deepEqual(parseBuildGatedGuardCount("twenty-one build-gated guards"), {
+    count: 21,
+    error: null,
+  });
+});
+
+test("unparseable build-gated guard counts are explicit failures", () => {
+  const parsed = parseBuildGatedGuardCount("many build-gated guards");
+  assert.equal(parsed.count, null);
+  assert.match(parsed.error, /unparseable claim: unknown number word `many`/);
+});
 
 test("specification-only search strips comments but preserves code strings", () => {
   const fixtures = new Map([
