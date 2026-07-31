@@ -6,6 +6,8 @@ import Seal.Classify
 import Seal.JsonUtil
 import Host.Action
 import Host.UnicodeKeys
+import Host.SurrogateEscapes
+import Host.NestingDepth
 
 namespace Host
 
@@ -72,6 +74,29 @@ def classifyLine (line : String) : LineClass :=
   if !Seal.JsonUtil.wireDigitsSafe trimmed then
     .refuse
   else
+  -- Cross-parser numeric agreement gate: refuse an unquoted number whose
+  -- exact Lean value is not the shortest decimal that round-trips through a
+  -- mainstream IEEE-754 binary64 reader. This prevents the kernel from
+  -- judging one numeric value while the downstream server rejects or reads
+  -- different bytes as another value. (Seal.JsonUtil.wireNumbersAgreementSafe)
+  if !Seal.JsonUtil.wireNumbersAgreementSafe trimmed then
+    .refuse
+  else
+  -- A2 class (a): an unpaired UTF-16 surrogate escape. `Json.parse` would
+  -- substitute U+FFFD and judge the substituted event while the forwarded
+  -- bytes still carry the surrogate — a witnessed judged/executed decoupling
+  -- (docs/V31-DOWNSTREAM-PARSER-AGREEMENT.md). Refuse on the raw bytes,
+  -- before the substitution can happen. (Host.SurrogateEscapes)
+  if !Host.SurrogateEscapes.wireSurrogatesSafe trimmed then
+    .refuse
+  else
+  -- A2 class (c): container nesting beyond the shallowest recorded
+  -- downstream reader depth limit (serde_json, 128). `Json.parse` is
+  -- unbounded, so a deeper line is judged here while the child's reader
+  -- rejects the same bytes. (Host.NestingDepth)
+  if !Host.NestingDepth.wireDepthSafe trimmed then
+    .refuse
+  else
   match Json.parse trimmed with
   | .error _ => .passthrough
   | .ok json =>
@@ -98,13 +123,13 @@ theorem classifyLine_refuse_of_unsafe (line : String)
     classifyLine line = .refuse := by
   simp only [classifyLine, h, Bool.not_false, if_true]
 
-/-! ### The other three raw-wire guards, proven the same way
+/-! ### The other raw-wire guards, proven the same way
 
 The theorem above existed for `wireNumbersSafe` alone. The duplicate-key,
 Unicode-equivalent-key and significant-digit guards were added on 2026-07-24 and
 2026-07-25 with TESTS but WITHOUT the matching theorems, so three of the four
 pre-parse refusals were asserted only by tests while their sibling was proven.
-The pattern was six lines above the whole time.
+The binary64-agreement guard follows the same pattern below.
 
 Each is stated UNCONDITIONALLY on its own guard: an earlier guard failing also
 yields `.refuse`, so the conclusion holds either way and the theorem need not
@@ -147,5 +172,47 @@ theorem classifyLine_refuse_of_unsafe_digits (line : String)
     cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
       cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
         simp [hn, hk, hu, h]
+
+/-- A raw line carrying an unquoted number outside binary64 round-trip
+    agreement is refused before parsing, so the exact Lean reading can never
+    be approved and forwarded to a downstream binary64 reader that disagrees. -/
+theorem classifyLine_refuse_of_unsafe_agreement (line : String)
+    (h : Seal.JsonUtil.wireNumbersAgreementSafe
+      line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine]
+  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
+    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
+      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
+        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
+          simp [hn, hk, hu, hd, h]
+
+/-- A raw line carrying an unpaired UTF-16 surrogate escape is refused: the
+    substituted (U+FFFD) event is never judged, so the witnessed downstream
+    decoupling of A2 class (a) has no forwarded line left to act on. -/
+theorem classifyLine_refuse_of_unsafe_surrogates (line : String)
+    (h : Host.SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine]
+  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
+    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
+      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
+        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
+          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe line.trimAscii.toString <;>
+            simp [hn, hk, hu, hd, ha, h]
+
+/-- A raw line nesting deeper than the pinned downstream depth bound is
+    refused — A2 class (c): never judged here while rejected there. -/
+theorem classifyLine_refuse_of_unsafe_depth (line : String)
+    (h : Host.NestingDepth.wireDepthSafe line.trimAscii.toString = false) :
+    classifyLine line = .refuse := by
+  simp only [classifyLine]
+  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
+    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
+      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
+        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
+          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe line.trimAscii.toString <;>
+            cases hs : Host.SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString <;>
+              simp [hn, hk, hu, hd, ha, hs, h]
 
 end Host

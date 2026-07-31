@@ -75,6 +75,11 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 /-- info: 'Host.classifyLine' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.classifyLine
 
+/--
+info: 'Host.classifyLine_act_ast' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_act_ast
+
 /-- info: 'Host.combineVerdicts' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.combineVerdicts
 
@@ -129,6 +134,11 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 info: 'Host.composed_no_conflicting_agreement' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.composed_no_conflicting_agreement
+
+/--
+info: 'Host.classify_act_witness' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classify_act_witness
 
 /--
 info: 'Host.and_combinator_preserves_invariants' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -664,6 +674,15 @@ info: 'Host.Perimeter.toolsCallShape_eq_toolsCall?' depends on axioms: [propext,
 -/
 #guard_msgs in #print axioms Host.Perimeter.toolsCallShape_eq_toolsCall?
 
+/-- info: 'Host.Perimeter.wireSafe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Perimeter.wireSafe
+
+/-- info: 'Host.Perimeter.refusedClass' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Perimeter.refusedClass
+
+/-- info: 'Host.Perimeter.inPerimeter' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Perimeter.inPerimeter
+
 -- Capability adequacy, UNCONDITIONAL (Host/Encoding.lean +
 -- Host/CapabilityAdequacy.lean, ARIA S6): injective netstring encoding +
 -- the no-universe reduction to A-CR on the commitment.
@@ -1000,6 +1019,34 @@ def main : IO Unit :=
 info: 'Host.classifyLine_refuse_of_unsafe' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_agreement' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_agreement
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_surrogates' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_surrogates
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_depth' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_depth
+
+/--
+info: 'Host.SurrogateEscapes.unsafe_implies_surrogateEscape' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.SurrogateEscapes.unsafe_implies_surrogateEscape
+
+/--
+info: 'Host.SurrogateEscapes.safe_of_no_surrogateEscape' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.SurrogateEscapes.safe_of_no_surrogateEscape
+
+/-- info: 'Host.NestingDepth.wireDepthSafe_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.NestingDepth.wireDepthSafe_iff
 
 /--
 info: 'Host.stepRoute_refuse_ne_forward' depends on axioms: [propext, Classical.choice, Quot.sound]

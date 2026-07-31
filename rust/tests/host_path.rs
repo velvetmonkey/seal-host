@@ -1533,11 +1533,16 @@ fn non_utf8_line_refused_and_session_survives() {
 /// classifier set (refuse or mediate), never passthrough or a new value. The
 /// observed outcome is printed so permitted drift remains visible.
 ///
-/// For a real agreement-accepted representational difference (the curated
-/// lone-high-surrogate class), the authorization-decision layer must never veto a kernel
-/// verdict it cannot re-parse: an allowed call forwards, a blocked call gets
-/// the KERNEL's response, and the authorization decision records the raw line hash + parse
-/// error instead of structured request material it does not hold.
+/// Recut 2026-07-31 to the seven-guard boundary. The serde-unrecoverable,
+/// kernel-mediated, approvable class this test used to drive end-to-end is
+/// now EMPTY at the wire: lone surrogates and non-agreement numerics are
+/// wire-refused by the pre-parse guards, and any nesting deep enough to
+/// defeat serde (>128) is stopped far earlier by the host's own
+/// `check_json_limits` depth bound (`MAX_JSON_DEPTH = 64`, `-32001`). This
+/// test pins both closures, then keeps the still-reachable halves: parseable
+/// receipts and the structural divergent shapes, which must always get the
+/// KERNEL's response. The reduced-scope receipt writer itself keeps unit
+/// coverage in `src/main.rs` — defense in depth, no longer wire-reachable.
 #[test]
 fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
     let mut o = Oracle::spawn_signed("receipt-deparse");
@@ -1559,90 +1564,56 @@ fn authorization_decision_layer_never_vetoes_kernel_verdicts() {
         "overflow-number classifier must fail closed (allowed: refuse=2, mediate=1; observed {overflow_outcome})"
     );
 
-    // Existing parser-boundary corpus case `str-lone-high-surrogate`: the
-    // agreement guard accepts it, Lean mediates it, and serde cannot recover
-    // the whole request. The end-to-end probe named in the lane evidence
-    // establishes that this is a reachable production path.
-    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
-    o.send(divergent);
-    let blocked = o.expect_line();
+    // Recut 2026-07-31: the former divergent vector of this test — the
+    // parser-boundary case `str-lone-high-surrogate` — is wire-refused by the
+    // unpaired-surrogate-escape guard. Pin the new boundary: refused before
+    // the kernel, never offered an approval target.
+    let surrogate = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
+    assert_eq!(
+        LeanHost::new()
+            .classify(surrogate)
+            .expect("classify seam healthy on the surrogate line"),
+        2,
+        "lone-surrogate line must wire-refuse under the seven-guard stack"
+    );
+    o.send(surrogate);
+    let refused = o.expect_line();
     assert!(
-        is_block(&blocked),
-        "unapproved divergent call must get the KERNEL's block, not a seam error: {blocked}"
-    );
-    let target = block_target(&blocked).expect("kernel block names its approval target");
-
-    // Approve and resend: the kernel allows — the receipt writer must not
-    // stand in the way of the proven verdict.
-    o.approve_v2(
-        &target,
-        format!("{divergent}\n").as_bytes(),
-        "n-receipt-deparse",
-    );
-    o.send(divergent);
-    assert_eq!(
-        o.expect_line(),
-        divergent,
-        "kernel-allowed call must forward even though serde cannot re-parse it"
+        block_target(&refused).is_none(),
+        "a wire-refused line must never be offered an approval target: {refused}"
     );
 
-    // The ALLOW receipt carries the raw line identity in place of the
-    // structured request material the producer does not hold.
-    let receipts = o.receipts();
-    let allow = receipts
-        .iter()
-        .rev()
-        .find(|receipt| receipt["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW authorization decision");
-    assert_eq!(
-        allow["request_sha256"],
-        hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
-        "receipt must hash the terminator-stripped body judged by the kernel"
+    // Closure pin 2: nesting past serde's recursion limit is still Lean-
+    // mediated at the classify seam (the parser-boundary `nesting-125`
+    // divergence lives), but the deployed host's byte-level depth bound
+    // (`MAX_JSON_DEPTH = 64`) stops the line long before the kernel could
+    // name an approval target: constant resource-limit response, nothing
+    // forwarded. serde-unrecoverable ∧ host-admitted is therefore empty.
+    let deep = format!("{}0{}", "[".repeat(125), "]".repeat(125));
+    let divergent = format!(
+        r#"{{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{{"name":"db.execute","arguments":{{"database":"prod","sql":"drop table accounts","x":{deep}}}}}}}"#
     );
+    let divergent = divergent.as_str();
     assert_eq!(
-        allow["framed_subject_sha256"],
-        hex::encode(sha2::Sha256::digest(format!("{divergent}\n").as_bytes())),
-        "receipt must separately hash the delimiter-bearing approval subject"
-    );
-    assert_eq!(
-        allow["framed_subject_length"],
-        divergent.len() + 1,
-        "receipt must state the delimiter-bearing approval subject length"
+        LeanHost::new()
+            .classify(divergent)
+            .expect("classify seam healthy on the deep-nesting line"),
+        1,
+        "deep-nesting divergent line is still kernel-mediated at the classify seam"
     );
     assert!(
-        allow["request_parse_error"].is_string(),
-        "receipt must name the parse failure"
+        serde_json::from_str::<serde_json::Value>(divergent).is_err(),
+        "deep-nesting divergent line must stay serde-unrecoverable"
     );
-    for absent in [
-        "tool",
-        "arguments",
-        "args_hash",
-        "canonical_request",
-        "canonical_request_sha256",
-        "effect_view",
-    ] {
-        assert!(
-            allow.get(absent).is_none(),
-            "field {absent} must be ABSENT (honesty rule), not fabricated"
-        );
-    }
-    assert_eq!(allow["authorization"], "approval");
-
-    // The kernel-attested request commitment inside emitted_bytes agrees
-    // with the receipt's request_sha256 — for exactly this unparseable
-    // class of line, the binding is now kernel-backed, not host-asserted.
-    let emitted: serde_json::Value = serde_json::from_str(
-        allow["emitted_bytes"]
-            .as_str()
-            .expect("emitted_bytes string"),
-    )
-    .expect("emitted bytes parse");
-    let audit: serde_json::Value =
-        serde_json::from_str(emitted["audit"].as_str().expect("audit string"))
-            .expect("audit parses");
-    assert_eq!(
-        audit["request_sha256"], allow["request_sha256"],
-        "kernel-attested hash must equal the receipt's request_sha256"
+    o.send(divergent);
+    let limited = o.expect_line();
+    assert!(
+        limited.contains("\"code\":-32001"),
+        "over-deep line must get the constant resource-limit response: {limited}"
+    );
+    assert!(
+        block_target(&limited).is_none(),
+        "a resource-limited line must never be offered an approval target: {limited}"
     );
 
     // Parseable receipts are unchanged AND now also carry request_sha256.
@@ -1788,80 +1759,50 @@ fn approval_target_binds_every_argument_key() {
     assert_eq!(o.expect_line(), nested_sibling);
 }
 
-/// P2-c observability tap: the agreement-accepted, curated lone-high-surrogate
-/// class is a real FORCED reduced-scope forward (an ALLOW whose wire line serde
-/// cannot recover). It must emit a distinct, structured stderr signal so an
-/// operator can see and count forced downgrades, while the forward stays
-/// byte-identical and the authorization decision is unchanged (passive tap). A normal parseable
-/// ALLOW must stay silent. Drives the real binary end-to-end.
+/// P2-c observability tap, recut 2026-07-31 to the seven-guard boundary. The
+/// forced reduced-scope forward (an ALLOW whose wire line serde cannot
+/// recover) is no longer wire-reachable: lone surrogates wire-refuse
+/// pre-parse, and any nesting deep enough to defeat serde is stopped by the
+/// host's depth bound (`MAX_JSON_DEPTH = 64`) before mediation. This test
+/// pins that BOTH closure responses stay signal-silent — the downgrade
+/// counter must never tick for a line that was never forwarded — and that a
+/// normal parseable ALLOW forwards verbatim, also silent. The signal
+/// emitter itself keeps line-escape unit coverage in `src/main.rs`.
 #[test]
 fn reduced_scope_forward_attempt_emits_observability_signal() {
     let mut o = Oracle::spawn_signed("reduced-scope-signal");
 
-    // FORCED downgrade: existing parser-boundary corpus case
-    // `str-lone-high-surrogate` — agreement-accepted, kernel-mediated, and
-    // serde-unrecoverable (same class as the receipt-layer test).
-    let divergent = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
-    o.send(divergent);
-    let target = block_target(&o.expect_line()).expect("kernel block names its approval target");
-    o.approve_v2(
-        &target,
-        format!("{divergent}\n").as_bytes(),
-        "n-reduced-scope",
-    );
-    o.send(divergent);
-
-    // Passive-tap property #1: the child receives the wire VERBATIM — the forward
-    // is byte-identical, the signal changed nothing about what was forwarded.
-    assert_eq!(
-        o.expect_line(),
-        divergent,
-        "forward must be byte-identical to the wire (signal is a passive tap)"
+    // Closed class 1: lone surrogate escape — wire-refused pre-parse.
+    let surrogate = r#"{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table accounts","x":"\ud800"}}}"#;
+    o.send(surrogate);
+    let refused = o.expect_line();
+    assert!(
+        block_target(&refused).is_none(),
+        "wire-refused line must not be offered an approval target: {refused}"
     );
 
-    // The signal is on stderr, structured, and reports THIS forced downgrade.
-    let signal = o
+    // Closed class 2: nesting past serde's limit — host resource-limited.
+    let deep = format!("{}0{}", "[".repeat(125), "]".repeat(125));
+    let divergent = format!(
+        r#"{{"jsonrpc":"2.0","id":90,"method":"tools/call","params":{{"name":"db.execute","arguments":{{"database":"prod","sql":"drop table accounts","x":{deep}}}}}}}"#
+    );
+    o.send(&divergent);
+    let limited = o.expect_line();
+    assert!(
+        limited.contains("\"code\":-32001"),
+        "over-deep line must get the constant resource-limit response: {limited}"
+    );
+
+    // Neither closure emits the downgrade signal: nothing was forwarded.
+    let stray = o
         .drain_stderr(Duration::from_millis(400))
         .into_iter()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
-        .find(|v| v["event"] == "reduced_scope_forward_attempt")
-        .expect("a forced reduced-scope forward attempt must emit the observability signal");
-    assert_eq!(
-        signal["request_sha256"],
-        hex::encode(sha2::Sha256::digest(divergent.as_bytes())),
-        "signal must carry the exact wire-line hash"
-    );
+        .any(|v| v["event"] == "reduced_scope_forward_attempt");
     assert!(
-        signal["parse_error"].is_string(),
-        "signal must name the parse failure"
+        !stray,
+        "a refused or resource-limited line must not tick the downgrade counter"
     );
-    assert_eq!(signal["count"], 1, "first forced downgrade is count 1");
-
-    // Passive-tap property #2: the authorization decision is unchanged — still the reduced-scope
-    // shape (raw hash + parse error, structured fields absent), not touched by the signal.
-    let receipts = o.receipts();
-    let allow = receipts
-        .iter()
-        .rev()
-        .find(|r| r["verdict"] == "ALLOW")
-        .expect("forwarded decision persisted an ALLOW authorization decision");
-    assert_eq!(
-        allow["request_sha256"],
-        hex::encode(sha2::Sha256::digest(divergent.as_bytes()))
-    );
-    assert!(allow["request_parse_error"].is_string());
-    for absent in [
-        "tool",
-        "arguments",
-        "args_hash",
-        "canonical_request",
-        "canonical_request_sha256",
-    ] {
-        assert!(
-            allow.get(absent).is_none(),
-            "receipt field {absent} must stay absent"
-        );
-    }
 
     // A normal PARSEABLE ALLOW must NOT emit the signal (fires only on downgrade).
     let parseable = guarded_call(91, "drop table accounts");

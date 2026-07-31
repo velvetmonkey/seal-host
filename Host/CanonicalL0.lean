@@ -77,11 +77,17 @@ theorem classifyLine_act_ast (line : String) (a : CanonicalAction)
       · split at hclass
         · exact absurd hclass (by simp)  -- oversized number ⇒ .refuse
         · split at hclass
-          · exact absurd hclass (by simp)  -- parse error ⇒ .passthrough
+          · exact absurd hclass (by simp)  -- binary64 disagreement ⇒ .refuse
           · split at hclass
-            · exact absurd hclass (by simp)  -- not a tools/call ⇒ .passthrough
-            · cases hclass
-              rfl
+            · exact absurd hclass (by simp)  -- unpaired surrogate escape ⇒ .refuse
+            · split at hclass
+              · exact absurd hclass (by simp)  -- over-deep nesting ⇒ .refuse
+              · split at hclass
+                · exact absurd hclass (by simp)  -- parse error ⇒ .passthrough
+                · split at hclass
+                  · exact absurd hclass (by simp)  -- not a tools/call ⇒ .passthrough
+                  · cases hclass
+                    rfl
 
 /-- **Reject-on-parse-failure (soundness).** A wire line the V1 view
     recognises as a `tools/call` whose canonical parse fails routes to
