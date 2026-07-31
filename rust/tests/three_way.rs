@@ -74,10 +74,12 @@ use std::sync::OnceLock;
 
 /// Pinned wasm artifact under test. Authority: wasm-spike/verified/PROVENANCE.txt
 /// (rebuilt for the V2.2 authority-bound principal envelope, P6 byte frames,
-/// and raw-wire guards from mcp-seal-dev 6c74b61 + seal-host 4b0845e; Lean
-/// v4.28.0, emscripten 6.0.0). This harness
+/// and the A2 seven-guard pre-parse boundary from mcp-seal-dev 6c74b61 +
+/// seal-host 822570a; Lean v4.28.0, emscripten 6.0.0). This harness
 /// NEVER rebuilds the wasm; a hash mismatch is a preflight failure.
-const PINNED_WASM_SHA256: &str = "70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf";
+const PINNED_WASM_SHA256: &str = "dd00cd2bd01531113e3c687eb0df62f23860213219a01d2cb1f3e219adfa48c3";
+const PINNED_WASM_JS_SHA256: &str =
+    "0802ef0c4237c88dcefbaa4e2bb541e0dc6477ee1b6e3d5e5627e1d50b3bdf0a";
 
 const DEFAULT_SEED: u64 = 0x5EA1_C0DE_2026_0716;
 /// Fresh session every SEGMENT cases — bounds failure repro to one segment.
@@ -821,9 +823,20 @@ fn preflight(root: &Path) -> Result<Vec<String>, String> {
         "wasm artifact : {} (sha256 {got}, pin OK)",
         wasm_path.display()
     ));
-    if !root.join("wasm-spike/verified/seal.js").exists() {
-        return Err("wasm-spike/verified/seal.js missing".into());
+    let js_path = root.join("wasm-spike/verified/seal.js");
+    let js_bytes = fs::read(&js_path)
+        .map_err(|e| format!("cannot read pinned wasm loader {}: {e}", js_path.display()))?;
+    let js_got = sha256_hex(&js_bytes);
+    if js_got != PINNED_WASM_JS_SHA256 {
+        return Err(format!(
+            "seal.js sha256 mismatch: pinned {PINNED_WASM_JS_SHA256}, on disk {js_got} — refusing \
+             a wasm/loader pair not reviewed in wasm-spike/verified/PROVENANCE.txt"
+        ));
     }
+    banner.push(format!(
+        "wasm loader   : {} (sha256 {js_got}, pin OK)",
+        js_path.display()
+    ));
     for (tool, args) in [("node", vec!["--version"]), ("lake", vec!["--version"])] {
         let out = Command::new(tool).args(&args).output().map_err(|e| {
             format!(

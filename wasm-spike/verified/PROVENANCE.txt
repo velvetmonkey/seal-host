@@ -1,8 +1,8 @@
 seal.wasm — verified conformance build provenance
 ==================================================
 Built from the current P6 byte-carrier kernel with the V2.2 authority-bound
-principal-envelope host, the raw-wire guards, and the single-source policy
-codec. The signed-message domain is
+principal-envelope host, the A2 seven-guard pre-parse boundary, and the
+single-source policy codec. The signed-message domain is
 `seal/v2.2/principal-envelope\0` and commits to the 32-byte config authority,
 the length-prefixed registry key id, nonce, issue time, and exact judged line.
 This intentionally rejects V2.1 envelopes and closes the V2.1 authority-
@@ -12,9 +12,9 @@ semantics are unchanged.
 Kernel source    : mcp-seal-dev 6c74b61382f8b7057cfb332a44a45e9e1b04e2b4
                    (current pin — raw-key and significant-digit guards)
 Host source      : seal-host main
-                   4b0845e5d16ba058ef5b3503ffac334a144d8541
-                   (raw-wire guards including Unicode-canonical key identity)
-Build date       : 2026-07-26
+                   822570ac580e86728e90996505d37a4f7291af84
+                   (includes A2 seven-guard merge 3126764)
+Build date       : 2026-07-31
 Lean toolchain   : leanprover/lean4:v4.28.0
                    commit 7e01a1bf5c70fc6167d49c345d3bf80596e9a79b
                    with the checked-in interrupt.cpp compatibility patch
@@ -23,8 +23,8 @@ Emscripten       : 6.0.0 (wasm-spike/emsdk)
                    emsdk commit d223ae73c6998296e3ab27cf81dc2c2c9fd383de
 
 Artifact sha256:
-  seal.wasm  70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf  (5701292 bytes)
-  seal.js    071d7a3d4504d9e6024554e7fc6be68d3849a77c4585a4c40422fee9f63ed245
+  seal.wasm  dd00cd2bd01531113e3c687eb0df62f23860213219a01d2cb1f3e219adfa48c3  (5776864 bytes)
+  seal.js    0802ef0c4237c88dcefbaa4e2bb541e0dc6477ee1b6e3d5e5627e1d50b3bdf0a
 
 Golden Path assurance-kit/kernel history
 (machine-readable authority: wasm-spike/verified/pin-history.json):
@@ -36,6 +36,11 @@ Golden Path assurance-kit/kernel history
   0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
 
 Supersedes the previously checked-in conformance artifact sha256
+  70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf
+  (the raw-wire build before binary64-agreement, unpaired-surrogate, and
+  nesting-depth guards joined the host boundary). The repin closes the
+  verified wasm divergence on the A2-refused inputs.
+That build superseded
   d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be
   (the P6 byte-carrier build before the duplicate-key,
   canonical-equivalent-key, and significant-digit guards). The repin closes
@@ -71,11 +76,11 @@ ignored Emscripten and Lean-source trees, including the recorded Lean patch):
   (cd .. && /home/monkey/bin/leanbuild build)
                                   # emit HEAD project C -> .lake/build/ir/*.c
   ./build_runtime_wasm.sh        # rebuild Lean runtime archive
-  ./build_core.sh               # ir -> build-core/*.o (incl Host/UnicodeKeys)
+  ./build_core.sh               # ir -> build-core/*.o (incl A2 guard modules)
   ./build_base.sh               # package/Unicode/stdlib/specialization objects
   ./build_closure.sh            # module-initializer closure + external-lib stubs
   ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
-  # then: cp build-core/seal.wasm verified/
+  # then: cp build-core/seal.{wasm,js} verified/
 
 Local-rebuild note: the installed Emscripten and Lean sources were used through
 the existing wasm-spike build path. The Lean runtime archive, every project and
@@ -83,11 +88,16 @@ mcp-seal object, the runtime package objects (including UnicodeBasic), the
 stdlib/specialization providers, and the initializer closure were rebuilt from
 empty object directories before the strict link. A second strict link
 reproduced the wasm hash and generated glue hash
-`72124956d480295ef0ffb1d75034662bf9bb801441a03a53bd9f7521f5ef6a13`
-byte-for-byte. Only `seal.wasm` is repinned here; the existing verified
-`seal.js` loader above is retained and was exercised against the new module by
-the three-way Node lane. This is a same-machine build, not a clean-runner
-reproduction; independent clean-runner minting remains the judge of record.
+`0802ef0c4237c88dcefbaa4e2bb541e0dc6477ee1b6e3d5e5627e1d50b3bdf0a`
+byte-for-byte. Both `seal.wasm` and its generated `seal.js` loader are repinned
+as a matched pair and exercised together by the three-way Node lane.
+`build_runtime_wasm.sh` source-shape-checks and normalizes Lean 4.28's
+`String.data` list terminator from `lean_box_uint32(0)` to the scalar
+`lean_box(0)`: the former is only `List.nil` on a 64-bit runtime and becomes a
+boxed UInt32 on 32-bit wasm. The normalization is applied to a generated build
+copy; the vendored Lean source remains unchanged. This is a same-machine build,
+not a clean-runner reproduction; independent clean-runner minting remains the
+judge of record.
 
 Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
   seal_init(envelope, pubkey) -> {ok,...}
