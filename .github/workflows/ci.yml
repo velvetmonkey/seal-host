@@ -128,6 +128,19 @@ jobs:
         continue-on-error: true
         run: lake exe sha256_selfcheck
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_16
+        continue-on-error: true
+        name: Build exact A2 parser-divergence classification guards
+        run: lake build Test.A2DivergenceClassification
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_17
+        continue-on-error: true
+        name: Run compiled passthrough-perimeter control
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          lake build perimeter_probe
+          lake exe perimeter_probe
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}

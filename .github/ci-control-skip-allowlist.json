@@ -81,6 +81,18 @@
     },
     {
       "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_16",
+      "reason": "The A2 divergence module is built from the Lean graph that imports the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_17",
+      "reason": "The perimeter executable is built from the Lean graph that imports the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
       "job": "rust-conformance",
       "id": "control_02",
       "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
