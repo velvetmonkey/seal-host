@@ -277,6 +277,11 @@ jobs:
           set -euo pipefail
           python3 test/integration/test_host.py
           python3 test/integration/test_host_rs.py
+      - id: control_30
+        continue-on-error: true
+        name: Prove the secure-default golden path accepts signed config and denies tamper
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 test/test_golden_path_secure_default.py -v
       - id: control_21
         continue-on-error: true
         run: lake exe honesty_matrix > /tmp/honesty.json
