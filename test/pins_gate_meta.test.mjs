@@ -232,7 +232,7 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
     .join("\n");
   const normal = parseCiRunSteps(ci);
   const shifted = parseCiRunSteps(reindented);
-  assert.equal(normal.length, 59, "review the expected run-step inventory explicitly");
+  assert.equal(normal.length, 60, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
