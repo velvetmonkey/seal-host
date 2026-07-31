@@ -383,6 +383,14 @@ jobs:
         continue-on-error: true
         name: Freeze gate fail-closed self-tests
         run: python3 -m unittest discover -s test -p 'test_contract_freeze_gate.py' -v
+      - id: control_09
+        continue-on-error: true
+        name: CI control aggregator fails closed on failed, skipped, or missing results
+        run: python3 test/test_ci_control_aggregate.py -v
+      - id: control_10
+        continue-on-error: true
+        name: Every CI workflow isolates and aggregates its control steps
+        run: python3 test/test_ci_control_reporting.py -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
