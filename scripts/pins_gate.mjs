@@ -21,6 +21,7 @@ export const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+export const CI_RUN_STEP_MINIMUM = 50;
 
 const PINS = path.join(ROOT, "PINS.md");
 const KERNEL = path.join(ROOT, ".lake", "packages", "mcp-seal");
@@ -423,36 +424,76 @@ function parseLakefile() {
 export function parseCiRunSteps(
   text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8"),
 ) {
+  const lines = text.split(/\r?\n/);
   const steps = [];
-  let current = null;
-  for (const line of text.split(/\r?\n/)) {
-    const start = line.match(/^(\s*)-\s+run:\s*(.*)$/);
-    if (start) {
-      if (current) steps.push(current);
-      current = {
-        indent: start[1].length,
-        run: start[2].trim(),
-        workingDirectory: null,
-      };
-      continue;
-    }
-    if (!current) continue;
-    const anotherItem = line.match(/^(\s*)-\s+/);
-    if (anotherItem && anotherItem[1].length === current.indent) {
-      steps.push(current);
+  for (let index = 0; index < lines.length; index += 1) {
+    const stepsKey = lines[index].match(/^(\s*)steps:\s*(?:#.*)?$/);
+    if (!stepsKey) continue;
+
+    const stepsIndent = stepsKey[1].length;
+    let stepIndent = null;
+    let current = null;
+    const finishCurrent = () => {
+      if (current && current.run !== null) {
+        steps.push({
+          run: current.run,
+          workingDirectory: current.workingDirectory,
+        });
+      }
       current = null;
-      continue;
+    };
+
+    let cursor = index + 1;
+    for (; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor];
+      if (/^\s*(?:#.*)?$/.test(line)) continue;
+      const indent = line.match(/^\s*/)[0].length;
+      if (indent <= stepsIndent) break;
+
+      const sequenceItem = line.match(/^(\s*)-\s+(.*)$/);
+      if (sequenceItem && stepIndent === null) {
+        stepIndent = sequenceItem[1].length;
+      }
+      if (sequenceItem && sequenceItem[1].length === stepIndent) {
+        finishCurrent();
+        current = {
+          indent: stepIndent,
+          mappingIndent: null,
+          run: null,
+          workingDirectory: null,
+        };
+        const inlineRun = sequenceItem[2].match(/^run:\s*(.*)$/);
+        if (inlineRun) current.run = inlineRun[1].trim();
+        continue;
+      }
+      if (!current || indent <= stepIndent) continue;
+      if (current.mappingIndent === null) current.mappingIndent = indent;
+      if (indent !== current.mappingIndent) continue;
+
+      const field = line.trim();
+      const run = field.match(/^run:\s*(.*)$/);
+      if (run) current.run = run[1].trim();
+      const working = field.match(/^working-directory:\s*(\S+)\s*$/);
+      if (working) current.workingDirectory = working[1];
     }
-    const working = line.match(/^\s+working-directory:\s*(\S+)\s*$/);
-    if (working) current.workingDirectory = working[1];
+    finishCurrent();
+    index = cursor - 1;
   }
-  if (current) steps.push(current);
   return steps;
 }
 
 function cargoCiStep(command) {
   return parseCiRunSteps().find(
     (step) => step.run === command && step.workingDirectory === "rust",
+  );
+}
+
+export function ciRunStepFloorFailure(count) {
+  if (count >= CI_RUN_STEP_MINIMUM) return null;
+  return (
+    "ci.yml [run-step inventory]\n" +
+    `  claimed: at least ${CI_RUN_STEP_MINIMUM} parsed run steps\n` +
+    `  actual:  parsed ${count}; refusing vacuous CI reachability checks`
   );
 }
 
@@ -1036,11 +1077,15 @@ export const CHECKS = Object.freeze({
 export function runGate() {
   process.chdir(ROOT);
   const parsed = parseLedger();
+  const ciRunSteps = parseCiRunSteps();
   const ctx = {
     ...parsed,
     failures: [],
     specificationOnlyCount: 0,
+    ciRunStepCount: ciRunSteps.length,
   };
+  const ciFloorFailure = ciRunStepFloorFailure(ciRunSteps.length);
+  if (ciFloorFailure) ctx.failures.push(ciFloorFailure);
 
   for (const policy of GATED_ROWS) {
     const matches = matchingRows(ctx.rows, policy.anchor);

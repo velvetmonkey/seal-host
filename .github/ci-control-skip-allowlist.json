@@ -4,6 +4,12 @@
     {
       "workflow": "ci.yml",
       "job": "build",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
       "id": "control_03",
       "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
     },
@@ -72,6 +78,12 @@
       "job": "build",
       "id": "control_14",
       "reason": "The SHA-256 self-check executable is built from the Lean graph that imports the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
     },
     {
       "workflow": "ci.yml",

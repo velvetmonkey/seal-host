@@ -203,6 +203,31 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
+      # V2.3 byte-twin guard, named so nobody has to trust that the generic
+      # `cargo test` below covered it: the Rust encoder must reproduce the
+      # Lean-spec-generated expectation over the shared corpus
+      # (rust/tests/vectors/envelope_v23_twin_corpus.json), and the corpus
+      # golden line must equal the #guard_msgs literal frozen in
+      # mcp-seal-dev's SealV2/EffectEnvelope.lean.
+      #
+      # The live dual-encoder diff in the same file is NO LONGER #[ignore]d
+      # (un-ignored on the pin `6c74b61`, which contains mcp-seal-dev
+      # `4f39f20`). It shells out to `lake env lean --run
+      # scripts/envelope_v23_twin_lane.lean`, so it needs the olean for
+      # SealV2.EffectEnvelope to exist. The earlier
+      # `lake build +Ffi:c.o.export` does not produce it, and neither does the
+      # default-target `lake build` later in this job: lake builds only what
+      # the requested targets import. Locally that left 9 of the 22 SealV2
+      # modules built, EffectEnvelope among the missing 13. Without this
+      # explicit prerequisite before the generic Cargo suite the test fails
+      # with
+      #   error: object file '.../SealV2/EffectEnvelope.olean' ... does not exist
+      # which reads like a byte divergence and is not one. Observed on main at
+      # 23c3c03 (RUN twin-red-2026-07-26).
+      - id: control_27
+        continue-on-error: true
+        run: lake build SealV2.EffectEnvelope
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       # --no-fail-fast: a test binary that dies on a signal instead of
       # reporting otherwise takes every binary queued behind it down with it,
       # and cargo exits non-zero having silently run a fraction of the suite
@@ -277,29 +302,6 @@ jobs:
       - id: control_26
         continue-on-error: true
         run: bash scripts/receipt_demo.sh
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      # V2.3 byte-twin guard, named so nobody has to trust that the generic
-      # `cargo test` above covered it: the Rust encoder must reproduce the
-      # Lean-spec-generated expectation over the shared corpus
-      # (rust/tests/vectors/envelope_v23_twin_corpus.json), and the corpus
-      # golden line must equal the #guard_msgs literal frozen in
-      # mcp-seal-dev's SealV2/EffectEnvelope.lean.
-      #
-      # The live dual-encoder diff in the same file is NO LONGER #[ignore]d
-      # (un-ignored on the pin `6c74b61`, which contains mcp-seal-dev
-      # `4f39f20`). It shells out to `lake env lean --run
-      # scripts/envelope_v23_twin_lane.lean`, so it needs the olean for
-      # SealV2.EffectEnvelope to exist. Neither `lake build +Ffi:c.o.export`
-      # nor the default-target `lake build` above produces it: lake builds only
-      # what the default targets import, and locally that left 9 of the 22
-      # SealV2 modules built, EffectEnvelope among the missing 13. Without this
-      # explicit step the test fails with
-      #   error: object file '.../SealV2/EffectEnvelope.olean' ... does not exist
-      # which reads like a byte divergence and is not one. Observed on main at
-      # 23c3c03 (RUN twin-red-2026-07-26).
-      - id: control_27
-        continue-on-error: true
-        run: lake build SealV2.EffectEnvelope
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_28
         continue-on-error: true
