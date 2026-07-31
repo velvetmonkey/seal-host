@@ -483,6 +483,16 @@ jobs:
           RELEASE_EVIDENCE_PRIVATE_TOKEN_CONFIGURED: ${{ secrets.SEAL_CI_READ_TOKEN != '' }}
         run: python3 scripts/release_evidence_gate.py
 
+      - id: control_03
+        continue-on-error: true
+        name: Prove release evidence rejects unsuccessful reported jobs
+        run: python3 test/test_release_evidence_gate.py -v
+
+      - id: control_04
+        continue-on-error: true
+        name: Prove release workflows retain signature and attestation consumers
+        run: python3 test/test_release_proof_consumers.py -v
+
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
         env:
