@@ -15,8 +15,10 @@ import {
   PIN_ROWS,
 } from "../scripts/pins_gate_rows.mjs";
 import {
+  CI_RUN_STEP_MINIMUM,
   CHECKS,
   ROOT,
+  ciRunStepFloorFailure,
   matchingRows,
   parseCiRunSteps,
   parseLedger,
@@ -192,6 +194,15 @@ test("CI runs the one checker door and this meta-test", () => {
 
 test("CI Cargo controls are parsed from id-first workflow steps", () => {
   const steps = parseCiRunSteps();
+  assert.equal(
+    CI_RUN_STEP_MINIMUM,
+    50,
+    "review the pinned CI run-step floor explicitly when workflow size changes",
+  );
+  assert.ok(
+    steps.length >= CI_RUN_STEP_MINIMUM,
+    `parsed ${steps.length} run steps, below floor ${CI_RUN_STEP_MINIMUM}`,
+  );
   assert.ok(
     steps.some(
       (step) =>
@@ -207,6 +218,34 @@ test("CI Cargo controls are parsed from id-first workflow steps", () => {
         step.workingDirectory === "rust",
     ),
     "named envelope_v23_twin suite is missing from rust/",
+  );
+});
+
+test("CI run-step parsing is invariant under uniform workflow reindent", () => {
+  const ci = fs.readFileSync(
+    path.join(ROOT, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const reindented = ci
+    .split(/\r?\n/)
+    .map((line) => `  ${line}`)
+    .join("\n");
+  const normal = parseCiRunSteps(ci);
+  const shifted = parseCiRunSteps(reindented);
+  assert.equal(normal.length, 59, "review the expected run-step inventory explicitly");
+  assert.equal(
+    shifted.length,
+    normal.length,
+    "uniform reindent changed the parsed run-step inventory",
+  );
+  assert.deepEqual(shifted, normal, "uniform reindent changed parsed run-step semantics");
+});
+
+test("CI run-step floor fails below its pinned minimum", () => {
+  assert.equal(ciRunStepFloorFailure(CI_RUN_STEP_MINIMUM), null);
+  assert.match(
+    ciRunStepFloorFailure(CI_RUN_STEP_MINIMUM - 1),
+    /parsed 49; refusing vacuous CI reachability checks/,
   );
 });
 
