@@ -45,7 +45,10 @@ Everything downstream of that placement is machine-checked.
   constraint constrains nothing: a `spawnEv` mediation obligation
   quantifies over an EMPTY set of positions. This is the prose claim
   "would quantify over nothing the model constrains", as a theorem, and
-  it is labelled vacuous because vacuity IS the content.
+  it is labelled vacuous because vacuity IS the content. Read the scope
+  exactly: the vacuity is a property of the GUARDED form, not of every
+  conceivable argv property. A direct `C argv`, or `spawnEv v ∈ tr → C v`,
+  is NOT vacuous — at `C := False` it is refuted by `srun_spawn_mem`.
 * **The widening breaks nothing** (`srun_client_block_mediated`): the P5
   capstone transfers verbatim to spawn-extended runs, for every argv —
   what an argv-controlling operator gets is the child selection and ONLY
@@ -59,9 +62,31 @@ is the P4 row of the trust inventory (`RUST_BRIDGE.md`: "Operator argv: the
 command line names the guarded server"), verified by inspection of
 `rust/src/main.rs`, not by proof; a host that re-spawned mid-run would need
 a different `srun` and would falsify none of the parent theorems. P4
-REMAINS a trust assumption — these theorems are the machine-checked reason
-WHY it can only be a trust assumption: the trace semantics provably cannot
-constrain a value that precedes every event it could be constrained by.
+REMAINS a trust assumption — and what these theorems establish is that
+THIS MODEL's trace semantics contain no argv constraint of the guarded
+form, because argv precedes every event it could be constrained by. That
+is a statement about this model, NOT a proof that no model and no deployed
+host could constrain argv.
+
+Explicit residuals, none of them discharged anywhere in this module:
+
+* **No refinement to the binary.** No theorem here connects `srun` to the
+  deployed Rust execution trace. `srun`'s startup placement is read off
+  `rust/src/main.rs` by inspection; the `rust/` ↔ model correspondence
+  stays the conformance-bridge obligation.
+* **Child-produced inputs are assumed argv-invariant.**
+  `srun_argv_parameter` holds `inputs` FIXED. It therefore does NOT model
+  that a different executable may emit different child output and hence
+  drive a DIFFERENT future input stream. Argv-invariance of the trace above
+  the spawn is proved only against one and the same input list.
+* **Startup argv validation is not ruled out.** Nothing here proves that
+  the deployed host performs no argv check, nor that such a check is
+  impossible. The claim is about what the TRACE semantics can express, not
+  about what startup code can do before the trace begins.
+* **Nothing is claimed about argv safety.** No theorem states that any argv
+  is safe, that the spawned child is the intended one, or which executables
+  are acceptable. Child identity and argv admissibility remain entirely
+  outside the model.
 -/
 
 namespace Host.Spawn

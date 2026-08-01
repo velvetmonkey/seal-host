@@ -35,17 +35,28 @@ seam table (`rust/src/main.rs:13-21`, `RUST_BRIDGE.md:35-43`):
 ## What this module does NOT cover, stated loud
 
 * **P4 operator argv → `Command::new(...).spawn()`.** Not modelled HERE;
-  the no-go itself is now MACHINE-CHECKED in `Host/SpawnSeam.lean`, which
-  adds the `spawnEv` this paragraph calls pointless and proves the point:
-  the spawn precedes every event, so strict spawn mediation FAILS on every
-  run (`spawn_non_bypass_fails`), every candidate argv constraint is
-  VACUOUS — it holds even at `C := fun _ => False`
-  (`spawn_constraint_vacuous_false`) — and argv is a run PARAMETER the
-  trace semantics cannot observe (`srun_argv_parameter`), while the P5
-  capstone below transfers for every argv (`srun_client_block_mediated`):
-  argv buys the child selection and ONLY the child selection. P4 REMAINS a
-  TRUST ASSUMPTION (operator startup authority, `RUST_BRIDGE.md:148`) —
-  the theorems are the machine-checked reason WHY it can only be one.
+  the no-go is MACHINE-CHECKED AT THE MODEL LEVEL in `Host/SpawnSeam.lean`,
+  which adds the `spawnEv` this paragraph calls pointless and proves what
+  the extension yields. The real negative: the spawn precedes every event,
+  so strict spawn mediation FAILS on every run — every argv, adapter, gate,
+  author and input stream (`spawn_non_bypass_fails`). That is a PROVED
+  negative, not a failure to prove mediation, and it is not vacuous:
+  `srun_spawn_mem` proves the spawn event actually occurs in the trace.
+  The vacuity result is NARROWER than "every candidate argv constraint":
+  what is vacuous is every constraint of the GUARDED-POSITION form
+  `spawnGuardedBy` — "wherever the spawn sits above a nonempty history, its
+  argv satisfies `C`" — which holds for every `C`, including
+  `C := fun _ => False` (`spawn_constraint_vacuous_false`), because no run
+  puts a spawn above a nonempty history. Constraints of OTHER shapes are
+  NOT vacuous: a direct `C argv`, or `spawnEv v ∈ tr → C v`, is refuted at
+  `C := False` by `srun_spawn_mem`. Argv is also a run PARAMETER the trace
+  semantics cannot observe (`srun_argv_parameter` — in THIS model, and with
+  the input stream held FIXED), while the P5 capstone below transfers for
+  every argv (`srun_client_block_mediated`): argv buys the child selection
+  and ONLY the child selection. P4 REMAINS a TRUST ASSUMPTION (operator
+  startup authority, `RUST_BRIDGE.md:148`) — and the theorems establish
+  that THIS MODEL contains no argv constraint of the guarded form, not that
+  no such constraint could exist in another model or in the deployed host.
 * **P7 stderr telemetry.** Not in the alphabet: stderr has no input edge
   into routing, so a faithful `audEv` would be no-effect by construction and
   prove nothing new. The CONTENT of audit records is governed model-level by
