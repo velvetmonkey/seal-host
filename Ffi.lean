@@ -8,6 +8,9 @@ import Host.Registry
 import Host.Audit
 import Host.Evidence
 import Seal.Block
+-- M.7 branch dependency: requires kernel commit 564c21f (or its merge) and
+-- cannot build against the current pin before the single repin.
+import SealV2.McpVersionGate
 import Kernels
 
 /-!
@@ -332,6 +335,11 @@ def sealHostClassify (line : String) : UInt32 :=
   | .passthrough => 0
   | .act _ => 1
   | .refuse => 2
+
+/-- M.7 kernel-owned metadata, era-consistency, and error-rendering gate. -/
+@[export seal_host_mcp_version_gate]
+def sealHostMcpVersionGate (line selectedRevision : String) : String :=
+  (SealV2.Effect.mcpVersionGate line selectedRevision).toJson.compress
 
 /-- The deployed Rust host's pre-classify numeric-agreement seam. The empty
     string is the safe sentinel (a JSON numeric literal is never empty);

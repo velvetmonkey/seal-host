@@ -60,8 +60,9 @@ use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
 use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::{
-    numeric_agreement_refusal_response, route_of_classify, route_of_step_output, ClassifyRoute,
-    Route, RESOURCE_LIMIT_RESPONSE, SEAM_ERROR_RESPONSE,
+    numeric_agreement_refusal_response, route_of_classify, route_of_step_output,
+    route_of_version_gate, ClassifyRoute, Route, VersionGateRoute, RESOURCE_LIMIT_RESPONSE,
+    SEAM_ERROR_RESPONSE,
 };
 use seal_host_rs::secure_fs;
 use serde_json::{json, Value};
@@ -1449,10 +1450,6 @@ fn run() -> i32 {
                 continue;
             }
         }
-        // Observe only the entry method. M.7 owns per-request validation of
-        // protocolVersion/clientCapabilities and its JSON-RPC error mapping.
-        // Observation never changes the bytes sent to or returned by child.
-        mcp_revision_session.observe_received_call(line);
         // Numeric agreement is independent of the parse-cost guard already
         // inside `seal_host_classify`: ask the pinned Lean kernel for the
         // exact first literal BEFORE the classify fast path can admit this
@@ -1490,6 +1487,32 @@ fn run() -> i32 {
                 continue;
             }
         }
+        // M.7 kernel gate: before entry observation, classify, provider/replay
+        // work, audit, approval consumption, or decision persistence.
+        match route_of_version_gate(
+            host.mcp_version_gate(line, mcp_revision_session.version_gate_input()),
+        ) {
+            VersionGateRoute::Continue => {}
+            VersionGateRoute::Reject { response } => {
+                eprintln!(
+                    "{}",
+                    json!({"seal_host_event": "mcp_version_gate_rejected"})
+                );
+                if write_frame(&output, &response).is_err() {
+                    break;
+                }
+                continue;
+            }
+            VersionGateRoute::SeamFailure { reason } => {
+                eprintln!("{}", json!({"error": reason}));
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
+                continue;
+            }
+        }
+        // M.2 observation feeds the next kernel gate and signed adapter claim.
+        mcp_revision_session.observe_received_call(line);
         // Bytes the child receives on allow: the original wire verbatim for
         // a plain line; for an enveloped line, exactly the judged inner
         // string plus ONE host-authored `\n` (the inner string is verifiably

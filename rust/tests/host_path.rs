@@ -176,6 +176,12 @@ impl Oracle {
                 "match": {"type": "always"},
                 "target": []
             }),
+            serde_json::json!({
+                "name": "m7.echo",
+                "mode": "allow",
+                "match": {"type": "always"},
+                "target": []
+            }),
         ];
         if numeric_observer {
             tools.push(serde_json::json!({
@@ -457,6 +463,91 @@ fn guarded_call(id: u64, sql: &str) -> String {
         r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"db.execute","arguments":{{"database":"prod","sql":{}}}}}}}"#,
         serde_json::to_string(sql).unwrap()
     )
+}
+
+fn m7_state_inventory(o: &Oracle) -> String {
+    let mut receipt_entries: Vec<_> = std::fs::read_dir(o.receipt_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    receipt_entries.sort();
+    let replay = rusqlite::Connection::open(o.dir.join("replay.sqlite")).unwrap();
+    let replay_rows: i64 = replay
+        .query_row("SELECT COUNT(*) FROM nonces", [], |row| row.get(0))
+        .unwrap();
+    let approvals_bytes = std::fs::read(o.dir.join("approvals.ndjson")).unwrap().len();
+    let tokens_bytes = std::fs::read(o.dir.join("tokens.ndjson")).unwrap().len();
+    format!(
+        "receipt_dir_entries={receipt_entries:?} authorization_decisions={} audit_head_present={} approval_bytes={approvals_bytes} token_bytes={tokens_bytes} replay_rows={replay_rows}",
+        receipt_entries
+            .iter()
+            .filter(|name| name.ends_with(".json"))
+            .count(),
+        receipt_entries
+            .iter()
+            .any(|name| name == ".seal-audit-head.state"),
+    )
+}
+
+#[test]
+fn m7_version_gate_precedes_authority_and_preserves_positive_control() {
+    let mut o = Oracle::spawn_signed("m7-version-gate");
+    let discover = r#"{"jsonrpc":"2.0","id":700,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
+    o.send(discover);
+    assert_eq!(o.expect_line(), discover);
+
+    let empty_state = m7_state_inventory(&o);
+    println!("M7 STATE BEFORE {empty_state}");
+
+    let malformed = r#"{"jsonrpc":"2.0","id":701,"method":"tools/call","params":{"name":"m7.echo","arguments":{"q":"malformed"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+    println!("M7 MALFORMED WIRE UTF8={malformed}\\n");
+    println!(
+        "M7 MALFORMED WIRE HEX={}",
+        hex::encode(format!("{malformed}\n"))
+    );
+    o.send(malformed);
+    let malformed_response = o.expect_line();
+    println!("M7 MALFORMED RESPONSE={malformed_response}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&malformed_response).unwrap()["error"]["code"],
+        -32602
+    );
+    let after_malformed = m7_state_inventory(&o);
+    println!("M7 STATE AFTER MALFORMED {after_malformed}");
+    assert_eq!(after_malformed, empty_state);
+
+    let unsupported = r#"{"jsonrpc":"2.0","id":702,"method":"tools/call","params":{"name":"m7.echo","arguments":{"q":"unsupported"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
+    o.send(unsupported);
+    let unsupported_response = o.expect_line();
+    println!("M7 UNSUPPORTED RESPONSE={unsupported_response}");
+    let unsupported_json: serde_json::Value = serde_json::from_str(&unsupported_response).unwrap();
+    assert_eq!(unsupported_json["error"]["code"], -32022);
+    assert_eq!(
+        unsupported_json["error"]["data"]["supportedVersions"],
+        serde_json::json!(["2025-06-18", "2026-07-28"])
+    );
+    let after_unsupported = m7_state_inventory(&o);
+    println!("M7 STATE AFTER UNSUPPORTED {after_unsupported}");
+    assert_eq!(after_unsupported, empty_state);
+
+    let legacy_after_modern = r#"{"jsonrpc":"2.0","id":703,"method":"tools/call","params":{"name":"m7.echo","arguments":{"q":"legacy-after-modern"}}}"#;
+    o.send(legacy_after_modern);
+    let era_response = o.expect_line();
+    println!("M7 ERA CONSISTENCY selected=2026-07-28 later_request=legacy response={era_response}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&era_response).unwrap()["error"]["code"],
+        -32602
+    );
+    let after_era_rejection = m7_state_inventory(&o);
+    println!("M7 STATE AFTER ERA REJECTION {after_era_rejection}");
+    assert_eq!(after_era_rejection, empty_state);
+
+    let positive = r#"{"jsonrpc":"2.0","id":704,"method":"tools/call","params":{"name":"m7.echo","arguments":{"q":"positive"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
+    o.send(positive);
+    let positive_response = o.expect_line();
+    println!("M7 POSITIVE RESPONSE={positive_response}");
+    assert_eq!(positive_response, positive);
+    println!("M7 STATE AFTER POSITIVE {}", m7_state_inventory(&o));
 }
 
 /// M.1 stage 3 live cross-layer control. The shipped Lean FFI supplies the
