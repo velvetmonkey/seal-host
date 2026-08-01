@@ -27,6 +27,7 @@ import Host.CapabilityAdequacy
 import Host.DispatchSpelled
 import Host.Principal
 import Host.PrincipalCommit
+import Host.ObjectB
 import Host.DurabilityA6
 import Host.EgressPerimeter
 import Host.EgressStrength
@@ -1249,3 +1250,26 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
 
 /-- info: 'Ffi.receipt_principal_authenticated' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Ffi.receipt_principal_authenticated
+
+-- Object B: DECIDED + RECORDED only.
+
+/-- info: 'Host.ObjectB.verdict_agrees_with_raw_kernel_output_bytes' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.verdict_agrees_with_raw_kernel_output_bytes
+
+/-- info: 'Host.ObjectB.check_refuses_verdict_mismatch' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.check_refuses_verdict_mismatch
+
+/-- info: 'Host.ObjectB.external_delegation_required' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.external_delegation_required
+
+/-- info: 'Host.ObjectB.kernel_produced_over_exact_decision_inputs' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.kernel_produced_over_exact_decision_inputs
+
+/-- info: 'Host.ObjectB.durably_recorded_under_stated_class' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.durably_recorded_under_stated_class
+
+/-- info: 'Host.ObjectB.decided_recorded_does_not_entail_released' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.decided_recorded_does_not_entail_released
+
+/-- info: 'Host.ObjectB.asserted_provenance_cannot_affect_verdict' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.asserted_provenance_cannot_affect_verdict
