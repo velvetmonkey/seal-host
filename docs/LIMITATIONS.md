@@ -15,9 +15,20 @@ These limits are part of the Seal claim. They are not footnotes.
 
 ## Proof build-wire residual
 
-**As of 2026-08-01:** `lake exe axiom_check` does not import the theorem-bearing
-modules `Host.CanonicalL0Liveness`, `Host.DurabilityA6`,
-`Host.EgressPerimeter`, `Host.EgressStrength`, `Host.PolicyOverlap`, or
-`Host.StrictPerimeter`. Any inline theorem checks, axiom pins, and
-compiler-evaluated guards in those modules are not exercised by that release
-gate until the modules are added to the `Test/Axioms.lean` import closure.
+**As of 2026-08-01, after the wiring work:** five of the six modules named in
+the earlier version of this residual are now in the `Test/Axioms.lean` import
+closure and are built by release CI. Verified in run `30693805679`, whose build
+log contains `Built` lines for `Host.DurabilityA6`, `Host.EgressPerimeter`,
+`Host.EgressStrength`, `Host.PolicyOverlap` and `Host.StrictPerimeter`, along
+with the newer `Host.SpawnSeam` and `Host.AuditSeam`.
+
+**One module remains outside the wire, and this is a ruling, not an oversight.**
+`Host.CanonicalL0Liveness` was DROPPED FROM THE RELEASE CLAIM by Ben on
+2026-08-01. Its kernel reduction measured 6.0 GiB RSS and 1h51m CPU on
+2026-07-31, which the release pipeline will not carry. Nothing in the public
+claim surface asserts that its theorems are built or axiom-checked. The source
+remains in the tree and remains visible in every generated proof inventory as
+`reserved=1`, so the exclusion is stated rather than silent.
+
+`scripts/proof_inventory.py` fails the build with `ORPHAN PROOF MODULE` for any
+other theorem-bearing `Host/` source that is not in the closure.

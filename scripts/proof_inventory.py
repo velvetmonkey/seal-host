@@ -34,13 +34,15 @@ IMPORT_TOKEN = re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$"
 )
 
-# This is a reviewed scheduling decision, not a proof-reachability waiver:
-# the source remains visible in every generated inventory. Its kernel reduction
-# was measured at 6.0 GiB RSS / 1h51m CPU on 2026-07-31 and Ben reserved it for
-# a separate ruling. All other explicitly theorem/lemma-bearing Host sources
-# are fail-closed.
+# RULED by Ben on 2026-08-01: dropped from the release claim. Its kernel
+# reduction was measured at 6.0 GiB RSS / 1h51m CPU on 2026-07-31, which the
+# release pipeline will not carry. It is NOT part of the maintained assurance
+# case: nothing in the public claim surface asserts its theorems are built or
+# axiom-checked. The source stays in the tree and stays visible in every
+# generated inventory, so the exclusion is stated rather than silent. All other
+# explicitly theorem/lemma-bearing Host sources are fail-closed.
 RESERVED = {
-    "Host.CanonicalL0Liveness": "reserved for Ben's separate liveness ruling",
+    "Host.CanonicalL0Liveness": "dropped from the release claim (Ben, 2026-08-01); not part of the maintained assurance case",
 }
 
 
