@@ -33,7 +33,7 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 [[require]]
 name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
-rev = "bd03bf7b5ef1d7d29792d08b14f90d0654954207"
+rev = "316d74126b4cb164d501fea21738d6880469bcb4"
 
 # Unicode 17 canonical decomposition data for the raw-wire object-key
 # identity guard. This is pinned to the last release built with Lean 4.28.0.
