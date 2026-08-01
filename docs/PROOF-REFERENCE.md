@@ -28,7 +28,18 @@ The file and line numbers below were verified by grep in this repository.
 | Step spelled: one mediation step IS the pure plan around its two IO leaves — field-to-parser marshalling, single judged `line`, fail-closed branches, registry at exactly the marshalled values | `Ffi.stepImpl_spelled` (+ `stepPlanFor`, `stepInputsOf`, `stepRender`) | `Ffi.lean` (file-local; `stepImpl` is private); pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
 | No kernel registered twice: the deployed selection is duplicate-free for every config — no double ingest, no double verdict, at most one instance per stateful ref | `Ffi.registryFor_kernels_nodup` (+ `activeKernels_nodup`, `activeKernels_names_nodup`) | `FfiSpec.lean`; pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
 
-The axiom gate is `lake exe axiom_check`; it is pinned with `#guard_msgs`, so drift in these footprints breaks the build. The composition-algebra rows are pinned **inline** at the bottom of `Host/Composition.lean` (same `#guard_msgs` mechanism), so their footprints are enforced whenever the module itself builds.
+The axiom gate is `lake exe axiom_check`. For theorem names imported and pinned
+by `Test/Axioms.lean`, `#guard_msgs` makes footprint drift break that target's
+build. The composition-algebra rows are pinned **inline** at the bottom of
+`Host/Composition.lean` (the same `#guard_msgs` mechanism), so their footprints
+are enforced whenever that module builds.
+
+**Build-wire residual (2026-08-01).** This is not repository-wide coverage.
+The current `Test.Axioms` import closure excludes the theorem-bearing modules
+`Host.CanonicalL0Liveness`, `Host.DurabilityA6`, `Host.EgressPerimeter`,
+`Host.EgressStrength`, `Host.PolicyOverlap`, and `Host.StrictPerimeter`.
+Their inline guards therefore do not run under `lake exe axiom_check`; see
+[LIMITATIONS.md](LIMITATIONS.md#proof-build-wire-residual).
 
 Two rows deserve a closer look. The record-chain rows (`head_after_append`, `tamper_evident`) carry an **empty** axiom footprint — stronger than the family's usual minimal classical fragment: collision resistance (A-CR) and genesis freshness (A-GEN) enter `tamper_evident` as explicit hypotheses in the statement, not as axioms, so the theorem itself is axiom-free. The two bridge rows are instances of the abstract coordination-free impossibility proven in [crdt-lean](https://github.com/velvetmonkey/crdt-lean) (`Crdt/AuthorityFrontier.lean`), applied to this repo's real consume seam (`validateAndConsumeWithStore`) as a TTL-scoped instance mapping.
 
