@@ -114,7 +114,7 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_18
         continue-on-error: true
-        name: Generate and gate theorem-bearing Host proof inventory
+        name: Gate explicit theorem/lemma Host source inventory
         run: |
           python3 scripts/proof_inventory.py
           python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v

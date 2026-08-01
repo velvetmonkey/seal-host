@@ -93,6 +93,12 @@
     },
     {
       "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_18",
+      "reason": "The proof inventory validates artifacts produced by the token-dependent default Lean build and its private dependency graph."
+    },
+    {
+      "workflow": "ci.yml",
       "job": "rust-conformance",
       "id": "control_02",
       "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."

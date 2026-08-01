@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -34,6 +35,52 @@ class ProofInventoryTests(unittest.TestCase):
         )
         (root / ".lake/build/lib/lean/Host/Wired.olean").touch()
         return root
+
+    def assert_orphan_detected(self, source: str) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Host/Evasion.lean").write_text(source, encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--root", str(root)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("Host.Evasion\tyes\tUNASSIGNED", result.stdout)
+            self.assertIn("ORPHAN PROOF MODULE: Host.Evasion", result.stderr)
+
+    def test_protected_theorem_is_detected(self) -> None:
+        self.assert_orphan_detected("protected theorem t : True := by trivial\n")
+
+    def test_private_theorem_is_detected(self) -> None:
+        self.assert_orphan_detected("private theorem t : True := by trivial\n")
+
+    def test_same_line_attribute_theorem_is_detected(self) -> None:
+        self.assert_orphan_detected("@[simp] theorem t : True := by trivial\n")
+
+    def test_nonrec_theorem_is_detected(self) -> None:
+        self.assert_orphan_detected("nonrec theorem t : True := by trivial\n")
+
+    def test_indented_theorem_is_detected(self) -> None:
+        self.assert_orphan_detected("  theorem t : True := by trivial\n")
+
+    def test_comment_markers_in_strings_do_not_hide_theorem(self) -> None:
+        self.assert_orphan_detected(
+            'def openMarker : String := "/-"\n'
+            "theorem frisk_hidden_by_string : True := by trivial\n"
+            'def closeMarker : String := "-/"\n'
+        )
+
+    def test_comment_markers_in_raw_strings_do_not_hide_theorem(self) -> None:
+        self.assert_orphan_detected(
+            'def markers : String := r#"/- an embedded " quote -/"#\n'
+            "theorem visible_after_raw_string : True := by trivial\n"
+        )
+
+    def test_reserved_module_set_is_pinned(self) -> None:
+        self.assertEqual(set(inventory.RESERVED), {"Host.CanonicalL0Liveness"})
 
     def test_wired_compiled_and_classified_module_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -77,6 +124,15 @@ class ProofInventoryTests(unittest.TestCase):
             )
             report = inventory.evaluate(root)
             self.assertNotIn("Host.CommentOnly", {row.module for row in report.rows})
+
+    def test_theorem_text_in_string_does_not_create_row(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Host/StringOnly.lean").write_text(
+                'def prose : String := "theorem fake : False"\n', encoding="utf-8"
+            )
+            report = inventory.evaluate(root)
+            self.assertNotIn("Host.StringOnly", {row.module for row in report.rows})
 
 
 if __name__ == "__main__":
