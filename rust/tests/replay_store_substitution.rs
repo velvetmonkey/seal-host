@@ -106,6 +106,19 @@ fn parent_mode_0755_is_refused_by_strict_0700_whitelist() {
     assert!(metadata.is_file());
     assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
 
+    // Re-check the guard's actual input immediately before the call. This
+    // keeps an environment that rewrites or ignores directory modes from
+    // turning the expected refusal into a verdict about some other state.
+    let victim_parent = victim.parent().unwrap();
+    let parent_metadata = std::fs::symlink_metadata(victim_parent).unwrap();
+    assert!(parent_metadata.is_dir());
+    assert!(!parent_metadata.file_type().is_symlink());
+    assert_eq!(
+        parent_metadata.permissions().mode() & 0o777,
+        0o755,
+        "victim parent must still be the intended non-0700 directory"
+    );
+
     let error = SqliteReplayStore::open(&victim, ReplayStoreLineage::CURRENT)
         .err()
         .expect("open must refuse a store whose parent is not 0700")
