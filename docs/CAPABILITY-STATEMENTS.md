@@ -151,7 +151,9 @@ Green bare `lake build` (gate closure); axioms exactly
 `[propext, Classical.choice, Quot.sound]` per pinned theorem (observed
 footprints pinned if lighter, per repo precedent); zero `sorry`; zero
 `native_decide`; per-theorem `#guard_msgs in #print axioms` pins; module
-wired via `Test/Axioms.lean` import like every Wave module. Proposed home:
+wired via an explicit `Test/Axioms.lean` import. This is a required acceptance
+check, not a claim that every theorem-bearing module is already wired; the
+current residual is recorded in `docs/LIMITATIONS.md`. Proposed home:
 `Host/CapabilityAdequacy.lean` (council Q4).
 
 ## 7. Open questions for the design council (settle BEFORE the freeze)

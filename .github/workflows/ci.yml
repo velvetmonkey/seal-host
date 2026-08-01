@@ -112,6 +112,10 @@ jobs:
         continue-on-error: true
         run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_15
+        continue-on-error: true
+        name: Proof-reference citation gate
+        run: python3 scripts/check_proof_references.py
       - id: control_11
         continue-on-error: true
         run: lake exe host_unit_tests
