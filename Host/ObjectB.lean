@@ -7,12 +7,13 @@ Object B's kernel model. `CorePayload` carries DECIDED + RECORDED data only;
 it has no RELEASED or EXECUTED field. `ObjectB ctx` is constructible only when
 the executable `Established` gate accepts the payload.
 
-`EstablishmentContext` is the explicit assumption boundary: statement
-framing/reference rules, interpretation of raw kernel output, the decision-input
-kernel-production predicate, offline delegation, and durable recording. This
-module proves only that those predicates accepted their payload arguments; it
-does not prove the external checks faithful, global sequence monotonicity,
-signatures, or a wire encoding.
+`EstablishmentContext` is the explicit verifier-supplied assumption boundary:
+the decision-input kernel-production predicate, offline delegation trust, and
+durable recording. Request and approval references, the config digest, and raw
+kernel-output decoding are canonical functions below rather than caller-chosen
+fields. This module proves only that the deployment predicates accepted their
+payload arguments; it does not prove those external checks faithful, global
+sequence monotonicity, signatures, or a wire encoding.
 
 The gate imposes no independent meaning or validity check on `schema`,
 `verificationProfile`, `recordedAt`, `sequenceNumber`, `postStateHash`,
@@ -119,28 +120,33 @@ def CorePayload.decisionInputs (p : CorePayload) : DecisionInputs :=
     logicalTime := p.logicalTime }
 
 structure EstablishmentContext where
-  frameRequestStatement : ByteArray → ByteArray
-  approvalStatementRef : ByteArray → Digest256
-  verdictOfRaw : KernelProfile → ByteArray → Option Verdict
   kernelProduced : DecisionInputs → ByteArray → Verdict → Bool
   delegated : DeploymentId → ReceiptKeyDelegationRef → Bool
   durablyRecorded : DurabilityClass → CorePayload → Bool
 
-def requestRefTag : ByteArray := "seal.request-ref/v1\x00".toUTF8
+def requestStatementRef (bytes : ByteArray) : Digest256 :=
+  Host.Sha256.sha256Digest ("seal.request-ref/v1\x00".toUTF8 ++ bytes)
 
-def requestStatementRef (ctx : EstablishmentContext) (bytes : ByteArray) : Digest256 :=
-  Host.Sha256.sha256Digest (requestRefTag ++ ctx.frameRequestStatement bytes)
+def approvalStatementRef (bytes : ByteArray) : Digest256 :=
+  Host.Sha256.sha256Digest bytes
 
 def configDigest (bytes : ByteArray) : Digest256 :=
   Host.Sha256.sha256Digest bytes
 
+def verdictOfRaw (profile : KernelProfile) (raw : ByteArray) : Option Verdict :=
+  if profile = ⟨"kernel-profile-v1"⟩ then
+    if raw = "kernel-output:ALLOW".toUTF8 then some .allow
+    else if raw = "kernel-output:BLOCK".toUTF8 then some .block
+    else none
+  else none
+
 def Established (ctx : EstablishmentContext) (p : CorePayload) : Bool :=
-  decide (ctx.verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict) &&
+  decide (verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict) &&
   ctx.kernelProduced p.decisionInputs p.rawKernelOutputBytes p.verdict &&
   ctx.delegated p.deploymentId p.receiptKeyDelegationRef &&
-  decide (p.requestStatementRef = requestStatementRef ctx p.requestStatementBytes) &&
+  decide (p.requestStatementRef = requestStatementRef p.requestStatementBytes) &&
   decide (p.approvalStatementRefs =
-    p.approvalStatementBytes.map ctx.approvalStatementRef) &&
+    p.approvalStatementBytes.map approvalStatementRef) &&
   decide (p.configDigest = configDigest p.signedConfigBytes) &&
   ctx.durablyRecorded p.durabilityClass p
 
@@ -151,25 +157,25 @@ structure ObjectB (ctx : EstablishmentContext) where
 def check (ctx : EstablishmentContext) (p : CorePayload) : Option (ObjectB ctx) :=
   if h : Established ctx p = true then some { payload := p, established := h } else none
 
-theorem context_verdict_decoder_accepted_payload_verdict
+theorem canonical_verdict_decoder_matches_payload
     {ctx : EstablishmentContext} (r : ObjectB ctx) :
-    ctx.verdictOfRaw r.payload.kernelProfile r.payload.rawKernelOutputBytes
+    verdictOfRaw r.payload.kernelProfile r.payload.rawKernelOutputBytes
       = some r.payload.verdict :=
   by
     have h := r.established
     simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at h
     exact h.1.1.1.1.1.1
 
-theorem check_refuses_verdict_mismatch
+theorem check_refuses_canonical_verdict_mismatch
     (ctx : EstablishmentContext) (p : CorePayload) (got : Verdict)
-    (hgot : ctx.verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some got)
+    (hgot : verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some got)
     (hne : got ≠ p.verdict) :
     check ctx p = none := by
   unfold check
   split
   next hvalid =>
     have hraw :
-        ctx.verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict := by
+        verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict := by
       simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at hvalid
       exact hvalid.1.1.1.1.1.1
     have hsome : some got = some p.verdict :=
@@ -273,18 +279,8 @@ def inputs : DecisionInputs :=
     stepInputBytes := stepBytes
     logicalTime := 41 }
 
-def approvalRef (bytes : ByteArray) : Digest256 := Host.Sha256.sha256Digest bytes
-
-def verdictOfRaw (_ : KernelProfile) (raw : ByteArray) : Option Verdict :=
-  if raw = rawAllow then some .allow
-  else if raw = rawBlock then some .block
-  else none
-
 def context : EstablishmentContext :=
-  { frameRequestStatement := fun bytes => bytes
-    approvalStatementRef := approvalRef
-    verdictOfRaw := verdictOfRaw
-    kernelProduced := fun seenInputs raw verdict =>
+  { kernelProduced := fun seenInputs raw verdict =>
       decide (seenInputs = inputs) && decide (raw = rawAllow) && decide (verdict = .allow)
     delegated := fun dep ref => decide (dep = deployment) && decide (ref = delegation)
     durablyRecorded := fun durability p =>
@@ -294,9 +290,9 @@ def payload : CorePayload :=
   { schema := .v1
     deploymentId := deployment
     receiptKeyDelegationRef := delegation
-    requestStatementRef := requestStatementRef context requestBytes
+    requestStatementRef := requestStatementRef requestBytes
     requestStatementBytes := requestBytes
-    approvalStatementRefs := approvalBytes.map approvalRef
+    approvalStatementRefs := approvalBytes.map approvalStatementRef
     approvalStatementBytes := approvalBytes
     configDigest := configDigest configBytes
     signedConfigBytes := configBytes
@@ -317,7 +313,7 @@ def payload : CorePayload :=
 def receipt : ObjectB context :=
   { payload := payload
     established := by
-      simp [Established, payload, context, verdictOfRaw, inputs,
+      simp [Established, payload, context, verdictOfRaw, inputs, profile, rawAllow,
         CorePayload.decisionInputs] }
 
 def wrongVerdict : CorePayload := { payload with verdict := .block }
@@ -325,10 +321,10 @@ def wrongRawBytes : CorePayload := { payload with rawKernelOutputBytes := rawBlo
 def wrongStepInputs : CorePayload := { payload with stepInputBytes := "other-step".toUTF8 }
 def wrongRequestStatementRef : CorePayload :=
   { payload with
-    requestStatementRef := requestStatementRef context "other-request".toUTF8 }
+    requestStatementRef := requestStatementRef "other-request".toUTF8 }
 def wrongApprovalStatementRefs : CorePayload :=
   { payload with
-    approvalStatementRefs := [approvalRef "other-approval".toUTF8] }
+    approvalStatementRefs := [approvalStatementRef "other-approval".toUTF8] }
 def wrongConfigDigest : CorePayload :=
   { payload with configDigest := configDigest "other-config".toUTF8 }
 
@@ -337,6 +333,14 @@ def unrecordedContext : EstablishmentContext :=
 
 def undelegatedContext : EstablishmentContext :=
   { context with delegated := fun _ _ => false }
+
+def liarContext : EstablishmentContext :=
+  { kernelProduced := fun _ _ _ => true
+    delegated := fun _ _ => true
+    durablyRecorded := fun _ _ => true }
+
+def forged : CorePayload :=
+  { payload with rawKernelOutputBytes := rawBlock, verdict := .allow }
 
 #guard (check context payload).isSome
 #guard verdictOfRaw profile payload.rawKernelOutputBytes == some payload.verdict
@@ -348,6 +352,9 @@ def undelegatedContext : EstablishmentContext :=
 #guard (check context wrongConfigDigest).isNone
 #guard (check unrecordedContext payload).isNone
 #guard (check undelegatedContext payload).isNone
+#guard verdictOfRaw profile forged.rawKernelOutputBytes == some .block
+#guard forged.verdict == .allow
+#guard (check liarContext forged).isNone
 
 end Witness
 

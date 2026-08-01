@@ -1253,11 +1253,11 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
 
 -- Object B: DECIDED + RECORDED only.
 
-/-- info: 'Host.ObjectB.context_verdict_decoder_accepted_payload_verdict' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.context_verdict_decoder_accepted_payload_verdict
+/-- info: 'Host.ObjectB.canonical_verdict_decoder_matches_payload' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.canonical_verdict_decoder_matches_payload
 
-/-- info: 'Host.ObjectB.check_refuses_verdict_mismatch' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.check_refuses_verdict_mismatch
+/-- info: 'Host.ObjectB.check_refuses_canonical_verdict_mismatch' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.check_refuses_canonical_verdict_mismatch
 
 /-- info: 'Host.ObjectB.context_delegation_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.context_delegation_predicate_accepted
