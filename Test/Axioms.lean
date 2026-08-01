@@ -1253,23 +1253,23 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
 
 -- Object B: DECIDED + RECORDED only.
 
-/-- info: 'Host.ObjectB.verdict_agrees_with_raw_kernel_output_bytes' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.verdict_agrees_with_raw_kernel_output_bytes
+/-- info: 'Host.ObjectB.context_verdict_decoder_accepted_payload_verdict' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_verdict_decoder_accepted_payload_verdict
 
 /-- info: 'Host.ObjectB.check_refuses_verdict_mismatch' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.check_refuses_verdict_mismatch
 
-/-- info: 'Host.ObjectB.external_delegation_required' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.external_delegation_required
+/-- info: 'Host.ObjectB.context_delegation_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_delegation_predicate_accepted
 
-/-- info: 'Host.ObjectB.kernel_produced_over_exact_decision_inputs' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.kernel_produced_over_exact_decision_inputs
+/-- info: 'Host.ObjectB.context_kernel_production_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_kernel_production_predicate_accepted
 
-/-- info: 'Host.ObjectB.durably_recorded_under_stated_class' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.durably_recorded_under_stated_class
+/-- info: 'Host.ObjectB.context_recording_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_recording_predicate_accepted
 
-/-- info: 'Host.ObjectB.decided_recorded_does_not_entail_released' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.decided_recorded_does_not_entail_released
+/-- info: 'Host.ObjectB.core_claim_does_not_constrain_release_or_execution' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.core_claim_does_not_constrain_release_or_execution
 
 /-- info: 'Host.ObjectB.asserted_provenance_cannot_affect_verdict' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.asserted_provenance_cannot_affect_verdict

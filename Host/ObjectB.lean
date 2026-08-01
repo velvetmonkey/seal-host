@@ -8,10 +8,17 @@ it has no RELEASED or EXECUTED field. `ObjectB ctx` is constructible only when
 the executable `Established` gate accepts the payload.
 
 `EstablishmentContext` is the explicit assumption boundary: statement
-framing/reference rules, interpretation of raw kernel output, the exact-input
-kernel-production check, offline delegation, and durable recording. This
-module does not prove those external checks faithful, global sequence
-monotonicity, signatures, or a wire encoding.
+framing/reference rules, interpretation of raw kernel output, the decision-input
+kernel-production predicate, offline delegation, and durable recording. This
+module proves only that those predicates accepted their payload arguments; it
+does not prove the external checks faithful, global sequence monotonicity,
+signatures, or a wire encoding.
+
+The gate imposes no independent meaning or validity check on `schema`,
+`verificationProfile`, `recordedAt`, `sequenceNumber`, `postStateHash`,
+`receiptNonce`, `operationId`, or `kernelArtifactSha256`. The last two can be
+observed by deployment-supplied predicates, but this module does not constrain
+how those predicates use them.
 -/
 
 namespace Host.ObjectB
@@ -124,6 +131,9 @@ def requestRefTag : ByteArray := "seal.request-ref/v1\x00".toUTF8
 def requestStatementRef (ctx : EstablishmentContext) (bytes : ByteArray) : Digest256 :=
   Host.Sha256.sha256Digest (requestRefTag ++ ctx.frameRequestStatement bytes)
 
+def configDigest (bytes : ByteArray) : Digest256 :=
+  Host.Sha256.sha256Digest bytes
+
 def Established (ctx : EstablishmentContext) (p : CorePayload) : Bool :=
   decide (ctx.verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict) &&
   ctx.kernelProduced p.decisionInputs p.rawKernelOutputBytes p.verdict &&
@@ -131,7 +141,7 @@ def Established (ctx : EstablishmentContext) (p : CorePayload) : Bool :=
   decide (p.requestStatementRef = requestStatementRef ctx p.requestStatementBytes) &&
   decide (p.approvalStatementRefs =
     p.approvalStatementBytes.map ctx.approvalStatementRef) &&
-  decide (p.configDigest = Host.Sha256.sha256Digest p.signedConfigBytes) &&
+  decide (p.configDigest = configDigest p.signedConfigBytes) &&
   ctx.durablyRecorded p.durabilityClass p
 
 structure ObjectB (ctx : EstablishmentContext) where
@@ -141,7 +151,7 @@ structure ObjectB (ctx : EstablishmentContext) where
 def check (ctx : EstablishmentContext) (p : CorePayload) : Option (ObjectB ctx) :=
   if h : Established ctx p = true then some { payload := p, established := h } else none
 
-theorem verdict_agrees_with_raw_kernel_output_bytes
+theorem context_verdict_decoder_accepted_payload_verdict
     {ctx : EstablishmentContext} (r : ObjectB ctx) :
     ctx.verdictOfRaw r.payload.kernelProfile r.payload.rawKernelOutputBytes
       = some r.payload.verdict :=
@@ -167,7 +177,7 @@ theorem check_refuses_verdict_mismatch
     exact (hne (Option.some.inj hsome)).elim
   next => rfl
 
-theorem external_delegation_required
+theorem context_delegation_predicate_accepted
     {ctx : EstablishmentContext} (r : ObjectB ctx) :
     ctx.delegated r.payload.deploymentId r.payload.receiptKeyDelegationRef = true :=
   by
@@ -175,7 +185,7 @@ theorem external_delegation_required
     simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at h
     exact h.1.1.1.1.2
 
-theorem kernel_produced_over_exact_decision_inputs
+theorem context_kernel_production_predicate_accepted
     {ctx : EstablishmentContext} (r : ObjectB ctx) :
     ctx.kernelProduced r.payload.decisionInputs r.payload.rawKernelOutputBytes
       r.payload.verdict = true := by
@@ -183,7 +193,7 @@ theorem kernel_produced_over_exact_decision_inputs
   simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.1.1.1.1.1.2
 
-theorem durably_recorded_under_stated_class
+theorem context_recording_predicate_accepted
     {ctx : EstablishmentContext} (r : ObjectB ctx) :
     ctx.durablyRecorded r.payload.durabilityClass r.payload = true := by
   have h := r.established
@@ -206,20 +216,17 @@ def CoreClaimHolds {ctx : EstablishmentContext}
   o.verdict = r.payload.verdict ∧
   o.recordedPayload = r.payload
 
-theorem decided_recorded_does_not_entail_released
-    {ctx : EstablishmentContext} (r : ObjectB ctx) :
-    ¬ (∀ o, CoreClaimHolds r o → o.released = true) := by
-  intro h
+theorem core_claim_does_not_constrain_release_or_execution
+    {ctx : EstablishmentContext} (r : ObjectB ctx) (released executed : Bool) :
+    ∃ o, CoreClaimHolds r o ∧ o.released = released ∧ o.executed = executed := by
   let o : OperationObservation :=
     { decisionInputs := r.payload.decisionInputs
       rawKernelOutputBytes := r.payload.rawKernelOutputBytes
       verdict := r.payload.verdict
       recordedPayload := r.payload
-      released := false
-      executed := false }
-  have hcore : CoreClaimHolds r o := ⟨rfl, rfl, rfl, rfl⟩
-  have := h o hcore
-  contradiction
+      released := released
+      executed := executed }
+  exact ⟨o, ⟨rfl, rfl, rfl, rfl⟩, rfl, rfl⟩
 
 structure AssertedProvenance where
   hostBinarySha256 : Option Digest256
@@ -291,7 +298,7 @@ def payload : CorePayload :=
     requestStatementBytes := requestBytes
     approvalStatementRefs := approvalBytes.map approvalRef
     approvalStatementBytes := approvalBytes
-    configDigest := Host.Sha256.sha256Digest configBytes
+    configDigest := configDigest configBytes
     signedConfigBytes := configBytes
     kernelArtifactSha256 := artifact
     kernelProfile := profile
@@ -316,6 +323,14 @@ def receipt : ObjectB context :=
 def wrongVerdict : CorePayload := { payload with verdict := .block }
 def wrongRawBytes : CorePayload := { payload with rawKernelOutputBytes := rawBlock }
 def wrongStepInputs : CorePayload := { payload with stepInputBytes := "other-step".toUTF8 }
+def wrongRequestStatementRef : CorePayload :=
+  { payload with
+    requestStatementRef := requestStatementRef context "other-request".toUTF8 }
+def wrongApprovalStatementRefs : CorePayload :=
+  { payload with
+    approvalStatementRefs := [approvalRef "other-approval".toUTF8] }
+def wrongConfigDigest : CorePayload :=
+  { payload with configDigest := configDigest "other-config".toUTF8 }
 
 def unrecordedContext : EstablishmentContext :=
   { context with durablyRecorded := fun _ _ => false }
@@ -323,35 +338,16 @@ def unrecordedContext : EstablishmentContext :=
 def undelegatedContext : EstablishmentContext :=
   { context with delegated := fun _ _ => false }
 
-def noRelease : OperationObservation :=
-  { decisionInputs := receipt.payload.decisionInputs
-    rawKernelOutputBytes := receipt.payload.rawKernelOutputBytes
-    verdict := receipt.payload.verdict
-    recordedPayload := receipt.payload
-    released := false
-    executed := false }
-
-def provenanceA : AssertedProvenance :=
-  { hostBinarySha256 := none, toolchain := some "asserted-toolchain-a", axioms := [] }
-
-def provenanceB : AssertedProvenance :=
-  { hostBinarySha256 := some artifact
-    toolchain := some "asserted-toolchain-b"
-    axioms := ["asserted-only"] }
-
 #guard (check context payload).isSome
 #guard verdictOfRaw profile payload.rawKernelOutputBytes == some payload.verdict
 #guard (check context wrongVerdict).isNone
 #guard (check context wrongRawBytes).isNone
 #guard (check context wrongStepInputs).isNone
+#guard (check context wrongRequestStatementRef).isNone
+#guard (check context wrongApprovalStatementRefs).isNone
+#guard (check context wrongConfigDigest).isNone
 #guard (check unrecordedContext payload).isNone
 #guard (check undelegatedContext payload).isNone
-#guard noRelease.decisionInputs == receipt.payload.decisionInputs
-#guard noRelease.recordedPayload == receipt.payload
-#guard noRelease.released == false
-#guard
-  PresentedObjectB.verdict { core := receipt, assertedProvenance := some provenanceA } ==
-  PresentedObjectB.verdict { core := receipt, assertedProvenance := some provenanceB }
 
 end Witness
 
