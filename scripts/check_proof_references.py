@@ -49,7 +49,11 @@ def uncomment(text: str) -> str:
 def lean_files() -> dict[str, tuple[Path, str]]:
     files: dict[str, tuple[Path, str]] = {}
     for path in ROOT.rglob("*.lean"):
-        if ".lake" in path.parts:
+        # Skip dependency and vendored-upstream trees. `.lake` is fetched
+        # dependencies; `wasm-spike/lean4-src` is vendored Lean 4 source whose
+        # test corpus deliberately contains non-UTF-8 fixtures. Neither carries
+        # this repository's proof citations, and reading them crashes the gate.
+        if ".lake" in path.parts or "wasm-spike" in path.parts:
             continue
         module = ".".join(path.relative_to(ROOT).with_suffix("").parts)
         files[module] = (path, uncomment(path.read_text(encoding="utf-8")))
