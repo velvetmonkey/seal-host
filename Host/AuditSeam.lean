@@ -458,7 +458,10 @@ theorem arun_decide_tel_invariant (tel₁ tel₂ : EEv → List String)
   (arun_eev_mem tel₁ _ A gate author inputs).trans
     (arun_eev_mem tel₂ _ A gate author inputs).symm
 
-/-! ## The P7 verdict, part three — every feedback constraint is vacuous -/
+/-! ## The P7 verdict, part three — every constraint of the GUARDED
+    `audGuardedBy` form is vacuous. That is the vacuity of ONE form, NOT of
+    every stderr property: `audEv s ∈ tr → C s` is refuted at `C := False`
+    on the witness run. -/
 
 /-- A telemetry-fed decision: a decide that EXISTS under one telemetry
     function and is ABSENT under another. This is the only way stderr
