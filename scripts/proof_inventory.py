@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Generate and gate the theorem-bearing Host module build inventory."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from pathlib import Path
+import argparse
+import json
+import re
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+THEOREM_DECL = re.compile(
+    r"^(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_'.]*)", re.MULTILINE
+)
+AXIOM_PIN = re.compile(
+    r"#guard_msgs\s+in\s+#print\s+axioms\s+([A-Za-z_][A-Za-z0-9_'.]*)"
+)
+IMPORT_TOKEN = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$"
+)
+
+# This is a reviewed scheduling decision, not a proof-reachability waiver:
+# the source remains visible in every generated inventory. Its kernel reduction
+# was measured at 6.0 GiB RSS / 1h51m CPU on 2026-07-31 and Ben reserved it for
+# a separate ruling. All other theorem-bearing Host modules are fail-closed.
+RESERVED = {
+    "Host.CanonicalL0Liveness": "reserved for Ben's separate liveness ruling",
+}
+
+
+class InventoryError(RuntimeError):
+    """The inventory could not establish a trustworthy answer."""
+
+
+@dataclass(frozen=True)
+class InventoryRow:
+    module: str
+    discovered: bool
+    assigned: str
+    compiled: bool
+    axiom_classified: bool
+    orphaned: bool
+
+
+@dataclass(frozen=True)
+class Inventory:
+    rows: tuple[InventoryRow, ...]
+    errors: tuple[str, ...]
+
+    @property
+    def passed(self) -> bool:
+        return not self.errors and not any(row.orphaned for row in self.rows)
+
+
+def strip_lean_comments(text: str) -> str:
+    """Remove nested Lean comments while preserving line boundaries."""
+    output: list[str] = []
+    index = 0
+    block_depth = 0
+    while index < len(text):
+        if block_depth:
+            if text.startswith("/-", index):
+                block_depth += 1
+                output.extend("  ")
+                index += 2
+            elif text.startswith("-/", index):
+                block_depth -= 1
+                output.extend("  ")
+                index += 2
+            else:
+                output.append("\n" if text[index] == "\n" else " ")
+                index += 1
+        elif text.startswith("/-", index):
+            block_depth = 1
+            output.extend("  ")
+            index += 2
+        elif text.startswith("--", index):
+            newline = text.find("\n", index + 2)
+            if newline == -1:
+                output.extend(" " * (len(text) - index))
+                break
+            output.extend(" " * (newline - index))
+            output.append("\n")
+            index = newline + 1
+        else:
+            output.append(text[index])
+            index += 1
+    if block_depth:
+        raise InventoryError("unterminated Lean block comment")
+    return "".join(output)
+
+
+def lean_sources(root: Path) -> dict[str, Path]:
+    sources: dict[str, Path] = {}
+    excluded = {".git", ".lake", "node_modules", "target"}
+    for path in root.rglob("*.lean"):
+        relative = path.relative_to(root)
+        if relative.parts[0] in excluded:
+            continue
+        module = ".".join(relative.with_suffix("").parts)
+        if module in sources:
+            raise InventoryError(f"duplicate Lean source for {module}")
+        sources[module] = path
+    return sources
+
+
+def parse_imports(path: Path) -> tuple[str, ...]:
+    source = strip_lean_comments(path.read_text(encoding="utf-8"))
+    imports: list[str] = []
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped == "prelude":
+            continue
+        match = re.match(r"^\s*import(?:\s+(.+?))?\s*$", line)
+        if not match:
+            break
+        tail = match.group(1)
+        if not tail:
+            raise InventoryError(f"empty import at {path}:{line_number}")
+        modules = tail.split()
+        invalid = [module for module in modules if not IMPORT_TOKEN.fullmatch(module)]
+        if invalid:
+            raise InventoryError(
+                f"cannot parse import at {path}:{line_number}: {' '.join(invalid)}"
+            )
+        imports.extend(modules)
+    return tuple(imports)
+
+
+def import_closure(root_module: str, sources: dict[str, Path]) -> set[str]:
+    if root_module not in sources:
+        raise InventoryError(f"cannot resolve build-wire root {root_module}")
+    closure: set[str] = set()
+    queue = [root_module]
+    local_roots = {module.split(".", 1)[0] for module in sources}
+    while queue:
+        module = queue.pop()
+        if module in closure:
+            continue
+        path = sources.get(module)
+        if path is None:
+            if module.split(".", 1)[0] in local_roots:
+                raise InventoryError(f"cannot resolve local import {module}")
+            continue
+        closure.add(module)
+        queue.extend(parse_imports(path))
+    return closure
+
+
+def is_axiom_classified(
+    module_path: Path, declarations: tuple[str, ...], all_pins: set[str]
+) -> bool:
+    source = module_path.read_text(encoding="utf-8")
+    if AXIOM_PIN.search(strip_lean_comments(source)):
+        return True
+    return any(
+        pin == declaration or pin.endswith(f".{declaration}")
+        for declaration in declarations
+        for pin in all_pins
+    )
+
+
+def evaluate(root: Path = ROOT) -> Inventory:
+    errors: list[str] = []
+    try:
+        sources = lean_sources(root)
+        assigned = import_closure("Test.Axioms", sources)
+    except (InventoryError, OSError) as exc:
+        return Inventory((), (str(exc),))
+
+    host_dir = root / "Host"
+    axiom_sources = [root / "Test" / "Axioms.lean", *sorted(host_dir.glob("*.lean"))]
+    all_pins: set[str] = set()
+    try:
+        for path in axiom_sources:
+            all_pins.update(AXIOM_PIN.findall(strip_lean_comments(path.read_text(encoding="utf-8"))))
+    except (InventoryError, OSError) as exc:
+        return Inventory((), (str(exc),))
+
+    rows: list[InventoryRow] = []
+    for path in sorted(host_dir.glob("*.lean")):
+        try:
+            source = strip_lean_comments(path.read_text(encoding="utf-8"))
+        except (InventoryError, OSError) as exc:
+            errors.append(f"{path}: {exc}")
+            continue
+        declarations = tuple(THEOREM_DECL.findall(source))
+        if not declarations:
+            continue
+        module = f"Host.{path.stem}"
+        reservation = RESERVED.get(module)
+        assignment = "axiom_check" if module in assigned else (reservation or "UNASSIGNED")
+        olean = root / ".lake" / "build" / "lib" / "lean" / Path(*module.split("."))
+        # A stray artifact in a warm .lake is not release reachability. The
+        # module must be in the source-derived axiom_check closure as well as
+        # have the artifact produced/validated by the immediately preceding
+        # default build.
+        compiled = module in assigned and olean.with_suffix(".olean").is_file()
+        orphaned = reservation is None and (module not in assigned or not compiled)
+        rows.append(
+            InventoryRow(
+                module=module,
+                discovered=True,
+                assigned=assignment,
+                compiled=compiled,
+                axiom_classified=is_axiom_classified(path, declarations, all_pins),
+                orphaned=orphaned,
+            )
+        )
+    return Inventory(tuple(rows), tuple(errors))
+
+
+def print_table(inventory: Inventory) -> None:
+    print("module\tdiscovered\tassigned\tcompiled\taxiom-classified\torphaned")
+    for row in inventory.rows:
+        print(
+            f"{row.module}\tyes\t{row.assigned}\t"
+            f"{'yes' if row.compiled else 'no'}\t"
+            f"{'yes' if row.axiom_classified else 'no'}\t"
+            f"{'yes' if row.orphaned else 'no'}"
+        )
+    print(
+        "summary\t"
+        f"discovered={len(inventory.rows)}\t"
+        f"assigned={sum(row.assigned == 'axiom_check' for row in inventory.rows)}\t"
+        f"compiled={sum(row.compiled for row in inventory.rows)}\t"
+        f"axiom-classified={sum(row.axiom_classified for row in inventory.rows)}\t"
+        f"orphaned={sum(row.orphaned for row in inventory.rows)}\t"
+        f"reserved={sum(row.module in RESERVED for row in inventory.rows)}"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    inventory = evaluate(args.root.resolve())
+    if args.json:
+        print(json.dumps({"rows": [asdict(row) for row in inventory.rows], "errors": inventory.errors}, indent=2))
+    else:
+        print_table(inventory)
+    for error in inventory.errors:
+        print(f"ORPHAN PROOF MODULE: inventory error: {error}", file=sys.stderr)
+    for row in inventory.rows:
+        if row.orphaned:
+            print(
+                f"ORPHAN PROOF MODULE: {row.module} "
+                f"assigned={row.assigned} compiled={'yes' if row.compiled else 'no'}",
+                file=sys.stderr,
+            )
+    return 0 if inventory.passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

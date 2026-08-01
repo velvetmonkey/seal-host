@@ -25,6 +25,11 @@ import Host.CapabilityAdequacy
 import Host.DispatchSpelled
 import Host.Principal
 import Host.PrincipalCommit
+import Host.DurabilityA6
+import Host.EgressPerimeter
+import Host.EgressStrength
+import Host.PolicyOverlap
+import Host.StrictPerimeter
 import Kernels.PrincipalBudget
 import FfiSpec
 import Kernels

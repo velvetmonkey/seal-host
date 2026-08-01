@@ -112,6 +112,13 @@ jobs:
         continue-on-error: true
         run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_18
+        continue-on-error: true
+        name: Generate and gate theorem-bearing Host proof inventory
+        run: |
+          python3 scripts/proof_inventory.py
+          python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_11
         continue-on-error: true
         run: lake exe host_unit_tests
