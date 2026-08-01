@@ -40,12 +40,23 @@ seam table (`rust/src/main.rs:13-21`, `RUST_BRIDGE.md:35-43`):
   any `spawnEv` would quantify over nothing the model constrains. P4 is a
   TRUST ASSUMPTION (operator startup authority, `RUST_BRIDGE.md:148`), not a
   theorem, and pretending otherwise would be fiction. NO-GO.
-* **P7 stderr telemetry.** Not in the alphabet: stderr has no input edge
-  into routing, so a faithful `audEv` would be no-effect by construction and
-  prove nothing new. The CONTENT of audit records is governed model-level by
-  the W2 closeout non-interference row (`Host/NonInterference.lean`,
-  `record_authView_noninterference` / `observe_noninterference`); the Rust
-  stderr writes themselves stay TCB.
+* **P7 stderr telemetry.** Not in the alphabet HERE; the no-go itself is
+  now MACHINE-CHECKED in `Host/AuditSeam.lean`, which adds the `audEv` this
+  paragraph calls pointless and proves the point: the extension factors
+  THROUGH the unextended run (`arun_eq` — telemetry is post-processing, not
+  dynamics), the telemetry function is a run PARAMETER nothing in-run can
+  observe (`arun_tel_parameter`), every decide is telemetry-invariant
+  (`arun_decide_tel_invariant`), and every stderr-feedback constraint is
+  VACUOUS — it holds even at `C := fun _ _ => False`
+  (`aud_constraint_vacuous_false`) — while the P5 capstone below transfers
+  for every telemetry function (`arun_client_block_mediated`). The honest
+  asymmetry is also a theorem: stderr is an OUTPUT, and a reader of it gets
+  the telemetry image of the ENTIRE seam trace (`arun_stderr_image`) — a
+  real, read-only confidentiality residual — but nothing beyond the run
+  (`aud_provenance`), and no influence. The CONTENT of audit records is
+  governed model-level by the W2 closeout non-interference row
+  (`Host/NonInterference.lean`, `record_authView_noninterference` /
+  `observe_noninterference`); the Rust stderr writes themselves stay TCB.
 * **P8/P9 evidence reads** (approvals via A3; votes/grants/forecasts files).
   These are GATE-STATE inputs, not emission seams: they influence which
   verdict the gate returns, never whether an emission needs one. Pinned by
