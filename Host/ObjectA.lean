@@ -12,6 +12,12 @@ replace them.  Deployment-supplied context is limited to the current time and
 predicates for signature verification, role delegation, and accepted adapter
 profiles.  The theorem names say only that those predicates accepted.
 
+Representative exact outputs of the seven formerly unobserved canonical
+helpers, including the Object A SHA-256 wrapper, are now pinned below by
+independent build-gated known-answer controls.  Together with the existing
+negative witnesses for the other five helpers, these controls detect the
+specified constant collapses; they do not prove correctness for every input.
+
 This is not the three-artifact byte-lock.  In particular, this module does not
 compare an approval's `requestStatementRef` with an Object A, nor either
 statement with Object B.  It also does not implement DSSE JSON parsing or prove
@@ -20,17 +26,21 @@ the deployment predicates faithful.
 There are no fields wholly unread by the gates: every payload field is bound
 into canonical `statementBytes`.  The semantic limits are explicit.  For
 Object A, `schema`, `requestNonce`, and `sessionId` receive no independent
-meaning check; `deploymentId`, `configRef`, `keyEpoch`, and `signer` are only
-arguments to the request-delegation predicate; `adapterProfile` is only an
-argument to the adapter predicate; `signatureBytes` is only an argument to the
-signature predicate; `issuedAt` and `expiresAt` are checked only against
-context-supplied `now`; and `judgedRequestBytes` is digest-bound but not parsed.
+meaning check; `deploymentId` and `configRef` are arguments to both the
+request-delegation and adapter predicates; `keyEpoch` is only an argument to
+the request-delegation predicate; `signer` is an argument to both delegation
+and signature verification; `adapterProfile` is only an argument to the
+adapter predicate; `signatureBytes` is only an argument to the signature
+predicate; `issuedAt` and `expiresAt` are checked only against context-supplied
+`now`; and `judgedRequestBytes` is digest-bound but not parsed.
 For Approval, `schema`, `approvalNonce`, `requestStatementRef`,
 `targetCommitment`, `constraints`, and `sessionId` receive no independent
-meaning check; `authorityRef`, `deploymentId`, `configRef`, and
-`approverIdentity` are only arguments to the approver-delegation predicate;
-`adapterProfile` is only an argument to the adapter predicate;
-`signatureBytes` is only an argument to the signature predicate; and
+meaning check; `authorityRef` is only an argument to the approver-delegation
+predicate; `deploymentId` and `configRef` are arguments to both delegation and
+the adapter predicate; `approverIdentity` is an argument to both delegation
+and signature verification; `adapterProfile` is only an argument to the
+adapter predicate; `signatureBytes` is only an argument to the signature
+predicate; and
 `approvedAt` / `approvalExpiresAt` are checked only against context-supplied
 `now`.  Thus nonce uniqueness, key-epoch derivation, constraint meaning,
 target/request correspondence, cross-artifact context equality, and human
@@ -593,6 +603,37 @@ def forgedApproval : ApprovalStatement.Candidate :=
       targetCommitment := Host.Sha256.sha256Digest "notes/read".toUTF8,
       constraints := "unlimited".toUTF8 }
   { approvalCandidate with payload := payload }
+
+/-! ## Canonical-helper known-answer controls
+
+The SHA-256 value is the published FIPS 180-4 `"abc"` example, expressed as
+literal digest words rather than computed through either SHA-256 wrapper.  The
+encoding expectations likewise use literal bytes (or UTF-8 only), never the
+canonical helper under test. -/
+
+def fipsAbcDigest : Host.Sha256.Digest256 :=
+  { w0 := 0xba7816bf, w1 := 0x8f01cfea, w2 := 0x414140de, w3 := 0x5dae2223
+    w4 := 0xb00361a3, w5 := 0x96177a9c, w6 := 0xb410ff61, w7 := 0xf20015ad }
+
+def adapterKnownAnswer : ObjectA.AdapterProfile :=
+  { identifier := "id", version := "1.0", artifactSha256 := fipsAbcDigest }
+
+#guard StatementEncoding.u64be 0x0102030405060708 =
+  ByteArray.mk #[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+#guard StatementEncoding.frameString "abc" =
+  ByteArray.mk #[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x61, 0x62, 0x63]
+#guard StatementEncoding.digestBytes fipsAbcDigest =
+  "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".toUTF8
+#guard ObjectA.schemaBytes .v1 = ByteArray.mk #[0x01]
+#guard ObjectA.adapterProfileBytes adapterKnownAnswer =
+  ByteArray.mk #[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02] ++
+    "id".toUTF8 ++
+    ByteArray.mk #[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03] ++
+    "1.0".toUTF8 ++
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".toUTF8
+#guard ObjectA.judgedRequestDigest "abc".toUTF8 = fipsAbcDigest
+#guard ApprovalStatement.schemaBytes .v1 = ByteArray.mk #[0x01]
 
 #guard (ObjectA.check requestContext requestCandidate).isSome
 #guard (ObjectA.check requestContext requestWrongStatementBytes).isNone
