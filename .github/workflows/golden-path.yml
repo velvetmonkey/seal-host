@@ -69,6 +69,7 @@ jobs:
         continue-on-error: true
         name: Changed proven Lean surface must re-prove axiom-clean
         run: |
+          set -o pipefail
           PUSH_BASE="${{ github.event.before }}"
           if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
             PUSH_BASE="$(git merge-base origin/main HEAD)"
@@ -118,6 +119,7 @@ jobs:
         continue-on-error: true
         name: Deterministic shell acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
           ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
           python3 demo/doctrine_check.py "$C1_ARTIFACT"
@@ -139,6 +141,7 @@ jobs:
         continue-on-error: true
         name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"
           ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
           python3 demo/doctrine_check.py "$C2_ARTIFACT"
@@ -155,6 +158,7 @@ jobs:
         continue-on-error: true
         name: Deterministic token-governor S+B acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C4_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c4"
           ./demo/run c4 --output-dir "$C4_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c4.txt"
           python3 demo/doctrine_check.py "$C4_ARTIFACT"
@@ -185,6 +189,7 @@ jobs:
         continue-on-error: true
         name: Deterministic deploy S+C+L acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C3_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c3"
           ./demo/run c3 --output-dir "$C3_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c3.txt"
           python3 demo/doctrine_check.py "$C3_ARTIFACT"
@@ -236,6 +241,7 @@ jobs:
         continue-on-error: true
         name: Deterministic replicated-store S+V convergence acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C5_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c5"
           ./demo/run c5 --output-dir "$C5_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c5.txt"
           python3 demo/doctrine_check.py "$C5_ARTIFACT"
@@ -282,6 +288,7 @@ jobs:
         continue-on-error: true
         name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C6_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c6"
           ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
           python3 demo/doctrine_check.py "$C6_ARTIFACT"
@@ -331,6 +338,7 @@ jobs:
         continue-on-error: true
         name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           python3 demo/golden_path.py filesystem --deterministic --era 2025 | tee /tmp/golden-path-filesystem.txt
           grep -F "MCP_DEMO_ERA=2025 revision=2025-06-18 entry=initialize" /tmp/golden-path-filesystem.txt
           grep -F "ERA_ATTRIBUTION=2025 declared=2025-06-18 observed=initialize; alternate-entry-count=0" /tmp/golden-path-filesystem.txt
