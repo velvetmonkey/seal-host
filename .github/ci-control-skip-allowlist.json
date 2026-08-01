@@ -258,6 +258,12 @@
       "job": "rust-conformance",
       "id": "control_28",
       "reason": "The byte-twin test invokes the private mcp-seal Lean encoder and links token-dependent FFI artifacts."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_30",
+      "reason": "The secure-default golden path executes the Rust host linked to Lean FFI artifacts built from token-dependent private Lake dependencies."
     }
   ]
 }
