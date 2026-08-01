@@ -49,6 +49,14 @@ The canonical AST is audit input for kernels, not the mediation gate.
 | W2-T1 hardening: A-ENC DISCHARGED: `TimedEntry.encCanonical` (length-prefixed, delimiter-safe) is injective by Lean proof (`encCanonical_injective`, pure structural, no crypto); `timed_tamper_evident_canonical` gives timed tamper-evidence under A-CR + A-GEN ALONE, exactly the landed L1 crypto TCB, no encoder side-condition | `Host/RecordTemporalCanonical.lean` | Lean theorem | A-CR + A-GEN only (the L1 crypto TCB); monotone-clock caveat as above | `TimedEntry.line` remains demonstration-grade (unused by this theorem) | yes |
 | Deployed receipt commitment: production audit certificates are chained with SHA-256 (`sha256(prevHeadHex || 0x1f || payload)`) by `rust/src/receipt.rs` and independently by `scripts/seal_log.mjs`; conformance checks a fresh deployed host's emitted head against the model-derived head. The host file-fsyncs and atomically replaces a private prior-head state file, directory-fsyncs it, and the first record after restart names the prior head and process session | Rust host + `scripts/seal_log.mjs` + `scripts/conformance_bridge.mjs` | code + differential evidence | SHA-256 collision resistance is A-CR TCB; `node:crypto`/Rust `sha2`, filesystem `fsync` behavior, OS ownership, and harness are TCB | no Lean proof of SHA-256 CR; evidence over corpus C only; process-session metadata cross-links records but is not itself an authenticated caller identity | yes, "A-CR is TCB, not proven" mandatory |
 
+**Proof build-wire scope (2026-08-01).** “Lean theorem” in this table reports a
+theorem declaration and its stated scope; build-backed proof/axiom coverage is
+limited to theorem names in the `Test/Axioms.lean` import-and-pin closure. That
+closure does not include `Host.CanonicalL0Liveness`, `Host.DurabilityA6`,
+`Host.EgressPerimeter`, `Host.EgressStrength`, `Host.PolicyOverlap`, or
+`Host.StrictPerimeter`. In particular, the heavily qualified K5 row above is
+left unchanged, but its module is part of this explicit build-wire residual.
+
 ## Assumptions and residuals (A1-A7)
 
 - **A2 (numeric/parse fidelity)** minimised by construction (canonical strict subset), not eliminated. Per-server equivalence obligation remains.

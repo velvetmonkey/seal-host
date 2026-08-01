@@ -53,7 +53,7 @@ Or run the steps by hand:
 
 ```sh
 lake build                    # Lean core + FFI
-lake exe axiom_check          # confirm the axiom footprint (the one-shot script always runs it)
+lake exe axiom_check          # confirm pinned footprints in the Test/Axioms import closure
 scripts/build_ffi_so.sh       # build the FFI shared object the Rust host loads
 cd rust && cargo build && cd ..
 # binary: rust/target/debug/seal-host-rs

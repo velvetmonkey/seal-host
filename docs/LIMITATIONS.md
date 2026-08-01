@@ -10,5 +10,14 @@ These limits are part of the Seal claim. They are not footnotes.
 - Seal does NOT prevent compromise of hosts, browsers, build systems, keys, operators, or downstream tools.
 - Seal's audit chain is tamper-EVIDENT, not tamper-IMPOSSIBLE.
 - Seal does NOT make the AI smarter or prevent hallucinations; it stops an unapproved effect.
-- Axiom footprint {propext, Classical.choice, Quot.sound} is the minimal classical fragment; no extra axioms.
+- The `{propext, Classical.choice, Quot.sound}` axiom-footprint claim is scoped to theorem names imported and pinned by `Test/Axioms.lean`; it is not repository-wide (see “Proof build-wire residual” in the canonical limitations document).
 <!-- claims:end -->
+
+## Proof build-wire residual
+
+**As of 2026-08-01:** `lake exe axiom_check` does not import the theorem-bearing
+modules `Host.CanonicalL0Liveness`, `Host.DurabilityA6`,
+`Host.EgressPerimeter`, `Host.EgressStrength`, `Host.PolicyOverlap`, or
+`Host.StrictPerimeter`. Any inline theorem checks, axiom pins, and
+compiler-evaluated guards in those modules are not exercised by that release
+gate until the modules are added to the `Test/Axioms.lean` import closure.

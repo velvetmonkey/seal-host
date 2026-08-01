@@ -11,20 +11,24 @@ non-vacuity plan.
 assumptions* (its T6 = wall clock + `a3.rs`); wave labels always carry the
 `W2-` prefix to avoid collision.
 
-**Build bar (all targets).** Green `lake build`; axioms exactly
+**Build bar (landed Wave-2 targets, not every theorem-bearing module).** Green `lake build`; axioms exactly
 `[propext, Classical.choice, Quot.sound]`; zero `sorry`; zero `native_decide`
 (pulls `Lean.ofReduceBool`); per-theorem pinned `#guard_msgs in #print axioms`
 transcript (Test/Axioms.lean convention — drift fails the build via the
 `axiom_check` exe); witnessed non-vacuity per the conventions of
 `Host/CanonicalL0.lean:116-150`.
 
-**Build wiring.** Bare `lake build` builds only the `Host.Main` and
-`Test.Axioms` import closures (`defaultTargets = ["seal-host", "axiom_check"]`)
-— `Host/CanonicalL0*.lean` today builds only under `lake build Ffi`. Every new
-Wave-2 module is therefore imported from `Test/Axioms.lean` (where its pins
-live anyway): `axiom_check` is both the axiom gate and the build wire. New
-modules are NOT added to the `Host.lean`/`Kernels.lean` roots (that would drag
-them — and for W2-T4, Mathlib elaboration — into the FFI exe closures).
+**Build wiring.** Bare `lake build` builds the closures of every live entry in
+`defaultTargets`, which now includes test executables beyond `seal-host` and
+`axiom_check`. For proof coverage, the relevant wire remains the
+`Test.Axioms` closure: landed seal-host Wave-2 modules are imported there and
+their guarded pins run through `axiom_check`. In particular,
+`Host.CanonicalL0` is live through `Host.CompositionBytes`; only its companion
+`Host.CanonicalL0Liveness` remains outside that closure. This paragraph is not
+a repository-wide coverage claim: the other modules listed in
+`docs/LIMITATIONS.md#proof-build-wire-residual` remain unwired. New proof
+modules are not made live merely by the `Ffi` library glob; they need an actual
+default-target import path.
 
 **Verdict summary.**
 
