@@ -14,17 +14,17 @@
     },
     "seal-verify-action": {
       "url": "https://github.com/velvetmonkey/seal-verify-action.git",
-      "commit": "d97433e2e9370d660af2f5b08912941a880a75ce",
+      "commit": "7ea3cdb8f0b557597a8af72fd73277b6c380602d",
       "wasm": ["vendor/seal-assurance-kit/kernel/wasm/seal.wasm"]
     },
     "seal-demo": {
       "url": "https://github.com/velvetmonkey/seal-demo.git",
-      "commit": "c9df1fd7e9539ca13a38c03c4afd0de62d60fd64",
+      "commit": "a998b5b52a15b6070286349c589f7c21ae7f2e4a",
       "wasm": ["public/wasm/seal.wasm"]
     },
     "seal-live-demo": {
       "url": "https://github.com/velvetmonkey/seal-live-demo.git",
-      "commit": "cb6443d965a00638ceb0c58cf329b4d63aca18ce",
+      "commit": "ec03f2d5eed2aa2e7b1b465b83cb70f621147cf1",
       "wasm": ["seal-gateway/wasm/seal.wasm", "pwa/wasm/seal.wasm"]
     }
   }
