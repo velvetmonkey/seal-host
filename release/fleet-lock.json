@@ -4,7 +4,7 @@
   "repositories": {
     "seal-check": {
       "url": "https://github.com/velvetmonkey/seal-check.git",
-      "commit": "d0621a45f80419253b3e0ea0eb4b0590ec73ecbb",
+      "commit": "fcda028c9c14d0c5e153801843dc0eabcb6a0792",
       "wasm": ["wasm/seal.wasm"]
     },
     "seal-assurance-kit": {
