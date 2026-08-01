@@ -21,6 +21,7 @@ import Host.StatefulNI
 import Host.AuthorityFrontierBridge
 import Host.GatedSinkAdapter
 import Host.PassthroughPerimeter
+import Host.AuditSeam
 import Host.SpawnSeam
 import Host.CapabilityAdequacy
 import Host.DispatchSpelled
