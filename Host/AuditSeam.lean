@@ -41,21 +41,29 @@ that placement is machine-checked.
 * **The telemetry function is a run PARAMETER** (`arun_tel_parameter`,
   `arun_erase_eq`): two runs differing only in `tel` have identical adapter
   state and weave the SAME egress trace; erasing audit events recovers it
-  exactly. No gate, adapter, author or input stream can observe — hence be
-  influenced by — what the host tells stderr.
+  exactly. IN THIS MODEL, and with the input stream held FIXED, no gate,
+  adapter, author or input stream can observe — hence be influenced by —
+  what the host tells stderr.
 * **No event carries information INTO the mediated decision from stderr**
   (`arun_eev_mem`, `arun_decide_tel_invariant`): every seam-event fact of
   the extended run — in particular every decide — is `tel`-invariant, for
-  every adapter, gate, author and input stream.
-* **Every stderr-feedback constraint is VACUOUS**
-  (`aud_constraint_vacuous`, `aud_constraint_vacuous_false`): a constraint
-  can bite on a decision only where the decision differs across telemetry —
-  and no decide of any run is telemetry-sensitive (`aud_no_fed_decision`),
-  so every candidate obligation of the form "a decision stderr fed
-  satisfies C" holds for EVERY predicate C, including `C := fun _ _ =>
-  False`. The obligation quantifies over an EMPTY set of decisions. This is
-  the prose claim "no input edge into routing", as a theorem, and it is
-  labelled vacuous because vacuity IS the content.
+  every adapter, gate, author and input stream. Telemetry-invariance of the
+  decisions is a property of THIS model's trace semantics.
+* **Every constraint of the GUARDED form `audGuardedBy` is VACUOUS**
+  (`aud_constraint_vacuous`, `aud_constraint_vacuous_false`): that form's
+  antecedent is a TELEMETRY-FED decision — one present under one telemetry
+  function and absent under another — and no decide of any run is
+  telemetry-sensitive (`aud_no_fed_decision`), so the obligation "a
+  decision stderr fed satisfies C" holds for EVERY predicate C, including
+  `C := fun _ _ => False`: it quantifies over an EMPTY set of decisions.
+  Read the scope exactly — this is the vacuity of ONE form, not of every
+  conceivable stderr property. Constraints of OTHER shapes are NOT vacuous:
+  `AEv.audEv s ∈ tr → C s` is refuted at `C := fun _ => False` by the
+  `relayTel` witness run of `aud_non_bypass_fails`, whose trace that proof
+  pins by `rfl` with `audEv "relay"` in it (and by the compiler-evaluated
+  `#guard`s below). This is the prose claim "no input edge into routing",
+  as a theorem about the guarded form, and it is labelled vacuous because
+  vacuity IS the content.
 * **What stderr DOES carry — the honest asymmetry** (`arun_stderr_image`,
   `aud_provenance`): stderr is an OUTPUT channel, and "no input edge" is
   NOT "no leak". The stderr image of a run is exactly `telImage tel` of the
@@ -64,14 +72,18 @@ that placement is machine-checked.
   of stderr obtains the run's complete mediation transcript. Conversely,
   every audit line traces to a seam event: stderr says only what the run
   did. P7 buys an attacker who can read stderr the full seam history —
-  read-only — and buys ZERO influence over any decision, emission or state.
+  read-only — and, IN THIS MODEL, zero influence over any decision,
+  emission or state.
 * **Audit mediation is inherited, never created** (`aud_non_bypass_fails`,
-  `aud_decide_tel_mediated`): strict audit mediation fails on a witness run
+  `aud_decide_tel_mediated`): strict audit mediation FAILS on a witness run
   under relay-driven telemetry (the audit line's driving event is itself
   undecided, exactly the P6 negative propagating) and HOLDS for
   decide-driven telemetry on every run — the extension imposes no new
   obligation of its own; each audit line inherits the mediation status of
-  the event that drove it.
+  the event that drove it. The failure is a PROVED negative, not a failure
+  to prove mediation, and it is NOT vacuous: the same `rfl` that decides
+  the witness run's trace places `audEv "relay"` above `eev (relayEv c)`,
+  so the audit line whose mediation fails demonstrably occurs.
 * **The widening breaks nothing** (`arun_client_block_mediated`): the P5
   capstone transfers verbatim to audit-extended runs, for every telemetry
   function.
@@ -90,10 +102,42 @@ the OPERATOR, and it re-enters the model only as approval state (the same
 P8 row), never as a trace edge. The CONTENT discipline of audit records
 stays where the prose put it (`Host/NonInterference.lean`,
 `record_authView_noninterference`); the Rust stderr writes themselves stay
-TCB. P7 REMAINS "telemetry only, no effect" as a trust-inventory row —
-these theorems are the machine-checked reason why the trace semantics can
-give it nothing more: a value no event consumes cannot be constrained by
-any property quantifying over events.
+TCB. P7 REMAINS "telemetry only, no effect" as a trust-inventory row — and
+what these theorems establish is that THIS MODEL's trace semantics contain
+no telemetry-feedback constraint of the `audGuardedBy` form, because no
+decide of any run varies with `tel`. That is a statement about this model,
+NOT a proof that no model and no deployed host could constrain the
+telemetry, and NOT a claim about properties of other shapes: a property
+quantifying over audit events themselves is expressible here and is not
+vacuous (`aud_provenance`).
+
+Explicit residuals, none of them discharged anywhere in this module:
+
+* **The vacuity is scoped to one form.** `aud_constraint_vacuous` ranges
+  over every predicate `C`, but only inside `audGuardedBy`, whose
+  antecedent `audFedDecision` this model makes IMPOSSIBLE
+  (`aud_no_fed_decision`). Nothing here shows that every candidate P7
+  input-edge property must take that form.
+* **No refinement to the binary.** No theorem connects `arun` to the
+  deployed Rust stderr writes. `astep`'s placement of audit lines — a fixed
+  function of the step's own seam events, never re-entering the input
+  alphabet — is read off `rust/src/main.rs` by inspection; the `rust/` ↔
+  model correspondence stays the conformance-bridge obligation, and the
+  `eprintln!`s themselves stay TCB.
+* **Telemetry-invariance of decisions is a property of THIS model.**
+  `arun_decide_tel_invariant` and `arun_tel_parameter` say the model's
+  trace semantics cannot make a decide depend on `tel`. They do not prove
+  that the deployed host has no stderr feedback path; the absence of a
+  stderr read edge is the fidelity INPUT above, taken from `rust/`, not a
+  theorem. Both also hold `inputs` FIXED, so they do not model a reader of
+  stderr whose behaviour changes the future input stream — the interactive
+  operator loop noted above is exactly such a path, and it re-enters only
+  as gate state (P8), never as a trace edge.
+* **Nothing is claimed about audit CONTENT or confidentiality.** No theorem
+  states that any audit line is safe to disclose, that `tel` redacts
+  anything, or that the leak `arun_stderr_image` bounds is acceptable. The
+  content discipline is the NI row's; the confidentiality residual is
+  stated, not discharged.
 -/
 
 namespace Host.Audit
@@ -439,9 +483,11 @@ theorem aud_no_fed_decision (tel₁ tel₂ : EEv → List String) (A : Adapter)
     h.1)
 
 /-- A candidate stderr-feedback obligation: "every decision stderr fed
-    satisfies `C`." This is the shape ANY P7 input-edge property must take —
-    a constraint can only bite on a decision that varies with the
-    telemetry. -/
+    satisfies `C`." This is ONE shape a P7 input-edge property can take —
+    the shape whose antecedent is a decision that varies with the
+    telemetry. That every such property MUST take this shape is not proved
+    here; properties of other shapes are expressible and are not vacuous
+    (see `aud_provenance`). -/
 def audGuardedBy (C : SealV2.RawBytes → SealV2.Decision → Prop)
     (A : Adapter) (gate : SealV2.RawBytes → SealV2.Decision)
     (author : CanonicalAction → String) (inputs : List EIn) : Prop :=
@@ -454,8 +500,12 @@ def audGuardedBy (C : SealV2.RawBytes → SealV2.Decision → Prop)
     quantifies over an EMPTY set. This is `EgressPerimeter.lean`'s prose —
     "stderr has no input edge into routing, so a faithful `audEv` would be
     no-effect by construction" — as a theorem. A VACUOUS result by design:
-    the vacuity IS the no-go. It certifies nothing about what stderr
-    carries OUT (see `arun_stderr_image` for that). -/
+    the vacuity IS the no-go. Read the scope exactly: the vacuity is a
+    property of the GUARDED form `audGuardedBy`, not of every conceivable
+    stderr property — `AEv.audEv s ∈ tr → C s` is NOT vacuous, being
+    refuted at `C := fun _ => False` by the `relayTel` witness run of
+    `aud_non_bypass_fails`. It certifies nothing about what stderr carries
+    OUT (see `arun_stderr_image` for that). -/
 theorem aud_constraint_vacuous (C : SealV2.RawBytes → SealV2.Decision → Prop)
     (A : Adapter) (gate : SealV2.RawBytes → SealV2.Decision)
     (author : CanonicalAction → String) (inputs : List EIn) :
