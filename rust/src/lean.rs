@@ -72,6 +72,7 @@ extern "C" {
     fn seal_host_mcp_version_gate(line: LeanObj, selected_revision: LeanObj) -> LeanObj;
     fn seal_host_mcp_revision_observe(line: LeanObj, selection: LeanObj) -> LeanObj;
     fn seal_host_first_agreement_unsafe_number(line: LeanObj) -> LeanObj;
+    fn seal_host_canonical_effect(line: LeanObj) -> LeanObj;
     fn seal_policy_schema(unit: LeanObj) -> LeanObj;
     fn seal_policy_validate(payload: LeanObj) -> LeanObj;
 }
@@ -266,6 +267,13 @@ impl LeanHost {
                 Some(literal)
             }
         })
+    }
+
+    /// Observe the exact canonical effect fields derived by the pinned Lean
+    /// kernel.  The caller must compare this opaque JSON result with Rust's
+    /// independent derivation and reject every error or mismatch.
+    pub fn canonical_effect(&self, line: &str) -> Result<String, SeamError> {
+        self.call_string(|| unsafe { seal_host_canonical_effect(to_lean_string(line)) })
     }
 
     /// Test seam for `tests/panic_probe.rs` ONLY: trigger a Lean panic. With

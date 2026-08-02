@@ -63,7 +63,7 @@ claimed eliminated.
    existing `SealV2.ed25519Verify` leaf; the startup `--pubkey` is the named
    config-signing trust root and is not read from the config it verifies. The
    separate host approval back-channel can use real Ed25519 (`ed25519-dalek`)
-   over exact `ApprovalRecord` JSON payload bytes. The SealV2 canonical token
+   over exact `ApprovalRecord` JSON payload bytes. The SealV2 kernel-defined token
    path signs `(target, session, issuedAt, expiry, nonce)` bytes in
    `mcp-seal-dev`. These are three distinct signing channels and keys.
 
@@ -73,13 +73,17 @@ claimed eliminated.
    not surfaced as MCP calls are **out of scope by design**. The host is a
    boundary monitor, not a sandbox.
 
-4. **Parser/translation residual.** The shared SealV2 canonical parser closes
-   the parser-differential *on the seal side*: a canonical line has exactly one
-   byte form, the form an approval signature commits to. The residual gap
-   between the upstream server's wire parser and the seal canonical view is a
+4. **Parser/translation residual.** The shared SealV2 parser closes
+   the parser-differential *on the seal side*: a kernel-admitted line has the
+   one byte form defined by `SealV2.serializeAstValue`, the form an approval
+   signature commits to. "Canonical" here names the kernel rule, not RFC
+   8785/JCS; its known divergences and the host's cross-implementation
+   containment are documented in
+   [`docs/CANONICAL-BYTE-CONTRACT.md`](docs/CANONICAL-BYTE-CONTRACT.md). The residual gap
+   between the upstream server's wire parser and the Seal kernel-defined view is a
    per-server trusted-translation assumption, pinned (not eliminated) by the
    G6 property-based differential conformance harness
-   (`rust/tests/differential.rs`). The canonical parser is an audit/signing
+   (`rust/tests/differential.rs`). The kernel-defined parser is an audit/signing
    aid, **not** a traffic filter — legitimate multiline/Unicode arguments are
    mediated on the value view, not refused.
 

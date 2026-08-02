@@ -78,8 +78,9 @@ member order is not significant; the order above is the encoder's byte
 order.
 
 When `effect` is present under the MCP adapter, Rust derives
-`(params.name, params.action, canonical params.arguments)` from the exact
-judged line and requires equality. The all-empty object is therefore an
+`(params.name, params.action, kernel-rule params.arguments)` from the exact
+judged line, obtains the pinned Lean derivation, and requires byte equality
+before reconstructing the signature preimage. The all-empty object is therefore an
 ordinary present claim, not an absence sentinel, and normally fails that
 equality check.
 
@@ -121,7 +122,7 @@ with the complete metadata and multi-round-trip identities:
 optMeta(metadata) || optMrtr(requestState, inputResponses)
 
 optMeta(absent)              = 0x00
-optMeta(present canonical)   = 0x01 || frame(canonical)
+optMeta(present kernelBytes) = 0x01 || frame(kernelBytes)
 
 optMrtr(absent, absent)      = empty
 optMrtr(present s, absent)   = 0x01 || frame(s)
@@ -129,18 +130,33 @@ optMrtr(absent, present i)   = 0x02 || frame(i)
 optMrtr(present s, present i)= 0x03 || frame(s) || frame(i)
 ```
 
-Each present payload is the complete recursively canonicalized JSON value.
+Each present payload is the complete JSON value rendered by the pinned
+kernel's `Lean.Json.compress` byte rule: Unicode-scalar-sorted object members,
+array order retained, Lean `JsonNumber.toString` numbers, and Lean JSON string
+escaping. This is a kernel-defined format, **not RFC 8785/JCS**. In
+particular, U+0008/U+0009/U+000C use `\u0008`/`\u0009`/`\u000c`, numbers do
+not use ECMAScript's binary64 rendering, and property ordering is not RFC
+8785's UTF-16 order. [`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md)
+states the complete contract and the separate `arguments` rule.
+
+The Rust encoder uses an independent serializer. A present effect reaches
+signature-preimage reconstruction or verification only after the host's
+full-domain agreement gate has compared the actual Lean and Rust bytes for
+resource, action, arguments, metadata, request state, and input responses.
+Mismatch or unclassifiable input is rejected; the host never rewrites the
+client value. This makes admitted sides agree, not conform to JCS.
 `requestState` is opaque: the host performs no member lookup, token decode,
 or subfield projection. `inputResponses` is retained whole. Structural
 absence is not represented by a JSON sentinel, so absence, `{}`, and `null`
 remain three distinct signed identities.
 
 `rust/src/envelope_v23.rs::effect_message` is the sole active Rust encoder for
-this shape, and `rust/tests/mrtr_signed_shape.rs` compares it live with the
-manifest-pinned Phase-M Lean `SealV2.Effect.effectMessage` over all four
-presence modes. The coordinated repin and encoder cutover moved the trusted
-kernel, signatures/vectors, artifacts, and active Rust encoder as one contract.
-No pre-Phase-M encoder remains live under the unchanged `seal.effect/v2` tag.
+this shape. `rust/tests/canonical_boundary.rs` exhausts the C0 alphabet at
+every reachable seat and exercises the production full-domain equality gate;
+`rust/tests/mrtr_signed_shape.rs` retains the four presence-mode comparison.
+The coordinated repin and encoder cutover moved the trusted kernel,
+signatures/vectors, artifacts, and active Rust encoder as one contract. No
+pre-Phase-M encoder remains live under the unchanged `seal.effect/v2` tag.
 
 ## Exact signed bytes
 

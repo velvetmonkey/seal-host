@@ -113,7 +113,7 @@ gates this per commit (`lake exe v2_m4_axiom_check` + grep guards).
 |---|---|---|
 | **`non_bypass`** | `decide raw state = Decision.Allow out →` there exists an `ast` with `parse raw = some ast` and a `ValidCapability` witness such that `out = serialize ⟨ast, witness⟩`. **No Allow without a parsed request and a validated capability witness.** | `SealV2/DecideTheorems.lean:67` |
 | **`default_deny`** | `parse raw = none ∨ (∃ ast, parse raw = some ast ∧ validate ast state = none) → decide raw state = Decision.Block`. **Unparseable or unvalidated ⇒ Block.** | `SealV2/DecideTheorems.lean:77` |
-| **`decide_emit_unique`** | `decide raw state = Decision.Allow out ↔` the full parse-validate-serialize chain holds and `out` is the unique canonical serialization of the witness. **An Allow's bytes are exactly determined by the validated witness — no ambiguity, one emit path.** | `SealV2/DecideTheorems.lean:42` |
+| **`decide_emit_unique`** | `decide raw state = Decision.Allow out ↔` the full parse-validate-serialize chain holds and `out` is the unique kernel-defined serialization of the witness. **An Allow's bytes are exactly determined by the validated witness — no ambiguity, one emit path.** “Kernel-defined” is not an RFC 8785/JCS claim; see [`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md). | `SealV2/DecideTheorems.lean:42` |
 
 Supporting proven lemmas (same footprint): `SealCore/Safety.lean:8`
 `default_deny_never_allowed`; `no_allow_guarded_without_matching_approval_in_state`;

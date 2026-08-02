@@ -283,7 +283,9 @@ def checkTrustedConfig (publicKey payload signature : String) :
   pure config
 
 /-- Pure envelope check:
-    `{"payload": "<canonical JSON>", "signature": "<ed25519 signature hex>"}`.
+    `{"payload": "<exact compact JSON bytes>", "signature": "<ed25519 signature hex>"}`.
+    The spelling is the signer-defined byte contract, not an RFC 8785/JCS
+    conformance claim.
     The config public key is a startup trust root and is not read from the
     envelope it authenticates. -/
 def checkEnvelope (text publicKey : String) : Except String TrustedConfig := do

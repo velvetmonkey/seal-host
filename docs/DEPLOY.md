@@ -154,8 +154,11 @@ SEAL_CONFIG_SIGNING_KEY_HEX="$(tr -d '\r\n' < .seal/config.key)" \
   python3 test/tools/sign_config.py payload.json > trusted.json
 ```
 
-The signer compacts the payload to canonical JSON and wraps it as
-`{"payload": "...", "signature": "<ed25519 hex>"}`. The host rejects any config whose
+The signer serializes the parsed payload with Python `json.dumps(...,
+separators=(",", ":"))`, preserving parsed insertion order, and wraps those
+exact compact bytes as `{"payload": "...", "signature": "<ed25519 hex>"}`.
+This is the trusted-config byte contract, not RFC 8785/JCS; see
+[`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md). The host rejects any config whose
 signature does not verify against `--pubkey`.
 
 The checked-in [`trusted.example.json`](../config/trusted.example.json) is a real
@@ -406,7 +409,7 @@ This guide stands up the **`compatible`** profile. What that means precisely:
   proved and modelled but is not the route this host runs. The host is not proved
   end-to-end; the Rust is tied to the kernel by byte-exact conformance testing over a
   corpus, not by a theorem over every input.
-- Host `ApprovalRecord` tokens are a separate signed channel from the v2 canonical
+- Host `ApprovalRecord` tokens are a separate signed channel from the v2 kernel-defined
   approval tuple.
 
 Do not read "it worked in 5 minutes" as "end-to-end verified." For the authoritative

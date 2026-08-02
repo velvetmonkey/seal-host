@@ -278,7 +278,7 @@ fn write_canonical_json(value: &Value, out: &mut Vec<u8>) -> Result<(), String> 
                 .as_u64()
                 .ok_or("approval payload numbers must be unsigned integers")?;
             if integer > MAX_CANONICAL_JSON_INTEGER {
-                return Err("approval payload integer exceeds canonical JSON range".to_string());
+                return Err("approval payload integer exceeds renderer range".to_string());
             }
             out.extend_from_slice(integer.to_string().as_bytes());
         }
@@ -348,7 +348,7 @@ fn validate_approval_v2_payload(payload: &ApprovalRecordV2Payload) -> Result<(),
         ("shown_length", payload.shown_length),
     ] {
         if number > MAX_CANONICAL_JSON_INTEGER {
-            return Err(format!("{name} exceeds canonical JSON range"));
+            return Err(format!("{name} exceeds approval renderer range"));
         }
     }
     if payload.expiry < payload.authorized_at {
@@ -685,7 +685,8 @@ struct SignedToken {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApprovalRecordV2Token {
-    /// Canonical JSON text for ApprovalRecordV2Payload.
+    /// Exact custom-renderer JSON text for ApprovalRecordV2Payload. This is
+    /// the ApprovalRecord byte contract, not RFC 8785/JCS.
     payload: String,
     signature_algorithm: String,
     signature_encoding: String,

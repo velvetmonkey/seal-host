@@ -632,7 +632,7 @@ fn meta_identity_live_host_projection_and_kernel_commitment_agree() {
     );
 }
 
-/// Receipt follows envelope: every canonical JSON `_meta` identity accepted
+/// Receipt follows envelope: every complete JSON `_meta` identity accepted
 /// by the real kernel must survive a mediated ALLOW as complete evidence.
 #[test]
 fn non_object_metadata_allow_receipts_are_complete_and_distinct() {

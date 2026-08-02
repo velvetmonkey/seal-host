@@ -61,8 +61,8 @@ use seal_host_rs::receipt::ReceiptChain;
 use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::{
     numeric_agreement_refusal_response, route_of_classify, route_of_step_output,
-    route_of_version_gate, ClassifyRoute, Route, VersionGateRoute, RESOURCE_LIMIT_RESPONSE,
-    SEAM_ERROR_RESPONSE,
+    route_of_version_gate, ClassifyRoute, Route, VersionGateRoute,
+    CANONICAL_AGREEMENT_REFUSAL_RESPONSE, RESOURCE_LIMIT_RESPONSE, SEAM_ERROR_RESPONSE,
 };
 use seal_host_rs::secure_fs;
 use serde_json::{json, Value};
@@ -1603,6 +1603,44 @@ fn run() -> i32 {
                     }
                 };
                 let actual_adapter = actual_revision.adapter_claim();
+                // Full-domain canonical-byte containment.  A present effect
+                // is signature-bearing, so compare the actual pinned Lean
+                // derivation with Rust's independent derivation before the
+                // signature preimage is reconstructed or verified.  Effect
+                // absence has no canonical JSON seats and is therefore not
+                // routed through this gate.
+                let canonical_agreement = if envelope.effect.is_some() {
+                    let lean_observation = match host.canonical_effect(line) {
+                        Ok(observation) => observation,
+                        Err(error) => {
+                            let typed =
+                                envelope_v23::CanonicalAgreementError::LeanSeam(error.to_string());
+                            eprintln!(
+                                "{}",
+                                json!({"error": "canonical agreement refusal", "detail": typed.to_string()})
+                            );
+                            if write_frame(&output, CANONICAL_AGREEMENT_REFUSAL_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+                    match envelope_v23::canonical_effect_agreement(line, &lean_observation) {
+                        Ok(agreement) => Some(agreement),
+                        Err(error) => {
+                            eprintln!(
+                                "{}",
+                                json!({"error": "canonical agreement refusal", "detail": error.to_string()})
+                            );
+                            if write_frame(&output, CANONICAL_AGREEMENT_REFUSAL_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 match envelope_v23::verify(
                     envelope,
                     line,
@@ -1612,6 +1650,7 @@ fn run() -> i32 {
                         adapter: &actual_adapter,
                         kernel_config: &kernel_config,
                     },
+                    canonical_agreement.as_ref(),
                 ) {
                     Ok(verified) => Some(verified),
                     Err(error) => {

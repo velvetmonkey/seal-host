@@ -13,6 +13,18 @@ These limits are part of the Seal claim. They are not footnotes.
 - The `{propext, Classical.choice, Quot.sound}` axiom-footprint claim is scoped to theorem names imported and pinned by `Test/Axioms.lean`; it is not repository-wide (see “Proof build-wire residual” in the canonical limitations document).
 <!-- claims:end -->
 
+## Canonical JSON non-claim
+
+Seal does not claim RFC 8785/JCS conformance. “Canonical” in theorem, type,
+field, and profile names means the deterministic byte rule defined by the
+pinned kernel or by the specifically named host serializer. The signed effect
+boundary now rejects every present effect for which the actual Rust and Lean
+canonical fields are not byte-identical; it does not rewrite data and does not
+make either renderer standards-conformant. The exact rules, the U+0008/U+0009/
+U+000C, number, and property-order divergences, and the separate arguments,
+config, approval-record, and receipt contracts are in
+[`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md).
+
 ## Proof build-wire residual
 
 **As of 2026-08-01, after the wiring work:** five of the six modules named in

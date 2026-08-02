@@ -6,6 +6,12 @@ never conclusions. Each entry: frozen statement bound to live symbols,
 subsumption verdict against the landed L0/L1 stack, trust boundary, and the
 non-vacuity plan.
 
+**Canonical-byte terminology.** Every `CanonicalBytes`, “canonical bytes”,
+and “canonical serialization” below names the pinned Seal kernel's byte rule,
+not RFC 8785/JCS. Known string, number, and property-order divergences and the
+host-side agreement containment are stated in
+[`docs/CANONICAL-BYTE-CONTRACT.md`](docs/CANONICAL-BYTE-CONTRACT.md).
+
 **Labeling.** Targets are `W2-T1 … W2-T6`. The repo's TCB ledger
 (`docs/SEAL-SYSTEM-TCB.md`) already uses bare T-numbers for *trusted
 assumptions* (its T6 = wall clock + `a3.rs`); wave labels always carry the

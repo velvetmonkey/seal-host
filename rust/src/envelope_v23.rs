@@ -61,9 +61,11 @@ pub struct PrincipalClaim {
 pub struct EffectClaim {
     pub resource: String,
     pub action: String,
-    /// Canonical JSON serialization of the MCP `params.arguments` value.
+    /// Kernel-defined `SealV2.serializeAstValue` bytes for MCP
+    /// `params.arguments` (not an RFC 8785/JCS claim).
     pub args: String,
-    /// Complete canonical JSON `_meta` value. `None` is structural absence;
+    /// Complete `_meta` value. The signed bytes use the pinned kernel rule;
+    /// `None` is structural absence;
     /// every present value, including `null`, remains distinct.
     #[serde(
         default,
@@ -80,7 +82,7 @@ pub struct EffectClaim {
         deserialize_with = "deserialize_present_json"
     )]
     pub request_state: Option<Value>,
-    /// Complete JSON value; recursive canonicalization retains every member.
+    /// Complete JSON value; kernel-rule rendering retains every member.
     #[serde(
         rename = "inputResponses",
         default,
@@ -147,6 +149,95 @@ pub struct HostContext<'a> {
     pub kernel_config: &'a Value,
 }
 
+/// Proof-carrying result of the host-boundary byte-agreement check.  Its
+/// fields are private: callers can obtain one only after the actual pinned
+/// Lean derivation and the independent Rust derivation matched in every
+/// signed effect seat.
+#[derive(Clone, Debug)]
+pub struct CanonicalAgreement {
+    line: String,
+    effect: EffectClaim,
+}
+
+/// Typed fail-closed outcomes of canonical byte classification.  None is a
+/// signing/verification verdict; every variant means that no canonical
+/// preimage may be used for this request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalAgreementError {
+    RustUnclassifiable(String),
+    LeanSeam(String),
+    LeanUnclassifiable(String),
+    MalformedLeanObservation(String),
+    ByteMismatch { field: &'static str },
+    WrongRequest,
+    MissingAgreement,
+    EffectClaimMismatch,
+    PreimageEncoding(String),
+}
+
+impl std::fmt::Display for CanonicalAgreementError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RustUnclassifiable(reason) => {
+                write!(formatter, "Rust could not classify signed effect: {reason}")
+            }
+            Self::LeanSeam(reason) => write!(formatter, "Lean canonical oracle failed: {reason}"),
+            Self::LeanUnclassifiable(reason) => {
+                write!(formatter, "Lean could not classify signed effect: {reason}")
+            }
+            Self::MalformedLeanObservation(reason) => {
+                write!(
+                    formatter,
+                    "Lean canonical oracle returned malformed data: {reason}"
+                )
+            }
+            Self::ByteMismatch { field } => {
+                write!(formatter, "Rust and Lean canonical bytes differ at {field}")
+            }
+            Self::WrongRequest => formatter
+                .write_str("canonical agreement witness belongs to a different judged request"),
+            Self::MissingAgreement => formatter
+                .write_str("present signed effect lacks a canonical byte agreement witness"),
+            Self::EffectClaimMismatch => {
+                formatter.write_str("signed effect claim does not match the agreement witness")
+            }
+            Self::PreimageEncoding(reason) => {
+                write!(formatter, "cannot encode signed effect preimage: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CanonicalAgreementError {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanonicalSeatObservation {
+    present: bool,
+    #[serde(default)]
+    bytes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanonicalEffectObservation {
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    resource: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    args: Option<String>,
+    #[serde(default)]
+    metadata: Option<CanonicalSeatObservation>,
+    #[serde(rename = "requestState", default)]
+    request_state: Option<CanonicalSeatObservation>,
+    #[serde(rename = "inputResponses", default)]
+    input_responses: Option<CanonicalSeatObservation>,
+}
+
 /// Parse the strict V2.3 wrapper. Only the F3 `effect` claim may be
 /// omitted (declared absence); unknown fields — every killed field,
 /// `revocation_subject` included — are refused.
@@ -189,9 +280,10 @@ fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
     message.extend_from_slice(bytes);
 }
 
-/// Canonicalize one complete JSON value through recursively sorted object
-/// members, matching `Lean.Json.parse ... |>.compress`. Arrays retain order;
-/// no member is selected or interpreted.
+/// Render one complete JSON value through recursively scalar-sorted object
+/// members using serde_json. Arrays retain order; no member is selected or
+/// interpreted. This is compared with `Lean.Json.compress` by the boundary
+/// gate and is not an RFC 8785/JCS claim.
 pub fn canonical_json(value: &Value) -> Result<String, String> {
     fn normalized(value: &Value) -> Value {
         match value {
@@ -249,6 +341,110 @@ pub fn derive_mcp_effect(line: &str) -> Result<EffectClaim, String> {
     })
 }
 
+fn observed_seat(
+    name: &'static str,
+    observation: Option<CanonicalSeatObservation>,
+) -> Result<Option<String>, CanonicalAgreementError> {
+    let observation = observation.ok_or_else(|| {
+        CanonicalAgreementError::MalformedLeanObservation(format!(
+            "successful response omitted {name}"
+        ))
+    })?;
+    match (observation.present, observation.bytes) {
+        (false, None) => Ok(None),
+        (true, Some(bytes)) => Ok(Some(bytes)),
+        (false, Some(_)) => Err(CanonicalAgreementError::MalformedLeanObservation(format!(
+            "absent {name} carried bytes"
+        ))),
+        (true, None) => Err(CanonicalAgreementError::MalformedLeanObservation(format!(
+            "present {name} omitted bytes"
+        ))),
+    }
+}
+
+fn rust_seat(value: &Option<Value>) -> Result<Option<String>, CanonicalAgreementError> {
+    value
+        .as_ref()
+        .map(canonical_json)
+        .transpose()
+        .map_err(CanonicalAgreementError::RustUnclassifiable)
+}
+
+/// Compare the actual Rust signed-effect derivation with the exact field
+/// bytes observed from `seal_host_canonical_effect`.  This predicate is the
+/// containment boundary: its accepted space is the complete set of inputs
+/// for which both implementations returned the same signed tuple, rather
+/// than a hand-picked character or number allowlist.
+pub fn canonical_effect_agreement(
+    line: &str,
+    lean_observation: &str,
+) -> Result<CanonicalAgreement, CanonicalAgreementError> {
+    let rust = derive_mcp_effect(line).map_err(CanonicalAgreementError::RustUnclassifiable)?;
+    let lean: CanonicalEffectObservation = serde_json::from_str(lean_observation)
+        .map_err(|error| CanonicalAgreementError::MalformedLeanObservation(error.to_string()))?;
+    if !lean.ok {
+        return Err(CanonicalAgreementError::LeanUnclassifiable(
+            lean.error
+                .unwrap_or_else(|| "oracle returned ok=false without an error".into()),
+        ));
+    }
+    if lean.error.is_some() {
+        return Err(CanonicalAgreementError::MalformedLeanObservation(
+            "successful response also carried an error".into(),
+        ));
+    }
+
+    let lean_resource = lean.resource.ok_or_else(|| {
+        CanonicalAgreementError::MalformedLeanObservation(
+            "successful response omitted resource".into(),
+        )
+    })?;
+    let lean_action = lean.action.ok_or_else(|| {
+        CanonicalAgreementError::MalformedLeanObservation(
+            "successful response omitted action".into(),
+        )
+    })?;
+    let lean_args = lean.args.ok_or_else(|| {
+        CanonicalAgreementError::MalformedLeanObservation("successful response omitted args".into())
+    })?;
+    let lean_metadata = observed_seat("metadata", lean.metadata)?;
+    let lean_request_state = observed_seat("requestState", lean.request_state)?;
+    let lean_input_responses = observed_seat("inputResponses", lean.input_responses)?;
+
+    let comparisons = [
+        ("resource", rust.resource.as_str(), lean_resource.as_str()),
+        ("action", rust.action.as_str(), lean_action.as_str()),
+        ("arguments", rust.args.as_str(), lean_args.as_str()),
+    ];
+    for (field, rust_bytes, lean_bytes) in comparisons {
+        if rust_bytes.as_bytes() != lean_bytes.as_bytes() {
+            return Err(CanonicalAgreementError::ByteMismatch { field });
+        }
+    }
+    for (field, rust_bytes, lean_bytes) in [
+        ("_meta", rust_seat(&rust.metadata)?, lean_metadata),
+        (
+            "requestState",
+            rust_seat(&rust.request_state)?,
+            lean_request_state,
+        ),
+        (
+            "inputResponses",
+            rust_seat(&rust.input_responses)?,
+            lean_input_responses,
+        ),
+    ] {
+        if rust_bytes != lean_bytes {
+            return Err(CanonicalAgreementError::ByteMismatch { field });
+        }
+    }
+
+    Ok(CanonicalAgreement {
+        line: line.to_owned(),
+        effect: rust,
+    })
+}
+
 /// Exact byte twin of the manifest-pinned Phase-M
 /// `SealV2.Effect.effectMessage`:
 ///
@@ -266,7 +462,7 @@ pub fn derive_mcp_effect(line: &str) -> Result<EffectClaim, String> {
 ///  ‖ opt_meta(c.metadata) ‖ opt_mrtr(c.request_state,c.input_responses)`.
 /// Metadata uses an explicit `0x00`/`0x01` presence byte. The all-absent
 /// MRTR block is empty; its other three structural modes start with
-/// `0x01`/`0x02`/`0x03` and frame the complete canonical JSON values.
+/// `0x01`/`0x02`/`0x03` and frame complete kernel-rule JSON values.
 pub fn effect_message(
     authority: &[u8; 32],
     envelope: &EnvelopeV23,
@@ -327,12 +523,45 @@ pub fn effect_message(
     Ok(message)
 }
 
+fn require_agreement<'a>(
+    envelope: &EnvelopeV23,
+    line: &str,
+    agreement: Option<&'a CanonicalAgreement>,
+) -> Result<Option<&'a CanonicalAgreement>, CanonicalAgreementError> {
+    let Some(effect) = &envelope.effect else {
+        return Ok(None);
+    };
+    let agreement = agreement.ok_or(CanonicalAgreementError::MissingAgreement)?;
+    if agreement.line != line {
+        return Err(CanonicalAgreementError::WrongRequest);
+    }
+    if *effect != agreement.effect {
+        return Err(CanonicalAgreementError::EffectClaimMismatch);
+    }
+    Ok(Some(agreement))
+}
+
+/// Produce bytes suitable for signing only after the full-domain Lean/Rust
+/// boundary check.  The raw `effect_message` remains exposed as the verifier
+/// twin and vector oracle; in-repository signers use this witness-requiring
+/// entry point so divergent input is rejected before Ed25519 is invoked.
+pub fn effect_message_for_signing(
+    authority: &[u8; 32],
+    envelope: &EnvelopeV23,
+    line: &str,
+    agreement: Option<&CanonicalAgreement>,
+) -> Result<Vec<u8>, CanonicalAgreementError> {
+    require_agreement(envelope, line, agreement)?;
+    effect_message(authority, envelope, line).map_err(CanonicalAgreementError::PreimageEncoding)
+}
+
 /// Verify every host-owned equality gate and the Ed25519 signature over the
 /// reconstructed full tuple.
 pub fn verify(
     envelope: &EnvelopeV23,
     line: &str,
     context: &HostContext<'_>,
+    agreement: Option<&CanonicalAgreement>,
 ) -> Result<VerifiedEnvelope, String> {
     if envelope.adapter != *context.adapter {
         return Err("V2.3 adapter claim does not match the deployed mediator".into());
@@ -347,15 +576,18 @@ pub fn verify(
         return Err("V2.3 policy_version is mandatory and must be nonempty".into());
     }
     if let Some(effect) = &envelope.effect {
+        let agreement = match require_agreement(envelope, line, agreement)
+            .map_err(|error| error.to_string())?
+        {
+            Some(agreement) => agreement,
+            None => return Err(CanonicalAgreementError::MissingAgreement.to_string()),
+        };
         // A PRESENT claim is checked unconditionally — the retired
         // all-empty sentinel is a claim like any other (Stage B2).
         if context.adapter.kind != MCP_ADAPTER_TYPE {
             return Err("non-MCP adapter carried an MCP effect claim".into());
         }
-        let expected = derive_mcp_effect(line)?;
-        if *effect != expected {
-            return Err("V2.3 effect claim does not match the judged line".into());
-        }
+        debug_assert_eq!(effect, &agreement.effect);
     }
 
     let authority = decode_array::<32>(context.authority_hex, "config authority")?;

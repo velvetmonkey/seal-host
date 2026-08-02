@@ -7,7 +7,8 @@ use seal_host_rs::adapter_revision::{
     MCP_DISCOVERY_SUPPORTED_REVISIONS, MCP_MIXED_VERSION_POLICY,
 };
 use seal_host_rs::envelope_v23::{
-    effect_message, verify, AdapterClaim, EffectClaim, EnvelopeV23, HostContext, PrincipalClaim,
+    canonical_effect_agreement, effect_message_for_signing, verify, AdapterClaim, EffectClaim,
+    EnvelopeV23, HostContext, PrincipalClaim,
 };
 use seal_host_rs::lean::LeanHost;
 use serde_json::json;
@@ -57,7 +58,10 @@ fn signed(
             input_responses: None,
         }),
     };
-    let message = effect_message(&AUTHORITY, &envelope, CALL).unwrap();
+    let observation = host().canonical_effect(CALL).unwrap();
+    let agreement = canonical_effect_agreement(CALL, &observation).unwrap();
+    let message = effect_message_for_signing(&AUTHORITY, &envelope, CALL, Some(&agreement))
+        .expect("canonical agreement is required before signing");
     let signature = signing_key.sign(&message);
     envelope.sig = hex::encode(signature.to_bytes());
 
@@ -76,6 +80,7 @@ fn signed(
             adapter: &adapter,
             kernel_config: &kernel_config,
         },
+        Some(&agreement),
     )
     .unwrap();
     (adapter, message, signature, envelope)

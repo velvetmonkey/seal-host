@@ -537,6 +537,52 @@ unsafe def sealHostMcpVersionGateStep (inputText : String) : String :=
 def sealHostFirstAgreementUnsafeNumber (line : String) : String :=
   (Seal.JsonUtil.firstAgreementUnsafeNumber? line.trimAscii.toString).getD ""
 
+/-! ### Cross-implementation canonical-byte containment
+
+The V2.3 transport reconstructs the signed effect tuple independently in
+Rust.  Before Rust is allowed to verify (or a caller is allowed to mint) a
+signature preimage, it asks this export for the bytes the pinned kernel
+actually derives from the judged request.  The Rust boundary compares every
+canonicalized seat byte-for-byte.  `ok = false` is a typed, fail-closed
+classification: no guessed/default effect is returned. -/
+
+private def canonicalSeatJson : Option String → Json
+  | none => Json.mkObj [("present", Json.bool false)]
+  | some bytes => Json.mkObj [
+      ("present", Json.bool true),
+      ("bytes", Json.str bytes)]
+
+/-- Return the pinned kernel's exact canonical effect fields.  This is an
+    observation seam only: `SealV2.Effect.deriveEffect` remains the sole Lean
+    derivation and no Rust spelling is imported or reproduced here. -/
+@[export seal_host_canonical_effect]
+def sealHostCanonicalEffect (line : String) : String :=
+  match SealV2.Effect.deriveEffect line.trimAscii.toString with
+  | none => (Json.mkObj [
+      ("ok", Json.bool false),
+      ("error", Json.str "kernel could not classify a canonical signed effect")]).compress
+  | some claim =>
+      let metadata :=
+        match claim.metadata with
+        | .absent => none
+        | .present bytes => some bytes
+      let requestState :=
+        match claim.requestState with
+        | .absent => none
+        | .present bytes => some bytes
+      let inputResponses :=
+        match claim.inputResponses with
+        | .absent => none
+        | .present bytes => some bytes
+      (Json.mkObj [
+        ("ok", Json.bool true),
+        ("resource", Json.str claim.resource),
+        ("action", Json.str claim.action),
+        ("args", Json.str claim.args),
+        ("metadata", canonicalSeatJson metadata),
+        ("requestState", canonicalSeatJson requestState),
+        ("inputResponses", canonicalSeatJson inputResponses)]).compress
+
 /-! ### Policy schema/validate exports — `seal schema` / `seal validate`
 
 Thin projections of the SAME `Seal.policyBundleCodec` the init path parses
@@ -553,9 +599,10 @@ def sealPolicySchema (_ : Unit) : String :=
 /-- Validate raw policy-bundle payload text. Stages mirror the init path:
     the pathological-number guard (fail closed), JSON parse, the verified
     `parsePolicyBundle`, then `Host.ofBundle`. `canonical` reports whether
-    the bytes are in SealV2 canonical form (required for SIGNED payloads;
-    reported, not enforced, so the validator can also judge authoring-time
-    pretty-printed drafts). -/
+    the bytes satisfy the pinned SealV2 parser's one-representation grammar;
+    this is a kernel-defined diagnostic, not an RFC 8785/JCS claim. It is
+    reported rather than enforced so the validator can also judge
+    authoring-time pretty-printed drafts. -/
 @[export seal_policy_validate]
 def sealPolicyValidate (payloadText : String) : String :=
   let canonical := (SealV2.parse payloadText).isSome

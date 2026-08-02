@@ -49,7 +49,7 @@ from liveness, and `hACR` lifts that to part-list equality.
 * **Minting (TCB):** Rust providers (`rust/src/providers.rs`) mint
   `ApprovalRecord { target: "<64 lowercase hex>", … }` via control-file / Ed25519
   signed-token / TTY. The host Ed25519 signed-token provider signs the exact
-  `ApprovalRecord` JSON payload bytes; it is separate from the SealV2 canonical
+  `ApprovalRecord` JSON payload bytes; it is separate from the SealV2 kernel-defined
   `(target, session, issuedAt, expiry, nonce)` token path in `mcp-seal-dev`.
   `rust/src/a3.rs` freshness-filters every record (nonce-once per session, TTL,
   +5s future-skew, wall clock) before Lean sees it — `A3Filter`, fail-closed.
@@ -79,7 +79,9 @@ from liveness, and `hACR` lifts that to part-list equality.
   not have — rejected as the target, recorded here as a scope finding.
 * **Signature:** `SealV2.SignatureVerified` (`Validation.lean:191`) is a
   Prop over `verifySignature`; in `mcp-seal-dev` that path calls real Ed25519
-  over canonical `(target, session, issuedAt, expiry, nonce)` bytes. The host's
+  over kernel-defined `(target, session, issuedAt, expiry, nonce)` bytes. This
+  is not an RFC 8785/JCS claim; see
+  [`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md). The host's
   NDJSON provider is also real Ed25519 (`ed25519-dalek`) but over exact
   `ApprovalRecord` JSON payload bytes. The trusted config envelope is a third,
   separate Ed25519 channel over exact config payload bytes, verified with the

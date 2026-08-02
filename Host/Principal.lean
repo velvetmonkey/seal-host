@@ -222,8 +222,8 @@ theorem envelope_cross_version_separated (authority : ByteArray)
     simpa [String.toUTF8_eq_toByteArray, String.toByteArray_inj] using htag
   exact absurd this (by decide)
 
-/-- **Cross-plane separation.** The config plane signs raw canonical-JSON
-    payload bytes — which always begin with `{` (0x7b). An envelope-plane
+/-- **Cross-plane separation.** The config plane signs the exact trusted JSON
+    object payload bytes — which always begin with `{` (0x7b). An envelope-plane
     message always begins with the tag byte `s` (0x73). So no byte string is
     both a config payload and a principal-envelope message: a principal
     signature can never double as a config signature or vice versa. -/

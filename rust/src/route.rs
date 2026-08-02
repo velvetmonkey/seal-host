@@ -170,6 +170,11 @@ pub fn numeric_agreement_refusal_response(literal: &str) -> String {
         + "\n"
 }
 
+/// Stable typed refusal for a request whose independently derived signed
+/// canonical bytes are unequal or unclassifiable.  Detailed diagnostics stay
+/// on stderr; the wire response does not reflect attacker-controlled data.
+pub const CANONICAL_AGREEMENT_REFUSAL_RESPONSE: &str = "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":\"seal-host: signed canonical byte agreement failure; request blocked\"}}\n";
+
 /// Stable response for any hostile-boundary resource-limit refusal. The
 /// detailed, non-secret limit name is emitted once on stderr; the wire shape
 /// remains constant and never reflects attacker-controlled bytes.

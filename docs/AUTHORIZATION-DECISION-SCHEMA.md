@@ -49,19 +49,19 @@ reject it as legacy, naming this spec.
 | `record_type` | `"seal.authorization-decision"` | yes | authorization-decision type discriminator |
 | `record_version` | `1` | yes (or legacy `seal_live_receipt:"v0"`) | schema version discriminator |
 | `tool` | string | yes | mediated tool name (e.g. `"db.execute"`) |
-| `arguments` | object | yes | the tool-call arguments, verbatim; key order is fixed at production time and is significant (§2) |
-| `_meta` | JSON value | optional | complete canonical `params._meta` value; absence means the request omitted `_meta`, while `{}` and `null` remain present and distinct (§2) |
+| `arguments` | object | yes | complete parsed tool-call arguments; incoming member order is retained by Rust `serde_json`'s `preserve_order` feature and is significant (§2) |
+| `_meta` | JSON value | optional | complete parsed `params._meta` value; absence means the request omitted `_meta`, while `{}` and `null` remain present and distinct (§2) |
 | `requestState` | JSON value | optional | complete opaque `params.requestState` value; structural absence differs from every present value, including `{}` and `null`; consumers MUST NOT project or interpret its interior (§2) |
 | `inputResponses` | JSON value | optional | complete `params.inputResponses` value with every member retained; structural absence differs from every present value, including `{}` and `null` (§2) |
 | `now` | integer ≥ 0 | optional (default 1000) | the caller-supplied **logical clock** the kernel decided with — carried so re-derivation replays the same clock; NOT wall time |
-| `canonical_request` | string | optional | the exact canonical request line that was hashed; if present it MUST equal the line derived per §2 |
-| `canonical_request_sha256` | 64-hex string | yes | SHA-256 of the canonical request line (§2) |
+| `canonical_request` | string | optional | legacy field name for the exact deterministic Rust request projection that was hashed; if present it MUST equal the line derived per §2 |
+| `canonical_request_sha256` | 64-hex string | yes | SHA-256 of that deterministic request projection (§2) |
 | `bypass` | boolean | yes | `true` = mediation was skipped (control run); §6 |
 | `verdict` | `"ALLOW" \| "BLOCK" \| "ERROR"` | yes | §5 vocabulary |
 | `reason` | string | yes | human-readable ground for the verdict |
 | `deny_kernel` | string or null | yes when mediated | which gating kernel denied (null on ALLOW) |
 | `certs` | array | yes when mediated | per-gate seals `{kernel, verdict, reason, certHash}` with `certHash` a **decimal string** (u64; §3) — top-level, not nested under `witness` |
-| `emitted_bytes` | string | yes when mediated | verbatim canonical `seal_decide` output |
+| `emitted_bytes` | string | yes when mediated | verbatim `seal_decide` output |
 | `kernel_identity` | object | yes | `wasm_sha256` (64-hex, or **null iff `bypass`**), `self_verified` (boolean). HARD SPLIT: never carries toolchain/axioms in v1. See §4 |
 | `asserted_provenance` | object | optional | asserted-not-verified proof hygiene (`lean_toolchain`, `axioms`, `verified_in_browser` — MUST NOT be `true`); the only v1 home for toolchain/axioms (§4) |
 | `kernel_config` | object | yes when mediated | the exact trusted config the kernel was initialised with — re-derivation input |
@@ -74,7 +74,8 @@ permitted; verifiers MUST ignore unknown top-level fields.
 
 ## 2. `canonical_request_sha256` — exact pre-image
 
-The canonical request line is:
+`canonical_request` is a retained schema field name, not a JCS conformance
+claim. Its bytes are the Rust `serde_json` serialization of this projection:
 
 ```js
 JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call",
@@ -87,12 +88,18 @@ JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call",
 ```
 
 with `<tool>` = the receipt's `tool` and `<arguments>` = the receipt's
-`arguments` object serialised **in its stored key order** (JS objects
-preserve insertion order for non-integer-like keys; integer-like argument
-names are forbidden in v1 for this reason). When the receipt carries
-`_meta`, it is inserted after `arguments` and its complete value is
-serialised with the envelope/kernel canonicalisation: object members are
-sorted lexicographically at every depth while array order is retained. When
+`arguments` object serialized in its retained incoming member order by Rust
+`serde_json` with `preserve_order`; arrays retain order. When the receipt
+carries `_meta`, it is inserted after `arguments`; the producer first applies
+`envelope_v23::canonical_json` (recursive Unicode-scalar key sorting), reparses
+that text, then the whole projection is emitted through `serde_json`.
+`requestState` and `inputResponses` retain their parsed incoming member order.
+This is deliberately **not** described as
+the envelope/kernel renderer: Lean's signed-effect rule differs on control
+escaping and some numbers, and the host boundary rejects those signed inputs
+rather than pretending the receipt serializer is identical. The exact split
+and remaining RFC 8785 divergences are in
+[`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md). When
 `_meta` is absent, the historical
 two-member `params` bytes are unchanged unless an MRTR value follows it.
 Present `requestState` is inserted after `_meta` (or after `arguments` when
@@ -358,8 +365,8 @@ Every v1 field carries forward with unchanged semantics. New fields:
 | `approval.nonce` | string | yes iff `channel = "ed25519"`; absent otherwise unless the channel truly carried one | approval nonce (64 lowercase hex on the signed channel) |
 | `approval.issued_at` | integer (epoch ms) | yes iff the channel carried it | mint time as presented; producers MUST NOT invent it |
 | `approval.expiry` | integer (epoch ms) | yes iff derivable (`issued_at` + TTL) or carried | absolute expiry deadline |
-| `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the canonical `kernel_config` serialization — see 11.3 |
-| `args_hash` | 64-hex string | yes when mediated and the request parsed (see the unparseable-request rule below) | SHA-256 of the canonical `arguments` serialization — see 11.3 |
+| `approval.policy_hash` | 64-hex string | yes within `approval` | SHA-256 of the deterministic Rust `kernel_config` serialization — see 11.3 |
+| `args_hash` | 64-hex string | yes when mediated and the request parsed (see the unparseable-request rule below) | SHA-256 of the deterministic Rust `arguments` serialization — see 11.3 |
 | `request_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the terminator-stripped request body the kernel judged (pre-canonicalisation). This established field is not the ApprovalRecord v2 framed-subject digest. Present on every receipt and kernel-attested: the kernel emits the same hash inside its audit (`emitted_bytes`), and the producer cross-checks the two before persisting — a mismatch is a SEAM failure that fails closed. |
 | `framed_subject_sha256` | 64-hex string | yes on native-host receipts | SHA-256 of the exact delimiter-bearing raw frame used by ApprovalRecord v2 subject admission. Deliberately named separately from `request_sha256`; for ordinary LF-framed requests these hash nearly the same bytes but MUST NOT be interchanged. |
 | `framed_subject_length` | non-negative integer | yes on native-host receipts | Byte length of the exact delimiter-bearing raw frame hashed by `framed_subject_sha256` and matched by ApprovalRecord v2. |
@@ -476,10 +483,11 @@ deliberately stripped of.
 
 ### 11.3 Derived hashes (computable on every surface)
 
-Both hashes use the §2 serialization discipline — `JSON.stringify` of the
-object **in its stored key order**, SHA-256 over the UTF-8 bytes, lowercase
-hex. They are derived fields: any verifier recomputes them from the receipt's
-own `arguments` / `kernel_config` and REJECTS on mismatch.
+Both hashes use the §2 deterministic Rust/ECMAScript-style serialization
+discipline over the parsed object, SHA-256 over the UTF-8 bytes, lowercase
+hex. They are not RFC 8785/JCS hashes. They are derived fields: any verifier
+recomputes them from the receipt's own `arguments` / `kernel_config` and
+REJECTS on mismatch.
 
 ```
 args_hash   := sha256Hex(UTF8(JSON.stringify(arguments)))
@@ -521,7 +529,7 @@ arguments[bind.amount]`, etc.); any mismatch is a REJECT — this is the
 `gate:amount-merchant-mismatch` negative gate. Non-payment tools carry none
 of the three fields; the live-demo `db.execute` gateway emits none.
 
-### 11.5 Canonical serialization and roundtrip stability
+### 11.5 Deterministic serialization and roundtrip stability
 
 v2 key order (extends the §1/`V1_KEY_ORDER` pattern; producers emit exactly
 this top-level order):
@@ -566,4 +574,5 @@ its fixtures.
 | live demo (seal-live-demo) | gateway emits v2 (kills the v0 drift); evidence + bundle regenerate via the real docker run |
 
 Shared implementation stays the §9 frozen seam: `seal-check/receipt-format.js`
-is canonical; the kit and the live demo vendor byte-identical copies.
+is the authoritative implementation; the kit and the live demo vendor
+byte-identical copies. This authority statement is not a JCS claim.

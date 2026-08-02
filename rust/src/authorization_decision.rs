@@ -93,7 +93,7 @@ fn hash_file(path: &Path) -> Result<String, String> {
 fn canonical_json_sha256(value: &Value) -> Result<String, String> {
     serde_json::to_vec(value)
         .map(|bytes| sha256_hex(&bytes))
-        .map_err(|e| format!("cannot serialize canonical JSON: {e}"))
+        .map_err(|e| format!("cannot serialize deterministic Rust JSON: {e}"))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -228,7 +228,9 @@ pub fn request_parts(line: &str) -> Result<RequestParts, String> {
         .filter(|v| v.is_object())
         .ok_or("mediated request lacks object params.arguments")?
         .clone();
-    // Metadata identity follows the envelope's complete canonical JSON value:
+    // Metadata identity preserves the envelope's complete JSON value. The
+    // receipt's final bytes use serde_json and are not claimed to be the
+    // kernel renderer or RFC 8785/JCS:
     // structural absence remains distinct from every present value, including
     // `{}` and `null`. No shape gate belongs at this descriptive boundary.
     let metadata = params.get("_meta").cloned();
