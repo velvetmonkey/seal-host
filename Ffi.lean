@@ -80,7 +80,7 @@ inductive McpRevisionSelection where
   | undetermined
   | selected (revision : String)
   | conflictingEntryCalls
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- `McpRevisionSession::version_gate_input`: the exact string handed to
     `SealV2.Effect.mcpVersionGate` as `selectedRevision`. -/
@@ -112,6 +112,26 @@ def McpRevisionSelection.observe (selection : McpRevisionSelection)
           | .selected s =>
               if s == observed then .selected s else .conflictingEntryCalls
           | .conflictingEntryCalls => .conflictingEntryCalls
+
+/-- Decode the gate-input encoding back into a selection. Total; the inverse
+    of `gateInput` on every state the fold can reach, because a selected
+    revision is always `McpEntryCall.revision.version` — nonempty and never
+    the conflict sentinel. Pinned by the `example`s below. -/
+def McpRevisionSelection.ofGateInput : String → McpRevisionSelection
+  | "" => .undetermined
+  | "conflicting-entry-calls" => .conflictingEntryCalls
+  | revision => .selected revision
+
+example : McpRevisionSelection.ofGateInput
+    McpRevisionSelection.undetermined.gateInput = .undetermined := by decide
+example : McpRevisionSelection.ofGateInput
+    McpRevisionSelection.conflictingEntryCalls.gateInput =
+      .conflictingEntryCalls := by decide
+example : ∀ entry : SealV2.Effect.McpEntryCall,
+    McpRevisionSelection.ofGateInput
+        (McpRevisionSelection.selected entry.revision.version).gateInput =
+      .selected entry.revision.version := by
+  intro entry; cases entry <;> decide
 
 /-- The wasm module's revision session. Reset by `initFromConfig` (a fresh
     session has seen no entry call), exactly as the native host constructs a
@@ -405,6 +425,32 @@ def sealHostClassify (line : String) : UInt32 :=
 @[export seal_host_mcp_version_gate]
 def sealHostMcpVersionGate (line selectedRevision : String) : String :=
   (SealV2.Effect.mcpVersionGate line selectedRevision).toJson.compress
+
+/-- M.2 native observation: fold ONE gate-admitted line into the session
+    selection, both encoded as the gate-input string (`""` / revision /
+    `"conflicting-entry-calls"`) — the exact vocabulary
+    `seal_host_mcp_version_gate` already receives. The Rust host stores the
+    returned string opaquely; state stays host-side, the transition is
+    kernel-owned, and the wasm session above folds the SAME
+    `McpRevisionSelection.observe`.
+
+    Precondition, kernel-owned: the fold runs only when
+    `Host.SurrogateEscapes.wireSurrogatesSafe` admits the line. Native twin
+    of the wasm bridge's guard story (M.2 section above): the retired native
+    observer (serde_json) rejected a line carrying an unpaired UTF-16
+    surrogate escape, while `Json.parse` substitutes U+FFFD and accepts —
+    the one measured divergence class reachable at the native observe site
+    (the other class, numerals outside binary64 round-trip, is refused
+    upstream by `seal_host_first_agreement_unsafe_number`). Skipping the
+    fold on that class preserves the native observer's behaviour exactly:
+    no observation, no selection change — and `classifyLine` refuses the
+    line itself immediately after. -/
+@[export seal_host_mcp_revision_observe]
+def sealHostMcpRevisionObserve (line selection : String) : String :=
+  if !Host.SurrogateEscapes.wireSurrogatesSafe line then
+    selection
+  else
+    ((McpRevisionSelection.ofGateInput selection).observe line).gateInput
 
 /-- The step-envelope `line` extraction, shared. This is the ONE
     guard/parse/default sequence for reading the judged line out of the outer

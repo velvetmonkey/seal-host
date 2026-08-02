@@ -1512,7 +1512,21 @@ fn run() -> i32 {
             }
         }
         // M.2 observation feeds the next kernel gate and signed adapter claim.
-        mcp_revision_session.observe_received_call(line);
+        // The fold is the kernel's (seal_host_mcp_revision_observe); a seam
+        // failure refuses the line and leaves the selection unchanged, like
+        // every other seam error on this path.
+        if let Err(error) = mcp_revision_session.observe_received_call(&host, line) {
+            eprintln!(
+                "{}",
+                json!({
+                    "error": format!("revision observe seam failure; line refused: {error}")
+                })
+            );
+            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                break;
+            }
+            continue;
+        }
         // Bytes the child receives on allow: the original wire verbatim for
         // a plain line; for an enveloped line, exactly the judged inner
         // string plus ONE host-authored `\n` (the inner string is verifiably

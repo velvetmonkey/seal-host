@@ -4,12 +4,23 @@
 //! The supported set is discovery information. The effect envelope continues
 //! to sign one scalar: the revision selected by the received entry-call shape
 //! for the child session that mediated that call.
+//!
+//! The selection TRANSITION is not implemented here. It is the kernel-owned
+//! fold `seal_host_mcp_revision_observe` (Ffi.lean `McpRevisionSelection.observe`
+//! — the same fold the wasm build runs), reached through the seam this host
+//! already links. This module only carries the opaque selection string between
+//! calls and maps it fail-closed onto the signed adapter claim. The retired
+//! serde_json twin of the fold survives solely as the reference comparand in
+//! `tests/m2_observe_differential.rs`.
 
 use crate::envelope_v23::{AdapterClaim, MCP_ADAPTER_TYPE};
-use serde_json::Value;
+use crate::lean::{LeanHost, SeamError};
 
 pub const MCP_LEGACY_ADAPTER_REVISION: &str = "2025-06-18";
 pub const MCP_CURRENT_ADAPTER_REVISION: &str = "2026-07-28";
+
+/// The kernel's `McpRevisionSelection.gateInput` conflict sentinel, verbatim.
+const MCP_CONFLICTING_ENTRY_CALLS: &str = "conflicting-entry-calls";
 
 /// Discovery-facing supported set. A cooperating MCP server may serialize
 /// these strings as `result.supportedVersions` in its own `server/discover`
@@ -51,69 +62,54 @@ pub enum McpMixedVersionPolicy {
 pub const MCP_MIXED_VERSION_POLICY: McpMixedVersionPolicy =
     McpMixedVersionPolicy::TransparentDualEra;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum McpRevisionSelection {
-    #[default]
-    Undetermined,
-    Selected(McpAdapterRevision),
-    ConflictingEntryCalls,
-}
-
-/// Derives the revision fact from the received session entry-call shape.
+/// Carries the revision fact derived from the received session entry-call
+/// shape — derived by the kernel, per observed line, never re-derived here.
 ///
-/// Only the method name is observed here. M.7 owns validation of each
-/// request's `protocolVersion` and `clientCapabilities`, plus its JSON-RPC
-/// error mapping. A mediated call before either entry shape, or after both
+/// Only the method name is observed. M.7 owns validation of each request's
+/// `protocolVersion` and `clientCapabilities`, plus its JSON-RPC error
+/// mapping. A mediated call before either entry shape, or after both
 /// incompatible shapes, has no honest scalar and is refused rather than
 /// silently falling back to the legacy revision.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct McpRevisionSession {
-    selection: McpRevisionSelection,
+    /// Gate-input encoding, kernel-owned domain: `""` while undetermined,
+    /// the selected revision string, or the conflict sentinel. Written only
+    /// from `seal_host_mcp_revision_observe` results.
+    selection: String,
 }
 
 impl McpRevisionSession {
-    pub fn observe_received_call(&mut self, line: &str) {
-        let Ok(request) = serde_json::from_str::<Value>(line) else {
-            return;
-        };
-        let observed = match request.get("method").and_then(Value::as_str) {
-            Some("initialize") => Some(McpAdapterRevision::Legacy2025_06_18),
-            Some("server/discover") => Some(McpAdapterRevision::Current2026_07_28),
-            _ => None,
-        };
-        let Some(observed) = observed else {
-            return;
-        };
-        self.selection = match self.selection {
-            McpRevisionSelection::Undetermined => McpRevisionSelection::Selected(observed),
-            McpRevisionSelection::Selected(selected) if selected == observed => {
-                McpRevisionSelection::Selected(selected)
-            }
-            McpRevisionSelection::Selected(_) | McpRevisionSelection::ConflictingEntryCalls => {
-                McpRevisionSelection::ConflictingEntryCalls
-            }
-        };
+    /// Fold one line into the selection through the kernel. On a seam error
+    /// the selection is left unchanged; the caller must refuse the line
+    /// (fail-closed, like every other seam failure).
+    pub fn observe_received_call(
+        &mut self,
+        host: &LeanHost,
+        line: &str,
+    ) -> Result<(), SeamError> {
+        self.selection = host.mcp_revision_observe(line, &self.selection)?;
+        Ok(())
     }
 
-    pub fn actual_revision(self) -> Result<McpAdapterRevision, &'static str> {
-        match self.selection {
-            McpRevisionSelection::Selected(revision) => Ok(revision),
-            McpRevisionSelection::Undetermined => Err(
+    pub fn actual_revision(&self) -> Result<McpAdapterRevision, &'static str> {
+        match self.selection.as_str() {
+            MCP_LEGACY_ADAPTER_REVISION => Ok(McpAdapterRevision::Legacy2025_06_18),
+            MCP_CURRENT_ADAPTER_REVISION => Ok(McpAdapterRevision::Current2026_07_28),
+            "" => Err(
                 "MCP adapter revision is undetermined: no initialize or server/discover entry call was received",
             ),
-            McpRevisionSelection::ConflictingEntryCalls => Err(
+            MCP_CONFLICTING_ENTRY_CALLS => Err(
                 "MCP adapter revision is ambiguous: both initialize and server/discover entry calls were received",
+            ),
+            _ => Err(
+                "MCP adapter revision is unrecognized: the kernel selected a revision outside the ruled dual-era set",
             ),
         }
     }
 
     /// Lossless M.2 state input for the Lean-owned M.7 gate. Rust never
     /// compares request metadata with this value.
-    pub fn version_gate_input(self) -> &'static str {
-        match self.selection {
-            McpRevisionSelection::Undetermined => "",
-            McpRevisionSelection::Selected(revision) => revision.as_str(),
-            McpRevisionSelection::ConflictingEntryCalls => "conflicting-entry-calls",
-        }
+    pub fn version_gate_input(&self) -> &str {
+        &self.selection
     }
 }

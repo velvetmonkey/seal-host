@@ -9,9 +9,16 @@ use seal_host_rs::adapter_revision::{
 use seal_host_rs::envelope_v23::{
     effect_message, verify, AdapterClaim, EffectClaim, EnvelopeV23, HostContext, PrincipalClaim,
 };
+use seal_host_rs::lean::LeanHost;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
+
+fn host() -> &'static LeanHost {
+    static HOST: OnceLock<LeanHost> = OnceLock::new();
+    HOST.get_or_init(LeanHost::new)
+}
 
 const PRINCIPAL_SEED: [u8; 32] = [41; 32];
 const AUTHORITY: [u8; 32] = [83; 32];
@@ -21,7 +28,7 @@ const DISCOVER: &str = r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","pa
 
 fn selected(entry: &str) -> McpAdapterRevision {
     let mut session = McpRevisionSession::default();
-    session.observe_received_call(entry);
+    session.observe_received_call(host(), entry).unwrap();
     session.actual_revision().unwrap()
 }
 
@@ -98,13 +105,13 @@ fn discovery_capability_is_a_two_revision_set_and_policy_is_transparent() {
 #[test]
 fn missing_or_conflicting_entry_shape_has_no_hidden_default() {
     let mut unselected = McpRevisionSession::default();
-    unselected.observe_received_call(CALL);
+    unselected.observe_received_call(host(), CALL).unwrap();
     let empty = unselected.actual_revision().unwrap_err();
     assert!(empty.contains("undetermined"), "{empty}");
 
     let mut conflict = McpRevisionSession::default();
-    conflict.observe_received_call(INITIALIZE);
-    conflict.observe_received_call(DISCOVER);
+    conflict.observe_received_call(host(), INITIALIZE).unwrap();
+    conflict.observe_received_call(host(), DISCOVER).unwrap();
     let error = conflict.actual_revision().unwrap_err();
     assert!(error.contains("ambiguous"), "{error}");
 }
