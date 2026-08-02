@@ -43,6 +43,9 @@ fn proof_golden_envelope() -> EnvelopeV23 {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     }
 }
@@ -52,7 +55,7 @@ fn byte_twin_matches_fable_golden_vector() {
     let authority: [u8; 32] = std::array::from_fn(|index| 0xa0 + index as u8);
     let actual =
         hex::encode(effect_message(&authority, &proof_golden_envelope(), r#"{"m":1}"#).unwrap());
-    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d";
+    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d00";
     assert_eq!(actual, expected);
 }
 
@@ -82,6 +85,9 @@ fn fixture() -> (EnvelopeV23, String, String, serde_json::Value) {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     };
     envelope.sig = hex::encode(
@@ -233,6 +239,9 @@ fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: 
         resource: String::new(),
         action: String::new(),
         args: String::new(),
+        metadata: None,
+        request_state: None,
+        input_responses: None,
     });
     // v1 seats ride at their "unset" wire values regardless of what the v2
     // envelope now carries (policy_version framed empty, expires_at 0): the
@@ -326,8 +335,8 @@ fn kernel_principal_is_cross_checked() {
 /// omitted from the wire at all.
 #[test]
 fn strict_wire_shape_effect_omission_is_declared_absence() {
-    let (envelope, line, _, _) = fixture();
-    let mut env = serde_json::to_value(envelope).unwrap();
+    let (mut envelope, line, _, _) = fixture();
+    let mut env = serde_json::to_value(&envelope).unwrap();
     env.as_object_mut().unwrap().remove("effect");
     let wrapper = json!({"seal_env": env, "request": line}).to_string();
     match wire_view(&wrapper) {
@@ -336,6 +345,24 @@ fn strict_wire_shape_effect_omission_is_declared_absence() {
         }
         other => panic!("unexpected wire view: {other:?}"),
     }
+
+    // `Option<Value>` normally collapses a JSON null to `None`. The claim's
+    // custom deserializer must retain field presence so the signed identities
+    // absent, `{}`, and `null` remain distinct on the actual wire path.
+    envelope.effect.as_mut().unwrap().request_state = None;
+    let absent = json!({"seal_env": &envelope, "request": &line}).to_string();
+    envelope.effect.as_mut().unwrap().request_state = Some(json!({}));
+    let empty = json!({"seal_env": &envelope, "request": &line}).to_string();
+    envelope.effect.as_mut().unwrap().request_state = Some(serde_json::Value::Null);
+    let null = json!({"seal_env": &envelope, "request": &line}).to_string();
+
+    let parsed_state = |wire: &str| match wire_view(wire) {
+        WireView::Enveloped { envelope, .. } => envelope.effect.unwrap().request_state,
+        other => panic!("unexpected wire view: {other:?}"),
+    };
+    assert_eq!(parsed_state(&absent), None);
+    assert_eq!(parsed_state(&empty), Some(json!({})));
+    assert_eq!(parsed_state(&null), Some(serde_json::Value::Null));
 }
 
 #[test]
@@ -380,6 +407,9 @@ fn all_empty_effect_sentinel_is_a_checked_claim() {
         resource: String::new(),
         action: String::new(),
         args: String::new(),
+        metadata: None,
+        request_state: None,
+        input_responses: None,
     });
     resign(&mut envelope, &line, &authority);
     let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
@@ -538,6 +568,9 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     };
     envelope.sig = hex::encode(

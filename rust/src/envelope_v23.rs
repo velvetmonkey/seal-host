@@ -2,9 +2,9 @@
 //! Rust byte twin and host-side gates for the gated V2.3 effect envelope
 //! (`seal.effect/v2`, Stage B strip).
 //!
-//! This module deliberately does not alter or replace the pinned Lean kernel.
-//! It stages the exact `SealV2.Effect.effectMessage` byte contract and the
-//! transport facts Rust must independently check before the future repin.
+//! This module independently reconstructs the manifest-pinned
+//! `SealV2.Effect.effectMessage` byte contract and checks the transport facts
+//! Rust owns at the active verification boundary.
 //!
 //! Stage B (E1★ ballot, Ben 2026-07-22) stripped the killed seats; Stage B2
 //! (field-warrant reconciliation, same unshipped tag) adjusts the shape:
@@ -63,41 +63,37 @@ pub struct EffectClaim {
     pub action: String,
     /// Canonical JSON serialization of the MCP `params.arguments` value.
     pub args: String,
-}
-
-/// Phase-M effect claim staged for the coordinated kernel/artifact repin.
-///
-/// This is deliberately separate from the currently deployed `EffectClaim`:
-/// the manifest-pinned kernel predates both the signed metadata byte and the
-/// MRTR suffix. Accepting both layouts under the unchanged domain tag would
-/// create an ambiguous signature contract. The repin switches the complete
-/// tuple atomically; until then this type is used by the live Rust/Lean
-/// correspondence control only.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PhaseMEffectClaim {
-    pub resource: String,
-    pub action: String,
-    /// Canonical JSON serialization of `params.arguments`, preserving the
-    /// parsed member order just like `SealV2.serializeAstValue`.
-    pub args: String,
     /// Complete validated `_meta` object. `None` is structural absence.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_json"
+    )]
     pub metadata: Option<Value>,
-    /// Complete opaque JSON value. No member is inspected by this encoder.
+    /// Complete opaque JSON value. Structural absence, `{}`, and `null` are
+    /// distinct: a present JSON null deserializes as `Some(Value::Null)`.
+    #[serde(
+        rename = "requestState",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_json"
+    )]
     pub request_state: Option<Value>,
     /// Complete JSON value; recursive canonicalization retains every member.
+    #[serde(
+        rename = "inputResponses",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_json"
+    )]
     pub input_responses: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PhaseMEnvelope {
-    pub key_id: String,
-    pub nonce: String,
-    pub issued_at: u64,
-    pub expires_at: u64,
-    pub adapter: AdapterClaim,
-    pub principal: PrincipalClaim,
-    pub policy_version: String,
-    pub effect: Option<PhaseMEffectClaim>,
+fn deserialize_present_json<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 /// The stripped Stage B envelope: every field both authenticated AND
@@ -195,7 +191,7 @@ fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
 /// Canonicalize one complete JSON value through recursively sorted object
 /// members, matching `Lean.Json.parse ... |>.compress`. Arrays retain order;
 /// no member is selected or interpreted.
-fn phase_m_canonical_json(value: &Value) -> Result<String, String> {
+fn canonical_json(value: &Value) -> Result<String, String> {
     fn normalized(value: &Value) -> Value {
         match value {
             Value::Object(object) => {
@@ -216,10 +212,10 @@ fn phase_m_canonical_json(value: &Value) -> Result<String, String> {
         .map_err(|error| format!("cannot canonicalize complete JSON value: {error}"))
 }
 
-/// Derive the complete Phase-M MCP claim from the judged line. `requestState`
+/// Derive the complete MCP claim from the judged line. `requestState`
 /// is fetched exactly once from top-level `params` and then treated opaquely;
 /// `inputResponses` is cloned whole.
-pub fn derive_phase_m_mcp_effect(line: &str) -> Result<PhaseMEffectClaim, String> {
+pub fn derive_mcp_effect(line: &str) -> Result<EffectClaim, String> {
     let request: Value = serde_json::from_str(line)
         .map_err(|error| format!("cannot parse judged MCP line: {error}"))?;
     if request.get("method").and_then(Value::as_str) != Some("tools/call") {
@@ -245,7 +241,7 @@ pub fn derive_phase_m_mcp_effect(line: &str) -> Result<PhaseMEffectClaim, String
         Some(value) if value.is_object() => Some(value.clone()),
         Some(_) => return Err("judged MCP line has non-object params._meta".into()),
     };
-    Ok(PhaseMEffectClaim {
+    Ok(EffectClaim {
         resource: resource.into(),
         action: action.into(),
         args: serde_json::to_string(arguments)
@@ -256,12 +252,27 @@ pub fn derive_phase_m_mcp_effect(line: &str) -> Result<PhaseMEffectClaim, String
     })
 }
 
-/// Exact Rust twin of the complete Phase-M
-/// `SealV2.Effect.effectMessage` shape. It is staged separately from
-/// `effect_message`; see `PhaseMEffectClaim`.
-pub fn phase_m_effect_message(
+/// Exact byte twin of the manifest-pinned Phase-M
+/// `SealV2.Effect.effectMessage`:
+///
+/// ```text
+/// tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32)
+///     ‖ u64be(issued_at) ‖ u64be(expires_at)
+///     ‖ frame(line)
+///     ‖ frame(adapter.type) ‖ frame(adapter.version)
+///     ‖ frame(principal.session) ‖ frame(policy_version)
+///     ‖ opt_effect(effect)
+/// ```
+///
+/// where `opt_effect(None) = 0x00` and `opt_effect(Some c) =
+/// `0x01 ‖ frame(c.resource) ‖ frame(c.action) ‖ frame(c.args)
+///  ‖ opt_meta(c.metadata) ‖ opt_mrtr(c.request_state,c.input_responses)`.
+/// Metadata uses an explicit `0x00`/`0x01` presence byte. The all-absent
+/// MRTR block is empty; its other three structural modes start with
+/// `0x01`/`0x02`/`0x03` and frame the complete canonical JSON values.
+pub fn effect_message(
     authority: &[u8; 32],
-    envelope: &PhaseMEnvelope,
+    envelope: &EnvelopeV23,
     line: &str,
 ) -> Result<Vec<u8>, String> {
     let nonce = decode_array::<32>(&envelope.nonce, "nonce")?;
@@ -292,7 +303,7 @@ pub fn phase_m_effect_message(
                         return Err("Phase-M metadata must be an object".into());
                     }
                     message.push(0x01);
-                    let canonical = phase_m_canonical_json(metadata)?;
+                    let canonical = canonical_json(metadata)?;
                     frame(&mut message, canonical.as_bytes());
                 }
             }
@@ -301,18 +312,18 @@ pub fn phase_m_effect_message(
                 (None, None) => {}
                 (Some(state), None) => {
                     message.push(0x01);
-                    let canonical = phase_m_canonical_json(state)?;
+                    let canonical = canonical_json(state)?;
                     frame(&mut message, canonical.as_bytes());
                 }
                 (None, Some(responses)) => {
                     message.push(0x02);
-                    let canonical = phase_m_canonical_json(responses)?;
+                    let canonical = canonical_json(responses)?;
                     frame(&mut message, canonical.as_bytes());
                 }
                 (Some(state), Some(responses)) => {
                     message.push(0x03);
-                    let canonical_state = phase_m_canonical_json(state)?;
-                    let canonical_responses = phase_m_canonical_json(responses)?;
+                    let canonical_state = canonical_json(state)?;
+                    let canonical_responses = canonical_json(responses)?;
                     frame(&mut message, canonical_state.as_bytes());
                     frame(&mut message, canonical_responses.as_bytes());
                 }
@@ -320,79 +331,6 @@ pub fn phase_m_effect_message(
         }
     }
     Ok(message)
-}
-
-/// Exact byte twin of `SealV2.Effect.effectMessage` on Fable's Stage B2
-/// branch (mcp-seal-dev, Stage B2 reconciliation):
-///
-/// ```text
-/// tag ‖ authority(32) ‖ frame(key_id) ‖ nonce(32)
-///     ‖ u64be(issued_at) ‖ u64be(expires_at)
-///     ‖ frame(line)
-///     ‖ frame(adapter.type) ‖ frame(adapter.version)
-///     ‖ frame(principal.session) ‖ frame(policy_version)
-///     ‖ opt_effect(effect)
-/// ```
-///
-/// where `opt_effect(None) = 0x00` and `opt_effect(Some c) =
-/// 0x01 ‖ frame(c.resource) ‖ frame(c.action) ‖ frame(c.args)` — the
-/// presence byte is inside the signed message (Lean `optEffect`).
-pub fn effect_message(
-    authority: &[u8; 32],
-    envelope: &EnvelopeV23,
-    line: &str,
-) -> Result<Vec<u8>, String> {
-    let nonce = decode_array::<32>(&envelope.nonce, "nonce")?;
-    let mut message = Vec::new();
-    message.extend_from_slice(DOMAIN_TAG);
-    message.extend_from_slice(authority);
-    frame(&mut message, envelope.key_id.as_bytes());
-    message.extend_from_slice(&nonce);
-    message.extend_from_slice(&envelope.issued_at.to_be_bytes());
-    message.extend_from_slice(&envelope.expires_at.to_be_bytes());
-    frame(&mut message, line.as_bytes());
-    frame(&mut message, envelope.adapter.kind.as_bytes());
-    frame(&mut message, envelope.adapter.version.as_bytes());
-    frame(&mut message, envelope.principal.session.as_bytes());
-    frame(&mut message, envelope.policy_version.as_bytes());
-    match &envelope.effect {
-        None => message.push(0x00),
-        Some(effect) => {
-            message.push(0x01);
-            frame(&mut message, effect.resource.as_bytes());
-            frame(&mut message, effect.action.as_bytes());
-            frame(&mut message, effect.args.as_bytes());
-        }
-    }
-    Ok(message)
-}
-
-/// The host's independent MCP projection. `args` is serialized in the same
-/// object order as the exact judged line; it remains advisory and never
-/// replaces `line` as the decision input.
-pub fn derive_mcp_effect(line: &str) -> Result<EffectClaim, String> {
-    let request: Value = serde_json::from_str(line)
-        .map_err(|error| format!("cannot parse judged MCP line: {error}"))?;
-    if request.get("method").and_then(Value::as_str) != Some("tools/call") {
-        return Err("judged line is not an MCP tools/call".into());
-    }
-    let resource = request
-        .pointer("/params/name")
-        .and_then(Value::as_str)
-        .ok_or("judged MCP line lacks string params.name")?;
-    let action = request
-        .pointer("/params/action")
-        .and_then(Value::as_str)
-        .ok_or("judged MCP line lacks string params.action")?;
-    let args = request
-        .pointer("/params/arguments")
-        .ok_or("judged MCP line lacks params.arguments")?;
-    Ok(EffectClaim {
-        resource: resource.into(),
-        action: action.into(),
-        args: serde_json::to_string(args)
-            .map_err(|error| format!("cannot serialize MCP arguments: {error}"))?,
-    })
 }
 
 /// Verify every host-owned equality gate and the Ed25519 signature over the

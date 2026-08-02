@@ -4,7 +4,7 @@
 //! observations and are compared directly.
 
 use seal_host_rs::envelope_v23::{
-    derive_phase_m_mcp_effect, phase_m_effect_message, AdapterClaim, PhaseMEnvelope, PrincipalClaim,
+    derive_mcp_effect, effect_message, AdapterClaim, EnvelopeV23, PrincipalClaim,
 };
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -54,10 +54,11 @@ fn rust_observations() -> BTreeMap<String, String> {
     let authority: [u8; 32] = std::array::from_fn(|index| 160 + index as u8);
     let mut observations = BTreeMap::new();
     for (label, raw) in cases {
-        let claim = derive_phase_m_mcp_effect(&raw)
+        let claim = derive_mcp_effect(&raw)
             .unwrap_or_else(|error| panic!("{label}: Phase-M derivation failed: {error}"));
-        let envelope = PhaseMEnvelope {
+        let envelope = EnvelopeV23 {
             key_id: "mrtr-control".into(),
+            sig: String::new(),
             nonce: hex::encode((0u8..32).collect::<Vec<_>>()),
             issued_at: 10,
             expires_at: 120,
@@ -71,8 +72,8 @@ fn rust_observations() -> BTreeMap<String, String> {
             policy_version: "mrtr-control-policy".into(),
             effect: Some(claim),
         };
-        let first = phase_m_effect_message(&authority, &envelope, "{}").unwrap();
-        let twin = phase_m_effect_message(&authority, &envelope, "{}").unwrap();
+        let first = effect_message(&authority, &envelope, "{}").unwrap();
+        let twin = effect_message(&authority, &envelope, "{}").unwrap();
         assert_eq!(
             first, twin,
             "SIGNED-SHAPE-POSITIVE-TWIN RED field={label}: byte-identical claims differed"

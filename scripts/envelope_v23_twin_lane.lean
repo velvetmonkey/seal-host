@@ -11,14 +11,12 @@ byte-twin break.
 
 Run: `lean --run scripts/envelope_v23_twin_lane.lean rust/tests/vectors/envelope_v23_twin_corpus.json`
 
-Stage B2: the corpus shape is the RECONCILED `seal.effect/v2` envelope
-(mcp-seal-dev `4f39f20`) — killed seats gone (revocation_subject included),
-expires_at/policy_version rescued and mandatory, and the F3 claim is
-Option-encoded with a signed presence byte: `effect: null` and an all-empty
-effect object are now DIFFERENT wire values.
+The corpus shape is the RECONCILED `seal.effect/v2` envelope — killed seats
+gone (revocation_subject included), expires_at/policy_version rescued and
+mandatory, and the F3 claim Option-encoded with a signed presence byte:
+`effect: null` and an all-empty effect object are DIFFERENT wire values.
 
-Resolution: the manifest pins `mcp-seal` at `6c74b61`, which contains the
-Stage B2 reconciliation `4f39f20`, so
+Resolution: the manifest pins `mcp-seal` at Phase-M commit `316d741`, so
 `lake env lean` resolves `SealV2.EffectEnvelope` from the in-repo package
 graph and `rust/tests/envelope_v23_twin.rs` runs this lane LIVE by default
 (Ben's Stage B acceptance addition, 2026-07-22). `LEAN_PATH` can still be
@@ -63,7 +61,7 @@ def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := d
   let adapter ← e.getObjVal? "adapter"
   -- PORTED 2026-07-25 from the `seal.effect/v1` shape to `seal.effect/v2`.
   --
-  -- The Stage B2 reconciliation (mcp-seal-dev `4f39f20`) removed
+  -- The Stage B2 reconciliation removed
   -- `idempotency_key`, `on_behalf_of`, `parent_capability_ref`,
   -- `revocation_subject`, `audience` and `causality_token` from
   -- `EffectEnvelope` entirely, while retaining mandatory `expires_at` and
@@ -86,7 +84,8 @@ def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := d
       pure (some {
         resource := ← getStr effectJson "resource"
         action := ← getStr effectJson "action"
-        args := ← getStr effectJson "args" })
+        args := ← getStr effectJson "args"
+        metadata := .absent })
   pure (authority, {
     keyId := ← getStr e "key_id"
     nonce := nonce

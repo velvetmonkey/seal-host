@@ -52,6 +52,9 @@ fn signed(
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     };
     let message = effect_message(&AUTHORITY, &envelope, CALL).unwrap();

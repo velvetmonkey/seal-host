@@ -94,19 +94,19 @@ FROZEN_DIRECTORIES = (
 # the file and its manifest entry to approve one another.
 REVIEWED_HASHES = {
     "docs/EFFECT-ENVELOPE-V23.md":
-        "ab1cdb0c95f05b2703957f4f54c687e8e38f613803969b6372a77cad127348eb",
+        "dcf3e00e17c8f3bfe7e91e0c09d3f422f5a27119244317580e567cc9e8e7cbed",
     "rust/src/envelope_v23.rs":
-        "15edd4a02d73da36f0d2d8f72934d28a097547c3fed505fda4e736dfab0cbdbe",
+        "60e27a773b095c1d8950f31c52aa5af77635ad6cb5ec614ddb8f5428e9fa3b3c",
     "rust/tests/envelope_v23.rs":
-        "5558a435d43c7947dcb990bf1a72447723fa65a100d204e46a985fd21e3e4581",
+        "c9f4d7133abba44f0396a1b8f3fc06fd8c956a395c6acc832fa03ef60a4fe6df",
     "rust/tests/envelope_v23_twin.rs":
-        "62616871b2e08c5024dbe0f87899494905f6405b99f1b3067062cfcc93e1c289",
+        "68a09a34e8a207e149a7c2291394b5ae9ec2be11ae392e409af873ee7571907e",
     "rust/tests/vectors/envelope_v23_twin_corpus.json":
         "ce9048af3df4a2edc70c09b3bb9c6f7b920ac53775d0a0a1e8c5efc5b0075cd1",
     "rust/tests/vectors/envelope_v23_twin_expected.hex":
-        "7fd50361da59fef0d157829bbf4268c4fc9cd213a8fed57b3503865a1e6c5e15",
+        "855157cdac666b6c0a35f98dd969c1d6c385c725c4736f08982c8faee39915a6",
     "scripts/envelope_v23_twin_lane.lean":
-        "9ce45fd3850a4643986a936df049eb6f65992b4170b55f7f727a469eaac8292d",
+        "a3c354e30949bdb17fab57d37b8f4e142c7f15383ace4edd2d5b196b64793596",
 }
 
 # One-time compatibility for the manifest and review baseline written before

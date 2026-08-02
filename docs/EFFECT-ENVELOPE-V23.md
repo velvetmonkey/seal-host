@@ -1,4 +1,4 @@
-# V2.3 effect envelope — staged host contract
+# V2.3 effect envelope — active host contract
 
 Status: **gated behind `--envelope-v23`**. The manifest-pinned Lean source
 package defines and proves the `seal.effect/v2` message shape, and Rust
@@ -135,13 +135,12 @@ or subfield projection. `inputResponses` is retained whole. Structural
 absence is not represented by a JSON sentinel, so absence, `{}`, and `null`
 remain three distinct signed identities.
 
-`rust/src/envelope_v23.rs::phase_m_effect_message` stages this exact encoder,
-and `rust/tests/mrtr_signed_shape.rs` compares it live with the Phase-M Lean
-`SealV2.Effect.effectMessage` over all four presence modes. The deployed
-`effect_message` remains on the manifest-pinned pre-Phase-M shape until the
-single coordinated repin. These layouts MUST NOT be dual-accepted under the
-unchanged `seal.effect/v2` tag: the repin atomically changes the trusted
-kernel, signatures/vectors, artifacts, and active Rust encoder.
+`rust/src/envelope_v23.rs::effect_message` is the sole active Rust encoder for
+this shape, and `rust/tests/mrtr_signed_shape.rs` compares it live with the
+manifest-pinned Phase-M Lean `SealV2.Effect.effectMessage` over all four
+presence modes. The coordinated repin and encoder cutover moved the trusted
+kernel, signatures/vectors, artifacts, and active Rust encoder as one contract.
+No pre-Phase-M encoder remains live under the unchanged `seal.effect/v2` tag.
 
 ## Exact signed bytes
 
