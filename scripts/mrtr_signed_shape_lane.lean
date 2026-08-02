@@ -57,6 +57,11 @@ private def observations : List (String × EffectClaim) :=
     ("metadata.right", claim (.present "{\"attempt\":1,\"trace\":\"meta-b\"}") .absent .absent),
     ("metadata.absent", claim .absent .absent .absent),
     ("metadata.present-empty", claim (.present "{}") .absent .absent),
+    ("metadata.present-null", claim (.present "null") .absent .absent),
+    ("metadata.present-bool", claim (.present "true") .absent .absent),
+    ("metadata.present-number", claim (.present "42") .absent .absent),
+    ("metadata.present-string", claim (.present "\"str\"") .absent .absent),
+    ("metadata.present-array", claim (.present "[]") .absent .absent),
     ("metadata.with-requestState", claim
       (.present "{\"trace\":\"co-present\"}")
       (.present "{\"opaque\":\"state\"}") .absent),

@@ -61,6 +61,14 @@ fn rust_observations() -> BTreeMap<String, String> {
         ),
         ("metadata.absent", request(None, None, None)),
         ("metadata.present-empty", request(Some("{}"), None, None)),
+        ("metadata.present-null", request(Some("null"), None, None)),
+        ("metadata.present-bool", request(Some("true"), None, None)),
+        ("metadata.present-number", request(Some("42"), None, None)),
+        (
+            "metadata.present-string",
+            request(Some(r#""str""#), None, None),
+        ),
+        ("metadata.present-array", request(Some("[]"), None, None)),
         (
             "metadata.with-requestState",
             request(
@@ -150,12 +158,20 @@ fn rust_observations() -> BTreeMap<String, String> {
         observations["metadata.left"], observations["metadata.right"],
         "SIGNED-SHAPE-DISCRIMINATION RED field=metadata: complete values collided"
     );
-    assert_ne!(
-        observations["metadata.absent"], observations["metadata.present-empty"],
-        "SIGNED-SHAPE-ABSENCE RED field=metadata: absent/present-empty collapsed"
+    let metadata_absent = &observations["metadata.absent"];
+    let metadata_empty = &observations["metadata.present-empty"];
+    let metadata_null = &observations["metadata.present-null"];
+    assert!(
+        metadata_absent != metadata_empty
+            && metadata_absent != metadata_null
+            && metadata_empty != metadata_null,
+        "SIGNED-SHAPE-ABSENCE RED field=metadata: absent/empty/null collapsed"
     );
     println!(
-        "SIGNED-SHAPE-DISCRIMINATION GREEN field=metadata complete-values=different absent/present-empty=distinct"
+        "SIGNED-SHAPE-DISCRIMINATION GREEN field=metadata complete-values=different absent/empty/null=three-distinct"
+    );
+    println!(
+        "METADATA-THREE-IDENTITIES absence={metadata_absent} empty={metadata_empty} null={metadata_null}"
     );
     observations
 }

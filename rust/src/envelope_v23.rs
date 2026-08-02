@@ -63,7 +63,8 @@ pub struct EffectClaim {
     pub action: String,
     /// Canonical JSON serialization of the MCP `params.arguments` value.
     pub args: String,
-    /// Complete validated `_meta` object. `None` is structural absence.
+    /// Complete canonical JSON `_meta` value. `None` is structural absence;
+    /// every present value, including `null`, remains distinct.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -236,11 +237,7 @@ pub fn derive_mcp_effect(line: &str) -> Result<EffectClaim, String> {
     let arguments = params
         .get("arguments")
         .ok_or("judged MCP line lacks params.arguments")?;
-    let metadata = match params.get("_meta") {
-        None => None,
-        Some(value) if value.is_object() => Some(value.clone()),
-        Some(_) => return Err("judged MCP line has non-object params._meta".into()),
-    };
+    let metadata = params.get("_meta").cloned();
     Ok(EffectClaim {
         resource: resource.into(),
         action: action.into(),
@@ -299,9 +296,6 @@ pub fn effect_message(
             match &effect.metadata {
                 None => message.push(0x00),
                 Some(metadata) => {
-                    if !metadata.is_object() {
-                        return Err("Phase-M metadata must be an object".into());
-                    }
                     message.push(0x01);
                     let canonical = canonical_json(metadata)?;
                     frame(&mut message, canonical.as_bytes());
