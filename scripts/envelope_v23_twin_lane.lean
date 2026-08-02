@@ -50,6 +50,26 @@ def getStr (j : Json) (k : String) : Except String String := do
 def getNat (j : Json) (k : String) : Except String Nat := do
   (← j.getObjVal? k).getNat?
 
+def getOptJson (j : Json) (k : String) : Except String (Option Json) := do
+  let object ← j.getObj?
+  pure (object.get? k)
+
+def metadataOfJson (j : Json) : Except String SealV2.MetaValue := do
+  match ← getOptJson j "metadata" with
+  | none => pure SealV2.MetaValue.absent
+  | some metadata =>
+      pure (SealV2.MetaValue.present metadata.compress)
+
+def requestStateOfJson (j : Json) : Except String SealV2.RequestState := do
+  match ← getOptJson j "requestState" with
+  | none => pure SealV2.RequestState.absent
+  | some state => pure (SealV2.RequestState.present state.compress)
+
+def inputResponsesOfJson (j : Json) : Except String SealV2.InputResponses := do
+  match ← getOptJson j "inputResponses" with
+  | none => pure SealV2.InputResponses.absent
+  | some responses => pure (SealV2.InputResponses.present responses.compress)
+
 def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := do
   let authorityHex ← getStr v "authority_hex"
   let some authority := hexToBytes authorityHex
@@ -85,7 +105,9 @@ def envelopeOfJson (v : Json) : Except String (ByteArray × EffectEnvelope) := d
         resource := ← getStr effectJson "resource"
         action := ← getStr effectJson "action"
         args := ← getStr effectJson "args"
-        metadata := .absent })
+        metadata := ← metadataOfJson effectJson
+        requestState := ← requestStateOfJson effectJson
+        inputResponses := ← inputResponsesOfJson effectJson })
   pure (authority, {
     keyId := ← getStr e "key_id"
     nonce := nonce

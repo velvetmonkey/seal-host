@@ -9,10 +9,18 @@ use seal_host_rs::envelope_v23::{
 use std::collections::BTreeMap;
 use std::process::Command;
 
-fn request(request_state: Option<&str>, input_responses: Option<&str>) -> String {
+fn request(
+    metadata: Option<&str>,
+    request_state: Option<&str>,
+    input_responses: Option<&str>,
+) -> String {
     let mut raw = String::from(
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell_exec","action":"run","arguments":{"command":"echo controlled"}"#,
     );
+    if let Some(value) = metadata {
+        raw.push_str(",\"_meta\":");
+        raw.push_str(value);
+    }
     if let Some(value) = request_state {
         raw.push_str(",\"requestState\":");
         raw.push_str(value);
@@ -33,19 +41,56 @@ fn rust_observations() -> BTreeMap<String, String> {
     let responses_left = r#"{"confirm":{"action":"accept","content":true},"survey":{"score":5},"extension":["one","two"]}"#;
     let responses_right = r#"{"confirm":{"action":"decline","content":false},"survey":{"score":5},"extension":["one","two"]}"#;
     let cases = [
-        ("requestState.left", request(Some(state_left), None)),
-        ("requestState.right", request(Some(state_right), None)),
-        ("inputResponses.left", request(None, Some(responses_left))),
-        ("inputResponses.right", request(None, Some(responses_right))),
-        ("requestState.absent", request(None, None)),
-        ("requestState.present-empty", request(Some("{}"), None)),
-        ("requestState.present-null", request(Some("null"), None)),
-        ("inputResponses.absent", request(None, None)),
-        ("inputResponses.present-empty", request(None, Some("{}"))),
-        ("inputResponses.present-null", request(None, Some("null"))),
+        ("requestState.left", request(None, Some(state_left), None)),
+        ("requestState.right", request(None, Some(state_right), None)),
+        (
+            "inputResponses.left",
+            request(None, None, Some(responses_left)),
+        ),
+        (
+            "inputResponses.right",
+            request(None, None, Some(responses_right)),
+        ),
+        (
+            "metadata.left",
+            request(Some(r#"{"trace":"meta-a","attempt":1}"#), None, None),
+        ),
+        (
+            "metadata.right",
+            request(Some(r#"{"trace":"meta-b","attempt":1}"#), None, None),
+        ),
+        ("metadata.absent", request(None, None, None)),
+        ("metadata.present-empty", request(Some("{}"), None, None)),
+        (
+            "metadata.with-requestState",
+            request(
+                Some(r#"{"trace":"co-present"}"#),
+                Some(r#"{"opaque":"state"}"#),
+                None,
+            ),
+        ),
+        ("requestState.absent", request(None, None, None)),
+        (
+            "requestState.present-empty",
+            request(None, Some("{}"), None),
+        ),
+        (
+            "requestState.present-null",
+            request(None, Some("null"), None),
+        ),
+        ("inputResponses.absent", request(None, None, None)),
+        (
+            "inputResponses.present-empty",
+            request(None, None, Some("{}")),
+        ),
+        (
+            "inputResponses.present-null",
+            request(None, None, Some("null")),
+        ),
         (
             "both.present",
             request(
+                None,
                 Some(r#"{"opaque":"state"}"#),
                 Some(r#"{"confirm":{"action":"accept"},"extension":{"retained":true}}"#),
             ),
@@ -101,6 +146,17 @@ fn rust_observations() -> BTreeMap<String, String> {
             "SIGNED-SHAPE-DISCRIMINATION GREEN field={field} complete-values=different absent/empty/null=three-distinct"
         );
     }
+    assert_ne!(
+        observations["metadata.left"], observations["metadata.right"],
+        "SIGNED-SHAPE-DISCRIMINATION RED field=metadata: complete values collided"
+    );
+    assert_ne!(
+        observations["metadata.absent"], observations["metadata.present-empty"],
+        "SIGNED-SHAPE-ABSENCE RED field=metadata: absent/present-empty collapsed"
+    );
+    println!(
+        "SIGNED-SHAPE-DISCRIMINATION GREEN field=metadata complete-values=different absent/present-empty=distinct"
+    );
     observations
 }
 
@@ -171,6 +227,6 @@ fn live_phase_m_rust_lean_signed_shape_agreement() {
         );
     }
     println!(
-        "RUST-LEAN-SIGNED-SHAPE GREEN fields=requestState,inputResponses modes=absent,state,responses,both complete-values=byte-identical"
+        "RUST-LEAN-SIGNED-SHAPE GREEN fields=metadata,requestState,inputResponses modes=absent,metadata,state,responses,co-present complete-values=byte-identical"
     );
 }

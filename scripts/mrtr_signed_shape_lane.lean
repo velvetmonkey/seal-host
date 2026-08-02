@@ -11,13 +11,13 @@ named observations for the Rust integration test to compare directly.
 open SealV2
 open SealV2.Effect
 
-private def claim (requestState : RequestState)
+private def claim (metadata : MetaValue) (requestState : RequestState)
     (inputResponses : InputResponses) : EffectClaim :=
   {
     resource := "shell_exec"
     action := "run"
     args := "{\"command\":\"echo controlled\"}"
-    metadata := .absent
+    metadata
     requestState
     inputResponses
   }
@@ -42,22 +42,32 @@ private def authority : ByteArray :=
 private def observations : List (String × EffectClaim) :=
   [
     ("requestState.left", claim
+      .absent
       (.present "{\"opaque\":{\"ignoredSemantics\":[1,null,false],\"token\":\"state-a\"},\"sibling\":\"retained\"}")
       .absent),
     ("requestState.right", claim
+      .absent
       (.present "{\"opaque\":{\"ignoredSemantics\":[1,null,false],\"token\":\"state-b\"},\"sibling\":\"retained\"}")
       .absent),
-    ("inputResponses.left", claim .absent
+    ("inputResponses.left", claim .absent .absent
       (.present "{\"confirm\":{\"action\":\"accept\",\"content\":true},\"extension\":[\"one\",\"two\"],\"survey\":{\"score\":5}}")),
-    ("inputResponses.right", claim .absent
+    ("inputResponses.right", claim .absent .absent
       (.present "{\"confirm\":{\"action\":\"decline\",\"content\":false},\"extension\":[\"one\",\"two\"],\"survey\":{\"score\":5}}")),
-    ("requestState.absent", claim .absent .absent),
-    ("requestState.present-empty", claim (.present "{}") .absent),
-    ("requestState.present-null", claim (.present "null") .absent),
-    ("inputResponses.absent", claim .absent .absent),
-    ("inputResponses.present-empty", claim .absent (.present "{}")),
-    ("inputResponses.present-null", claim .absent (.present "null")),
+    ("metadata.left", claim (.present "{\"attempt\":1,\"trace\":\"meta-a\"}") .absent .absent),
+    ("metadata.right", claim (.present "{\"attempt\":1,\"trace\":\"meta-b\"}") .absent .absent),
+    ("metadata.absent", claim .absent .absent .absent),
+    ("metadata.present-empty", claim (.present "{}") .absent .absent),
+    ("metadata.with-requestState", claim
+      (.present "{\"trace\":\"co-present\"}")
+      (.present "{\"opaque\":\"state\"}") .absent),
+    ("requestState.absent", claim .absent .absent .absent),
+    ("requestState.present-empty", claim .absent (.present "{}") .absent),
+    ("requestState.present-null", claim .absent (.present "null") .absent),
+    ("inputResponses.absent", claim .absent .absent .absent),
+    ("inputResponses.present-empty", claim .absent .absent (.present "{}")),
+    ("inputResponses.present-null", claim .absent .absent (.present "null")),
     ("both.present", claim
+      .absent
       (.present "{\"opaque\":\"state\"}")
       (.present "{\"confirm\":{\"action\":\"accept\"},\"extension\":{\"retained\":true}}"))
   ]
