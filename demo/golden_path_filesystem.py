@@ -311,7 +311,9 @@ def assert_receipt_era(
 def build_named_release_targets() -> None:
     env = os.environ.copy(); env.pop("SEAL_LAKE_OLD", None)
     gp.run(["bash", "scripts/build_ffi_so.sh"], env=env)
-    gp.run(["cargo", "build", "--release", "--manifest-path", "rust/Cargo.toml", "--bin", "seal-host-rs"], env=env)
+    # See golden_path.build_named_targets: rustup picks the toolchain from the working
+    # directory, so cargo must run inside rust/ where rust-toolchain.toml lives.
+    gp.run(["cargo", "build", "--release", "--bin", "seal-host-rs"], cwd=gp.ROOT / "rust", env=env)
     if not HOST.is_file(): raise gp.DemoFailure("named release host build did not produce seal-host-rs")
     check("named release build", "PASS", "exact FFI runtime closure + release seal-host-rs")
 

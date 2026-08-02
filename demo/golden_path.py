@@ -774,7 +774,11 @@ def preflight(deterministic: bool) -> None:
 def build_named_targets() -> None:
     env = os.environ.copy(); env.pop("SEAL_LAKE_OLD", None)
     run(["bash", "scripts/build_ffi_so.sh"], env=env)
-    run(["cargo", "build", "--manifest-path", "rust/Cargo.toml", "--bin", "seal-host-rs"], env=env)
+    # Run from rust/ rather than passing --manifest-path from ROOT: rustup resolves the
+    # toolchain from the working directory, and only rust/ carries rust-toolchain.toml
+    # (channel 1.96.0). Invoked from ROOT this silently depended on an ambient `rustup
+    # default` being configured, and failed outright on a box without one.
+    run(["cargo", "build", "--bin", "seal-host-rs"], cwd=ROOT / "rust", env=env)
     if not HOST.is_file(): raise DemoFailure("named host build did not produce seal-host-rs")
     check("named native build", "PASS", "exact FFI runtime closure + seal-host-rs")
 
