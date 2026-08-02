@@ -1,5 +1,6 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
+import Lean.Data.Json
 import SealV2.EffectEnvelope
 
 /-!
@@ -10,6 +11,11 @@ named observations for the Rust integration test to compare directly.
 
 open SealV2
 open SealV2.Effect
+
+private def canonicalJson (raw : String) : String :=
+  match Lean.Json.parse raw with
+  | .ok value => value.compress
+  | .error error => panic! s!"invalid metadata test JSON: {error}"
 
 private def claim (metadata : MetaValue) (requestState : RequestState)
     (inputResponses : InputResponses) : EffectClaim :=
@@ -53,17 +59,18 @@ private def observations : List (String × EffectClaim) :=
       (.present "{\"confirm\":{\"action\":\"accept\",\"content\":true},\"extension\":[\"one\",\"two\"],\"survey\":{\"score\":5}}")),
     ("inputResponses.right", claim .absent .absent
       (.present "{\"confirm\":{\"action\":\"decline\",\"content\":false},\"extension\":[\"one\",\"two\"],\"survey\":{\"score\":5}}")),
-    ("metadata.left", claim (.present "{\"attempt\":1,\"trace\":\"meta-a\"}") .absent .absent),
-    ("metadata.right", claim (.present "{\"attempt\":1,\"trace\":\"meta-b\"}") .absent .absent),
+    ("metadata.left", claim (.present (canonicalJson "{\"trace\":\"meta-a\",\"attempt\":1}")) .absent .absent),
+    ("metadata.right", claim (.present (canonicalJson "{\"trace\":\"meta-b\",\"attempt\":1}")) .absent .absent),
     ("metadata.absent", claim .absent .absent .absent),
-    ("metadata.present-empty", claim (.present "{}") .absent .absent),
-    ("metadata.present-null", claim (.present "null") .absent .absent),
-    ("metadata.present-bool", claim (.present "true") .absent .absent),
-    ("metadata.present-number", claim (.present "42") .absent .absent),
-    ("metadata.present-string", claim (.present "\"str\"") .absent .absent),
-    ("metadata.present-array", claim (.present "[]") .absent .absent),
+    ("metadata.present-empty", claim (.present (canonicalJson "{}")) .absent .absent),
+    ("metadata.present-null", claim (.present (canonicalJson "null")) .absent .absent),
+    ("metadata.present-bool", claim (.present (canonicalJson "true")) .absent .absent),
+    ("metadata.present-number", claim (.present (canonicalJson "42")) .absent .absent),
+    ("metadata.present-string", claim (.present (canonicalJson "\"str\"")) .absent .absent),
+    ("metadata.present-array", claim
+      (.present (canonicalJson "[{\"z\":1,\"a\":2}]")) .absent .absent),
     ("metadata.with-requestState", claim
-      (.present "{\"trace\":\"co-present\"}")
+      (.present (canonicalJson "{\"trace\":\"co-present\"}"))
       (.present "{\"opaque\":\"state\"}") .absent),
     ("requestState.absent", claim .absent .absent .absent),
     ("requestState.present-empty", claim .absent (.present "{}") .absent),

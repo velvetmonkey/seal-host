@@ -632,6 +632,127 @@ fn meta_identity_live_host_projection_and_kernel_commitment_agree() {
     );
 }
 
+/// Receipt follows envelope: every canonical JSON `_meta` identity accepted
+/// by the real kernel must survive a mediated ALLOW as complete evidence.
+#[test]
+fn non_object_metadata_allow_receipts_are_complete_and_distinct() {
+    let mut o = Oracle::spawn_numeric_observer("receipt-follows-envelope");
+    let cases = [
+        ("absent", None),
+        ("empty", Some("{}")),
+        ("null", Some("null")),
+        ("number", Some("42")),
+        ("string", Some(r#""receipt""#)),
+        ("array", Some(r#"[{"z":1,"a":2}]"#)),
+    ];
+    let expected_count = cases.len();
+    let mut expected = Vec::new();
+    for (index, (label, raw_metadata)) in cases.into_iter().enumerate() {
+        let metadata_member = raw_metadata
+            .map(|raw| format!(r#","_meta":{raw}"#))
+            .unwrap_or_default();
+        let line = format!(
+            r#"{{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{{"name":"numeric.observer","arguments":{{"v":1}}{metadata_member}}}}}"#,
+            80 + index
+        );
+        o.send(&line);
+        let response: serde_json::Value = serde_json::from_str(&o.expect_line()).unwrap();
+        assert_eq!(
+            response
+                .pointer("/result/content/0/raw")
+                .and_then(serde_json::Value::as_str),
+            Some(line.as_str()),
+            "{label}: mediated ALLOW did not reach the observer byte-identically"
+        );
+        expected.push((label, raw_metadata, line));
+    }
+
+    let receipts = o.receipts();
+    assert_eq!(receipts.len(), expected_count, "one receipt per ALLOW");
+    let mut canonical_identities = std::collections::BTreeSet::new();
+    for (receipt, (label, raw_metadata, line)) in receipts.iter().zip(&expected) {
+        assert_eq!(receipt["verdict"], "ALLOW", "{label}: verdict");
+        assert_eq!(receipt["tool"], "numeric.observer", "{label}: tool");
+        assert_eq!(
+            receipt["arguments"],
+            serde_json::json!({"v": 1}),
+            "{label}: arguments"
+        );
+        assert_eq!(
+            receipt["effect_view"]["effect"]["arguments"], receipt["arguments"],
+            "{label}: effect arguments"
+        );
+        match raw_metadata {
+            None => {
+                assert!(receipt.get("_meta").is_none(), "absent metadata was minted");
+                assert!(
+                    receipt["effect_view"]["effect"].get("_meta").is_none(),
+                    "effect view minted absent metadata"
+                );
+            }
+            Some(raw) => {
+                let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+                assert_eq!(
+                    receipt.get("_meta"),
+                    Some(&value),
+                    "{label}: receipt metadata"
+                );
+                assert_eq!(
+                    receipt["effect_view"]["effect"].get("_meta"),
+                    Some(&value),
+                    "{label}: effect metadata"
+                );
+            }
+        }
+        assert!(receipt["effect_view"].is_object(), "{label}: effect_view");
+        assert!(
+            receipt.get("request_parse_error").is_none(),
+            "{label}: parse error"
+        );
+
+        let canonical = receipt["canonical_request"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{label}: canonical request missing"));
+        let canonical_value: serde_json::Value = serde_json::from_str(canonical).unwrap();
+        match raw_metadata {
+            None => assert!(canonical_value["params"].get("_meta").is_none()),
+            Some(raw) => assert_eq!(
+                canonical_value["params"].get("_meta"),
+                Some(&serde_json::from_str::<serde_json::Value>(raw).unwrap()),
+                "{label}: canonical request metadata"
+            ),
+        }
+        let canonical_hash = hex::encode(sha2::Sha256::digest(canonical.as_bytes()));
+        assert_eq!(
+            receipt["canonical_request_sha256"], canonical_hash,
+            "{label}: canonical request hash"
+        );
+        assert!(
+            canonical_identities.insert(canonical_hash),
+            "{label}: canonical identity collapsed"
+        );
+
+        let emitted: serde_json::Value =
+            serde_json::from_str(receipt["emitted_bytes"].as_str().unwrap()).unwrap();
+        let audit: serde_json::Value =
+            serde_json::from_str(emitted["audit"].as_str().unwrap()).unwrap();
+        let raw_hash = hex::encode(sha2::Sha256::digest(line.as_bytes()));
+        assert_eq!(
+            audit["request_sha256"], raw_hash,
+            "{label}: kernel raw hash"
+        );
+        assert_eq!(
+            receipt["request_sha256"], raw_hash,
+            "{label}: receipt raw hash"
+        );
+    }
+    assert_eq!(canonical_identities.len(), expected_count);
+    println!(
+        "RECEIPT-FOLLOWS-ENVELOPE REAL-RECEIPT {}",
+        serde_json::to_string(&receipts[3]).unwrap()
+    );
+}
+
 /// M.4 stage 3 live host-versus-kernel agreement. The shipped kernel's exact
 /// request commitment observes each complete MRTR value independently of the
 /// Rust projection. Every field-specific discrimination has a byte-identical

@@ -192,7 +192,7 @@ fn frame(message: &mut Vec<u8>, bytes: &[u8]) {
 /// Canonicalize one complete JSON value through recursively sorted object
 /// members, matching `Lean.Json.parse ... |>.compress`. Arrays retain order;
 /// no member is selected or interpreted.
-fn canonical_json(value: &Value) -> Result<String, String> {
+pub fn canonical_json(value: &Value) -> Result<String, String> {
     fn normalized(value: &Value) -> Value {
         match value {
             Value::Object(object) => {

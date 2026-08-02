@@ -4,7 +4,7 @@
 //! observations and are compared directly.
 
 use seal_host_rs::envelope_v23::{
-    derive_mcp_effect, effect_message, AdapterClaim, EnvelopeV23, PrincipalClaim,
+    canonical_json, derive_mcp_effect, effect_message, AdapterClaim, EnvelopeV23, PrincipalClaim,
 };
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -68,7 +68,10 @@ fn rust_observations() -> BTreeMap<String, String> {
             "metadata.present-string",
             request(Some(r#""str""#), None, None),
         ),
-        ("metadata.present-array", request(Some("[]"), None, None)),
+        (
+            "metadata.present-array",
+            request(Some(r#"[{"z":1,"a":2}]"#), None, None),
+        ),
         (
             "metadata.with-requestState",
             request(
@@ -242,7 +245,71 @@ fn live_phase_m_rust_lean_signed_shape_agreement() {
             "RUST-LEAN-SIGNED-SHAPE RED field={label}: encoders disagree"
         );
     }
+
+    // Load-bearing receipt binding: `authorization_decision::canonical_request`
+    // calls this exact production serializer for `_meta`. Extract the metadata
+    // frame from the independently produced Lean message and compare its bytes
+    // directly, so agreement is not proved by comparing two receipt values.
+    for (label, raw) in [
+        ("metadata.present-empty", "{}"),
+        ("metadata.present-null", "null"),
+        ("metadata.present-bool", "true"),
+        ("metadata.present-number", "42"),
+        ("metadata.present-string", r#""str""#),
+        ("metadata.present-array", r#"[{"z":1,"a":2}]"#),
+    ] {
+        let lean_message = hex::decode(&lean[label]).expect("Lean message is lowercase hex");
+        let lean_metadata = metadata_frame(&lean_message)
+            .unwrap_or_else(|| panic!("{label}: Lean message lacks present metadata frame"));
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let receipt_metadata = canonical_json(&value).unwrap();
+        assert_eq!(
+            lean_metadata,
+            receipt_metadata.as_bytes(),
+            "LEAN-RECEIPT-CANONICALIZATION RED field={label}: receipt metadata bytes differ from Lean optMeta"
+        );
+    }
     println!(
         "RUST-LEAN-SIGNED-SHAPE GREEN fields=metadata,requestState,inputResponses modes=absent,metadata,state,responses,co-present complete-values=byte-identical"
     );
+    println!(
+        "LEAN-RECEIPT-CANONICALIZATION GREEN authority=SealV2.Effect.optMeta values=empty,null,bool,number,string,array bytes=byte-identical"
+    );
+}
+
+fn take_frame<'a>(message: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    let length_bytes: [u8; 8] = message.get(*cursor..*cursor + 8)?.try_into().ok()?;
+    *cursor += 8;
+    let length = u64::from_be_bytes(length_bytes) as usize;
+    let value = message.get(*cursor..*cursor + length)?;
+    *cursor += length;
+    Some(value)
+}
+
+/// Locate the `optMeta` payload in one canonical Lean `effectMessage`.
+fn metadata_frame(message: &[u8]) -> Option<&[u8]> {
+    const TAG: &[u8] = b"seal.effect/v2\0";
+    if !message.starts_with(TAG) {
+        return None;
+    }
+    let mut cursor = TAG.len() + 32;
+    take_frame(message, &mut cursor)?; // key id
+    cursor += 32 + 8 + 8; // nonce, issuedAt, expiresAt
+    take_frame(message, &mut cursor)?; // judged line
+    take_frame(message, &mut cursor)?; // adapter type
+    take_frame(message, &mut cursor)?; // adapter version
+    take_frame(message, &mut cursor)?; // session
+    take_frame(message, &mut cursor)?; // policy version
+    if *message.get(cursor)? != 1 {
+        return None;
+    }
+    cursor += 1;
+    take_frame(message, &mut cursor)?; // resource
+    take_frame(message, &mut cursor)?; // action
+    take_frame(message, &mut cursor)?; // arguments
+    if *message.get(cursor)? != 1 {
+        return None;
+    }
+    cursor += 1;
+    take_frame(message, &mut cursor)
 }

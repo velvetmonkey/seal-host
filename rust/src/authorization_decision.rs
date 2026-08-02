@@ -7,7 +7,7 @@
 //! result before any ALLOW is forwarded.
 
 use crate::providers::ApprovalRecord;
-use crate::{lean, secure_fs};
+use crate::{envelope_v23::canonical_json, lean, secure_fs};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::io::Write;
@@ -105,12 +105,15 @@ pub struct RequestParts {
     pub input_responses: Option<Value>,
 }
 
-fn canonical_request(parts: &RequestParts) -> Value {
+fn canonical_request(parts: &RequestParts) -> Result<Value, String> {
     let mut params = Map::new();
     params.insert("name".into(), Value::String(parts.tool.clone()));
     params.insert("arguments".into(), parts.arguments.clone());
     if let Some(metadata) = &parts.metadata {
-        params.insert("_meta".into(), metadata.clone());
+        let canonical_metadata = canonical_json(metadata)?;
+        let canonical_metadata: Value = serde_json::from_str(&canonical_metadata)
+            .map_err(|e| format!("cannot materialize canonical metadata: {e}"))?;
+        params.insert("_meta".into(), canonical_metadata);
     }
     if let Some(request_state) = &parts.request_state {
         params.insert("requestState".into(), request_state.clone());
@@ -123,7 +126,7 @@ fn canonical_request(parts: &RequestParts) -> Value {
     request.insert("id".into(), Value::from(1));
     request.insert("method".into(), Value::String("tools/call".into()));
     request.insert("params".into(), Value::Object(params));
-    Value::Object(request)
+    Ok(Value::Object(request))
 }
 
 /// Build the authorization-decision-only MCP projection. Every value here is either a
@@ -225,13 +228,12 @@ pub fn request_parts(line: &str) -> Result<RequestParts, String> {
         .filter(|v| v.is_object())
         .ok_or("mediated request lacks object params.arguments")?
         .clone();
-    let metadata = match params.get("_meta") {
-        None => None,
-        Some(value) if value.is_object() => Some(value.clone()),
-        Some(_) => return Err("mediated request has non-object params._meta".into()),
-    };
-    // MRTR identity is complete-value identity. Unlike `_meta`, neither
-    // field has a semantic shape restriction at this descriptive boundary:
+    // Metadata identity follows the envelope's complete canonical JSON value:
+    // structural absence remains distinct from every present value, including
+    // `{}` and `null`. No shape gate belongs at this descriptive boundary.
+    let metadata = params.get("_meta").cloned();
+    // MRTR identity is complete-value identity. Neither field has a semantic
+    // shape restriction at this descriptive boundary:
     // preserve structural absence and clone every present JSON value whole.
     let request_state = params.get("requestState").cloned();
     let input_responses = params.get("inputResponses").cloned();
@@ -367,7 +369,7 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
     }
     receipt.insert("now".into(), Value::from(input.now));
     if let Ok(parts) = &request_material {
-        let canonical = canonical_request(parts);
+        let canonical = canonical_request(parts)?;
         let canonical_text = serde_json::to_string(&canonical)
             .map_err(|e| format!("cannot serialize canonical request: {e}"))?;
         receipt.insert(
@@ -832,13 +834,16 @@ mod tests {
     #[test]
     fn canonical_request_preserves_argument_order() {
         let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
-        let line = serde_json::to_string(&canonical_request(&RequestParts {
-            tool: "x".into(),
-            arguments: args,
-            metadata: None,
-            request_state: None,
-            input_responses: None,
-        }))
+        let line = serde_json::to_string(
+            &canonical_request(&RequestParts {
+                tool: "x".into(),
+                arguments: args,
+                metadata: None,
+                request_state: None,
+                input_responses: None,
+            })
+            .unwrap(),
+        )
         .unwrap();
         assert_eq!(
             line,
@@ -1128,21 +1133,24 @@ mod tests {
     }
 
     #[test]
-    fn canonical_request_carries_metadata_in_member_order() {
+    fn canonical_request_carries_metadata_in_envelope_canonical_order() {
         let args: Value = serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap();
         let metadata: Value =
             serde_json::from_str(r#"{"traceparent":"00-a","example.com/invocation":"7"}"#).unwrap();
-        let line = serde_json::to_string(&canonical_request(&RequestParts {
-            tool: "x".into(),
-            arguments: args,
-            metadata: Some(metadata),
-            request_state: None,
-            input_responses: None,
-        }))
+        let line = serde_json::to_string(
+            &canonical_request(&RequestParts {
+                tool: "x".into(),
+                arguments: args,
+                metadata: Some(metadata),
+                request_state: None,
+                input_responses: None,
+            })
+            .unwrap(),
+        )
         .unwrap();
         assert_eq!(
             line,
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2},"_meta":{"traceparent":"00-a","example.com/invocation":"7"}}}"#
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"z":1,"a":2},"_meta":{"example.com/invocation":"7","traceparent":"00-a"}}}"#
         );
     }
 
@@ -1155,13 +1163,16 @@ mod tests {
         let input_responses: Value =
             serde_json::from_str(r#"{"first":{"action":"accept"},"second":{"content":{"x":1}}}"#)
                 .unwrap();
-        let line = serde_json::to_string(&canonical_request(&RequestParts {
-            tool: "x".into(),
-            arguments: args,
-            metadata: Some(metadata),
-            request_state: Some(request_state),
-            input_responses: Some(input_responses),
-        }))
+        let line = serde_json::to_string(
+            &canonical_request(&RequestParts {
+                tool: "x".into(),
+                arguments: args,
+                metadata: Some(metadata),
+                request_state: Some(request_state),
+                input_responses: Some(input_responses),
+            })
+            .unwrap(),
+        )
         .unwrap();
         assert_eq!(
             line,

@@ -50,7 +50,7 @@ reject it as legacy, naming this spec.
 | `record_version` | `1` | yes (or legacy `seal_live_receipt:"v0"`) | schema version discriminator |
 | `tool` | string | yes | mediated tool name (e.g. `"db.execute"`) |
 | `arguments` | object | yes | the tool-call arguments, verbatim; key order is fixed at production time and is significant (§2) |
-| `_meta` | object | optional | complete `params._meta` value, by value and in member order; absence means the request omitted `_meta`, while `{}` remains present-empty and distinct (§2) |
+| `_meta` | JSON value | optional | complete canonical `params._meta` value; absence means the request omitted `_meta`, while `{}` and `null` remain present and distinct (§2) |
 | `requestState` | JSON value | optional | complete opaque `params.requestState` value; structural absence differs from every present value, including `{}` and `null`; consumers MUST NOT project or interpret its interior (§2) |
 | `inputResponses` | JSON value | optional | complete `params.inputResponses` value with every member retained; structural absence differs from every present value, including `{}` and `null` (§2) |
 | `now` | integer ≥ 0 | optional (default 1000) | the caller-supplied **logical clock** the kernel decided with — carried so re-derivation replays the same clock; NOT wall time |
@@ -90,8 +90,10 @@ with `<tool>` = the receipt's `tool` and `<arguments>` = the receipt's
 `arguments` object serialised **in its stored key order** (JS objects
 preserve insertion order for non-integer-like keys; integer-like argument
 names are forbidden in v1 for this reason). When the receipt carries
-`_meta`, it is inserted after `arguments` and its complete object is
-serialised in stored member order. When `_meta` is absent, the historical
+`_meta`, it is inserted after `arguments` and its complete value is
+serialised with the envelope/kernel canonicalisation: object members are
+sorted lexicographically at every depth while array order is retained. When
+`_meta` is absent, the historical
 two-member `params` bytes are unchanged unless an MRTR value follows it.
 Present `requestState` is inserted after `_meta` (or after `arguments` when
 metadata is absent) as one opaque complete JSON value. Present
