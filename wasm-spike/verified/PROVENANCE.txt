@@ -218,6 +218,7 @@ Fleet pin history
 The machine-readable history in `pin-history.json` is mirrored here without
 collapsing intermediate pin transitions:
 
+  193c6be1bf83f9d93f14840f2b928fcb46937cc0 -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
   39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
   d5e14d173bd8b2170e244a91ad2ddc42ae168cff -> d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be
   62f5fe5d2f3f9d1d700b524aa1d415db449799fc -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af

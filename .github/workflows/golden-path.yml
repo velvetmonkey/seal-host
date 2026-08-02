@@ -38,7 +38,7 @@ jobs:
       # verifies today's receipts against yesterday's kernel and fails
       # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
-      # by hand. 39ae67d carries kernel 0b5e7925 and descends from the current
+      # by hand. 193c6be carries kernel 0b5e7925 and descends from the current
       # 7-kernel policy bundle lineage.
       - id: control_03
         continue-on-error: true
@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: 39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd
+          ref: 193c6be1bf83f9d93f14840f2b928fcb46937cc0
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
