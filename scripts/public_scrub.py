@@ -13,7 +13,7 @@ ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else None
 if ROOT is None or not ROOT.is_dir():
     raise SystemExit("usage: public_scrub.py SOURCE_TREE")
 
-EXPECTED_KERNEL = "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be"
+EXPECTED_KERNEL = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec"
 TEXT_SUFFIXES = {".c", ".cjs", ".css", ".html", ".js", ".json", ".lean", ".md", ".mjs", ".py", ".rs", ".sh", ".toml", ".txt", ".yml", ".yaml"}
 SKIP_DIRS = {".git", ".lake", "node_modules", "target"}
 FORBIDDEN_NAMES = {".env", "id_rsa", "id_ed25519"}

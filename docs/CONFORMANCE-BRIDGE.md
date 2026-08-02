@@ -163,7 +163,7 @@ before the differential, and driving the fresh artifact:
   authority-bound principal envelope: domain tag
   `seal/v2.2/principal-envelope\0`, config authority, and length-prefixed key
   id, plus the existing Kernel PB)
-- `seal.wasm` sha256: `d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be`
+- `seal.wasm` sha256: `0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
 - Supersedes `c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda`
   (the V2.2 authority-bound build against mcp-seal-dev `1d35669`), which

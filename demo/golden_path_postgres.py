@@ -34,9 +34,9 @@ HOST = gp.HOST
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# bd1cf89 carries the pinned d7d81e27 kernel and the current 7-kernel policy
+# a5f9a91 carries the pinned 0b5e7925 kernel and the current 7-kernel policy
 # bundle used by the doctrine-clean S+B+T recipe.
-PHASE_B_KIT_REV = "bd1cf89ec5d6da6501299e0963f1ef9f5bd5d837"
+PHASE_B_KIT_REV = "39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd"
 PINNED_POSTGRES_IMAGE = "postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb"
 POSTGRES_IMAGE = os.environ.get("SEAL_POSTGRES_IMAGE", PINNED_POSTGRES_IMAGE)
 C2_THEOREMS = [

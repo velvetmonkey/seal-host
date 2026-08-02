@@ -14,11 +14,11 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 # The published fleet artifact and this repo's verified conformance build are
 # independent facts while publication is pending.
-FLEET_KERNEL_SHA256 = "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be"
-VERIFIED_WASM_SHA256 = "dd00cd2bd01531113e3c687eb0df62f23860213219a01d2cb1f3e219adfa48c3"
+FLEET_KERNEL_SHA256 = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec"
+VERIFIED_WASM_SHA256 = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec"
 SOURCE_KIT_REV = "316d74126b4cb164d501fea21738d6880469bcb4"
-FLEET_ASSURANCE_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
-GOLDEN_PATH_KIT_REV = "bd1cf89ec5d6da6501299e0963f1ef9f5bd5d837"
+FLEET_ASSURANCE_KIT_REV = "39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd"
+GOLDEN_PATH_KIT_REV = "39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd"
 
 GOLDEN_PATH_DEMOS = (
     "golden_path_composition.py",

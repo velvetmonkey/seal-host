@@ -6,6 +6,12 @@
 # Usage: ./build_wasm.sh [strict]
 #   strict -> link with -sERROR_ON_UNDEFINED_SYMBOLS=1 (proves full symbol closure)
 set -euo pipefail
+# Deterministic link: the object list comes from shell globs, glob order is
+# LC_COLLATE-dependent, and object order assigns wasm function indices — an
+# en_US.UTF-8 host and a C-locale clean runner produced different (equally
+# valid) bytes from identical objects. Pin the C locale so every environment
+# links the clean runner's bytes.
+export LC_ALL=C
 cd "$(dirname "$0")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 
@@ -50,7 +56,7 @@ emcc -O2 \
   build-core/*.o build-seal/*.o build-pkg/*.o $STDLIB_O $CLOSURE_O $SPEC_O \
   build-wasm-rt/libleanrt.a \
   -o build-core/seal.js \
-  -s EXPORTED_FUNCTIONS='["_seal_init","_seal_decide","_malloc","_free"]' \
+  -s EXPORTED_FUNCTIONS='["_seal_init","_seal_decide","_seal_mcp_version_gate","_malloc","_free"]' \
   -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s MODULARIZE=1 -s EXPORT_NAME=SealModule \

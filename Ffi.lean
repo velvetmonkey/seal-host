@@ -58,6 +58,67 @@ initialize sessionRef : IO.Ref (Option Session) ← IO.mkRef none
 private def errJson (msg : String) : String :=
   (Json.mkObj [("ok", Json.bool false), ("error", Json.str msg)]).compress
 
+/-! ### M.2 revision session — the wasm port of `McpRevisionSession`
+
+The native host derives the per-session MCP adapter revision from the
+received entry-call shapes (`rust/src/adapter_revision.rs`) and feeds it to
+the M.7 gate as `version_gate_input()`: `""` while undetermined, the selected
+revision string once one entry shape has been seen, and the
+`"conflicting-entry-calls"` sentinel once both incompatible shapes have been
+seen (which the gate rejects as ambiguous). The wasm `seal_decide` wrapper
+carries the same fold here so the browser build and the native build gate
+each request against the SAME session evidence — the method→revision mapping
+is NOT re-implemented: it is the kernel-owned `mcpEntryCallOfMethod` /
+`McpEntryCall.revision` seam, the same seam the native envelope path signs.
+
+Ordering matches `rust/src/main.rs`: the gate judges a line under the
+selection derived from PRIOR traffic, and only a line the gate admits is
+observed. A rejected line never mutates the selection. -/
+
+/-- The three-valued native selection state, verbatim. -/
+inductive McpRevisionSelection where
+  | undetermined
+  | selected (revision : String)
+  | conflictingEntryCalls
+  deriving Repr, BEq, Inhabited
+
+/-- `McpRevisionSession::version_gate_input`: the exact string handed to
+    `SealV2.Effect.mcpVersionGate` as `selectedRevision`. -/
+def McpRevisionSelection.gateInput : McpRevisionSelection → String
+  | .undetermined => ""
+  | .selected revision => revision
+  | .conflictingEntryCalls => "conflicting-entry-calls"
+
+/-- `McpRevisionSession::observe_received_call`, purely: fold one admitted
+    line into the selection. The method→revision map is the kernel's
+    `mcpEntryCallOfMethod`; non-entry methods, non-object lines and
+    unparseable lines observe nothing. Callers must only pass lines the
+    raw-wire classifier did NOT refuse: the guards are what make this
+    `Json.parse` agree with the native observer's serde_json parse
+    (duplicate keys, depth, numeric form), and what make it safe to run
+    on a small wasm stack. -/
+def McpRevisionSelection.observe (selection : McpRevisionSelection)
+    (line : String) : McpRevisionSelection :=
+  match Json.parse line with
+  | .error _ => selection
+  | .ok request =>
+      match ((request.getObjVal? "method").toOption.bind
+          (·.getStr?.toOption)).bind SealV2.Effect.mcpEntryCallOfMethod with
+      | none => selection
+      | some entry =>
+          let observed := entry.revision.version
+          match selection with
+          | .undetermined => .selected observed
+          | .selected s =>
+              if s == observed then .selected s else .conflictingEntryCalls
+          | .conflictingEntryCalls => .conflictingEntryCalls
+
+/-- The wasm module's revision session. Reset by `initFromConfig` (a fresh
+    session has seen no entry call), exactly as the native host constructs a
+    fresh `McpRevisionSession` per mediated connection. -/
+initialize mcpRevisionSelectionRef : IO.Ref McpRevisionSelection ←
+  IO.mkRef .undetermined
+
 private def initFromConfig (config : TrustedConfig)
     (configAuthority : ByteArray) : IO String := do
   let session : Session := {
@@ -71,6 +132,10 @@ private def initFromConfig (config : TrustedConfig)
     unitRef := ← IO.mkRef ()
   }
   sessionRef.set (some session)
+  -- M.2: a fresh session has observed no entry call — the gate's selection
+  -- input returns to `""` (undetermined), as in the native per-connection
+  -- `McpRevisionSession::default()`.
+  mcpRevisionSelectionRef.set .undetermined
   pure <| (Json.mkObj [
     ("ok", Json.bool true),
     ("epoch", toJson config.epoch),
@@ -341,6 +406,81 @@ def sealHostClassify (line : String) : UInt32 :=
 def sealHostMcpVersionGate (line selectedRevision : String) : String :=
   (SealV2.Effect.mcpVersionGate line selectedRevision).toJson.compress
 
+/-- The step-envelope `line` extraction, shared. This is the ONE
+    guard/parse/default sequence for reading the judged line out of the outer
+    step input; `stepImpl` marshals through the same expressions
+    (`stepLineOf?_agrees` below pins the agreement at build time — edit one
+    copy without the other and the theorem breaks). `none` means the outer
+    envelope itself is refused by `stepImpl`'s fail-closed step-input error
+    path (unsafe host-side numeric literal, or unparseable outer JSON) — no
+    line exists to gate. -/
+def stepLineOf? (inputText : String) : Option String :=
+  if !Seal.JsonUtil.wireNumbersSafe inputText then
+    none
+  else
+    match Json.parse inputText with
+    | .error _ => none
+    | .ok input => some (getStrD input "line" "")
+
+/-- The wasm gate bridge, purely: the gate decision handed to the C wrapper
+    and the revision selection after this call.
+
+    Composition, not duplication: the line comes from `stepLineOf?` (the same
+    extraction `stepImpl` performs), and the decision to parse it AT ALL is
+    delegated to the same `classifyLine` classifier `stepImpl` routes on.
+    A `.refuse` line is returned as continue WITHOUT this bridge ever running
+    `Json.parse` over it — `mcpVersionGate`'s own parse carries none of the
+    raw-wire guards (depth, surrogate, digit, agreement), so parsing before
+    the classifier would trade `stepImpl`'s fail-closed block for a wasm
+    stack trap (the depth-5000 regression this ordering buries). `stepImpl`
+    re-runs the identical classifier and produces the exact block bytes.
+
+    Malformed outer envelopes (`stepLineOf? = none`) also return continue:
+    `stepImpl` returns its existing fail-closed step-input ERROR (not a
+    decision, not a passthrough), and keeping that path authoritative
+    preserves its observable bytes (`stepLineOf?_none_respond`).
+
+    An envelope with no usable line (`line` absent, non-string, or empty)
+    yields `line = ""`, which classifies `.passthrough` and gates continue:
+    there is no protocol request to judge, and `stepImpl` returns its normal
+    `route:"passthrough"` — the DELIBERATE compatible-profile behaviour, not
+    an oversight; see the report for the argument.
+
+    Native ordering (`rust/src/main.rs`): gate under the selection derived
+    from prior traffic; observe the entry call only when the gate admits the
+    line. -/
+def gatePlanFor (selection : McpRevisionSelection) (inputText : String) :
+    SealV2.Effect.McpVersionGateDecision × McpRevisionSelection :=
+  match stepLineOf? inputText with
+  | none => (.continue, selection)
+  | some line =>
+      match classifyLine line with
+      | .refuse => (.continue, selection)
+      | _ =>
+          match SealV2.Effect.mcpVersionGate line selection.gateInput with
+          | .continue => (.continue, selection.observe line)
+          | .reject response => (.reject response, selection)
+
+/-- The bridge's IO shell: read the session selection, run the pure plan,
+    commit the folded selection, return the decision bytes. -/
+private def gateStepImpl (inputText : String) : IO String := do
+  let selection ← mcpRevisionSelectionRef.get
+  let (decision, next) := gatePlanFor selection inputText
+  mcpRevisionSelectionRef.set next
+  pure decision.toJson.compress
+
+/-- Wasm-wrapper adapter for structural gate-before-step ordering. The public
+    `seal_decide` ABI carries a step envelope rather than a raw MCP line, so
+    this extracts the exact `line` field `stepImpl` judges and gates it under
+    the M.2 revision session above. This symbol is linked for the C wrapper;
+    it is not in the public Emscripten export list. Exceptions fail closed:
+    the error result is not the exact continue object, so the C wrapper
+    returns it and `seal_host_step` is never reached. -/
+@[export seal_host_mcp_version_gate_step]
+unsafe def sealHostMcpVersionGateStep (inputText : String) : String :=
+  unsafeBaseIO <| (gateStepImpl inputText).catchExceptions
+    (fun e => pure (errJson (toString e)))
+
 /-- The deployed Rust host's pre-classify numeric-agreement seam. The empty
     string is the safe sentinel (a JSON numeric literal is never empty);
     otherwise the exact offending raw literal is returned so the host can
@@ -541,6 +681,78 @@ theorem stepImpl_spelled (inputText : String) :
             cases Host.stepRoute (LineClass.act act) p.2 <;> rfl
     · simp only [hw, Bool.not_false, if_true]
 
+/-! ### The gate bridge, kept in step — build-failing agreement theorems
+
+The wasm gate bridge (`gatePlanFor`) and `stepImpl` both read the judged
+line out of the outer step envelope, and both route on `classifyLine`. The
+theorems below are the anti-drift contract: they tie the bridge's extraction
+to `stepImpl`'s marshalling (through `stepInputsOf`, which `stepImpl_spelled`
+ties to `stepImpl`) and pin the load-bearing ordering — no `Json.parse` of a
+line the classifier refuses. Editing either side out of agreement breaks the
+build here, not in a browser six months later. -/
+
+/-- The bridge gates the SAME line `stepImpl` judges: on any well-formed
+    outer envelope, `stepLineOf?` returns exactly the `line` `stepInputsOf`
+    marshals. -/
+theorem stepLineOf?_agrees (session : Session) (inputText : String)
+    (input : Json)
+    (hw : Seal.JsonUtil.wireNumbersSafe inputText = true)
+    (hp : Json.parse inputText = .ok input) :
+    stepLineOf? inputText = some (stepInputsOf session input).line := by
+  simp [stepLineOf?, stepInputsOf, hw, hp]
+
+/-- No extracted line ⇒ `stepImpl` responds with its own fail-closed
+    step-input error and never mediates: the bridge's continue on a malformed
+    outer envelope delegates to an error path, not to a decision. -/
+theorem stepLineOf?_none_respond (session : Session) (inputText : String)
+    (h : stepLineOf? inputText = none) :
+    ∃ msg, stepPlanFor session inputText = .respond (errJson msg) := by
+  unfold stepLineOf? at h
+  by_cases hw : Seal.JsonUtil.wireNumbersSafe inputText
+  · simp only [hw, Bool.not_true, Bool.false_eq_true, if_false] at h
+    cases hp : Json.parse inputText with
+    | error e =>
+        exact ⟨s!"bad step input: {e}", by
+          simp [stepPlanFor, hw, hp]⟩
+    | ok input => rw [hp] at h; cases h
+  · exact ⟨"bad step input: unsafe numeric literal", by
+      simp [stepPlanFor, hw]⟩
+
+/-- **The ordering, pinned.** A line the raw-wire classifier refuses is never
+    parsed by the bridge: the gate is not consulted, the revision fold is
+    untouched, and the exact continue result hands the line to `stepImpl`,
+    whose identical classifier produces the fail-closed block. This is the
+    depth-5000 regression's tombstone. -/
+theorem gatePlanFor_refuse_continue (selection : McpRevisionSelection)
+    (inputText line : String)
+    (hl : stepLineOf? inputText = some line)
+    (hr : classifyLine line = .refuse) :
+    gatePlanFor selection inputText = (.continue, selection) := by
+  simp [gatePlanFor, hl, hr]
+
+/-- A malformed outer envelope gates nothing and observes nothing. -/
+theorem gatePlanFor_badEnvelope_continue (selection : McpRevisionSelection)
+    (inputText : String) (h : stepLineOf? inputText = none) :
+    gatePlanFor selection inputText = (.continue, selection) := by
+  simp [gatePlanFor, h]
+
+/-- Observation strictly follows admission (the native gate-before-observe
+    ordering): whenever the bridge's selection moved, the gate admitted the
+    line. -/
+theorem gatePlanFor_observe_only_admitted (selection : McpRevisionSelection)
+    (inputText : String) :
+    (gatePlanFor selection inputText).2 = selection ∨
+      (gatePlanFor selection inputText).1 =
+        SealV2.Effect.McpVersionGateDecision.continue := by
+  unfold gatePlanFor
+  split
+  · exact .inl rfl
+  · split
+    · exact .inl rfl
+    · split
+      · exact .inr rfl
+      · exact .inl rfl
+
 /-! ### The receipt principal, modelled — `receipt_principal_authenticated`
 
 The step-output `principal` member has exactly one producer
@@ -639,6 +851,20 @@ The spelled step plan sits on Lean's three classical axioms at most; no
 proof uses only core's lawful-monad laws and case analysis on the pure
 plan. Drift fails the build here and again in `Test/Axioms.lean`. -/
 
+/-- info: 'Ffi.stepLineOf?' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepLineOf?
+/-- info: 'Ffi.gatePlanFor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.gatePlanFor
+/-- info: 'Ffi.stepLineOf?_agrees' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepLineOf?_agrees
+/-- info: 'Ffi.stepLineOf?_none_respond' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.stepLineOf?_none_respond
+/-- info: 'Ffi.gatePlanFor_refuse_continue' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.gatePlanFor_refuse_continue
+/-- info: 'Ffi.gatePlanFor_badEnvelope_continue' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.gatePlanFor_badEnvelope_continue
+/-- info: 'Ffi.gatePlanFor_observe_only_admitted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ffi.gatePlanFor_observe_only_admitted
 /-- info: 'Ffi.stepInputsOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Ffi.stepInputsOf
 /-- info: 'Ffi.stepPlanFor' depends on axioms: [propext, Classical.choice, Quot.sound] -/

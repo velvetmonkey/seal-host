@@ -1,36 +1,36 @@
 {
   "schema": 1,
   "fleetLock": "release/fleet-lock.json",
-  "kernelSha256": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+  "kernelSha256": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
   "repositories": [
     {
       "name": "seal-check",
       "url": "https://github.com/velvetmonkey/seal-check.git",
-      "commit": "fcda028c9c14d0c5e153801843dc0eabcb6a0792",
+      "commit": "5165d95b0f003e69948899540d080ee1f9c3007b",
       "status": "scanned"
     },
     {
       "name": "seal-assurance-kit",
       "url": "https://github.com/velvetmonkey/seal-assurance-kit.git",
-      "commit": "d5e14d173bd8b2170e244a91ad2ddc42ae168cff",
+      "commit": "39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd",
       "status": "scanned"
     },
     {
       "name": "seal-verify-action",
       "url": "https://github.com/velvetmonkey/seal-verify-action.git",
-      "commit": "7ea3cdb8f0b557597a8af72fd73277b6c380602d",
+      "commit": "c040a7e256978294dbef4c69cbad243212494df8",
       "status": "scanned"
     },
     {
       "name": "seal-demo",
       "url": "https://github.com/velvetmonkey/seal-demo.git",
-      "commit": "a998b5b52a15b6070286349c589f7c21ae7f2e4a",
+      "commit": "a50b59b755bba6bdc9ee23f3eafe77af4d528ccb",
       "status": "scanned"
     },
     {
       "name": "seal-live-demo",
       "url": "https://github.com/velvetmonkey/seal-live-demo.git",
-      "commit": "ec03f2d5eed2aa2e7b1b465b83cb70f621147cf1",
+      "commit": "e8ba1fd9ba9d7d9e2ed4c8ee88b5c5bc785283f6",
       "status": "scanned"
     }
   ],
@@ -45,29 +45,29 @@
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-allow.json",
-      "line": 177,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "line": 168,
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-allow.json",
       "line": 21,
-      "hash": "50d98711427502f8386fbe19baa9bfadb6c30d4e702828c6e39f78e97b8aec07",
+      "hash": "76fff1942ae3a599eaa3b50b0c66df782c7eef29e95ca4c69d298dbf1dcd8a2c",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-allow.json",
       "line": 27,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-allow.json",
       "line": 43,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
@@ -81,7 +81,7 @@
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-allow.json",
       "line": 45,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -102,28 +102,14 @@
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-block.json",
       "line": 14,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-block.json",
       "line": 20,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-assurance-kit",
-      "path": "fixtures/receipt-block.json",
-      "line": 30,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-assurance-kit",
-      "path": "fixtures/receipt-block.json",
-      "line": 30,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
       "classification": "SIGNED"
     },
     {
@@ -136,8 +122,22 @@
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-block.json",
+      "line": 30,
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/receipt-block.json",
+      "line": 30,
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/receipt-block.json",
       "line": 32,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -164,29 +164,29 @@
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-crosstool.json",
-      "line": 177,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "line": 168,
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-crosstool.json",
       "line": 21,
-      "hash": "50d98711427502f8386fbe19baa9bfadb6c30d4e702828c6e39f78e97b8aec07",
+      "hash": "76fff1942ae3a599eaa3b50b0c66df782c7eef29e95ca4c69d298dbf1dcd8a2c",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-crosstool.json",
       "line": 27,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-crosstool.json",
       "line": 43,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
@@ -200,7 +200,7 @@
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-crosstool.json",
       "line": 45,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -213,57 +213,36 @@
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-unparseable.json",
-      "line": 14,
-      "hash": "f690ae2830d29772ddb0b9d880c6e24bd6f59d5450d34dc2137c42d99722b9af",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-assurance-kit",
-      "path": "fixtures/receipt-unparseable.json",
       "line": 24,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-assurance-kit",
-      "path": "fixtures/receipt-unparseable.json",
-      "line": 24,
-      "hash": "f690ae2830d29772ddb0b9d880c6e24bd6f59d5450d34dc2137c42d99722b9af",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-assurance-kit",
-      "path": "fixtures/receipt-unparseable.json",
-      "line": 24,
-      "hash": "f690ae2830d29772ddb0b9d880c6e24bd6f59d5450d34dc2137c42d99722b9af",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-unparseable.json",
       "line": 26,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-unparseable.json",
       "line": 31,
-      "hash": "e4c57ae9f2fb816c115d9afd90e9b8f5bd5680ec6ca9eee60092d8b158b5d664",
+      "hash": "2fe5ca27d0a7616d6679a6177f6d4001e5e97e6e79fe6d6478112b0aa6ab8999",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-unparseable.json",
       "line": 32,
-      "hash": "0c0d71326c2b8fd215ac20fcc322505022b867e52f1a195304b2cdc2b9f424bb",
+      "hash": "2be60a2d0177c30f13b78d94e4bd219683fb39871aa13a0cafc0db5e8722bbd2",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-unparseable.json",
       "line": 4,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
@@ -275,23 +254,16 @@
     },
     {
       "repo": "seal-assurance-kit",
-      "path": "fixtures/receipt-unparseable.json",
-      "line": 8,
-      "hash": "f690ae2830d29772ddb0b9d880c6e24bd6f59d5450d34dc2137c42d99722b9af",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-assurance-kit",
       "path": "kernel/kernel.js",
       "line": 25,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "kernel/wasm/seal.wasm",
       "line": null,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "BINARY"
     },
     {
@@ -304,56 +276,56 @@
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 25,
+      "line": 26,
       "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 29,
+      "line": 30,
       "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 32,
+      "line": 33,
       "hash": "460d746ba064ab9398885158dddfd6d32f1722b0efe0d3b6085c8441e9127793",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 33,
+      "line": 34,
       "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 35,
+      "line": 36,
       "hash": "351f47a44bcf935c7242432e24bd11db1536d7c1da873f0ca953c8b80ae02433",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 40,
+      "line": 41,
       "hash": "46657b69f15f78859ead6dd0d416cbfc9809922757ba90aa16a56b7d73afafc8",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 44,
+      "line": 45,
       "hash": "53ae7fa46f79dd2637b3d5af5a160834b755d0a00a66fec11cb313db8bca753c",
       "classification": "STRING"
     },
     {
       "repo": "seal-assurance-kit",
       "path": "test/format-check.cjs",
-      "line": 52,
+      "line": 53,
       "hash": "436c50ce0860d500c188e7e7c8133eed1e41e626b01174727159f3f664e84407",
       "classification": "STRING"
     },
@@ -361,7 +333,7 @@
       "repo": "seal-check",
       "path": "AUDIT.md",
       "line": 11,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -423,29 +395,29 @@
     {
       "repo": "seal-check",
       "path": "examples/allow.receipt.json",
-      "line": 182,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "line": 173,
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "examples/allow.receipt.json",
       "line": 21,
-      "hash": "50d98711427502f8386fbe19baa9bfadb6c30d4e702828c6e39f78e97b8aec07",
+      "hash": "76fff1942ae3a599eaa3b50b0c66df782c7eef29e95ca4c69d298dbf1dcd8a2c",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "examples/allow.receipt.json",
       "line": 27,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "examples/allow.receipt.json",
       "line": 43,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
@@ -459,7 +431,7 @@
       "repo": "seal-check",
       "path": "examples/allow.receipt.json",
       "line": 45,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -480,7 +452,7 @@
       "repo": "seal-check",
       "path": "kernel.js",
       "line": 25,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -507,29 +479,29 @@
     {
       "repo": "seal-check",
       "path": "test/fixtures/cross-receipt.json",
-      "line": 182,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "line": 173,
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/cross-receipt.json",
       "line": 21,
-      "hash": "50d98711427502f8386fbe19baa9bfadb6c30d4e702828c6e39f78e97b8aec07",
+      "hash": "76fff1942ae3a599eaa3b50b0c66df782c7eef29e95ca4c69d298dbf1dcd8a2c",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/cross-receipt.json",
       "line": 27,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/cross-receipt.json",
       "line": 43,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
@@ -543,7 +515,7 @@
       "repo": "seal-check",
       "path": "test/fixtures/cross-receipt.json",
       "line": 45,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -563,57 +535,36 @@
     {
       "repo": "seal-check",
       "path": "test/fixtures/unparseable-block.receipt.json",
-      "line": 14,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-check",
-      "path": "test/fixtures/unparseable-block.receipt.json",
       "line": 24,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-check",
-      "path": "test/fixtures/unparseable-block.receipt.json",
-      "line": 24,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-check",
-      "path": "test/fixtures/unparseable-block.receipt.json",
-      "line": 24,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/unparseable-block.receipt.json",
       "line": 26,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/unparseable-block.receipt.json",
       "line": 31,
-      "hash": "56cc0a114a813b6598fbfa3adc55f642ae1d44f104a3ab55f0ed097d54276821",
+      "hash": "2fe5ca27d0a7616d6679a6177f6d4001e5e97e6e79fe6d6478112b0aa6ab8999",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/unparseable-block.receipt.json",
       "line": 32,
-      "hash": "45a00c0d5de303b53f3a58120347c45362a92d648606bb5afc7c234a63a105b7",
+      "hash": "2be60a2d0177c30f13b78d94e4bd219683fb39871aa13a0cafc0db5e8722bbd2",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-check",
       "path": "test/fixtures/unparseable-block.receipt.json",
       "line": 4,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
@@ -621,13 +572,6 @@
       "path": "test/fixtures/unparseable-block.receipt.json",
       "line": 48,
       "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-check",
-      "path": "test/fixtures/unparseable-block.receipt.json",
-      "line": 8,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
       "classification": "SIGNED"
     },
     {
@@ -718,7 +662,7 @@
       "repo": "seal-check",
       "path": "test/receipt-format.test.cjs",
       "line": 60,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -732,7 +676,7 @@
       "repo": "seal-check",
       "path": "test/receipt-harness.cjs",
       "line": 50,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -753,42 +697,42 @@
       "repo": "seal-check",
       "path": "wasm/seal.wasm",
       "line": null,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "BINARY"
     },
     {
       "repo": "seal-demo",
       "path": "NOTICE",
       "line": 7,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
       "repo": "seal-demo",
       "path": "fixtures/captured.json",
       "line": 13,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
       "classification": "STRING"
     },
     {
       "repo": "seal-demo",
       "path": "fixtures/captured.json",
       "line": 55,
-      "hash": "e35dd14f3e1d02fec3b03a781b7f8928bfd1ce7b7f93a23a7b61228c536bd73a",
+      "hash": "a456c48ae0ab036b6e492c07162a17ae461c31f5b644b4f5c11cfdd11acb99ce",
       "classification": "STRING"
     },
     {
       "repo": "seal-demo",
       "path": "fixtures/captured.json",
       "line": 73,
-      "hash": "e35dd14f3e1d02fec3b03a781b7f8928bfd1ce7b7f93a23a7b61228c536bd73a",
+      "hash": "a456c48ae0ab036b6e492c07162a17ae461c31f5b644b4f5c11cfdd11acb99ce",
       "classification": "STRING"
     },
     {
       "repo": "seal-demo",
       "path": "public/audit.js",
       "line": 23,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -809,14 +753,14 @@
       "repo": "seal-demo",
       "path": "public/seal-wasm.js",
       "line": 7,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
       "repo": "seal-demo",
       "path": "public/wasm/seal.wasm",
       "line": null,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "BINARY"
     },
     {
@@ -837,21 +781,21 @@
       "repo": "seal-live-demo",
       "path": ".github/workflows/demo.yml",
       "line": 44,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
       "repo": "seal-live-demo",
       "path": "AUDIT.md",
       "line": 12,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
       "repo": "seal-live-demo",
       "path": "NOTICE",
       "line": 7,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -872,7 +816,7 @@
       "repo": "seal-live-demo",
       "path": "archive/README.md",
       "line": 18,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1031,23 +975,555 @@
     },
     {
       "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 14,
+      "hash": "53ae7fa46f79dd2637b3d5af5a160834b755d0a00a66fec11cb313db8bca753c",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 16,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 26,
+      "hash": "b01fe12eced21ec3b0a4fc8193a792959f4f7d0cb1009680fc1c2a6779b6ae5e",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 32,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 42,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 42,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 44,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p1.json",
+      "line": 61,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 14,
+      "hash": "3f353ae8fd51c2fbb08aac5a3ebf0dc299dd10f6dc7d5d5b48aae46b5af7a388",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 16,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 19,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 25,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 35,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 35,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 35,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 37,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/agent-p2.json",
+      "line": 54,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 107,
+      "hash": "b01fe12eced21ec3b0a4fc8193a792959f4f7d0cb1009680fc1c2a6779b6ae5e",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 113,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 123,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 123,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 125,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 142,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 205,
+      "hash": "3f353ae8fd51c2fbb08aac5a3ebf0dc299dd10f6dc7d5d5b48aae46b5af7a388",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 207,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 210,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 216,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 226,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 226,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 226,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 228,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 245,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 308,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 6,
+      "hash": "754fd3c8fda5bb6611ad6cf6f830787a00597347fba00b2fea7fbd97e06629fa",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 9,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 95,
+      "hash": "53ae7fa46f79dd2637b3d5af5a160834b755d0a00a66fec11cb313db8bca753c",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/bundle.json",
+      "line": 97,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/p3-control.json",
+      "line": 14,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "53ae7fa46f79dd2637b3d5af5a160834b755d0a00a66fec11cb313db8bca753c",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "b01fe12eced21ec3b0a4fc8193a792959f4f7d0cb1009680fc1c2a6779b6ae5e",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 1,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "3f353ae8fd51c2fbb08aac5a3ebf0dc299dd10f6dc7d5d5b48aae46b5af7a388",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 2,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/receipts.jsonl",
+      "line": 3,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/run-meta.json",
+      "line": 3,
+      "hash": "754fd3c8fda5bb6611ad6cf6f830787a00597347fba00b2fea7fbd97e06629fa",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/run-meta.json",
+      "line": 6,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 118,
+      "hash": "53ae7fa46f79dd2637b3d5af5a160834b755d0a00a66fec11cb313db8bca753c",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 120,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 130,
+      "hash": "b01fe12eced21ec3b0a4fc8193a792959f4f7d0cb1009680fc1c2a6779b6ae5e",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 136,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 146,
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 146,
+      "hash": "66330ea2242d45a5a6b32d85007464125608fec7e88430fa3c23d5c5303db756",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 148,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 165,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 226,
+      "hash": "3f353ae8fd51c2fbb08aac5a3ebf0dc299dd10f6dc7d5d5b48aae46b5af7a388",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 228,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 231,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 237,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 247,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 247,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 247,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 249,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 266,
+      "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-live-demo",
+      "path": "evidence/summary.md",
+      "line": 328,
+      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
+      "classification": "STRING"
+    },
+    {
+      "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
       "line": 107,
-      "hash": "485eda4ba022b72bb4b2be3021add312d352846331671c704a2d637c58f92069",
+      "hash": "b01fe12eced21ec3b0a4fc8193a792959f4f7d0cb1009680fc1c2a6779b6ae5e",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
       "line": 113,
-      "hash": "351f47a44bcf935c7242432e24bd11db1536d7c1da873f0ca953c8b80ae02433",
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
       "line": 123,
-      "hash": "351f47a44bcf935c7242432e24bd11db1536d7c1da873f0ca953c8b80ae02433",
+      "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
       "classification": "SIGNED"
     },
     {
@@ -1061,7 +1537,7 @@
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
       "line": 125,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -1074,70 +1550,70 @@
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 204,
+      "line": 205,
       "hash": "3f353ae8fd51c2fbb08aac5a3ebf0dc299dd10f6dc7d5d5b48aae46b5af7a388",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 206,
+      "line": 207,
       "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 209,
-      "hash": "bd320931069ebb98a9b205fa2e9227b3bdcdc9f7e98197cd855089ae5d720ac1",
+      "line": 210,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 215,
-      "hash": "bd320931069ebb98a9b205fa2e9227b3bdcdc9f7e98197cd855089ae5d720ac1",
+      "line": 216,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 225,
-      "hash": "bd320931069ebb98a9b205fa2e9227b3bdcdc9f7e98197cd855089ae5d720ac1",
+      "line": 226,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 225,
-      "hash": "bd320931069ebb98a9b205fa2e9227b3bdcdc9f7e98197cd855089ae5d720ac1",
+      "line": 226,
+      "hash": "0c61a5e7422b77c92dba74543347db4a13819c83daeb9c5581ebaba08f1ef0df",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 225,
+      "line": 226,
       "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 227,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "line": 228,
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 244,
+      "line": 245,
       "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
-      "line": 306,
+      "line": 308,
       "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
       "classification": "SIGNED"
     },
@@ -1145,14 +1621,14 @@
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
       "line": 6,
-      "hash": "8e28a1d3a78bff32b667ecb4a82fcbde49b769270eabd6e0aee6a70dac874931",
+      "hash": "754fd3c8fda5bb6611ad6cf6f830787a00597347fba00b2fea7fbd97e06629fa",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/bundle.json",
       "line": 9,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -1187,21 +1663,21 @@
       "repo": "seal-live-demo",
       "path": "pwa/seal-wasm.js",
       "line": 8,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
       "repo": "seal-live-demo",
       "path": "pwa/wasm/seal.wasm",
       "line": null,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "BINARY"
     },
     {
       "repo": "seal-live-demo",
       "path": "scripts/run_local.sh",
       "line": 43,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1215,7 +1691,7 @@
       "repo": "seal-live-demo",
       "path": "seal-gateway/decide.cjs",
       "line": 17,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1223,20 +1699,20 @@
       "path": "seal-gateway/seal-config.js",
       "line": 14,
       "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-      "classification": "SIGNED"
+      "classification": "STRING"
     },
     {
       "repo": "seal-live-demo",
       "path": "seal-gateway/seal-config.js",
       "line": 18,
       "hash": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
-      "classification": "SIGNED"
+      "classification": "STRING"
     },
     {
       "repo": "seal-live-demo",
       "path": "seal-gateway/wasm/seal.wasm",
       "line": null,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "BINARY"
     },
     {
@@ -1299,7 +1775,7 @@
       "repo": "seal-verify-action",
       "path": "VENDORED.md",
       "line": 15,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1320,21 +1796,21 @@
       "repo": "seal-verify-action",
       "path": "VENDORED.md",
       "line": 65,
-      "hash": "5c05c12f1c96454b7ece8705f6891b8ebcfa9500d49f012935c48f428577888e",
+      "hash": "83749603b79002e85df69408773e00af3fd6aaf1ce3ef05222db048ffea91c66",
       "classification": "STRING"
     },
     {
       "repo": "seal-verify-action",
       "path": "VENDORED.md",
       "line": 66,
-      "hash": "47cda2a5becd1e855be7905214dc2b5db81427fdcdff865ef1f41695dd97c324",
+      "hash": "9d36e977f9d7e0d7a715edcb02da17771885f3bfe9ef77081a48064af7edbf66",
       "classification": "STRING"
     },
     {
       "repo": "seal-verify-action",
       "path": "VENDORED.md",
       "line": 67,
-      "hash": "bc073812b30fe120aeeb533360a0440f2d482da65d7c89a272b09fe3786cb524",
+      "hash": "f8dcd7f39bc77151a6433c81ddf0e3c175772550ab30344c0788a5cf33ed45e1",
       "classification": "STRING"
     },
     {
@@ -1348,14 +1824,14 @@
       "repo": "seal-verify-action",
       "path": "VENDORED.md",
       "line": 69,
-      "hash": "1b565eef3373b56b56ed295ddf5511c76f2ba3a24856640165cb2eb84309ffc5",
+      "hash": "aa6996d130057815cf493a5097a515c58b89df2ae832f2277110bc66d30cdf17",
       "classification": "STRING"
     },
     {
       "repo": "seal-verify-action",
       "path": "VENDORED.md",
       "line": 70,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1368,57 +1844,36 @@
     {
       "repo": "seal-verify-action",
       "path": "fixtures/fail/forged-binding.receipt.json",
-      "line": 14,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/fail/forged-binding.receipt.json",
       "line": 24,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/fail/forged-binding.receipt.json",
-      "line": 24,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/fail/forged-binding.receipt.json",
-      "line": 24,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/fail/forged-binding.receipt.json",
       "line": 26,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/fail/forged-binding.receipt.json",
       "line": 31,
-      "hash": "56cc0a114a813b6598fbfa3adc55f642ae1d44f104a3ab55f0ed097d54276821",
+      "hash": "2fe5ca27d0a7616d6679a6177f6d4001e5e97e6e79fe6d6478112b0aa6ab8999",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/fail/forged-binding.receipt.json",
       "line": 32,
-      "hash": "45a00c0d5de303b53f3a58120347c45362a92d648606bb5afc7c234a63a105b7",
+      "hash": "2be60a2d0177c30f13b78d94e4bd219683fb39871aa13a0cafc0db5e8722bbd2",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/fail/forged-binding.receipt.json",
       "line": 4,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd31",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad0",
       "classification": "SIGNED"
     },
     {
@@ -1426,13 +1881,6 @@
       "path": "fixtures/fail/forged-binding.receipt.json",
       "line": 48,
       "hash": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/fail/forged-binding.receipt.json",
-      "line": 8,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
       "classification": "SIGNED"
     },
     {
@@ -1445,29 +1893,29 @@
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/allow.receipt.json",
-      "line": 182,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "line": 173,
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/allow.receipt.json",
       "line": 21,
-      "hash": "50d98711427502f8386fbe19baa9bfadb6c30d4e702828c6e39f78e97b8aec07",
+      "hash": "76fff1942ae3a599eaa3b50b0c66df782c7eef29e95ca4c69d298dbf1dcd8a2c",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/allow.receipt.json",
       "line": 27,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/allow.receipt.json",
       "line": 43,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
@@ -1481,7 +1929,7 @@
       "repo": "seal-verify-action",
       "path": "fixtures/pass/allow.receipt.json",
       "line": 45,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -1509,28 +1957,14 @@
       "repo": "seal-verify-action",
       "path": "fixtures/pass/block.receipt.json",
       "line": 14,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/block.receipt.json",
       "line": 20,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/pass/block.receipt.json",
-      "line": 30,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/pass/block.receipt.json",
-      "line": 30,
-      "hash": "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783",
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
       "classification": "SIGNED"
     },
     {
@@ -1543,8 +1977,22 @@
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/block.receipt.json",
+      "line": 30,
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-verify-action",
+      "path": "fixtures/pass/block.receipt.json",
+      "line": 30,
+      "hash": "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-verify-action",
+      "path": "fixtures/pass/block.receipt.json",
       "line": 32,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -1571,29 +2019,29 @@
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/crosstool.receipt.json",
-      "line": 182,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "line": 173,
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/crosstool.receipt.json",
       "line": 21,
-      "hash": "50d98711427502f8386fbe19baa9bfadb6c30d4e702828c6e39f78e97b8aec07",
+      "hash": "76fff1942ae3a599eaa3b50b0c66df782c7eef29e95ca4c69d298dbf1dcd8a2c",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/crosstool.receipt.json",
       "line": 27,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/pass/crosstool.receipt.json",
       "line": 43,
-      "hash": "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984",
+      "hash": "a1fb55c62c23d6ceb4a4df45e9d33f0e051f8985aab3364ff033051104f42379",
       "classification": "SIGNED"
     },
     {
@@ -1607,7 +2055,7 @@
       "repo": "seal-verify-action",
       "path": "fixtures/pass/crosstool.receipt.json",
       "line": 45,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
@@ -1627,57 +2075,36 @@
     {
       "repo": "seal-verify-action",
       "path": "fixtures/reduced/unparseable.receipt.json",
-      "line": 14,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/reduced/unparseable.receipt.json",
       "line": 24,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/reduced/unparseable.receipt.json",
-      "line": 24,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
-      "path": "fixtures/reduced/unparseable.receipt.json",
-      "line": 24,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/reduced/unparseable.receipt.json",
       "line": 26,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/reduced/unparseable.receipt.json",
       "line": 31,
-      "hash": "56cc0a114a813b6598fbfa3adc55f642ae1d44f104a3ab55f0ed097d54276821",
+      "hash": "2fe5ca27d0a7616d6679a6177f6d4001e5e97e6e79fe6d6478112b0aa6ab8999",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/reduced/unparseable.receipt.json",
       "line": 32,
-      "hash": "45a00c0d5de303b53f3a58120347c45362a92d648606bb5afc7c234a63a105b7",
+      "hash": "2be60a2d0177c30f13b78d94e4bd219683fb39871aa13a0cafc0db5e8722bbd2",
       "classification": "SIGNED"
     },
     {
       "repo": "seal-verify-action",
       "path": "fixtures/reduced/unparseable.receipt.json",
       "line": 4,
-      "hash": "c88367514666fdf3ec74b6157deeae7ea2018bea9ce87d6e64120502df81fd30",
+      "hash": "905d74b5fd7fdd76eb8ae361e655aacc6b3a948760df2373b7ec568fd7b08ad5",
       "classification": "SIGNED"
     },
     {
@@ -1689,16 +2116,9 @@
     },
     {
       "repo": "seal-verify-action",
-      "path": "fixtures/reduced/unparseable.receipt.json",
-      "line": 8,
-      "hash": "ea94cd4681dda88a124f6974a3c766da185a6bd2982ef20edb83ab0635f101ae",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-verify-action",
       "path": "lib/pin.js",
       "line": 22,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1740,7 +2160,7 @@
       "repo": "seal-verify-action",
       "path": "vendor/seal-assurance-kit/kernel/kernel.js",
       "line": 30,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "STRING"
     },
     {
@@ -1775,7 +2195,7 @@
       "repo": "seal-verify-action",
       "path": "vendor/seal-assurance-kit/kernel/wasm/seal.wasm",
       "line": null,
-      "hash": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
+      "hash": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
       "classification": "BINARY"
     }
   ]
