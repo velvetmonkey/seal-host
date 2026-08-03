@@ -407,6 +407,26 @@ function leanDeclarationLine(lines, name) {
   );
 }
 
+function leanDefinitionCode(file, name) {
+  const lines = sourceCodeLines(file);
+  const start = lines.findIndex((line) =>
+    new RegExp(`^def\\s+${escaped(name)}(?:\\s|\\()`).test(line),
+  );
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (
+      /^(?:def|abbrev|opaque|structure|inductive|theorem|lemma|end)\b/.test(
+        lines[index],
+      )
+    ) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 function leanStructure(lines, name) {
   const start = lineNumber(
     lines,
@@ -723,8 +743,6 @@ function checkEffectMessage(ctx, row) {
 function checkKernelRawGuard(ctx, row, name) {
   const kernelCitation = "Seal/JsonUtil.lean";
   const kernelFile = path.join(KERNEL, kernelCitation);
-  const hostCitation = "Host/Canonical.lean";
-  const hostFile = path.join(ROOT, hostCitation);
   if (!fs.existsSync(kernelFile)) {
     reportMismatch(
       ctx,
@@ -743,14 +761,40 @@ function checkKernelRawGuard(ctx, row, name) {
       `${kernelCitation} has no such declaration`,
     );
   }
-  const host = fs.readFileSync(hostFile, "utf8");
+  checkJsonWireGuardReachability(ctx, row, `Seal.JsonUtil.${name}`);
+}
+
+function checkJsonWireGuardReachability(ctx, row, guard) {
+  const hostCitation = "Host/Canonical.lean";
+  const hostFile = path.join(ROOT, hostCitation);
+  const boundaryCitation = "Host/JsonWire.lean";
+  const boundaryFile = path.join(ROOT, boundaryCitation);
+  const host = stripSourceComments(fs.readFileSync(hostFile, "utf8"), ".lean");
+  const classifyLine = leanDefinitionCode(hostFile, "classifyLine");
+  const safe = leanDefinitionCode(boundaryFile, "safe");
   requireText(
     ctx,
     row,
     host,
-    new RegExp(`if\\s+!Seal\\.JsonUtil\\.${escaped(name)}\\s+trimmed\\s+then`),
-    `${name} is reached by Host.classifyLine`,
-    `${hostCitation} does not call it in the classify guard chain`,
+    /^import\s+Host\.JsonWire\s*$/m,
+    `${guard} is reached by Host.classifyLine`,
+    `${hostCitation} does not import ${boundaryCitation}`,
+  );
+  requireText(
+    ctx,
+    row,
+    classifyLine ?? "",
+    /Host\.JsonWire\.safe\s+trimmed/,
+    `${guard} is reached by Host.classifyLine`,
+    `${hostCitation} classifyLine does not call Host.JsonWire.safe`,
+  );
+  requireText(
+    ctx,
+    row,
+    safe ?? "",
+    new RegExp(`${escaped(guard)}\\s+text`),
+    `${guard} is reached by Host.classifyLine`,
+    `${boundaryCitation} safe does not call ${guard}`,
   );
 }
 
@@ -931,18 +975,7 @@ function checkUnicodeDuplicateKeys(ctx, row) {
       );
     }
   }
-  const canonical = fs.readFileSync(
-    path.join(ROOT, "Host", "Canonical.lean"),
-    "utf8",
-  );
-  requireText(
-    ctx,
-    row,
-    canonical,
-    /if\s+!Host\.UnicodeKeys\.wireKeysSafe\s+trimmed\s+then/,
-    "the Unicode key guard is reached by Host.classifyLine",
-    "Host/Canonical.lean does not call it in the classify guard chain",
-  );
+  checkJsonWireGuardReachability(ctx, row, "Host.UnicodeKeys.wireKeysSafe");
 
   const lakeRev = lakeRequirementRevision("UnicodeBasic");
   const manifestRev = manifestRevision("UnicodeBasic");
