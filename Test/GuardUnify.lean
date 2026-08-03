@@ -10,7 +10,7 @@ open Lean
 namespace Test.GuardUnify
 
 private def digits : String :=
-  "{\"route\":\"forward\",\"n\":9999999999999999999}"
+  "{\"route\":\"forward\",\"n\":1000000000000000000}"
 
 private def unicodeKeys : String :=
   "{\"route\":\"forward\",\"kéy\":\"safe\",\"kéy\":\"dangerous\"}"
@@ -29,6 +29,7 @@ private def depth : String :=
 -- F1 first: the significant-digit bound rejects a literal both parsers used
 -- to accept.
 #guard Seal.JsonUtil.wireDigitsSafe digits = false
+#guard Seal.JsonUtil.wireNumbersAgreementSafe digits = true
 #guard Host.StatementParsing.presentedJson? digits.toUTF8 = none
 #guard Host.ObjectB.verdictOfRaw digits.toUTF8 = none
 
