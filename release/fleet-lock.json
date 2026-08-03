@@ -24,7 +24,7 @@
     },
     "seal-live-demo": {
       "url": "https://github.com/velvetmonkey/seal-live-demo.git",
-      "commit": "e8ba1fd9ba9d7d9e2ed4c8ee88b5c5bc785283f6",
+      "commit": "a8a12e63e5034d3b99d8c7d404ac17b1d84f7f4c",
       "wasm": ["seal-gateway/wasm/seal.wasm", "pwa/wasm/seal.wasm"]
     }
   }
