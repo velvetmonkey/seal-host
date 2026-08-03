@@ -1253,23 +1253,31 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
 
 -- Object B: DECIDED + RECORDED only.
 
-/-- info: 'Host.ObjectB.canonical_verdict_decoder_matches_payload' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.canonical_verdict_decoder_matches_payload
+/-- info: 'Host.ObjectB.kernel_effect_boundary_matches_payload' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.kernel_effect_boundary_matches_payload
 
-/-- info: 'Host.ObjectB.check_refuses_canonical_verdict_mismatch' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectB.check_refuses_canonical_verdict_mismatch
+/-- info: 'Host.ObjectB.verdict_decoder_matches_payload' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.verdict_decoder_matches_payload
 
-/-- info: 'Host.ObjectB.context_delegation_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectB.check_refuses_kernel_effect_mismatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.check_refuses_kernel_effect_mismatch
+
+/-- info: 'Host.ObjectB.check_refuses_verdict_mismatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.check_refuses_verdict_mismatch
+
+/-- info: 'Host.ObjectB.context_delegation_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.context_delegation_predicate_accepted
 
-/-- info: 'Host.ObjectB.context_kernel_production_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectB.context_kernel_production_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.context_kernel_production_predicate_accepted
 
-/-- info: 'Host.ObjectB.context_recording_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectB.context_recording_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.context_recording_predicate_accepted
 
-/-- info: 'Host.ObjectB.core_claim_does_not_constrain_release_or_execution' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectB.core_claim_does_not_constrain_release_or_execution' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.core_claim_does_not_constrain_release_or_execution
 
-/-- info: 'Host.ObjectB.asserted_provenance_cannot_affect_verdict' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectB.asserted_provenance_cannot_affect_verdict' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.asserted_provenance_cannot_affect_verdict

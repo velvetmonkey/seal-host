@@ -1,6 +1,8 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
 import Host.Sha256
+import SealV2.EffectEnvelope
+import Lean.Data.Json
 
 /-!
 Object B's kernel model. `CorePayload` carries DECIDED + RECORDED data only;
@@ -9,11 +11,14 @@ the executable `Established` gate accepts the payload.
 
 `EstablishmentContext` is the explicit verifier-supplied assumption boundary:
 the decision-input kernel-production predicate, offline delegation trust, and
-durable recording. Request and approval references, the config digest, and raw
-kernel-output decoding are canonical functions below rather than caller-chosen
-fields. This module proves only that the deployment predicates accepted their
-payload arguments; it does not prove those external checks faithful, global
-sequence monotonicity, signatures, or a wire encoding.
+durable recording. The signed-effect fields are bound directly to the pinned
+kernel's `SealV2.Effect.deriveEffect`; this module defines no competing
+canonical-byte function. Request and approval references, the config digest,
+and decoding of the deployed host's raw route result are fixed functions below
+rather than caller-chosen fields. This module proves only that the deployment
+predicates accepted their payload arguments; it does not prove those external
+checks faithful, the Rust/Lean agreement witness, global sequence monotonicity,
+signatures, or a wire encoding.
 
 The gate imposes no independent meaning or validity check on `schema`,
 `verificationProfile`, `recordedAt`, `sequenceNumber`, `postStateHash`,
@@ -23,6 +28,8 @@ how those predicates use them.
 -/
 
 namespace Host.ObjectB
+
+open Lean
 
 abbrev Digest256 := Host.Sha256.Digest256
 
@@ -81,7 +88,8 @@ structure DecisionInputs where
   signedConfigBytes : ByteArray
   kernelArtifactSha256 : Digest256
   kernelProfile : KernelProfile
-  stepInputBytes : ByteArray
+  stepInput : SealV2.RawBytes
+  effectClaim : SealV2.Effect.EffectClaim
   logicalTime : Nat
   deriving BEq, DecidableEq
 
@@ -97,7 +105,8 @@ structure CorePayload where
   signedConfigBytes : ByteArray
   kernelArtifactSha256 : Digest256
   kernelProfile : KernelProfile
-  stepInputBytes : ByteArray
+  stepInput : SealV2.RawBytes
+  effectClaim : SealV2.Effect.EffectClaim
   rawKernelOutputBytes : ByteArray
   verdict : Verdict
   verificationProfile : VerificationProfile
@@ -116,7 +125,8 @@ def CorePayload.decisionInputs (p : CorePayload) : DecisionInputs :=
     signedConfigBytes := p.signedConfigBytes
     kernelArtifactSha256 := p.kernelArtifactSha256
     kernelProfile := p.kernelProfile
-    stepInputBytes := p.stepInputBytes
+    stepInput := p.stepInput
+    effectClaim := p.effectClaim
     logicalTime := p.logicalTime }
 
 structure EstablishmentContext where
@@ -133,15 +143,18 @@ def approvalStatementRef (bytes : ByteArray) : Digest256 :=
 def configDigest (bytes : ByteArray) : Digest256 :=
   Host.Sha256.sha256Digest bytes
 
-def verdictOfRaw (profile : KernelProfile) (raw : ByteArray) : Option Verdict :=
-  if profile = ⟨"kernel-profile-v1"⟩ then
-    if raw = "kernel-output:ALLOW".toUTF8 then some .allow
-    else if raw = "kernel-output:BLOCK".toUTF8 then some .block
-    else none
-  else none
+def verdictOfRaw (raw : ByteArray) : Option Verdict := do
+  let text ← String.fromUTF8? raw
+  let json ← (Json.parse text).toOption
+  let route ← (json.getObjVal? "route").toOption.bind (·.getStr?.toOption)
+  match route with
+  | "forward" => some .allow
+  | "block" => some .block
+  | _ => none
 
 def Established (ctx : EstablishmentContext) (p : CorePayload) : Bool :=
-  decide (verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict) &&
+  decide (SealV2.Effect.deriveEffect p.stepInput.trimAscii.toString = some p.effectClaim) &&
+  decide (verdictOfRaw p.rawKernelOutputBytes = some p.verdict) &&
   ctx.kernelProduced p.decisionInputs p.rawKernelOutputBytes p.verdict &&
   ctx.delegated p.deploymentId p.receiptKeyDelegationRef &&
   decide (p.requestStatementRef = requestStatementRef p.requestStatementBytes) &&
@@ -157,27 +170,52 @@ structure ObjectB (ctx : EstablishmentContext) where
 def check (ctx : EstablishmentContext) (p : CorePayload) : Option (ObjectB ctx) :=
   if h : Established ctx p = true then some { payload := p, established := h } else none
 
-theorem canonical_verdict_decoder_matches_payload
+theorem kernel_effect_boundary_matches_payload
     {ctx : EstablishmentContext} (r : ObjectB ctx) :
-    verdictOfRaw r.payload.kernelProfile r.payload.rawKernelOutputBytes
-      = some r.payload.verdict :=
+    SealV2.Effect.deriveEffect r.payload.stepInput.trimAscii.toString =
+      some r.payload.effectClaim :=
   by
     have h := r.established
     simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at h
-    exact h.1.1.1.1.1.1
+    exact h.1.1.1.1.1.1.1
 
-theorem check_refuses_canonical_verdict_mismatch
+theorem verdict_decoder_matches_payload
+    {ctx : EstablishmentContext} (r : ObjectB ctx) :
+    verdictOfRaw r.payload.rawKernelOutputBytes = some r.payload.verdict :=
+  by
+    have h := r.established
+    simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at h
+    exact h.1.1.1.1.1.1.2
+
+theorem check_refuses_kernel_effect_mismatch
+    (ctx : EstablishmentContext) (p : CorePayload) (got : SealV2.Effect.EffectClaim)
+    (hgot : SealV2.Effect.deriveEffect p.stepInput.trimAscii.toString = some got)
+    (hne : got ≠ p.effectClaim) :
+    check ctx p = none := by
+  unfold check
+  split
+  next hvalid =>
+    have heffect :
+        SealV2.Effect.deriveEffect p.stepInput.trimAscii.toString =
+          some p.effectClaim := by
+      simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at hvalid
+      exact hvalid.1.1.1.1.1.1.1
+    have hsome : some got = some p.effectClaim := hgot.symm.trans heffect
+    exact (hne (Option.some.inj hsome)).elim
+  next => rfl
+
+theorem check_refuses_verdict_mismatch
     (ctx : EstablishmentContext) (p : CorePayload) (got : Verdict)
-    (hgot : verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some got)
+    (hgot : verdictOfRaw p.rawKernelOutputBytes = some got)
     (hne : got ≠ p.verdict) :
     check ctx p = none := by
   unfold check
   split
   next hvalid =>
     have hraw :
-        verdictOfRaw p.kernelProfile p.rawKernelOutputBytes = some p.verdict := by
+        verdictOfRaw p.rawKernelOutputBytes = some p.verdict := by
       simp only [Established, Bool.and_eq_true, decide_eq_true_eq] at hvalid
-      exact hvalid.1.1.1.1.1.1
+      exact hvalid.1.1.1.1.1.1.2
     have hsome : some got = some p.verdict :=
       hgot.symm.trans hraw
     exact (hne (Option.some.inj hsome)).elim
@@ -260,9 +298,15 @@ namespace Witness
 def requestBytes : ByteArray := "signed-object-a".toUTF8
 def approvalBytes : List ByteArray := ["signed-approval".toUTF8]
 def configBytes : ByteArray := "signed-config".toUTF8
-def stepBytes : ByteArray := "step-input".toUTF8
-def rawAllow : ByteArray := "kernel-output:ALLOW".toUTF8
-def rawBlock : ByteArray := "kernel-output:BLOCK".toUTF8
+def stepInput : SealV2.RawBytes :=
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"db.execute\",\"action\":\"call\",\"arguments\":{\"q\":\"ok\"}}}"
+def effectClaim : SealV2.Effect.EffectClaim :=
+  { resource := "db.execute"
+    action := "call"
+    args := "{\"q\":\"ok\"}"
+    metadata := .absent }
+def rawAllow : ByteArray := "{\"route\":\"forward\"}".toUTF8
+def rawBlock : ByteArray := "{\"route\":\"block\"}".toUTF8
 def profile : KernelProfile := ⟨"kernel-profile-v1"⟩
 def deployment : DeploymentId := ⟨"deployment-7".toUTF8⟩
 def delegation : ReceiptKeyDelegationRef :=
@@ -276,7 +320,8 @@ def inputs : DecisionInputs :=
     signedConfigBytes := configBytes
     kernelArtifactSha256 := artifact
     kernelProfile := profile
-    stepInputBytes := stepBytes
+    stepInput := stepInput
+    effectClaim := effectClaim
     logicalTime := 41 }
 
 def context : EstablishmentContext :=
@@ -298,7 +343,8 @@ def payload : CorePayload :=
     signedConfigBytes := configBytes
     kernelArtifactSha256 := artifact
     kernelProfile := profile
-    stepInputBytes := stepBytes
+    stepInput := stepInput
+    effectClaim := effectClaim
     rawKernelOutputBytes := rawAllow
     verdict := .allow
     verificationProfile := .singleStepClosedV1
@@ -310,15 +356,14 @@ def payload : CorePayload :=
     postStateHash := .stateless
     receiptNonce := ⟨"local-handle".toUTF8⟩ }
 
-def receipt : ObjectB context :=
-  { payload := payload
-    established := by
-      simp [Established, payload, context, verdictOfRaw, inputs, profile, rawAllow,
-        CorePayload.decisionInputs] }
+def receipt? : Option (ObjectB context) := check context payload
 
 def wrongVerdict : CorePayload := { payload with verdict := .block }
 def wrongRawBytes : CorePayload := { payload with rawKernelOutputBytes := rawBlock }
-def wrongStepInputs : CorePayload := { payload with stepInputBytes := "other-step".toUTF8 }
+def wrongCanonicalInput : CorePayload :=
+  { payload with
+    stepInput :=
+      "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"db.execute\",\"action\":\"call\",\"arguments\":{\"q\":\"ox\"}}}" }
 def wrongRequestStatementRef : CorePayload :=
   { payload with
     requestStatementRef := requestStatementRef "other-request".toUTF8 }
@@ -343,16 +388,18 @@ def forged : CorePayload :=
   { payload with rawKernelOutputBytes := rawBlock, verdict := .allow }
 
 #guard (check context payload).isSome
-#guard verdictOfRaw profile payload.rawKernelOutputBytes == some payload.verdict
+#guard SealV2.Effect.deriveEffect payload.stepInput.trimAscii.toString ==
+  some payload.effectClaim
+#guard verdictOfRaw payload.rawKernelOutputBytes == some payload.verdict
 #guard (check context wrongVerdict).isNone
 #guard (check context wrongRawBytes).isNone
-#guard (check context wrongStepInputs).isNone
+#guard (check context wrongCanonicalInput).isNone
 #guard (check context wrongRequestStatementRef).isNone
 #guard (check context wrongApprovalStatementRefs).isNone
 #guard (check context wrongConfigDigest).isNone
 #guard (check unrecordedContext payload).isNone
 #guard (check undelegatedContext payload).isNone
-#guard verdictOfRaw profile forged.rawKernelOutputBytes == some .block
+#guard verdictOfRaw forged.rawKernelOutputBytes == some .block
 #guard forged.verdict == .allow
 #guard (check liarContext forged).isNone
 
