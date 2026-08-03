@@ -1283,43 +1283,58 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
 /-- info: 'Host.ObjectB.asserted_provenance_cannot_affect_verdict' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectB.asserted_provenance_cannot_affect_verdict
 
--- Object A and Approval Statement: independently gated signed statements.
+-- Object A and Approval Statement: guarded presented bytes, independently gated.
 
-/-- info: 'Host.ObjectA.canonical_statement_bytes_match_fields' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectA.canonical_statement_bytes_match_fields
+/-- info: 'Host.ObjectA.presented_statement_bytes_match_fields' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.presented_statement_bytes_match_fields
 
-/-- info: 'Host.ObjectA.canonical_judged_request_digest_matches_bytes' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ObjectA.canonical_judged_request_digest_matches_bytes
+/-- info: 'Host.ObjectA.judged_request_digest_matches_bytes' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.judged_request_digest_matches_bytes
 
-/-- info: 'Host.ObjectA.context_time_is_inside_validity_window' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectA.kernel_effect_boundary_accepts_judged_request' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.kernel_effect_boundary_accepts_judged_request
+
+/-- info: 'Host.ObjectA.context_time_is_inside_validity_window' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectA.context_time_is_inside_validity_window
 
-/-- info: 'Host.ObjectA.context_request_signer_delegation_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectA.context_request_signer_delegation_predicate_accepted' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectA.context_request_signer_delegation_predicate_accepted
 
-/-- info: 'Host.ObjectA.context_adapter_profile_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectA.context_adapter_profile_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectA.context_adapter_profile_predicate_accepted
 
-/-- info: 'Host.ObjectA.context_signature_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectA.context_signature_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectA.context_signature_predicate_accepted
 
-/-- info: 'Host.ObjectA.check_refuses_statement_field_mismatch' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ObjectA.check_refuses_statement_field_mismatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ObjectA.check_refuses_statement_field_mismatch
 
-/-- info: 'Host.ApprovalStatement.canonical_statement_bytes_match_fields' depends on axioms: [propext, Quot.sound] -/
-#guard_msgs in #print axioms Host.ApprovalStatement.canonical_statement_bytes_match_fields
+/-- info: 'Host.ApprovalStatement.presented_statement_bytes_match_fields' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.presented_statement_bytes_match_fields
 
-/-- info: 'Host.ApprovalStatement.context_time_is_inside_validity_window' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ApprovalStatement.context_time_is_inside_validity_window' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
 #guard_msgs in #print axioms Host.ApprovalStatement.context_time_is_inside_validity_window
 
-/-- info: 'Host.ApprovalStatement.context_approver_delegation_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ApprovalStatement.context_approver_delegation_predicate_accepted' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
 #guard_msgs in #print axioms Host.ApprovalStatement.context_approver_delegation_predicate_accepted
 
-/-- info: 'Host.ApprovalStatement.context_adapter_profile_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ApprovalStatement.context_adapter_profile_predicate_accepted' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
 #guard_msgs in #print axioms Host.ApprovalStatement.context_adapter_profile_predicate_accepted
 
-/-- info: 'Host.ApprovalStatement.context_signature_predicate_accepted' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ApprovalStatement.context_signature_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.ApprovalStatement.context_signature_predicate_accepted
 
-/-- info: 'Host.ApprovalStatement.check_refuses_statement_field_mismatch' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Host.ApprovalStatement.check_refuses_statement_field_mismatch' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
 #guard_msgs in #print axioms Host.ApprovalStatement.check_refuses_statement_field_mismatch

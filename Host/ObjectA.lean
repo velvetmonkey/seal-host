@@ -1,30 +1,31 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
 import Host.ObjectB
+import Seal.JsonUtil
+import SealV2.EffectEnvelope
+import Lean.Data.Json
 
 /-!
 # Object A and Approval Statement
 
-This module gives the signed request (Object A) and each signed approval
-statement an executable, independently checkable gate.  The canonical model
-encodings and SHA-256 functions are top-level definitions; callers cannot
-replace them.  Deployment-supplied context is limited to the current time and
-predicates for signature verification, role delegation, and accepted adapter
-profiles.  The theorem names say only that those predicates accepted.
+This module gives the authenticated request (Object A) and each approval
+statement an executable, independently checkable gate. Presented statement
+bytes are the sole signed byte source: a fixed parser binds them to every typed
+payload field, and the signature predicate receives those exact presented
+bytes. This module deliberately defines no statement serializer and no
+canonical-byte helper.
 
-Representative exact outputs of the seven formerly unobserved canonical
-helpers, including the Object A SHA-256 wrapper, are now pinned below by
-independent build-gated known-answer controls.  Together with the existing
-negative witnesses for the other five helpers, these controls detect the
-specified constant collapses; they do not prove correctness for every input.
+Both statement parsers cross the same raw-wire boundary before
+`Lean.Json.parse`: UTF-8, `Seal.JsonUtil.wireNumbersSafe`, and
+`Seal.JsonUtil.wireKeysSafe`. Object A additionally sends the exact judged
+request through the pinned kernel's `SealV2.Effect.deriveEffect`; it defines no
+competing request canonicaliser.
 
-This is not the three-artifact byte-lock.  In particular, this module does not
+This is not the three-artifact byte-lock. In particular, this module does not
 compare an approval's `requestStatementRef` with an Object A, nor either
-statement with Object B.  It also does not implement DSSE JSON parsing or prove
-the deployment predicates faithful.
+statement with Object B, and it does not prove deployment predicates faithful.
 
-There are no fields wholly unread by the gates: every payload field is bound
-into canonical `statementBytes`.  The semantic limits are explicit.  For
+Every payload field is bound by parsing the presented statement bytes. For
 Object A, `schema`, `requestNonce`, and `sessionId` receive no independent
 meaning check; `deploymentId` and `configRef` are arguments to both the
 request-delegation and adapter predicates; `keyEpoch` is only an argument to
@@ -32,46 +33,49 @@ the request-delegation predicate; `signer` is an argument to both delegation
 and signature verification; `adapterProfile` is only an argument to the
 adapter predicate; `signatureBytes` is only an argument to the signature
 predicate; `issuedAt` and `expiresAt` are checked only against context-supplied
-`now`; and `judgedRequestBytes` is digest-bound but not parsed.
-For Approval, `schema`, `approvalNonce`, `requestStatementRef`,
-`targetCommitment`, `constraints`, and `sessionId` receive no independent
-meaning check; `authorityRef` is only an argument to the approver-delegation
-predicate; `deploymentId` and `configRef` are arguments to both delegation and
-the adapter predicate; `approverIdentity` is an argument to both delegation
-and signature verification; `adapterProfile` is only an argument to the
-adapter predicate; `signatureBytes` is only an argument to the signature
-predicate; and
-`approvedAt` / `approvalExpiresAt` are checked only against context-supplied
-`now`.  Thus nonce uniqueness, key-epoch derivation, constraint meaning,
-target/request correspondence, cross-artifact context equality, and human
-intent are outside these gates.
+`now`; and `judgedRequestBytes` is digest-bound and must be accepted by the C0
+effect boundary. For Approval, `schema`, `approvalNonce`,
+`requestStatementRef`, `targetCommitment`, `constraints`, and `sessionId`
+receive no independent meaning check; `authorityRef` is only an argument to
+the approver-delegation predicate; `deploymentId` and `configRef` are arguments
+to both delegation and the adapter predicate; `approverIdentity` is an
+argument to both delegation and signature verification; `adapterProfile` is
+only an argument to the adapter predicate; `signatureBytes` is only an
+argument to the signature predicate; and `approvedAt` / `approvalExpiresAt`
+are checked only against context-supplied `now`. Thus nonce uniqueness,
+key-epoch derivation, constraint meaning, target/request correspondence,
+cross-artifact context equality, and human intent are outside these gates.
 -/
 
 namespace Host
 
-namespace StatementEncoding
+open Lean
 
-/-- Eight-byte big-endian encoding.  Values at least `2^64` are encoded modulo
-    `2^64`; the executable gates below therefore separately require all times
-    to be below `2^64`. -/
-def u64be (n : Nat) : ByteArray :=
-  ByteArray.mk #[
-    UInt8.ofNat (n >>> 56), UInt8.ofNat (n >>> 48), UInt8.ofNat (n >>> 40),
-    UInt8.ofNat (n >>> 32), UInt8.ofNat (n >>> 24), UInt8.ofNat (n >>> 16),
-    UInt8.ofNat (n >>> 8), UInt8.ofNat n]
+namespace StatementParsing
 
-/-- Length-frame arbitrary bytes so adjacent variable-width fields cannot be
-    confused in the model encoding. -/
-def frame (bytes : ByteArray) : ByteArray :=
-  u64be bytes.size ++ bytes
+/-- The only `Lean.Json.parse` entry point for presented statement bytes. -/
+def presentedJson? (raw : ByteArray) : Option Json := do
+  let text ← String.fromUTF8? raw
+  guard (Seal.JsonUtil.wireNumbersSafe text)
+  guard (Seal.JsonUtil.wireKeysSafe text)
+  (Json.parse text).toOption
 
-def frameString (value : String) : ByteArray :=
-  frame value.toUTF8
+def exactKeys? (json : Json) (keys : List String) (context : String) : Option Unit :=
+  (Seal.JsonUtil.expectObjKeys json keys context).toOption
 
-def digestBytes (digest : Host.Sha256.Digest256) : ByteArray :=
-  SealCore.Sha256.Digest256.toHex digest |>.toUTF8
+def string? (json : Json) (key : String) : Option String :=
+  (json.getObjVal? key).toOption.bind (·.getStr?.toOption)
 
-end StatementEncoding
+def nat? (json : Json) (key : String) : Option Nat :=
+  (json.getObjVal? key).toOption.bind (·.getNat?.toOption)
+
+def bytes? (json : Json) (key : String) : Option ByteArray :=
+  (string? json key).bind SealV2.hexDecode?
+
+def digest? (json : Json) (key : String) : Option Host.Sha256.Digest256 :=
+  (string? json key).bind SealCore.Sha256.Digest256.parseHex?
+
+end StatementParsing
 
 namespace ObjectA
 
@@ -118,66 +122,77 @@ structure Candidate where
   payload : Payload
   signer : RequestSignerRef
   signatureBytes : ByteArray
+  /-- Exact presented payload bytes covered by `signatureVerified`. -/
   statementBytes : ByteArray
   deriving BEq, DecidableEq
 
 structure VerificationContext where
   now : Nat
   requestSignerDelegated :
-    DeploymentId -> Digest256 -> Digest256 -> RequestSignerRef -> Bool
-  adapterProfileAccepted : DeploymentId -> Digest256 -> AdapterProfile -> Bool
-  signatureVerified : RequestSignerRef -> ByteArray -> ByteArray -> Bool
+    DeploymentId → Digest256 → Digest256 → RequestSignerRef → Bool
+  adapterProfileAccepted : DeploymentId → Digest256 → AdapterProfile → Bool
+  signatureVerified : RequestSignerRef → ByteArray → ByteArray → Bool
 
-def schemaBytes : Schema -> ByteArray
-  | .v1 => ByteArray.mk #[0x01]
+private def schema? (json : Json) : Option Schema := do
+  let value ← StatementParsing.string? json "schema"
+  guard (value = "v1")
+  pure .v1
 
-def adapterProfileBytes (profile : AdapterProfile) : ByteArray :=
-  StatementEncoding.frameString profile.identifier ++
-  StatementEncoding.frameString profile.version ++
-  StatementEncoding.digestBytes profile.artifactSha256
+private def adapterProfile? (json : Json) : Option AdapterProfile := do
+  let _ ← StatementParsing.exactKeys? json
+    ["identifier", "version", "artifact_sha256"] "Object A adapter_profile"
+  pure {
+    identifier := ← StatementParsing.string? json "identifier"
+    version := ← StatementParsing.string? json "version"
+    artifactSha256 := ← StatementParsing.digest? json "artifact_sha256"
+  }
 
-/-- Canonical signed preimage for Object A in this model. -/
-def signingBytes (payload : Payload) : ByteArray :=
-  "seal.authenticated-request/v1\x00".toUTF8 ++
-  schemaBytes payload.schema ++
-  StatementEncoding.frame payload.requestNonce.bytes ++
-  StatementEncoding.frame payload.deploymentId.bytes ++
-  StatementEncoding.frame payload.sessionId.bytes ++
-  StatementEncoding.digestBytes payload.configRef ++
-  StatementEncoding.digestBytes payload.keyEpoch ++
-  StatementEncoding.frame (adapterProfileBytes payload.adapterProfile) ++
-  StatementEncoding.u64be payload.issuedAt ++
-  StatementEncoding.u64be payload.expiresAt ++
-  StatementEncoding.frame payload.judgedRequestBytes ++
-  StatementEncoding.digestBytes payload.judgedRequestSha256
-
-/-- Canonical complete statement bytes: signed preimage, signer reference, and
-    signature, each length-framed.  This is a model encoding, not a DSSE JSON
-    serializer. -/
-def statementBytes (payload : Payload) (signer : RequestSignerRef)
-    (signatureBytes : ByteArray) : ByteArray :=
-  StatementEncoding.frame (signingBytes payload) ++
-  StatementEncoding.frame signer.bytes ++
-  StatementEncoding.frame signatureBytes
+/-- Parse exact presented Object A payload bytes into the fields the gate uses.
+    There is intentionally no inverse serializer in this module. -/
+def parsePayload (raw : ByteArray) : Option Payload := do
+  let json ← StatementParsing.presentedJson? raw
+  let _ ← StatementParsing.exactKeys? json
+    ["schema", "request_nonce", "deployment_id", "session_id", "config_ref",
+      "key_epoch", "adapter_profile", "issued_at", "expires_at",
+      "judged_request_bytes", "judged_request_sha256"] "Object A payload"
+  let adapterJson ← (json.getObjVal? "adapter_profile").toOption
+  pure {
+    schema := ← schema? json
+    requestNonce := ⟨← StatementParsing.bytes? json "request_nonce"⟩
+    deploymentId := ⟨← StatementParsing.bytes? json "deployment_id"⟩
+    sessionId := ⟨← StatementParsing.bytes? json "session_id"⟩
+    configRef := ← StatementParsing.digest? json "config_ref"
+    keyEpoch := ← StatementParsing.digest? json "key_epoch"
+    adapterProfile := ← adapterProfile? adapterJson
+    issuedAt := ← StatementParsing.nat? json "issued_at"
+    expiresAt := ← StatementParsing.nat? json "expires_at"
+    judgedRequestBytes := ← StatementParsing.bytes? json "judged_request_bytes"
+    judgedRequestSha256 := ← StatementParsing.digest? json "judged_request_sha256"
+  }
 
 def judgedRequestDigest (bytes : ByteArray) : Digest256 :=
   Host.Sha256.sha256Digest bytes
 
+/-- The imported C0 parser is the only request-effect interpretation used by
+    Object A. -/
+def judgedEffect (bytes : ByteArray) : Option SealV2.Effect.EffectClaim := do
+  let text ← String.fromUTF8? bytes
+  SealV2.Effect.deriveEffect text.trimAscii.toString
+
 def validAt (now issuedAt expiresAt : Nat) : Bool :=
-  expiresAt < 2 ^ 64 && issuedAt <= now && now <= expiresAt
+  expiresAt < 2 ^ 64 && issuedAt ≤ now && now ≤ expiresAt
 
 def Accepted (ctx : VerificationContext) (candidate : Candidate) : Bool :=
-  decide (candidate.statementBytes =
-    statementBytes candidate.payload candidate.signer candidate.signatureBytes) &&
+  decide (parsePayload candidate.statementBytes = some candidate.payload) &&
   decide (candidate.payload.judgedRequestSha256 =
     judgedRequestDigest candidate.payload.judgedRequestBytes) &&
+  (judgedEffect candidate.payload.judgedRequestBytes).isSome &&
   validAt ctx.now candidate.payload.issuedAt candidate.payload.expiresAt &&
   ctx.requestSignerDelegated candidate.payload.deploymentId candidate.payload.configRef
     candidate.payload.keyEpoch candidate.signer &&
   ctx.adapterProfileAccepted candidate.payload.deploymentId candidate.payload.configRef
     candidate.payload.adapterProfile &&
-  ctx.signatureVerified candidate.signer (signingBytes candidate.payload)
-    candidate.signatureBytes
+  ctx.signatureVerified candidate.signer candidate.statementBytes candidate.signatureBytes
 
 structure ObjectA (ctx : VerificationContext) where
   candidate : Candidate
@@ -188,18 +203,24 @@ def check (ctx : VerificationContext) (candidate : Candidate) : Option (ObjectA 
     some { candidate := candidate, accepted := h }
   else none
 
-theorem canonical_statement_bytes_match_fields
+theorem presented_statement_bytes_match_fields
     {ctx : VerificationContext} (request : ObjectA ctx) :
-    request.candidate.statementBytes = statementBytes request.candidate.payload
-      request.candidate.signer request.candidate.signatureBytes := by
+    parsePayload request.candidate.statementBytes = some request.candidate.payload := by
   have h := request.accepted
   simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at h
-  exact h.1.1.1.1.1
+  exact h.1.1.1.1.1.1
 
-theorem canonical_judged_request_digest_matches_bytes
+theorem judged_request_digest_matches_bytes
     {ctx : VerificationContext} (request : ObjectA ctx) :
     request.candidate.payload.judgedRequestSha256 =
       judgedRequestDigest request.candidate.payload.judgedRequestBytes := by
+  have h := request.accepted
+  simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact h.1.1.1.1.1.2
+
+theorem kernel_effect_boundary_accepts_judged_request
+    {ctx : VerificationContext} (request : ObjectA ctx) :
+    (judgedEffect request.candidate.payload.judgedRequestBytes).isSome = true := by
   have h := request.accepted
   simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.1.1.1.1.2
@@ -231,22 +252,21 @@ theorem context_adapter_profile_predicate_accepted
 
 theorem context_signature_predicate_accepted
     {ctx : VerificationContext} (request : ObjectA ctx) :
-    ctx.signatureVerified request.candidate.signer
-      (signingBytes request.candidate.payload) request.candidate.signatureBytes = true := by
+    ctx.signatureVerified request.candidate.signer request.candidate.statementBytes
+      request.candidate.signatureBytes = true := by
   have h := request.accepted
   simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.2
 
 theorem check_refuses_statement_field_mismatch
     (ctx : VerificationContext) (candidate : Candidate)
-    (hne : candidate.statementBytes ≠
-      statementBytes candidate.payload candidate.signer candidate.signatureBytes) :
+    (hne : parsePayload candidate.statementBytes ≠ some candidate.payload) :
     check ctx candidate = none := by
   unfold check
   split
   next haccepted =>
     simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at haccepted
-    exact absurd haccepted.1.1.1.1.1 hne
+    exact absurd haccepted.1.1.1.1.1.1 hne
   next => rfl
 
 end ObjectA
@@ -293,53 +313,69 @@ structure Payload where
 structure Candidate where
   payload : Payload
   signatureBytes : ByteArray
+  /-- Exact presented payload bytes covered by `signatureVerified`. -/
   statementBytes : ByteArray
   deriving BEq, DecidableEq
 
 structure VerificationContext where
   now : Nat
   approverDelegated :
-    AuthorityRef -> DeploymentId -> Digest256 -> ApproverIdentity -> Bool
-  adapterProfileAccepted : DeploymentId -> Digest256 -> AdapterProfile -> Bool
-  signatureVerified : ApproverIdentity -> ByteArray -> ByteArray -> Bool
+    AuthorityRef → DeploymentId → Digest256 → ApproverIdentity → Bool
+  adapterProfileAccepted : DeploymentId → Digest256 → AdapterProfile → Bool
+  signatureVerified : ApproverIdentity → ByteArray → ByteArray → Bool
 
-def schemaBytes : Schema -> ByteArray
-  | .v1 => ByteArray.mk #[0x01]
+private def schema? (json : Json) : Option Schema := do
+  let value ← StatementParsing.string? json "schema"
+  guard (value = "v1")
+  pure .v1
 
-/-- Canonical signed preimage for an Approval Statement in this model. -/
-def signingBytes (payload : Payload) : ByteArray :=
-  "seal.approval-statement/v1\x00".toUTF8 ++
-  schemaBytes payload.schema ++
-  StatementEncoding.frame payload.approverIdentity.bytes ++
-  StatementEncoding.frame payload.approvalNonce.bytes ++
-  StatementEncoding.digestBytes payload.requestStatementRef ++
-  StatementEncoding.digestBytes payload.targetCommitment ++
-  StatementEncoding.frame payload.constraints ++
-  StatementEncoding.u64be payload.approvedAt ++
-  StatementEncoding.u64be payload.approvalExpiresAt ++
-  StatementEncoding.digestBytes payload.authorityRef.digest ++
-  StatementEncoding.frame payload.deploymentId.bytes ++
-  StatementEncoding.frame payload.sessionId.bytes ++
-  StatementEncoding.digestBytes payload.configRef ++
-  StatementEncoding.frame (ObjectA.adapterProfileBytes payload.adapterProfile)
+private def adapterProfile? (json : Json) : Option AdapterProfile := do
+  let _ ← StatementParsing.exactKeys? json
+    ["identifier", "version", "artifact_sha256"] "approval adapter_profile"
+  pure {
+    identifier := ← StatementParsing.string? json "identifier"
+    version := ← StatementParsing.string? json "version"
+    artifactSha256 := ← StatementParsing.digest? json "artifact_sha256"
+  }
 
-def statementBytes (payload : Payload) (signatureBytes : ByteArray) : ByteArray :=
-  StatementEncoding.frame (signingBytes payload) ++
-  StatementEncoding.frame signatureBytes
+/-- Parse exact presented approval payload bytes into the fields the gate uses.
+    There is intentionally no inverse serializer in this module. -/
+def parsePayload (raw : ByteArray) : Option Payload := do
+  let json ← StatementParsing.presentedJson? raw
+  let _ ← StatementParsing.exactKeys? json
+    ["schema", "approver_identity", "approval_nonce", "request_statement_ref",
+      "target_commitment", "constraints", "approved_at", "approval_expires_at",
+      "authority_ref", "deployment_id", "session_id", "config_ref",
+      "adapter_profile"] "approval payload"
+  let adapterJson ← (json.getObjVal? "adapter_profile").toOption
+  pure {
+    schema := ← schema? json
+    approverIdentity := ⟨← StatementParsing.bytes? json "approver_identity"⟩
+    approvalNonce := ⟨← StatementParsing.bytes? json "approval_nonce"⟩
+    requestStatementRef := ← StatementParsing.digest? json "request_statement_ref"
+    targetCommitment := ← StatementParsing.digest? json "target_commitment"
+    constraints := ← StatementParsing.bytes? json "constraints"
+    approvedAt := ← StatementParsing.nat? json "approved_at"
+    approvalExpiresAt := ← StatementParsing.nat? json "approval_expires_at"
+    authorityRef := ⟨← StatementParsing.digest? json "authority_ref"⟩
+    deploymentId := ⟨← StatementParsing.bytes? json "deployment_id"⟩
+    sessionId := ⟨← StatementParsing.bytes? json "session_id"⟩
+    configRef := ← StatementParsing.digest? json "config_ref"
+    adapterProfile := ← adapterProfile? adapterJson
+  }
 
 def validAt (now approvedAt expiresAt : Nat) : Bool :=
-  expiresAt < 2 ^ 64 && approvedAt <= now && now <= expiresAt
+  expiresAt < 2 ^ 64 && approvedAt ≤ now && now ≤ expiresAt
 
 def Accepted (ctx : VerificationContext) (candidate : Candidate) : Bool :=
-  decide (candidate.statementBytes =
-    statementBytes candidate.payload candidate.signatureBytes) &&
+  decide (parsePayload candidate.statementBytes = some candidate.payload) &&
   validAt ctx.now candidate.payload.approvedAt candidate.payload.approvalExpiresAt &&
   ctx.approverDelegated candidate.payload.authorityRef candidate.payload.deploymentId
     candidate.payload.configRef candidate.payload.approverIdentity &&
   ctx.adapterProfileAccepted candidate.payload.deploymentId candidate.payload.configRef
     candidate.payload.adapterProfile &&
-  ctx.signatureVerified candidate.payload.approverIdentity
-    (signingBytes candidate.payload) candidate.signatureBytes
+  ctx.signatureVerified candidate.payload.approverIdentity candidate.statementBytes
+    candidate.signatureBytes
 
 structure ApprovalStatement (ctx : VerificationContext) where
   candidate : Candidate
@@ -351,10 +387,9 @@ def check (ctx : VerificationContext)
     some { candidate := candidate, accepted := h }
   else none
 
-theorem canonical_statement_bytes_match_fields
+theorem presented_statement_bytes_match_fields
     {ctx : VerificationContext} (approval : ApprovalStatement ctx) :
-    approval.candidate.statementBytes =
-      statementBytes approval.candidate.payload approval.candidate.signatureBytes := by
+    parsePayload approval.candidate.statementBytes = some approval.candidate.payload := by
   have h := approval.accepted
   simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.1.1.1.1
@@ -387,15 +422,14 @@ theorem context_adapter_profile_predicate_accepted
 theorem context_signature_predicate_accepted
     {ctx : VerificationContext} (approval : ApprovalStatement ctx) :
     ctx.signatureVerified approval.candidate.payload.approverIdentity
-      (signingBytes approval.candidate.payload) approval.candidate.signatureBytes = true := by
+      approval.candidate.statementBytes approval.candidate.signatureBytes = true := by
   have h := approval.accepted
   simp only [Accepted, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.2
 
 theorem check_refuses_statement_field_mismatch
     (ctx : VerificationContext) (candidate : Candidate)
-    (hne : candidate.statementBytes ≠
-      statementBytes candidate.payload candidate.signatureBytes) :
+    (hne : parsePayload candidate.statementBytes ≠ some candidate.payload) :
     check ctx candidate = none := by
   unfold check
   split
@@ -408,8 +442,8 @@ end ApprovalStatement
 
 namespace StatementWitness
 
-def deployment : ObjectB.DeploymentId := { bytes := "deployment-7".toUTF8 }
-def session : ObjectA.SessionId := { bytes := "session-4".toUTF8 }
+def deployment : ObjectB.DeploymentId := ⟨"deployment-7".toUTF8⟩
+def session : ObjectA.SessionId := ⟨"session-4".toUTF8⟩
 def configRef : Host.Sha256.Digest256 :=
   Host.Sha256.sha256Digest "signed-config".toUTF8
 def keyEpoch : Host.Sha256.Digest256 :=
@@ -418,13 +452,19 @@ def adapterDigest : Host.Sha256.Digest256 :=
   Host.Sha256.sha256Digest "adapter-artifact".toUTF8
 def adapter : ObjectA.AdapterProfile :=
   { identifier := "stdio-gated-sink", version := "1.0.0", artifactSha256 := adapterDigest }
-def requestSigner : ObjectA.RequestSignerRef := { bytes := "request-key-3".toUTF8 }
+def requestSigner : ObjectA.RequestSignerRef := ⟨"request-key-3".toUTF8⟩
 def requestSignature : ByteArray := "request-signature".toUTF8
-def requestBytes : ByteArray := "tools.call:database.drop".toUTF8
+def requestBytes : ByteArray :=
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"database.drop\",\"action\":\"call\",\"arguments\":{\"table\":\"main\"}}}".toUTF8
+
+def requestStatementText : String :=
+  "{\"schema\":\"v1\",\"request_nonce\":\"726571756573742d6e6f6e63652d3131\",\"deployment_id\":\"6465706c6f796d656e742d37\",\"session_id\":\"73657373696f6e2d34\",\"config_ref\":\"8db65cb58c559fce3abf6b1f376008eaab0408ea1e2ed48a5e840e87e1a1d635\",\"key_epoch\":\"926215a4a5de0bdecd59c7e0e76a336861d648d3ede6eec36563a3c369c51c64\",\"adapter_profile\":{\"identifier\":\"stdio-gated-sink\",\"version\":\"1.0.0\",\"artifact_sha256\":\"2de1f3a1752dc35308e48cde8ee2e146620d022fa0974ffbd4acf078bcb665f0\"},\"issued_at\":100,\"expires_at\":200,\"judged_request_bytes\":\"7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a22746f6f6c732f63616c6c222c22706172616d73223a7b226e616d65223a2264617461626173652e64726f70222c22616374696f6e223a2263616c6c222c22617267756d656e7473223a7b227461626c65223a226d61696e227d7d7d\",\"judged_request_sha256\":\"12ff30aa21c01589b337813c8fd9c39b0e38cb5b6b067920437c9d39b008ca30\"}"
+
+def requestStatementBytes : ByteArray := requestStatementText.toUTF8
 
 def requestPayload : ObjectA.Payload :=
   { schema := .v1
-    requestNonce := { bytes := "request-nonce-11".toUTF8 }
+    requestNonce := ⟨"request-nonce-11".toUTF8⟩
     deploymentId := deployment
     sessionId := session
     configRef := configRef
@@ -439,7 +479,7 @@ def requestCandidate : ObjectA.Candidate :=
   { payload := requestPayload
     signer := requestSigner
     signatureBytes := requestSignature
-    statementBytes := ObjectA.statementBytes requestPayload requestSigner requestSignature }
+    statementBytes := requestStatementBytes }
 
 def requestContext : ObjectA.VerificationContext :=
   { now := 150
@@ -449,49 +489,40 @@ def requestContext : ObjectA.VerificationContext :=
     adapterProfileAccepted := fun dep cfg profile =>
       decide (dep = deployment) && decide (cfg = configRef) && decide (profile = adapter)
     signatureVerified := fun signer message signature =>
-      decide (signer = requestSigner) &&
-      decide (message = ObjectA.signingBytes requestPayload) &&
+      decide (signer = requestSigner) && decide (message = requestStatementBytes) &&
       decide (signature = requestSignature) }
-
-def request : ObjectA.ObjectA requestContext :=
-  { candidate := requestCandidate
-    accepted := by
-      simp [ObjectA.Accepted, requestCandidate, requestPayload, requestContext,
-        ObjectA.validAt, ObjectA.statementBytes, ObjectA.judgedRequestDigest] }
 
 def requestWrongStatementBytes : ObjectA.Candidate :=
   { requestCandidate with statementBytes := "different-signed-request".toUTF8 }
+
 def requestWrongDigest : ObjectA.Candidate :=
-  let wrongDigest := Host.Sha256.sha256Digest ("different-request".toUTF8)
+  let wrongDigest := Host.Sha256.sha256Digest "different-request".toUTF8
   let payload : ObjectA.Payload := { requestPayload with judgedRequestSha256 := wrongDigest }
-  { payload := payload
-    signer := requestSigner
-    signatureBytes := requestSignature
-    statementBytes := ObjectA.statementBytes payload requestSigner requestSignature }
+  { requestCandidate with
+    payload := payload
+    statementBytes := (requestStatementText.replace
+      "12ff30aa21c01589b337813c8fd9c39b0e38cb5b6b067920437c9d39b008ca30"
+      "a01a668e54ecdd7fe83fe7e807084e029a08c58a8dfc8ff2da6b0e9cb4d33fd1").toUTF8 }
+
 def requestIssuedInFuture : ObjectA.Candidate :=
-  let payload : ObjectA.Payload := { requestPayload with issuedAt := 151 }
-  { payload := payload
-    signer := requestSigner
-    signatureBytes := requestSignature
-    statementBytes := ObjectA.statementBytes payload requestSigner requestSignature }
+  { requestCandidate with
+    payload := { requestPayload with issuedAt := 151 }
+    statementBytes := (requestStatementText.replace "\"issued_at\":100" "\"issued_at\":151").toUTF8 }
+
 def requestExpired : ObjectA.Candidate :=
-  let payload : ObjectA.Payload := { requestPayload with expiresAt := 149 }
-  { payload := payload
-    signer := requestSigner
-    signatureBytes := requestSignature
-    statementBytes := ObjectA.statementBytes payload requestSigner requestSignature }
+  { requestCandidate with
+    payload := { requestPayload with expiresAt := 149 }
+    statementBytes := (requestStatementText.replace "\"expires_at\":200" "\"expires_at\":149").toUTF8 }
+
 def requestExpiryOutOfRange : ObjectA.Candidate :=
-  let payload : ObjectA.Payload := { requestPayload with expiresAt := 2 ^ 64 }
-  { payload := payload
-    signer := requestSigner
-    signatureBytes := requestSignature
-    statementBytes := ObjectA.statementBytes payload requestSigner requestSignature }
+  { requestCandidate with
+    payload := { requestPayload with expiresAt := 2 ^ 64 }
+    statementBytes := (requestStatementText.replace "\"expires_at\":200"
+      "\"expires_at\":18446744073709551616").toUTF8 }
+
 def requestBadSignature : ObjectA.Candidate :=
-  let signature := "wrong-request-signature".toUTF8
-  { payload := requestPayload
-    signer := requestSigner
-    signatureBytes := signature
-    statementBytes := ObjectA.statementBytes requestPayload requestSigner signature }
+  { requestCandidate with signatureBytes := "wrong-request-signature".toUTF8 }
+
 def requestUndelegatedContext : ObjectA.VerificationContext :=
   { requestContext with requestSignerDelegated := fun _ _ _ _ => false }
 def requestRejectedAdapterContext : ObjectA.VerificationContext :=
@@ -505,31 +536,35 @@ def permissiveRequestContext : ObjectA.VerificationContext :=
     adapterProfileAccepted := fun _ _ _ => true
     signatureVerified := fun _ _ _ => true }
 
-/-- Strongest admitted-context forgery attempt: the canonical statement bytes
-    still encode `requestPayload`, while the visible fields claim a different
-    judged request and matching digest.  Even predicates that always return
-    true cannot make the canonical-byte conjunct accept it. -/
+/-- A field/byte forgery attempt: visible fields claim a different request and
+    matching digest while the exact signed bytes still parse to `requestPayload`. -/
 def forgedRequest : ObjectA.Candidate :=
-  let payload :=
-    { requestPayload with
-      judgedRequestBytes := "tools.call:notes.read".toUTF8
-      judgedRequestSha256 := ObjectA.judgedRequestDigest "tools.call:notes.read".toUTF8 }
-  { requestCandidate with payload := payload }
+  let forgedBytes :=
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"notes.read\",\"action\":\"call\",\"arguments\":{\"id\":\"1\"}}}".toUTF8
+  { requestCandidate with
+    payload := { requestPayload with
+      judgedRequestBytes := forgedBytes
+      judgedRequestSha256 := ObjectA.judgedRequestDigest forgedBytes } }
 
-def approver : ApprovalStatement.ApproverIdentity :=
-  { bytes := "approver-key-8".toUTF8 }
+def approver : ApprovalStatement.ApproverIdentity := ⟨"approver-key-8".toUTF8⟩
 def approvalSignature : ByteArray := "approval-signature".toUTF8
 def authority : ApprovalStatement.AuthorityRef :=
-  { digest := Host.Sha256.sha256Digest "approval-authority".toUTF8 }
+  ⟨Host.Sha256.sha256Digest "approval-authority".toUTF8⟩
 def targetCommitment : Host.Sha256.Digest256 :=
   Host.Sha256.sha256Digest "database/drop/main".toUTF8
 def requestRef : Host.Sha256.Digest256 :=
-  Host.ObjectB.requestStatementRef requestCandidate.statementBytes
+  { w0 := 0xc85e6bb2, w1 := 0xa85a9432, w2 := 0xb20250d8, w3 := 0xf95b0aa9
+    w4 := 0xef38761c, w5 := 0x17e078c4, w6 := 0xcbc86ca9, w7 := 0x55f9d1cd }
+
+def approvalStatementText : String :=
+  "{\"schema\":\"v1\",\"approver_identity\":\"617070726f7665722d6b65792d38\",\"approval_nonce\":\"617070726f76616c2d6e6f6e63652d3132\",\"request_statement_ref\":\"c85e6bb2a85a9432b20250d8f95b0aa9ef38761c17e078c4cbc86ca955f9d1cd\",\"target_commitment\":\"48a52f63a1ed1f9fec082f0965e26b4e500f9f0f1018550e2184cf9249689dcb\",\"constraints\":\"6f6e652d7573653b6265666f72653d323030\",\"approved_at\":120,\"approval_expires_at\":180,\"authority_ref\":\"e4fcc152a6e69875645683e8287273211e7415875e558c3ea9f18a5410c79daa\",\"deployment_id\":\"6465706c6f796d656e742d37\",\"session_id\":\"73657373696f6e2d34\",\"config_ref\":\"8db65cb58c559fce3abf6b1f376008eaab0408ea1e2ed48a5e840e87e1a1d635\",\"adapter_profile\":{\"identifier\":\"stdio-gated-sink\",\"version\":\"1.0.0\",\"artifact_sha256\":\"2de1f3a1752dc35308e48cde8ee2e146620d022fa0974ffbd4acf078bcb665f0\"}}"
+
+def approvalStatementBytes : ByteArray := approvalStatementText.toUTF8
 
 def approvalPayload : ApprovalStatement.Payload :=
   { schema := .v1
     approverIdentity := approver
-    approvalNonce := { bytes := "approval-nonce-12".toUTF8 }
+    approvalNonce := ⟨"approval-nonce-12".toUTF8⟩
     requestStatementRef := requestRef
     targetCommitment := targetCommitment
     constraints := "one-use;before=200".toUTF8
@@ -544,7 +579,7 @@ def approvalPayload : ApprovalStatement.Payload :=
 def approvalCandidate : ApprovalStatement.Candidate :=
   { payload := approvalPayload
     signatureBytes := approvalSignature
-    statementBytes := ApprovalStatement.statementBytes approvalPayload approvalSignature }
+    statementBytes := approvalStatementBytes }
 
 def approvalContext : ApprovalStatement.VerificationContext :=
   { now := 150
@@ -554,39 +589,33 @@ def approvalContext : ApprovalStatement.VerificationContext :=
     adapterProfileAccepted := fun dep cfg profile =>
       decide (dep = deployment) && decide (cfg = configRef) && decide (profile = adapter)
     signatureVerified := fun identity message signature =>
-      decide (identity = approver) &&
-      decide (message = ApprovalStatement.signingBytes approvalPayload) &&
+      decide (identity = approver) && decide (message = approvalStatementBytes) &&
       decide (signature = approvalSignature) }
-
-def approval : ApprovalStatement.ApprovalStatement approvalContext :=
-  { candidate := approvalCandidate
-    accepted := by
-      simp [ApprovalStatement.Accepted, approvalCandidate, approvalPayload,
-        approvalContext, ApprovalStatement.validAt, ApprovalStatement.statementBytes] }
 
 def approvalWrongStatementBytes : ApprovalStatement.Candidate :=
   { approvalCandidate with statementBytes := "different-signed-approval".toUTF8 }
+
 def approvalApprovedInFuture : ApprovalStatement.Candidate :=
-  let payload : ApprovalStatement.Payload := { approvalPayload with approvedAt := 151 }
-  { payload := payload
-    signatureBytes := approvalSignature
-    statementBytes := ApprovalStatement.statementBytes payload approvalSignature }
+  { approvalCandidate with
+    payload := { approvalPayload with approvedAt := 151 }
+    statementBytes := (approvalStatementText.replace
+      "\"approved_at\":120" "\"approved_at\":151").toUTF8 }
+
 def approvalExpired : ApprovalStatement.Candidate :=
-  let payload : ApprovalStatement.Payload := { approvalPayload with approvalExpiresAt := 149 }
-  { payload := payload
-    signatureBytes := approvalSignature
-    statementBytes := ApprovalStatement.statementBytes payload approvalSignature }
+  { approvalCandidate with
+    payload := { approvalPayload with approvalExpiresAt := 149 }
+    statementBytes := (approvalStatementText.replace
+      "\"approval_expires_at\":180" "\"approval_expires_at\":149").toUTF8 }
+
 def approvalExpiryOutOfRange : ApprovalStatement.Candidate :=
-  let payload : ApprovalStatement.Payload :=
-    { approvalPayload with approvalExpiresAt := 2 ^ 64 }
-  { payload := payload
-    signatureBytes := approvalSignature
-    statementBytes := ApprovalStatement.statementBytes payload approvalSignature }
+  { approvalCandidate with
+    payload := { approvalPayload with approvalExpiresAt := 2 ^ 64 }
+    statementBytes := (approvalStatementText.replace
+      "\"approval_expires_at\":180" "\"approval_expires_at\":18446744073709551616").toUTF8 }
+
 def approvalBadSignature : ApprovalStatement.Candidate :=
-  let signature := "wrong-approval-signature".toUTF8
-  { payload := approvalPayload
-    signatureBytes := signature
-    statementBytes := ApprovalStatement.statementBytes approvalPayload signature }
+  { approvalCandidate with signatureBytes := "wrong-approval-signature".toUTF8 }
+
 def approvalUndelegatedContext : ApprovalStatement.VerificationContext :=
   { approvalContext with approverDelegated := fun _ _ _ _ => false }
 def approvalRejectedAdapterContext : ApprovalStatement.VerificationContext :=
@@ -594,46 +623,37 @@ def approvalRejectedAdapterContext : ApprovalStatement.VerificationContext :=
 def approvalPermissiveSignatureContext : ApprovalStatement.VerificationContext :=
   { approvalContext with signatureVerified := fun _ _ _ => true }
 
-/-- The approval analogue of the Object A byte/field forgery: the statement
-    bytes still encode `approvalPayload`, while the visible target and
-    constraints claim something else. -/
+/-- The approval analogue of the field/byte forgery: visible fields claim a
+    different target and constraints while signed bytes still parse to the
+    original payload. -/
 def forgedApproval : ApprovalStatement.Candidate :=
-  let payload :=
-    { approvalPayload with
-      targetCommitment := Host.Sha256.sha256Digest "notes/read".toUTF8,
-      constraints := "unlimited".toUTF8 }
-  { approvalCandidate with payload := payload }
-
-/-! ## Canonical-helper known-answer controls
-
-The SHA-256 value is the published FIPS 180-4 `"abc"` example, expressed as
-literal digest words rather than computed through either SHA-256 wrapper.  The
-encoding expectations likewise use literal bytes (or UTF-8 only), never the
-canonical helper under test. -/
+  { approvalCandidate with
+    payload := { approvalPayload with
+      targetCommitment := Host.Sha256.sha256Digest "notes/read".toUTF8
+      constraints := "unlimited".toUTF8 } }
 
 def fipsAbcDigest : Host.Sha256.Digest256 :=
   { w0 := 0xba7816bf, w1 := 0x8f01cfea, w2 := 0x414140de, w3 := 0x5dae2223
     w4 := 0xb00361a3, w5 := 0x96177a9c, w6 := 0xb410ff61, w7 := 0xf20015ad }
 
-def adapterKnownAnswer : ObjectA.AdapterProfile :=
-  { identifier := "id", version := "1.0", artifactSha256 := fipsAbcDigest }
+def expectedRequestEffect : SealV2.Effect.EffectClaim :=
+  { resource := "database.drop"
+    action := "call"
+    args := "{\"table\":\"main\"}"
+    metadata := .absent }
 
-#guard StatementEncoding.u64be 0x0102030405060708 =
-  ByteArray.mk #[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
-#guard StatementEncoding.frameString "abc" =
-  ByteArray.mk #[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-    0x61, 0x62, 0x63]
-#guard StatementEncoding.digestBytes fipsAbcDigest =
-  "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".toUTF8
-#guard ObjectA.schemaBytes .v1 = ByteArray.mk #[0x01]
-#guard ObjectA.adapterProfileBytes adapterKnownAnswer =
-  ByteArray.mk #[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02] ++
-    "id".toUTF8 ++
-    ByteArray.mk #[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03] ++
-    "1.0".toUTF8 ++
-    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".toUTF8
+/-! Seven direct boundary/helper controls replace the removed seven private
+canonical-encoder controls. Together with the nineteen gate controls below,
+the Object A layer retains its original 26-control census. -/
+
+#guard ObjectA.parsePayload requestStatementBytes = some requestPayload
+#guard ApprovalStatement.parsePayload approvalStatementBytes = some approvalPayload
 #guard ObjectA.judgedRequestDigest "abc".toUTF8 = fipsAbcDigest
-#guard ApprovalStatement.schemaBytes .v1 = ByteArray.mk #[0x01]
+#guard ObjectA.judgedEffect requestBytes = some expectedRequestEffect
+#guard StatementParsing.presentedJson? "{\"issued_at\":1e9999999}".toUTF8 = none
+#guard StatementParsing.presentedJson? "{\"schema\":\"v1\",\"schema\":\"v2\"}".toUTF8 = none
+#guard ObjectA.parsePayload
+  (requestStatementText.replace "726571756573742d6e6f6e63652d3131" "not-hex").toUTF8 = none
 
 #guard (ObjectA.check requestContext requestCandidate).isSome
 #guard (ObjectA.check requestContext requestWrongStatementBytes).isNone
