@@ -54,7 +54,7 @@ today, and nothing would notice if it stopped being correct.
 Verified by repository-wide fixed-string search, zero matches each. These are **specification**
 defects if they are defects at all. Do not add machinery to satisfy a document.
 
-`judged_request_sha256` · `trust_context_ref` · `canonical_plane_encoding` ·
+`trust_context_ref` · `canonical_plane_encoding` ·
 `m_code` / `n_code` / `m_pol` / `n_pol` · `deprecated_from` · `permitted_profiles` ·
 `admission_key` · `kernel_tool_namespace`
 
