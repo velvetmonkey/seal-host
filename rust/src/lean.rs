@@ -246,11 +246,7 @@ impl LeanHost {
     /// the same vocabulary `mcp_version_gate` receives. The caller stores
     /// the result opaquely and maps any `SeamError` to a refused line with
     /// the selection left unchanged.
-    pub fn mcp_revision_observe(
-        &self,
-        line: &str,
-        selection: &str,
-    ) -> Result<String, SeamError> {
+    pub fn mcp_revision_observe(&self, line: &str, selection: &str) -> Result<String, SeamError> {
         self.call_string(|| unsafe {
             seal_host_mcp_revision_observe(to_lean_string(line), to_lean_string(selection))
         })

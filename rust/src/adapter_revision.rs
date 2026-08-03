@@ -82,11 +82,7 @@ impl McpRevisionSession {
     /// Fold one line into the selection through the kernel. On a seam error
     /// the selection is left unchanged; the caller must refuse the line
     /// (fail-closed, like every other seam failure).
-    pub fn observe_received_call(
-        &mut self,
-        host: &LeanHost,
-        line: &str,
-    ) -> Result<(), SeamError> {
+    pub fn observe_received_call(&mut self, host: &LeanHost, line: &str) -> Result<(), SeamError> {
         self.selection = host.mcp_revision_observe(line, &self.selection)?;
         Ok(())
     }
