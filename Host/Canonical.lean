@@ -3,11 +3,8 @@
 import Lean.Data.Json
 import SealV2.Parser
 import Seal.Classify
-import Seal.JsonUtil
 import Host.Action
-import Host.UnicodeKeys
-import Host.SurrogateEscapes
-import Host.NestingDepth
+import Host.JsonWire
 
 namespace Host
 
@@ -44,57 +41,9 @@ private def jsonId (json : Json) : Json :=
     Non-`tools/call` lines pass through untouched. -/
 def classifyLine (line : String) : LineClass :=
   let trimmed := line.trimAscii.toString
-  -- Fail closed BEFORE `Json.parse` on a pathological numeric literal: a wire
-  -- number with a monster decimal exponent makes `Json.parse` evaluate
-  -- `10^exponent` and abort (native `.so` + Lean interpreter) while the
-  -- emscripten wasm degrades to passthrough — the Lane C divergence. Refusing
-  -- here fails closed IDENTICALLY in every lane (all run this guard): the line
-  -- is neither aborted on nor passed through. (Seal.JsonUtil.wireNumbersSafe.)
-  if !Seal.JsonUtil.wireNumbersSafe trimmed then
-    .refuse
-  else
-  -- Duplicate-key mediation gate: `Json.parse` collapses duplicate object
-  -- keys last-wins, but a downstream tool parser may disagree (first-wins/
-  -- reject) — a divergence no post-parse check can see. A line whose RAW
-  -- text carries a duplicate (or escaped) object key is a HARD refusal.
-  -- (Seal.JsonUtil.wireKeysSafe)
-  if !Seal.JsonUtil.wireKeysSafe trimmed then
-    .refuse
-  else
-  -- A downstream Swift/Foundation reader stores object members in
-  -- Dictionary<String, ...>, whose key equality is Unicode canonical
-  -- equivalence. Refuse only an actual canonical-equivalent duplicate; do not
-  -- refuse non-ASCII keys in general. (Host.UnicodeKeys.wireKeysSafe)
-  if !Host.UnicodeKeys.wireKeysSafe trimmed then
-    .refuse
-  else
-  -- Stage-A pinned integer bound: >18 significant mantissa digits in an
-  -- unquoted number would diverge from the Stage-C i64 byte twin; fail closed
-  -- here instead. (Seal.JsonUtil.wireDigitsSafe)
-  if !Seal.JsonUtil.wireDigitsSafe trimmed then
-    .refuse
-  else
-  -- Cross-parser numeric agreement gate: refuse an unquoted number whose
-  -- exact Lean value is not the shortest decimal that round-trips through a
-  -- mainstream IEEE-754 binary64 reader. This prevents the kernel from
-  -- judging one numeric value while the downstream server rejects or reads
-  -- different bytes as another value. (Seal.JsonUtil.wireNumbersAgreementSafe)
-  if !Seal.JsonUtil.wireNumbersAgreementSafe trimmed then
-    .refuse
-  else
-  -- A2 class (a): an unpaired UTF-16 surrogate escape. `Json.parse` would
-  -- substitute U+FFFD and judge the substituted event while the forwarded
-  -- bytes still carry the surrogate — a witnessed judged/executed decoupling
-  -- (docs/V31-DOWNSTREAM-PARSER-AGREEMENT.md). Refuse on the raw bytes,
-  -- before the substitution can happen. (Host.SurrogateEscapes)
-  if !Host.SurrogateEscapes.wireSurrogatesSafe trimmed then
-    .refuse
-  else
-  -- A2 class (c): container nesting beyond the shallowest recorded
-  -- downstream reader depth limit (serde_json, 128). `Json.parse` is
-  -- unbounded, so a deeper line is judged here while the child's reader
-  -- rejects the same bytes. (Host.NestingDepth)
-  if !Host.NestingDepth.wireDepthSafe trimmed then
+  -- All presenter-controlled JSON crosses the one shared seven-guard boundary
+  -- before `Json.parse`. Any failed guard is a hard, fail-closed refusal.
+  if !Host.JsonWire.safe trimmed then
     .refuse
   else
   match Json.parse trimmed with
@@ -121,7 +70,7 @@ def classifyLine (line : String) : LineClass :=
 theorem classifyLine_refuse_of_unsafe (line : String)
     (h : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine, h, Bool.not_false, if_true]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 /-! ### The other raw-wire guards, proven the same way
 
@@ -145,9 +94,7 @@ refused it first".
 theorem classifyLine_refuse_of_unsafe_keys (line : String)
     (h : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    simp [hn, h]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 /-- A raw line carrying two keys that are DISTINCT byte sequences but share a
     Unicode canonical identity is refused. A Foundation/Swift reader keys its
@@ -156,10 +103,7 @@ theorem classifyLine_refuse_of_unsafe_keys (line : String)
 theorem classifyLine_refuse_of_unsafe_unicode_keys (line : String)
     (h : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      simp [hn, hk, h]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 /-- A raw line whose mantissa exceeds the pinned significant-digit bound is
     refused, rather than parsed into a value that would diverge from the
@@ -167,11 +111,7 @@ theorem classifyLine_refuse_of_unsafe_unicode_keys (line : String)
 theorem classifyLine_refuse_of_unsafe_digits (line : String)
     (h : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        simp [hn, hk, hu, h]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 /-- A raw line carrying an unquoted number outside binary64 round-trip
     agreement is refused before parsing, so the exact Lean reading can never
@@ -180,12 +120,7 @@ theorem classifyLine_refuse_of_unsafe_agreement (line : String)
     (h : Seal.JsonUtil.wireNumbersAgreementSafe
       line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          simp [hn, hk, hu, hd, h]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 /-- A raw line carrying an unpaired UTF-16 surrogate escape is refused: the
     substituted (U+FFFD) event is never judged, so the witnessed downstream
@@ -193,26 +128,13 @@ theorem classifyLine_refuse_of_unsafe_agreement (line : String)
 theorem classifyLine_refuse_of_unsafe_surrogates (line : String)
     (h : Host.SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe line.trimAscii.toString <;>
-            simp [hn, hk, hu, hd, ha, h]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 /-- A raw line nesting deeper than the pinned downstream depth bound is
     refused — A2 class (c): never judged here while rejected there. -/
 theorem classifyLine_refuse_of_unsafe_depth (line : String)
     (h : Host.NestingDepth.wireDepthSafe line.trimAscii.toString = false) :
     classifyLine line = .refuse := by
-  simp only [classifyLine]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : Host.UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe line.trimAscii.toString <;>
-            cases hs : Host.SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString <;>
-              simp [hn, hk, hu, hd, ha, hs, h]
+  simp [classifyLine, Host.JsonWire.safe, h]
 
 end Host

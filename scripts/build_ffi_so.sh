@@ -77,6 +77,11 @@ PROJECT_MODULES=(
   # comment above): adding a Lean module under Host/ that Ffi's import closure
   # reaches REQUIRES adding it here, or the shared object cannot be rebuilt.
   Host/UnicodeKeys
+  # Added 2026-08-03. SECOND occurrence of the 2026-07-25 Host/UnicodeKeys
+  # incident above: Host/JsonWire entered Ffi's import closure via
+  # Host/Canonical without being added to this manual list, leaving its
+  # initializer and safe predicate unresolved in every rebuilt shared object.
+  Host/JsonWire
   # Added 2026-07-30 with the class-(a)/(c) pre-parse guards: both are in
   # Ffi's import closure via Host/Canonical.
   Host/SurrogateEscapes Host/NestingDepth

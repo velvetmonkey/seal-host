@@ -1,7 +1,7 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
 import Host.Sha256
-import Seal.JsonUtil
+import Host.JsonWire
 import SealV2.EffectEnvelope
 import Lean.Data.Json
 
@@ -146,8 +146,7 @@ def configDigest (bytes : ByteArray) : Digest256 :=
 
 def verdictOfRaw (raw : ByteArray) : Option Verdict := do
   let text ← String.fromUTF8? raw
-  guard (Seal.JsonUtil.wireNumbersSafe text)
-  guard (Seal.JsonUtil.wireKeysSafe text)
+  guard (Host.JsonWire.safe text)
   let json ← (Json.parse text).toOption
   let route ← (json.getObjVal? "route").toOption.bind (·.getStr?.toOption)
   match route with
