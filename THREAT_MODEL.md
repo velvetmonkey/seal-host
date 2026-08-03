@@ -57,7 +57,7 @@ claimed eliminated.
    `name` and `arguments` within `params`; every other member of `params` is
    outside policy matching and every kernel verdict and, on a forward, is sent
    to the child verbatim (`.lake/packages/mcp-seal/Seal/Classify.lean:278-288`,
-   `rust/src/main.rs:527`, `:1559`).
+   `rust/src/main.rs:527`, `:1559`; measurement record: `docs/A2-UNJUDGED-SIBLING-EVIDENCE.md`).
 
 2. **OS-permission origin.** The trusted config (signed), the approval/votes/
    grants/forecast files, and the approval keys are trusted inputs. Their
