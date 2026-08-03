@@ -1,6 +1,7 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
 import Host.Sha256
+import Seal.JsonUtil
 import SealV2.EffectEnvelope
 import Lean.Data.Json
 
@@ -145,6 +146,8 @@ def configDigest (bytes : ByteArray) : Digest256 :=
 
 def verdictOfRaw (raw : ByteArray) : Option Verdict := do
   let text ← String.fromUTF8? raw
+  guard (Seal.JsonUtil.wireNumbersSafe text)
+  guard (Seal.JsonUtil.wireKeysSafe text)
   let json ← (Json.parse text).toOption
   let route ← (json.getObjVal? "route").toOption.bind (·.getStr?.toOption)
   match route with
@@ -391,6 +394,7 @@ def forged : CorePayload :=
 #guard SealV2.Effect.deriveEffect payload.stepInput.trimAscii.toString ==
   some payload.effectClaim
 #guard verdictOfRaw payload.rawKernelOutputBytes == some payload.verdict
+#guard verdictOfRaw "{\"route\":\"block\",\"route\":\"forward\"}".toUTF8 == none
 #guard (check context wrongVerdict).isNone
 #guard (check context wrongRawBytes).isNone
 #guard (check context wrongCanonicalInput).isNone
