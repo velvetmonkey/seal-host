@@ -53,6 +53,11 @@ claimed eliminated.
    destructive action the policy does not classify as guarded is not gated.
    Completeness of the policy is the operator's burden; the host proves only
    that *what the policy classifies as guarded* is enforced without bypass.
+   In the deployed `compatible` profile, classification reads exactly
+   `name` and `arguments` within `params`; every other member of `params` is
+   outside policy matching and every kernel verdict and, on a forward, is sent
+   to the child verbatim (`.lake/packages/mcp-seal/Seal/Classify.lean:278-288`,
+   `rust/src/main.rs:527`, `:1559`).
 
 2. **OS-permission origin.** The trusted config (signed), the approval/votes/
    grants/forecast files, and the approval keys are trusted inputs. Their
