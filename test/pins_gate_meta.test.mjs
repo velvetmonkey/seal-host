@@ -254,7 +254,9 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
     .join("\n");
   const normal = parseCiRunSteps(ci);
   const shifted = parseCiRunSteps(reindented);
-  assert.equal(normal.length, 69, "review the expected run-step inventory explicitly");
+  // Reviewed 2026-08-03: the export-surface job adds four controls with `run`
+  // commands plus its required isolated-control aggregate (69 + 5 = 74).
+  assert.equal(normal.length, 74, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
