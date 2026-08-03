@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Fail closed when the four hand-maintained export-surface lists drift from Ffi.lean.
+"""Fail closed when the hand-maintained export surfaces drift from Ffi.lean.
 
 The source of truth is the PROJECT root `Ffi.lean` (never the mcp-seal package's
 own root `Ffi.lean`, which carries the separate `seal_v2_*` surface): its
@@ -10,14 +10,14 @@ that set today:
 
   1. scripts/build_ffi_so.sh   PROJECT_MODULES + MCP_MODULES (native .so roster)
   2. wasm-spike/build_core.sh  MODULES + SEAL_MODULES        (wasm object roster)
-  3. wasm-spike/seal_wrapper.c extern decl + C wrapper per exported Lean fn
+  3. wasm-spike/seal_wrapper.c extern decl + C wrapper per wasm-destined Lean fn
   4. wasm-spike/build_wasm.sh  emscripten EXPORTED_FUNCTIONS allow-list
 
-Lists 1 and 2 fail loudly when stale (missing object -> build error). Lists 3
-and 4 fail SILENTLY: a symbol absent from the wrapper or the allow-list is
-dropped at link with no diagnostic, and the wasm ships doing less than the
-source declares. This gate compares all four against the source of truth and
-names every missing or stale entry.
+Lists 1 and 2 are root sets: different roots are equivalent when their
+transitive source closures cover Ffi's closure. Lists 3 and 4 fail SILENTLY:
+a wasm-destined symbol absent from the wrapper or the allow-list is dropped at
+link with no diagnostic, and the wasm ships doing less than the source
+declares. This gate checks all four surfaces against the source of truth.
 
 The project half of list 2 is already gated by wasm_module_closure_gate.py
 (missing direction only); this gate additionally covers the mcp-seal rosters,
@@ -85,6 +85,18 @@ EXTERN_DECL = re.compile(
 EXPORTED_FUNCTIONS = re.compile(r"EXPORTED_FUNCTIONS\s*=\s*'(\[[^']*\])'")
 # emscripten runtime symbols legitimately in the allow-list without a wrapper.
 RUNTIME_EXPORTS = {"_malloc", "_free"}
+
+# Ffi.lean is the shared native/CLI and wasm export source. New exports are
+# wasm-destined by default; only these source-documented native observation,
+# classification, and CLI seams are deliberately outside the wasm bridge.
+NATIVE_OR_CLI_ONLY_EXPORTS = {
+    "seal_host_classify",
+    "seal_host_mcp_revision_observe",
+    "seal_host_first_agreement_unsafe_number",
+    "seal_host_canonical_effect",
+    "seal_policy_schema",
+    "seal_policy_validate",
+}
 
 
 @dataclass
@@ -248,24 +260,39 @@ def import_closure(
     return closure, unresolved
 
 
-def roster_check(
-    findings: Findings, section: str, listed: list[str],
-    expected: set[str], scope: str, check_stale: bool = True,
+def roster_closure_check(
+    findings: Findings, section: str, listed: list[str], expected: set[str],
+    sources: dict[str, Path], scope: str,
 ) -> None:
+    """Require a roster's transitive closure to cover the Ffi closure.
+
+    Build rosters are root sets, so spelling an already-transitive module is
+    cosmetic. Extra roots are harmless; missing effective closure is not.
+    """
     listed_set = {dotted(m) for m in listed}
-    for module in sorted(expected - listed_set):
-        findings.add(section, f"missing from {scope}: {module}")
-    # With only a partial closure (mcp-seal sources unavailable), a listed
-    # module transitively reached but not directly imported would look stale;
-    # the stale direction is skipped rather than reported falsely.
-    if check_stale:
-        for module in sorted(listed_set - expected):
-            findings.add(section, f"stale in {scope} (not in the Ffi import closure): {module}")
+    effective: set[str] = set()
+    for root in sorted(listed_set):
+        if root not in sources:
+            findings.add(section, f"cannot resolve {scope} root: {root}")
+            continue
+        closure, _ = import_closure(sources, root)
+        effective |= closure
+    for module in sorted(expected - effective):
+        findings.add(section, f"not reached by transitive closure of {scope}: {module}")
 
 
 def main() -> int:
     findings = Findings()
     exports = parse_exports()
+    export_set = set(exports)
+    for export in sorted(NATIVE_OR_CLI_ONLY_EXPORTS - export_set):
+        findings.add(
+            "export ownership",
+            f"native/CLI-only declaration has no matching @[export]: {export}",
+        )
+    wasm_exports = [e for e in exports if e not in NATIVE_OR_CLI_ONLY_EXPORTS]
+    if not wasm_exports:
+        raise GateError("no wasm-destined exports remain; refusing vacuous wrapper check")
 
     # --- source of truth: the Ffi import closure --------------------------
     proj = project_sources()
@@ -306,28 +333,30 @@ def main() -> int:
     }
 
     # --- list 1: scripts/build_ffi_so.sh ----------------------------------
-    roster_check(
+    roster_closure_check(
         findings, "build_ffi_so.sh",
         parse_bash_array(BUILD_FFI_SO, "PROJECT_MODULES"),
-        project_part, "PROJECT_MODULES",
+        project_part, proj, "PROJECT_MODULES",
     )
-    roster_check(
-        findings, "build_ffi_so.sh",
-        parse_bash_array(BUILD_FFI_SO, "MCP_MODULES"),
-        mcp_closure, "MCP_MODULES", check_stale=mcp_root is not None,
-    )
+    if mcp_root is not None:
+        roster_closure_check(
+            findings, "build_ffi_so.sh",
+            parse_bash_array(BUILD_FFI_SO, "MCP_MODULES"),
+            mcp_closure, mcp_srcs, "MCP_MODULES",
+        )
 
     # --- list 2: wasm-spike/build_core.sh ---------------------------------
-    roster_check(
+    roster_closure_check(
         findings, "build_core.sh",
         parse_bash_array(BUILD_CORE, "MODULES"),
-        project_part, "MODULES",
+        project_part, proj, "MODULES",
     )
-    roster_check(
-        findings, "build_core.sh",
-        parse_bash_array(BUILD_CORE, "SEAL_MODULES"),
-        mcp_closure, "SEAL_MODULES", check_stale=mcp_root is not None,
-    )
+    if mcp_root is not None:
+        roster_closure_check(
+            findings, "build_core.sh",
+            parse_bash_array(BUILD_CORE, "SEAL_MODULES"),
+            mcp_closure, mcp_srcs, "SEAL_MODULES",
+        )
 
     # --- list 3: wasm-spike/seal_wrapper.c --------------------------------
     try:
@@ -341,8 +370,11 @@ def main() -> int:
     # Which exports each wrapper body calls: a call site is the symbol followed
     # by '(' somewhere after the extern declaration block.
     decl_free = re.sub(r"^\s*extern[^;]*;", "", wrapper_text, flags=re.MULTILINE)
-    called = {e for e in exports if re.search(rf"\b{re.escape(e)}\s*\(", decl_free)}
-    for export in exports:
+    called = {
+        e for e in wasm_exports
+        if re.search(rf"\b{re.escape(e)}\s*\(", decl_free)
+    }
+    for export in wasm_exports:
         if export not in externs:
             findings.add("seal_wrapper.c", f"no extern declaration for export: {export}")
         if export not in called:
@@ -380,12 +412,13 @@ def main() -> int:
 
     # --- verdict ----------------------------------------------------------
     print(
-        f"export surface: {len(exports)} @[export] names in Ffi.lean; "
+        f"export surface: {len(exports)} @[export] names in Ffi.lean "
+        f"({len(wasm_exports)} wasm, {len(exports) - len(wasm_exports)} native/CLI); "
         f"closure: {len(project_part)} project + {len(mcp_closure)} mcp-seal modules "
         f"({len(proj_closure - project_part)} other-package refs out of roster scope)"
     )
     sections = [
-        "source-of-truth", "build_ffi_so.sh", "build_core.sh",
+        "export ownership", "source-of-truth", "build_ffi_so.sh", "build_core.sh",
         "seal_wrapper.c", "build_wasm.sh",
     ]
     for section in sections:

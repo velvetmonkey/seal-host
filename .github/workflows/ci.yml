@@ -10,6 +10,58 @@ on:
 # any recorded failure back into a failing job; never remove that aggregate
 # while continue-on-error is present.
 jobs:
+  export-surface:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Require private dependency source access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - id: control_03
+        continue-on-error: true
+        name: Configure private dependency access
+        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - id: control_04
+        continue-on-error: true
+        name: Check out the manifest-pinned mcp-seal source
+        run: |
+          mapfile -t dependency < <(python3 - <<'PY'
+          import json
+
+          with open("lake-manifest.json", encoding="utf-8") as manifest_file:
+              manifest = json.load(manifest_file)
+          package = next(
+              package
+              for package in manifest["packages"]
+              if "mcp-seal" in package.get("name", "")
+          )
+          print(package["url"])
+          print(package["rev"])
+          PY
+          )
+          test "${#dependency[@]}" -eq 2
+          mkdir -p .lake/packages
+          git clone --filter=blob:none --no-checkout "${dependency[0]}" .lake/packages/mcp-seal
+          git -C .lake/packages/mcp-seal checkout --detach "${dependency[1]}"
+          test "$(git -C .lake/packages/mcp-seal rev-parse HEAD)" = "${dependency[1]}"
+      - id: control_05
+        continue-on-error: true
+        name: Gate native and wasm export surfaces
+        run: python3 scripts/export_surface_gate.py
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   kernel-hash-footprint:
     runs-on: ubuntu-latest
     permissions:
