@@ -25,13 +25,13 @@ the router/byte-class correspondence is a THEOREM
 `classifyLine_refuse_iff`), not a definition:
 
 * `inPerimeter` — **S, the mediation perimeter**: the trimmed line passes
-  all seven pre-parse raw-wire guards (`wireSafe`), `Lean.Json.parse`
+  all seven pre-parse raw-wire guards (`Host.JsonWire.safe`), `Lean.Json.parse`
   accepts it, and the JSON has the strict `tools/call` shape
   (`toolsCallShape`: method is byte-exactly `"tools/call"` and
   `params.name` is a string). These lines are gate-decided before anything
   is forwarded.
 * `refusedClass` — **R**: any of the seven pre-parse raw-wire guards rejects
-  the line (`wireSafe = false`: monster exponent, duplicate/escaped object
+  the line (`Host.JsonWire.safe = false`: monster exponent, duplicate/escaped object
   key, Unicode canonical-equivalent key, over-long mantissa, a number
   outside binary64 round-trip agreement, unpaired surrogate escape, or
   over-deep nesting). Blocked; never forwarded, never gate-decided.
@@ -108,15 +108,10 @@ def toolsCallShape (j : Json) : Bool :=
     refused class grew with each. The corresponding router theorems are
     `classifyLine_refuse_of_unsafe_keys`, `_unsafe_unicode_keys`,
     `_unsafe_digits`, `_unsafe_agreement`, `_unsafe_surrogates` and
-    `_unsafe_depth` in `Host/Canonical.lean`. -/
+    `_unsafe_depth` in `Host/Canonical.lean`. The guard list lives only in
+    `Host.JsonWire.safe`; this perimeter wrapper adds the router's trimming. -/
 def wireSafe (line : String) : Bool :=
-  Seal.JsonUtil.wireNumbersSafe (trimmed line)
-    && Seal.JsonUtil.wireKeysSafe (trimmed line)
-    && UnicodeKeys.wireKeysSafe (trimmed line)
-    && Seal.JsonUtil.wireDigitsSafe (trimmed line)
-    && Seal.JsonUtil.wireNumbersAgreementSafe (trimmed line)
-    && SurrogateEscapes.wireSurrogatesSafe (trimmed line)
-    && NestingDepth.wireDepthSafe (trimmed line)
+  Host.JsonWire.safe (trimmed line)
 
 /-- **R — the refused class.** Any of the seven pre-parse raw-wire guards
     rejects the line. A pure fold over the characters — bytes in, Bool out.
@@ -126,7 +121,7 @@ def refusedClass (line : String) : Bool :=
 
 /-- **S — the mediation perimeter.** A decidable predicate on the input
     bytes, stated independently of the adapter: the trimmed line passes all
-    seven pre-parse raw-wire guards (`wireSafe`), `Lean.Json.parse` accepts
+    seven pre-parse raw-wire guards (`Host.JsonWire.safe`), `Lean.Json.parse` accepts
     it, and the value has the strict
     `tools/call` shape. The characterisation theorems prove: a line is
     gate-decided before forwarding IFF it lies in S. -/
@@ -407,15 +402,7 @@ theorem toolsCallShape_eq_toolsCall? (j : Json) :
 theorem classifyLine_refuse_iff (line : String) :
     Host.classifyLine line = .refuse ↔ refusedClass line = true := by
   simp only [Host.classifyLine, refusedClass, wireSafe, trimmed]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe
-              line.trimAscii.toString <;>
-            cases hs : SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString <;>
-              cases hh : NestingDepth.wireDepthSafe line.trimAscii.toString <;>
-                simp
+  cases hg : Host.JsonWire.safe line.trimAscii.toString <;> simp
   cases hp : Json.parse line.trimAscii.toString with
   | error e => simp
   | ok j =>
@@ -427,15 +414,7 @@ theorem classifyLine_refuse_iff (line : String) :
 theorem classifyLine_act_iff (line : String) :
     (∃ a, Host.classifyLine line = .act a) ↔ inPerimeter line = true := by
   simp only [Host.classifyLine, inPerimeter, wireSafe, trimmed]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe
-              line.trimAscii.toString <;>
-            cases hs : SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString <;>
-              cases hh : NestingDepth.wireDepthSafe line.trimAscii.toString <;>
-                simp
+  cases hg : Host.JsonWire.safe line.trimAscii.toString <;> simp
   cases hp : Json.parse line.trimAscii.toString with
   | error e => simp
   | ok j =>
@@ -449,15 +428,7 @@ theorem classifyLine_passthrough_iff (line : String) :
     Host.classifyLine line = .passthrough ↔ escapes line = true := by
   simp only [Host.classifyLine, escapes, refusedClass, inPerimeter, wireSafe,
     trimmed]
-  cases hn : Seal.JsonUtil.wireNumbersSafe line.trimAscii.toString <;>
-    cases hk : Seal.JsonUtil.wireKeysSafe line.trimAscii.toString <;>
-      cases hu : UnicodeKeys.wireKeysSafe line.trimAscii.toString <;>
-        cases hd : Seal.JsonUtil.wireDigitsSafe line.trimAscii.toString <;>
-          cases ha : Seal.JsonUtil.wireNumbersAgreementSafe
-              line.trimAscii.toString <;>
-            cases hs : SurrogateEscapes.wireSurrogatesSafe line.trimAscii.toString <;>
-              cases hh : NestingDepth.wireDepthSafe line.trimAscii.toString <;>
-                simp
+  cases hg : Host.JsonWire.safe line.trimAscii.toString <;> simp
   cases hp : Json.parse line.trimAscii.toString with
   | error e => simp
   | ok j =>

@@ -1,7 +1,7 @@
 /- SPDX-License-Identifier: Apache-2.0 -/
 
 import Host.ObjectB
-import Seal.JsonUtil
+import Host.JsonWire
 import SealV2.EffectEnvelope
 import Lean.Data.Json
 
@@ -15,10 +15,9 @@ payload field, and the signature predicate receives those exact presented
 bytes. This module deliberately defines no statement serializer and no
 canonical-byte helper.
 
-Both statement parsers cross the same raw-wire boundary before
-`Lean.Json.parse`: UTF-8, `Seal.JsonUtil.wireNumbersSafe`, and
-`Seal.JsonUtil.wireKeysSafe`. Object A additionally sends the exact judged
-request through the pinned kernel's `SealV2.Effect.deriveEffect`; it defines no
+Both statement parsers cross the host's complete seven-guard raw-wire boundary
+before `Lean.Json.parse`. Object A additionally sends the exact judged request
+through the pinned kernel's `SealV2.Effect.deriveEffect`; it defines no
 competing request canonicaliser.
 
 This is not the three-artifact byte-lock. In particular, this module does not
@@ -56,8 +55,7 @@ namespace StatementParsing
 /-- The only `Lean.Json.parse` entry point for presented statement bytes. -/
 def presentedJson? (raw : ByteArray) : Option Json := do
   let text ← String.fromUTF8? raw
-  guard (Seal.JsonUtil.wireNumbersSafe text)
-  guard (Seal.JsonUtil.wireKeysSafe text)
+  guard (Host.JsonWire.safe text)
   (Json.parse text).toOption
 
 def exactKeys? (json : Json) (keys : List String) (context : String) : Option Unit :=
