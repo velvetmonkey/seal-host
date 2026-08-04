@@ -81,12 +81,17 @@ jobs:
         with:
           use-github-cache: false
           build: false
+          test: false
       - id: control_05
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update
       - id: control_06
         continue-on-error: true
         run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_12
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build
+        run: lake test
       - id: control_07
         continue-on-error: true
         run: lake build +Ffi:c.o.export
