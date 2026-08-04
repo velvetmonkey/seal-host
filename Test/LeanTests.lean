@@ -33,11 +33,16 @@ def main : IO UInt32 := do
   let some binDir := appPath.parent
     | IO.eprintln s!"[lean_tests] cannot determine binary directory from {appPath}"
       return 1
+  let mut passed : Array String := #[]
   for name in testBinaries do
     let exitCode ← runTest binDir name
     if exitCode != 0 then
       return exitCode
-  IO.println s!"[lean_tests] all {testBinaries.size} test binaries passed"
+    passed := passed.push name
+  if passed.isEmpty then
+    IO.eprintln "[lean_tests] no test binaries ran; refusing to pass vacuously"
+    return 1
+  IO.println s!"[lean_tests] all {passed.size} test binaries passed: {String.intercalate ", " passed.toList}"
   return 0
 
 end Test.LeanTests
