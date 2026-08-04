@@ -25,114 +25,197 @@ class ProofInventoryTests(unittest.TestCase):
         root = Path(directory)
         (root / "Host").mkdir()
         (root / "Test").mkdir()
-        (root / ".lake/build/lib/lean/Host").mkdir(parents=True)
-        (root / "Test/Axioms.lean").write_text("import Host.Wired\n", encoding="utf-8")
-        (root / "Host/Wired.lean").write_text(
-            "theorem wired : True := by trivial\n"
-            "/-- info: 'wired' does not depend on any axioms -/\n"
-            "#guard_msgs in #print axioms wired\n",
+        (root / ".github/workflows").mkdir(parents=True)
+        (root / "lakefile.toml").write_text(
+            'name = "fixture"\n'
+            'testDriver = "lean_tests"\n'
+            'defaultTargets = ["ci_root"]\n\n'
+            '[[lean_lib]]\nname = "HostLib"\nglobs = ["Host.+"]\n\n'
+            '[[lean_exe]]\nname = "ci_root"\nroot = "Test.CiRoot"\n\n'
+            '[[lean_exe]]\nname = "lean_tests"\nroot = "Test.CiRoot"\n',
             encoding="utf-8",
         )
-        (root / ".lake/build/lib/lean/Host/Wired.olean").touch()
+        (root / ".github/workflows/ci.yml").write_text(
+            "name: CI\non: [push, pull_request]\njobs:\n  build:\n    steps:\n"
+            "      - run: lake build\n"
+            "      - run: lake test\n",
+            encoding="utf-8",
+        )
+        (root / "Test/CiRoot.lean").write_text(
+            "import Host.Wired\n", encoding="utf-8"
+        )
+        (root / "Host/Wired.lean").write_text(
+            "theorem wired : True := by trivial\n", encoding="utf-8"
+        )
         return root
 
-    def assert_orphan_detected(self, source: str) -> None:
+    def run_gate(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(root)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def assert_orphan_source(self, source: str) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
             (root / "Host/Evasion.lean").write_text(source, encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, str(SCRIPT), "--root", str(root)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
+            result = self.run_gate(root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertIn("Host.Evasion\tyes\tUNASSIGNED", result.stdout)
-            self.assertIn("ORPHAN PROOF MODULE: Host.Evasion", result.stderr)
+            self.assertIn("ORPHANED\tHost.Evasion", result.stdout)
+
+    def test_workflow_build_closure_is_reached(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_gate(self.make_root(directory))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("REACHED=1", result.stdout)
+            self.assertIn("REACHED\tHost.Wired", result.stdout)
+
+    def test_orphan_control_is_red_and_names_module(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Host/Planted.lean").write_text(
+                "theorem planted_orphan : True := by trivial\n", encoding="utf-8"
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("ORPHANED\tHost.Planted", result.stdout)
+            self.assertIn("ORPHAN PROOF MODULE: Host.Planted", result.stderr)
 
     def test_protected_theorem_is_detected(self) -> None:
-        self.assert_orphan_detected("protected theorem t : True := by trivial\n")
+        self.assert_orphan_source("protected theorem t : True := by trivial\n")
 
     def test_private_theorem_is_detected(self) -> None:
-        self.assert_orphan_detected("private theorem t : True := by trivial\n")
+        self.assert_orphan_source("private theorem t : True := by trivial\n")
 
     def test_same_line_attribute_theorem_is_detected(self) -> None:
-        self.assert_orphan_detected("@[simp] theorem t : True := by trivial\n")
+        self.assert_orphan_source("@[simp] theorem t : True := by trivial\n")
 
     def test_nonrec_theorem_is_detected(self) -> None:
-        self.assert_orphan_detected("nonrec theorem t : True := by trivial\n")
+        self.assert_orphan_source("nonrec theorem t : True := by trivial\n")
 
     def test_indented_theorem_is_detected(self) -> None:
-        self.assert_orphan_detected("  theorem t : True := by trivial\n")
+        self.assert_orphan_source("  theorem t : True := by trivial\n")
 
     def test_comment_markers_in_strings_do_not_hide_theorem(self) -> None:
-        self.assert_orphan_detected(
+        self.assert_orphan_source(
             'def openMarker : String := "/-"\n'
-            "theorem frisk_hidden_by_string : True := by trivial\n"
+            "theorem visible_after_string : True := by trivial\n"
             'def closeMarker : String := "-/"\n'
         )
 
     def test_comment_markers_in_raw_strings_do_not_hide_theorem(self) -> None:
-        self.assert_orphan_detected(
+        self.assert_orphan_source(
             'def markers : String := r#"/- an embedded " quote -/"#\n'
             "theorem visible_after_raw_string : True := by trivial\n"
         )
 
-    def test_reserved_module_set_is_pinned(self) -> None:
-        self.assertEqual(set(inventory.RESERVED), {"Host.CanonicalL0Liveness"})
-
-    def test_wired_compiled_and_classified_module_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            report = inventory.evaluate(self.make_root(directory))
-            self.assertTrue(report.passed, report)
-            self.assertEqual(len(report.rows), 1)
-            self.assertEqual(report.rows[0].assigned, "axiom_check")
-            self.assertTrue(report.rows[0].compiled)
-            self.assertTrue(report.rows[0].axiom_classified)
-
-    def test_stale_olean_does_not_launder_unimported_theorem_module(self) -> None:
+    def test_severance_control_is_red_and_names_module(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
-            (root / "Host/Throwaway.lean").write_text(
-                "theorem proof_inventory_negative_control : True := by trivial\n",
+            (root / "Test/CiRoot.lean").write_text("", encoding="utf-8")
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+            self.assertIn("ORPHAN PROOF MODULE: Host.Wired", result.stderr)
+
+    def test_one_character_local_root_typo_is_unclassified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Host/Typo.lean").write_text(
+                "import Hosts.Wired\n"
+                "theorem typo_probe : True := by trivial\n",
                 encoding="utf-8",
             )
-            (root / ".lake/build/lib/lean/Host/Throwaway.olean").touch()
-            report = inventory.evaluate(root)
-            row = next(row for row in report.rows if row.module == "Host.Throwaway")
-            self.assertFalse(row.compiled)
-            self.assertEqual(row.assigned, "UNASSIGNED")
-            self.assertTrue(row.orphaned)
-            self.assertFalse(report.passed)
+            (root / "Test/CiRoot.lean").write_text(
+                "import Host.Wired\nimport Host.Typo\n", encoding="utf-8"
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("UNCLASSIFIED\tHost.Typo", result.stdout)
+            self.assertIn("cannot resolve import Hosts.Wired", result.stderr)
 
-    def test_assigned_module_without_build_artifact_is_orphaned(self) -> None:
+    def test_nonexistent_upstream_import_is_unclassified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
-            (root / ".lake/build/lib/lean/Host/Wired.olean").unlink()
-            report = inventory.evaluate(root)
-            self.assertTrue(report.rows[0].orphaned)
-            self.assertFalse(report.passed)
+            (root / "Host/Upstream.lean").write_text(
+                "import Mathlib.CompletelyFakeInventoryControl\n"
+                "theorem upstream_probe : True := by trivial\n",
+                encoding="utf-8",
+            )
+            (root / "Test/CiRoot.lean").write_text(
+                "import Host.Wired\nimport Host.Upstream\n", encoding="utf-8"
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("UNCLASSIFIED\tHost.Upstream", result.stdout)
+            self.assertIn(
+                "cannot resolve import Mathlib.CompletelyFakeInventoryControl",
+                result.stderr,
+            )
 
-    def test_comments_do_not_create_theorem_or_import_rows(self) -> None:
+    def test_circular_import_is_unclassified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
-            (root / "Host/CommentOnly.lean").write_text(
-                "/- theorem fake : False := by trivial -/\n"
-                "-- theorem alsoFake : False := by trivial\n",
+            (root / "Host/CycleA.lean").write_text(
+                "import Host.CycleB\n"
+                "theorem cycle_probe : True := by trivial\n",
+                encoding="utf-8",
+            )
+            (root / "Host/CycleB.lean").write_text(
+                "import Host.CycleA\n", encoding="utf-8"
+            )
+            (root / "Test/CiRoot.lean").write_text(
+                "import Host.Wired\nimport Host.CycleA\n", encoding="utf-8"
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("UNCLASSIFIED\tHost.CycleA", result.stdout)
+            self.assertIn("circular local import", result.stderr)
+
+    def test_comments_strings_and_modifiers_do_not_evade_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Test/CiRoot.lean").write_text(
+                "import Host.Wired\nimport Host.Prefixes\n", encoding="utf-8"
+            )
+            (root / "Host/Prefixes.lean").write_text(
+                '/- theorem fake : False := by trivial -/\n'
+                'def prose : String := "theorem alsoFake : False"\n'
+                "@[simp] protected theorem real : True := by trivial\n",
                 encoding="utf-8",
             )
             report = inventory.evaluate(root)
-            self.assertNotIn("Host.CommentOnly", {row.module for row in report.rows})
+            row = next(row for row in report.rows if row.module == "Host.Prefixes")
+            self.assertEqual(row.declarations, 1)
+            self.assertEqual(row.status, "REACHED")
 
-    def test_theorem_text_in_string_does_not_create_row(self) -> None:
+    def test_workflow_comments_and_echoes_are_not_builds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
-            (root / "Host/StringOnly.lean").write_text(
-                'def prose : String := "theorem fake : False"\n', encoding="utf-8"
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                "name: CI\non: push\njobs:\n  build:\n    steps:\n"
+                "      - run: |\n"
+                "          # lake build Host.NotACommand\n"
+                '          echo "lake build Host.NotACommand"\n'
+                "          lake build\n",
+                encoding="utf-8",
             )
-            report = inventory.evaluate(root)
-            self.assertNotIn("Host.StringOnly", {row.module for row in report.rows})
+            invocations = inventory.extract_invocations(root)
+            self.assertEqual(len(invocations), 1)
+            self.assertEqual(invocations[0].kind, "build")
+            self.assertEqual(invocations[0].target, "")
+
+    def test_exception_is_named_and_not_laundered_as_reached(self) -> None:
+        self.assertEqual(
+            set(inventory.EXCEPTIONS), {"Host.CanonicalL0Liveness"}
+        )
+        self.assertIn(
+            "Ben, 2026-08-01", inventory.EXCEPTIONS["Host.CanonicalL0Liveness"]
+        )
 
 
 if __name__ == "__main__":

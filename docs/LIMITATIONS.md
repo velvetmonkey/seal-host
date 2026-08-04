@@ -63,6 +63,19 @@ the reasons below.
    axiom-gated by `lake exe axiom_check`. CI builds it every run as
    `control_16` (`lake build Test.A2DivergenceClassification`); that build is
    a compile-time guard, not an axiom pin (seven `#print axioms` lines, zero
-   `#guard_msgs`). The Host-scoped inventory gate does not see `Test/`
-   sources; the G1 gate names it here as `EXCLUDED` so the public sentence
-   matches the measured census (51/53) and the exclusion is not silent.
+   `#guard_msgs`). The G1 gate names it here as `EXCLUDED` so the public
+   sentence matches the `Test.Axioms` census (51/53) and the exclusion is not
+   silent.
+
+The workflow-build inventory measures a separate, broader wire. Of the same 53
+theorem-bearing modules, 52 are in the transitive source-import closure of a
+concrete `lake test`, `lake build`, or `lake exe` command in a checked-in GitHub
+Actions workflow. It gives no credit to a Lake target merely because it is
+declared. Under this measure `Test.A2DivergenceClassification` is reached
+because CI explicitly runs `lake build Test.A2DivergenceClassification`; only
+`Host.CanonicalL0Liveness` remains outside the wire, reported as `EXCEPTED=1`
+under the ruling above.
+
+`scripts/proof_inventory.py` fails the build with `ORPHAN PROOF MODULE` for any
+other theorem-bearing module outside the workflow-derived closures. It also
+fails closed on any import it cannot resolve and on circular local imports.

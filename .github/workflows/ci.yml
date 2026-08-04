@@ -179,7 +179,7 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_18
         continue-on-error: true
-        name: Gate explicit theorem/lemma Host source inventory
+        name: Gate every explicit theorem/lemma module against CI build closures
         run: |
           python3 scripts/proof_inventory.py
           python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v
