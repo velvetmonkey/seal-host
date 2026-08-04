@@ -1,5 +1,6 @@
 name = "seal-host"
 version = "0.1.0"
+testDriver = "lean_tests"
 # `repin_step2_guards` added 2026-07-25. Test/RepinStep2Guards.lean carried five
 # compile-time `example ... := by native_decide` assertions covering the
 # duplicate-key mediation bypass and the Unicode canonical-equivalence key case,
@@ -128,3 +129,12 @@ root = "Test.DownstreamParserOracle"
 [[lean_exe]]
 name = "perimeter_probe"
 root = "Test.PerimeterProbe"
+
+# Lake accepts one test driver, while the suite's assertions are spread across
+# ten executables. Building this driver builds every child (including the four
+# whose assertions run at elaboration time), then Test.LeanTests runs each child
+# and propagates the first nonzero exit status.
+[[lean_exe]]
+name = "lean_tests"
+root = "Test.LeanTests"
+needs = ["axiom_check", "host_unit_tests", "dx_surface_tests", "classify_encoding_tests", "policy_server_identity_tests", "honesty_matrix", "sha256_selfcheck", "repin_step2_guards", "guard_unify_tests", "perimeter_probe"]
