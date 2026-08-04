@@ -27,6 +27,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import argparse
+import fnmatch
 import json
 import re
 import subprocess
@@ -46,6 +47,8 @@ IMPORT_TOKEN = re.compile(
 EXCLUDED_PARTS = {".git", ".lake", "node_modules", "target", "wasm-spike"}
 EXTERNAL_LAKE_EXES = {"cache"}
 MANIFEST_NAME = "proof-build-targets.toml"
+JUDGED_EVENT = "push"
+JUDGED_BRANCH = "main"
 
 JOBS_KEY = re.compile(r"^jobs:\s*$")
 JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
@@ -152,6 +155,12 @@ class InventoryRow:
 
 
 @dataclass(frozen=True)
+class TriggerException:
+    invocation: BuildInvocation
+    reason: str
+
+
+@dataclass(frozen=True)
 class Inventory:
     rows: tuple[InventoryRow, ...]
     invocations: tuple[BuildInvocation, ...]
@@ -161,6 +170,8 @@ class Inventory:
     discovered: tuple[BuildInvocation, ...] = ()
     notes: tuple[str, ...] = ()
     verified: int = 0
+    credited: int = 0
+    trigger_exceptions: tuple[TriggerException, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -748,6 +759,238 @@ def read_workflow_steps(root: Path) -> tuple[WorkflowStep, ...]:
     return tuple(steps)
 
 
+TRIGGER_KEY = re.compile(r"^on:\s*(.*?)\s*$")
+TRIGGER_EVENT_KEY = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_-]*):\s*(.*?)\s*$")
+TRIGGER_FILTER_KEY = re.compile(r"^    ([A-Za-z_][A-Za-z0-9_-]*):\s*(.*?)\s*$")
+TRIGGER_LIST_ITEM = re.compile(r"^      -\s+(.+?)\s*$")
+TRIGGER_ATOM = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+PUSH_FILTERS = {
+    "branches",
+    "branches-ignore",
+    "tags",
+    "tags-ignore",
+    "paths",
+    "paths-ignore",
+}
+
+
+def parse_trigger_atom(value: str, context: str) -> str:
+    atom = unquote_scalar(value.strip())
+    if not atom or any(character in atom for character in "{}[]"):
+        raise InventoryError(f"cannot parse {context}: {value!r}")
+    return atom
+
+
+def parse_trigger_values(value: str, context: str) -> tuple[str, ...]:
+    text = value.strip()
+    if text.startswith("["):
+        if not text.endswith("]"):
+            raise InventoryError(f"cannot parse {context}: unterminated flow sequence")
+        body = text[1:-1].strip()
+        if not body:
+            raise InventoryError(f"cannot parse {context}: empty sequence")
+        return tuple(parse_trigger_atom(item, context) for item in body.split(","))
+    return (parse_trigger_atom(text, context),)
+
+
+def parse_push_filters(lines: list[str], workflow: str) -> dict[str, tuple[str, ...]]:
+    filters: dict[str, tuple[str, ...]] = {}
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            index += 1
+            continue
+        match = TRIGGER_FILTER_KEY.match(line)
+        if match is None:
+            raise InventoryError(
+                f"{workflow}: cannot classify workflow trigger: "
+                f"cannot parse push filter line {line.strip()!r}"
+            )
+        key, value = match.groups()
+        if key not in PUSH_FILTERS:
+            raise InventoryError(
+                f"{workflow}: cannot classify workflow trigger: unsupported push filter {key!r}"
+            )
+        if key in filters:
+            raise InventoryError(
+                f"{workflow}: cannot classify workflow trigger: duplicate push filter {key!r}"
+            )
+        index += 1
+        if value:
+            filters[key] = parse_trigger_values(value, f"{workflow} push.{key}")
+            continue
+        items: list[str] = []
+        while index < len(lines):
+            nested = lines[index]
+            if not nested.strip() or nested.lstrip().startswith("#"):
+                index += 1
+                continue
+            item = TRIGGER_LIST_ITEM.match(nested)
+            if item is None:
+                break
+            items.append(parse_trigger_atom(item.group(1), f"{workflow} push.{key}"))
+            index += 1
+        if not items:
+            raise InventoryError(
+                f"{workflow}: cannot classify workflow trigger: push filter {key!r} is empty"
+            )
+        filters[key] = tuple(items)
+    if "branches" in filters and "branches-ignore" in filters:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: push has both branches and branches-ignore"
+        )
+    if "tags" in filters and "tags-ignore" in filters:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: push has both tags and tags-ignore"
+        )
+    return filters
+
+
+def branch_matches(patterns: tuple[str, ...], branch: str) -> bool:
+    """Apply the supported subset of ordered GitHub branch filters.
+
+    ``*`` has the same meaning for the judged branch ``main`` under both
+    Python and GitHub matching. Extended GitHub metacharacters are rejected;
+    approximating them could turn an exclusion into accidental credit.
+    """
+    matched = False
+    for pattern in patterns:
+        negative = pattern.startswith("!")
+        candidate = pattern[1:] if negative else pattern
+        if not candidate:
+            raise InventoryError("empty negative branch pattern")
+        unsupported = sorted(set(candidate) & set("?+()|@\\"))
+        if unsupported:
+            raise InventoryError(
+                f"unsupported branch-pattern metacharacters {''.join(unsupported)!r}"
+            )
+        if fnmatch.fnmatchcase(branch, candidate):
+            matched = not negative
+    return matched
+
+
+def workflow_trigger_refutation(path: Path) -> str | None:
+    """Return why this workflow cannot fire for the judged event, or ``None``.
+
+    ``None`` is never an independent grant of coverage. It only means this
+    text-derived predicate did not refute the manifest assertion. Unsupported
+    trigger syntax raises, so silence cannot be interpreted as liveness.
+    """
+    workflow = path.name
+    lines = path.read_text(encoding="utf-8").splitlines()
+    starts = [index for index, line in enumerate(lines) if TRIGGER_KEY.match(line)]
+    if len(starts) != 1:
+        detail = "no top-level on: block" if not starts else "multiple top-level on: blocks"
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: {detail}"
+        )
+    start = starts[0]
+    header = TRIGGER_KEY.match(lines[start])
+    assert header is not None
+    inline = header.group(1)
+    events: dict[str, tuple[str, list[str]]] = {}
+    if inline:
+        if inline.startswith("{"):
+            raise InventoryError(
+                f"{workflow}: cannot classify workflow trigger: flow mappings are unsupported"
+            )
+        for event in parse_trigger_values(inline, f"{workflow} on"):
+            if not TRIGGER_ATOM.fullmatch(event):
+                raise InventoryError(
+                    f"{workflow}: cannot classify workflow trigger: invalid event {event!r}"
+                )
+            events[event] = ("", [])
+    else:
+        index = start + 1
+        current = ""
+        while index < len(lines):
+            line = lines[index]
+            if line and not line[0].isspace() and not line.lstrip().startswith("#"):
+                break
+            index += 1
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            event_match = TRIGGER_EVENT_KEY.match(line)
+            if event_match:
+                current, value = event_match.groups()
+                if current in events:
+                    raise InventoryError(
+                        f"{workflow}: cannot classify workflow trigger: duplicate event {current!r}"
+                    )
+                events[current] = (value, [])
+                continue
+            if not current or not line.startswith("    "):
+                raise InventoryError(
+                    f"{workflow}: cannot classify workflow trigger: "
+                    f"cannot parse on: line {line.strip()!r}"
+                )
+            events[current][1].append(line)
+    if not events:
+        raise InventoryError(f"{workflow}: cannot classify workflow trigger: on: is empty")
+    if JUDGED_EVENT not in events:
+        named = ", ".join(sorted(events))
+        return (
+            f"workflow declares only {named}; does not admit {JUDGED_EVENT} "
+            f"to refs/heads/{JUDGED_BRANCH}"
+        )
+    push_value, push_lines = events[JUDGED_EVENT]
+    if push_value not in {"", "{}", "null", "~"}:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: unsupported push value {push_value!r}"
+        )
+    filters = parse_push_filters(push_lines, workflow)
+    if (
+        {"tags", "tags-ignore"} & filters.keys()
+        and not {"branches", "branches-ignore"} & filters.keys()
+    ):
+        return (
+            f"push trigger is tag-only; does not admit {JUDGED_EVENT} "
+            f"to refs/heads/{JUDGED_BRANCH}"
+        )
+    try:
+        if "branches" in filters and not branch_matches(filters["branches"], JUDGED_BRANCH):
+            return f"push.branches excludes refs/heads/{JUDGED_BRANCH}"
+        if "branches-ignore" in filters and branch_matches(
+            filters["branches-ignore"], JUDGED_BRANCH
+        ):
+            return f"push.branches-ignore excludes refs/heads/{JUDGED_BRANCH}"
+    except InventoryError as error:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: {error}"
+        ) from error
+    return None
+
+
+def refute_triggers(
+    root: Path, invocations: tuple[BuildInvocation, ...]
+) -> tuple[tuple[TriggerException, ...], tuple[str, ...], set[tuple[str, ...]]]:
+    """Apply trigger text only in the direction that removes manifest credit."""
+    reasons: dict[str, str] = {}
+    blocked: set[str] = set()
+    errors: list[str] = []
+    for workflow in sorted({entry.workflow for entry in invocations}):
+        try:
+            reason = workflow_trigger_refutation(root / ".github" / "workflows" / workflow)
+        except (InventoryError, OSError, UnicodeDecodeError) as error:
+            errors.append(str(error))
+            blocked.add(workflow)
+            continue
+        if reason is not None:
+            reasons[workflow] = reason
+    exceptions = tuple(
+        TriggerException(entry, reasons[entry.workflow])
+        for entry in invocations
+        if entry.workflow in reasons
+    )
+    rejected = {
+        entry.coordinate
+        for entry in invocations
+        if entry.workflow in reasons or entry.workflow in blocked
+    }
+    return exceptions, tuple(errors), rejected
+
+
 def is_statically_false(expression: str) -> bool:
     text = expression.strip()
     if text.startswith("${{") and text.endswith("}}"):
@@ -1170,8 +1413,14 @@ def evaluate(root: Path = ROOT, extra_upstream_roots: tuple[Path, ...] = ()) -> 
     check_errors, notes, verified = cross_check(declared, discovered, steps)
     errors.extend(check_errors)
     invocations = locate_declared(declared, discovered)
-    # Only rows the cross-check confirmed may confer reachability.
-    confirmed = tuple(entry for entry in invocations if entry.coordinate in verified)
+    trigger_exceptions, trigger_errors, trigger_rejected = refute_triggers(root, invocations)
+    errors.extend(trigger_errors)
+    # Only rows confirmed by both refuting checks may confer reachability.
+    confirmed = tuple(
+        entry
+        for entry in invocations
+        if entry.coordinate in verified and entry.coordinate not in trigger_rejected
+    )
 
     upstream, upstream_errors = upstream_modules(root, extra_upstream_roots)
     errors.extend(upstream_errors)
@@ -1229,7 +1478,9 @@ def evaluate(root: Path = ROOT, extra_upstream_roots: tuple[Path, ...] = ()) -> 
         tuple(sorted(set(errors))),
         discovered,
         tuple(sorted(set(notes))),
+        len(verified),
         len(confirmed),
+        trigger_exceptions,
     )
 
 
@@ -1238,12 +1489,20 @@ def print_report(inventory: Inventory) -> None:
         status: sum(row.status == status for row in inventory.rows)
         for status in ("REACHED", "EXCEPTED", "ORPHANED", "UNCLASSIFIED")
     }
-    live = sum(not item.dead for item in inventory.discovered)
+    dead = sum(item.dead for item in inventory.discovered)
+    trigger_unclassified = (
+        inventory.verified - inventory.credited - len(inventory.trigger_exceptions)
+    )
     print(
         f"scanned={inventory.scanned} theorem-bearing={len(inventory.rows)} "
         f"declared-invocations={len(inventory.invocations)} "
         f"verified-invocations={inventory.verified} "
-        f"discovered-live={live} discovered-dead={len(inventory.discovered) - live} "
+        f"credited-invocations={inventory.credited} "
+        f"trigger-excepted={len(inventory.trigger_exceptions)} "
+        f"discovered-live={inventory.credited} "
+        f"discovered-trigger-excepted={len(inventory.trigger_exceptions)} "
+        f"discovered-trigger-unclassified={trigger_unclassified} "
+        f"discovered-dead={dead} "
         f"build-roots={len(inventory.roots)}"
     )
     print(
@@ -1255,6 +1514,9 @@ def print_report(inventory: Inventory) -> None:
         if row.status == "REACHED":
             for build in row.builds:
                 print(f"  BUILD\t{row.module}\t{build}")
+    print("trigger-status\tdeclaration\treason")
+    for item in inventory.trigger_exceptions:
+        print(f"TRIGGER-EXCEPTED\t{item.invocation.label}\t{item.reason}")
 
 
 def main() -> int:
@@ -1281,6 +1543,8 @@ def main() -> int:
                     "roots": inventory.roots,
                     "declared": [asdict(item) for item in inventory.invocations],
                     "verified": inventory.verified,
+                    "credited": inventory.credited,
+                    "trigger_exceptions": [asdict(item) for item in inventory.trigger_exceptions],
                     "discovered": [asdict(item) for item in inventory.discovered],
                     "rows": [asdict(row) for row in inventory.rows],
                     "errors": inventory.errors,

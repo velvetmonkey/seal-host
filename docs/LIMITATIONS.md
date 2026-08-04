@@ -29,8 +29,9 @@ config, approval-record, and receipt contracts are in
 
 **As of 2026-08-04:** the repository contains 53 modules with explicit
 `theorem`/`lemma` commands. Of those, 52 are in the transitive source-import
-closure of a `lake test`, `lake build`, or `lake exe` command **declared in
-[`proof-build-targets.toml`](../proof-build-targets.toml)**. This definition
+closure of one of 24 `lake test`, `lake build`, or `lake exe` commands
+**declared in [`proof-build-targets.toml`](../proof-build-targets.toml) whose
+workflow trigger admits a push to the default branch**. This definition
 deliberately gives no credit to a Lake target merely because it is declared in
 `lakefile.toml`. In particular, `Test.A2DivergenceClassification` is reached
 because `ci.yml`'s `control_16` is declared to run `lake build
@@ -38,8 +39,13 @@ Test.A2DivergenceClassification`, while the `Ffi` and `Test` library globs do
 not confer reachability by themselves.
 
 **Read the claim precisely, because it is narrower than it looks.** The
-manifest is a set of *assertions by a maintainer* that CI runs those 27
-commands. It is not a derivation from the workflow text, and deliberately so:
+manifest contains 27 *assertions by a maintainer* about commands in CI. Three
+are not credited for the default-branch push inventory: the manual-only
+`public-export.yml:export:control_14` and the two tag-only declarations
+`release.yml:build:control_19` and `release.yml:build:control_09`. They remain
+named as `TRIGGER-EXCEPTED`, with the trigger reason, rather than disappearing.
+
+The manifest is not a derivation from workflow text, and deliberately so:
 whether a line of shell will actually run depends on runner secrets, event
 payloads, matrix expansion and scripts the workflow shells out to, none of
 which is a function of the text. A predicate over the text that *granted*
@@ -51,6 +57,9 @@ must still correspond to a command in shell **command position**, at the named
 job and step, under the recorded `guard`; a row that fails that check confers
 nothing and fails the build. Any live command-position `lake` invocation that
 no row declares also fails the build. Neither check can make the gate pass.
+A workflow trigger that does not admit a push to `main` likewise removes that
+row's credit. Trigger syntax the checker cannot classify fails the gate and
+confers no credit; uncertainty is never read as liveness.
 A row's `guard` field records verbatim what the invocation is conditional on
 (a step `if:`, a shell branch, or nothing), so a conditional build is visible
 rather than silently counted or silently dropped.
