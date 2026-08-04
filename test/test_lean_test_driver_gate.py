@@ -117,6 +117,36 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertLess(gate, action, workflow)
         self.assertGreater(action_count, 0, "no lean-action invocation found")
 
+    def test_every_lean_action_defers_tests_until_native_dependency_is_built(self) -> None:
+        action_marker = "leanprover/lean-action"
+        native_build = re.compile(
+            r"^\s+(?:run: )?bash \.lake/packages/mcp-seal/c/build\.sh$",
+            re.MULTILINE,
+        )
+        explicit_test = re.compile(r"^\s+(?:run: )?lake test$", re.MULTILINE)
+        action_count = 0
+
+        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+            text = workflow.read_text(encoding="utf-8")
+            actions = [match.start() for match in re.finditer(action_marker, text)]
+            if not actions:
+                continue
+
+            builds = [match.start() for match in native_build.finditer(text)]
+            tests = [match.start() for match in explicit_test.finditer(text)]
+            action_count += len(actions)
+            self.assertEqual(len(builds), len(actions), workflow)
+            self.assertEqual(len(tests), len(actions), workflow)
+
+            for action, build, test in zip(actions, builds, tests, strict=True):
+                next_step = text.find("\n      - ", action)
+                action_block = text[action : next_step if next_step != -1 else None]
+                self.assertIn("test: false", action_block, workflow)
+                self.assertLess(action, build, workflow)
+                self.assertLess(build, test, workflow)
+
+        self.assertEqual(action_count, 6, "review every lean-action call site")
+
 
 if __name__ == "__main__":
     unittest.main()

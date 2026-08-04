@@ -65,6 +65,20 @@ jobs:
         with:
           use-github-cache: false
           build: false
+          test: false
+
+      - id: control_21
+        continue-on-error: true
+        name: Build native Lean test link dependency
+        run: |
+          set -euo pipefail
+          test -d .lake/packages/mcp-seal || lake update
+          bash .lake/packages/mcp-seal/c/build.sh
+
+      - id: control_22
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build
+        run: lake test
 
       - id: control_06
         continue-on-error: true
@@ -81,7 +95,6 @@ jobs:
           fi
           echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
           lake exe cache get
-          bash .lake/packages/mcp-seal/c/build.sh
           lake build
           lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
           ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"

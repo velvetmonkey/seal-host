@@ -81,7 +81,10 @@ jobs:
       - id: control_04
         continue-on-error: true
         uses: leanprover/lean-action@v1.5.0
-        with: { use-github-cache: false, build: false }
+        with:
+          use-github-cache: false
+          build: false
+          test: false
       - id: control_05
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -96,6 +99,10 @@ jobs:
       - id: control_08
         continue-on-error: true
         run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_19
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build
+        run: lake test
       - id: control_09
         continue-on-error: true
         run: lake build +Ffi:c.o.export

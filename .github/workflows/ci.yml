@@ -140,35 +140,7 @@ jobs:
         with:
           use-github-cache: false
           build: false
-      # FAIL-CLOSED companion to the lean-action step above. lean-action runs
-      # `lake check-test` / `lake check-lint` first and, when they fail, prints
-      # "will not run lake test" and still reports the step SUCCESSFUL with an
-      # EMPTY test-status/lint-status. lakefile.toml configures no testDriver
-      # and no lintDriver, so `lake test` and `lake lint` have never once run
-      # in this CI and the control was green for it. Assert the statuses, so a
-      # silently-skipped suite is RED instead of invisible.
-      - id: control_20
-        continue-on-error: true
-        name: Fail closed if lean-action did not actually run lake test and lake lint
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        env:
-          LEAN_ACTION_TEST_STATUS: ${{ steps.control_04.outputs.test-status }}
-          LEAN_ACTION_LINT_STATUS: ${{ steps.control_04.outputs.lint-status }}
-        run: |
-          set -uo pipefail
-          rc=0
-          for pair in "test:${LEAN_ACTION_TEST_STATUS}" "lint:${LEAN_ACTION_LINT_STATUS}"; do
-            phase=${pair%%:*}
-            status=${pair#*:}
-            if [ -z "$status" ]; then
-              echo "::error::lake ${phase} did not run: lean-action left ${phase}-status EMPTY, which is what it reports when \`lake check-${phase}\` fails and it skips the phase. A skipped suite is not a passing suite; configure ${phase}Driver in lakefile.toml."
-              rc=1
-            elif [ "$status" != "SUCCESS" ]; then
-              echo "::error::lake ${phase} did not pass: lean-action reported ${phase}-status='${status}' (expected SUCCESS)."
-              rc=1
-            fi
-          done
-          exit $rc
+          test: false
       - id: control_05
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update
@@ -182,6 +154,34 @@ jobs:
         continue-on-error: true
         run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # lean-action installs the toolchain and restores the Mathlib cache, but
+      # cannot build this package's unmanaged native link input before its own
+      # test sub-step. Run the aggregate driver explicitly after control_07 so
+      # the native prerequisite is present and the control aggregator sees the
+      # real lake test exit status.
+      - id: control_20
+        continue-on-error: true
+        name: Run aggregate Lean tests and fail closed if lean-action skipped lint
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        env:
+          LEAN_ACTION_LINT_STATUS: ${{ steps.control_04.outputs.lint-status }}
+        run: |
+          set -uo pipefail
+          rc=0
+          if [ -z "$LEAN_ACTION_LINT_STATUS" ]; then
+            echo "::error::lake lint did not run: lean-action left lint-status EMPTY, which is what it reports when \`lake check-lint\` fails and it skips the phase. A skipped suite is not a passing suite; configure lintDriver in lakefile.toml."
+            rc=1
+          elif [ "$LEAN_ACTION_LINT_STATUS" != "SUCCESS" ]; then
+            echo "::error::lake lint did not pass: lean-action reported lint-status='$LEAN_ACTION_LINT_STATUS' (expected SUCCESS)."
+            rc=1
+          fi
+          lake test
+          test_rc=$?
+          if [ "$test_rc" -ne 0 ]; then
+            echo "::error::lake test did not pass: exit code $test_rc."
+            rc=1
+          fi
+          exit "$rc"
       - id: control_08
         continue-on-error: true
         run: lake build
@@ -284,34 +284,7 @@ jobs:
         with:
           use-github-cache: false
           build: false
-      # FAIL-CLOSED companion to the lean-action step above; see the twin at
-      # ci.yml:build:control_20 for the full reasoning. lean-action's
-      # auto-config path prints "lake check-test failed -> will not run lake
-      # test" and leaves test-status EMPTY while the step still reports
-      # success, so an unrun suite is currently indistinguishable from a
-      # passing one.
-      - id: control_31
-        continue-on-error: true
-        name: Fail closed if lean-action did not actually run lake test and lake lint
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        env:
-          LEAN_ACTION_TEST_STATUS: ${{ steps.control_06.outputs.test-status }}
-          LEAN_ACTION_LINT_STATUS: ${{ steps.control_06.outputs.lint-status }}
-        run: |
-          set -uo pipefail
-          rc=0
-          for pair in "test:${LEAN_ACTION_TEST_STATUS}" "lint:${LEAN_ACTION_LINT_STATUS}"; do
-            phase=${pair%%:*}
-            status=${pair#*:}
-            if [ -z "$status" ]; then
-              echo "::error::lake ${phase} did not run: lean-action left ${phase}-status EMPTY, which is what it reports when \`lake check-${phase}\` fails and it skips the phase. A skipped suite is not a passing suite; configure ${phase}Driver in lakefile.toml."
-              rc=1
-            elif [ "$status" != "SUCCESS" ]; then
-              echo "::error::lake ${phase} did not pass: lean-action reported ${phase}-status='${status}' (expected SUCCESS)."
-              rc=1
-            fi
-          done
-          exit $rc
+          test: false
       - id: control_07
         continue-on-error: true
         uses: actions/setup-node@v7.0.0
@@ -331,6 +304,29 @@ jobs:
         continue-on-error: true
         run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_31
+        continue-on-error: true
+        name: Run aggregate Lean tests and fail closed if lean-action skipped lint
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        env:
+          LEAN_ACTION_LINT_STATUS: ${{ steps.control_06.outputs.lint-status }}
+        run: |
+          set -uo pipefail
+          rc=0
+          if [ -z "$LEAN_ACTION_LINT_STATUS" ]; then
+            echo "::error::lake lint did not run: lean-action left lint-status EMPTY, which is what it reports when \`lake check-lint\` fails and it skips the phase. A skipped suite is not a passing suite; configure lintDriver in lakefile.toml."
+            rc=1
+          elif [ "$LEAN_ACTION_LINT_STATUS" != "SUCCESS" ]; then
+            echo "::error::lake lint did not pass: lean-action reported lint-status='$LEAN_ACTION_LINT_STATUS' (expected SUCCESS)."
+            rc=1
+          fi
+          lake test
+          test_rc=$?
+          if [ "$test_rc" -ne 0 ]; then
+            echo "::error::lake test did not pass: exit code $test_rc."
+            rc=1
+          fi
+          exit "$rc"
       - id: control_11
         continue-on-error: true
         run: lake build +Ffi:c.o.export

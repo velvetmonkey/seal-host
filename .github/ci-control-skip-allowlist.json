@@ -29,7 +29,7 @@
       "workflow": "ci.yml",
       "job": "build",
       "id": "control_20",
-      "reason": "This gate reads the status outputs of the token-gated lean-action step, which does not run on the tokenless path."
+      "reason": "This control runs aggregate Lean tests linked against private mcp-seal and reads lint status from the token-gated lean-action step."
     },
     {
       "workflow": "ci.yml",
@@ -233,7 +233,7 @@
       "workflow": "ci.yml",
       "job": "rust-conformance",
       "id": "control_31",
-      "reason": "This gate reads the status outputs of the token-gated lean-action step, which does not run on the tokenless path."
+      "reason": "This control runs aggregate Lean tests linked against private mcp-seal and reads lint status from the token-gated lean-action step."
     },
     {
       "workflow": "ci.yml",
