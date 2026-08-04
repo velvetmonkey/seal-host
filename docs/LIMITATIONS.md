@@ -62,19 +62,49 @@ nothing and fails the build. Any live command-position `lake` invocation that
 no row declares also fails the build. Neither check can make the gate pass.
 A workflow trigger that does not admit a push to `main` likewise removes that
 row's credit. Trigger evaluation is a closed world with three outcomes:
-`FIRES`, `DOES NOT FIRE`, and `NOT UNDERSTOOD`. The implemented event names are
-`push`, `pull_request`, `schedule`, and `workflow_dispatch`; the implemented
-`push` fields are `branches`, `branches-ignore`, `tags`, `tags-ignore`, `paths`,
-and `paths-ignore`. Scalar and sequence `on:` forms, block mappings, and flow
-mappings are implemented. The non-push configurations implemented today are an
-empty `pull_request` or `workflow_dispatch` value and a `schedule` sequence
-containing only `cron` mappings whose five fields are `*` or one range-valid
-integer. Ref filters implement literal characters, `*`/`**`, and ordered `!`
-negation in positive `branches`/`tags` lists. Any other event, field,
-configuration, value shape, or syntax is `NOT UNDERSTOOD`: every declaration
-in that workflow loses credit, every row is printed as
-`TRIGGER-NOT-UNDERSTOOD`, and the gate exits non-zero. Uncertainty is never
-read as liveness.
+`FIRES`, `DOES NOT FIRE`, and `NOT UNDERSTOOD`.
+
+**The `on:` block is read as YAML, not as text.** Until 2026-08-04 the reader
+matched indentation as literal string prefixes — two spaces for an event key,
+four for a filter key, six for a list item — which made the gate reject valid
+workflows over whitespace it had never documented and GitHub does not care
+about. A branch list written as a block sequence at four spaces instead of six
+matched no prefix, so the filter collected nothing and was reported as *empty*
+about a filter plainly containing `main`; quoting the top-level key as `"on":`,
+the standard answer to yamllint's default `truthy` warning, read as no trigger
+at all. Both now parse. So do anchors and aliases, which GitHub has supported
+since 2025-09-18, and any indentation YAML itself permits. This costs the gate
+a dependency on PyYAML, which `ci.yml` provisions explicitly; if it is missing
+the gate refuses to run rather than reporting coverage it could not check.
+
+Reading real YAML widens what parses, so the closed world is enforced above the
+parser instead. Event names are closed over GitHub's documented vocabulary of
+35, and each event's configuration keys over that event's documented set, both
+transcribed from the machine-readable workflow schema. The distinction that
+draws is the load-bearing one: a key that is **not an event name** — `defaults`,
+say — makes the workflow file invalid, so it runs on nothing, and refusing it is
+correct rather than over-strict; an event name this gate does not *interpret* is
+merely another way for the workflow to start, and since `on:` is a disjunction
+it cannot withdraw the push being judged. So `merge_group`, `workflow_call` and
+a configured `pull_request` leave the push verdict intact, while an unrecognised
+key at any depth does not.
+
+Only `push` is interpreted. Its implemented fields are `branches`,
+`branches-ignore`, `tags`, `tags-ignore`, `paths`, and `paths-ignore`; ref
+filters implement literal characters, `*`/`**`, and ordered `!` negation in
+positive `branches`/`tags` lists. A `schedule` is still checked to be a sequence
+of `cron` mappings whose five fields are `*` or one range-valid integer.
+Duplicate keys are refused at every level rather than resolved last-one-wins,
+as PyYAML's own constructor would; so are explicit YAML tags, merge keys,
+multi-document files, non-string keys, and alias graphs that are cyclic or that
+expand past a fixed bound. Any other event, field, configuration, value shape,
+or syntax is `NOT UNDERSTOOD`: every declaration in that workflow loses credit,
+every row is printed as `TRIGGER-NOT-UNDERSTOOD`, and the gate exits non-zero.
+Uncertainty is never read as liveness.
+
+Because YAML whitespace is space and tab only, characters that merely look like
+whitespace — U+00A0 and its relatives — remain scalar data and are refused as
+unsupported pattern characters rather than trimmed to a name that matches.
 
 A `paths`- or `paths-ignore`-filtered push is conditional on a changed-file set,
 so it is not an unconditional push-to-main witness. Either filter produces

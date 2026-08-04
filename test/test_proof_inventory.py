@@ -559,12 +559,48 @@ class ProofInventoryTests(unittest.TestCase):
                 result.stdout,
             )
 
-    def test_unknown_event_fails_even_when_push_is_present(self) -> None:
-        evaluation = self.evaluate_trigger("on: [push, merge_group]")
-        self.assertEqual(
-            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
+    def test_non_event_key_fails_even_when_push_is_present(self) -> None:
+        """A key that is not an event invalidates the file, so it must fail.
+
+        GitHub's `on:` mapping is closed. An unrecognised key there is not a
+        trigger this gate merely fails to implement -- it makes the workflow
+        file invalid, so the workflow runs on nothing, which is precisely the
+        state a declared-but-dead build would like to be mistaken for.
+        """
+        for key in ("defaults", "batch-size"):
+            with self.subTest(key=key):
+                evaluation = self.evaluate_trigger(f"on:\n  push:\n  {key}: null")
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                )
+                self.assertIn(f"unsupported event {key!r}", evaluation.reason)
+
+    def test_real_event_beside_push_does_not_disturb_the_push_verdict(self) -> None:
+        """`on:` is a disjunction, so a second event cannot withdraw the push.
+
+        Refusing these was the R8 over-refusal that mattered most in
+        practice: enabling a GitHub merge queue requires adding
+        `merge_group:` to every workflow providing a required check, and
+        making a workflow reusable requires `workflow_call:`. Neither touches
+        the push-to-main this gate judges.
+        """
+        cases = (
+            "on: [push, merge_group]",
+            "on:\n  push:\n  merge_group:\n    types: [checks_requested]",
+            "on:\n  push:\n  workflow_call:",
+            "on:\n  push:\n  release:\n    types: [published]",
+            "on:\n  push:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]",
+            "on:\n  push:\n  pull_request:\n    types: [opened]",
         )
-        self.assertIn("unsupported event 'merge_group'", evaluation.reason)
+        for trigger in cases:
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.FIRES,
+                    evaluation.reason,
+                )
 
     def test_invalid_ref_pattern_is_not_understood(self) -> None:
         evaluation = self.evaluate_trigger(
@@ -584,17 +620,44 @@ class ProofInventoryTests(unittest.TestCase):
         )
         self.assertIn("outside the implemented simple five-field subset", evaluation.reason)
 
-    def test_unimplemented_non_push_configuration_fails_closed(self) -> None:
-        evaluation = self.evaluate_trigger(
-            "on:\n  push:\n  pull_request:\n    types: [opened]"
-        )
-        self.assertEqual(
-            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
-        )
-        self.assertIn(
-            "configuration for event 'pull_request' is not implemented",
-            evaluation.reason,
-        )
+    def test_unreadable_non_push_configuration_fails_closed(self) -> None:
+        """Tolerating an event is not tolerating anything written under it."""
+        cases = {
+            "on:\n  push:\n  pull_request:\n    batch-size: [1]": (
+                "unsupported configuration key 'batch-size' for event 'pull_request'"
+            ),
+            "on:\n  push:\n  merge_group:\n    branches: [main]": (
+                "unsupported configuration key 'branches' for event 'merge_group'"
+            ),
+            "on:\n  push:\n  workflow_call:\n    nope: 1": (
+                "unsupported configuration key 'nope' for event 'workflow_call'"
+            ),
+            "on:\n  push:\n  release: [published]": (
+                "unsupported configuration for event 'release'"
+            ),
+            # A key GitHub's schema accepts, carrying a value it does not.
+            # That invalidates the workflow file exactly as an unknown key
+            # does, so the shapes are checked even though the values are
+            # never interpreted.
+            'on:\n  push:\n  merge_group:\n    types: "nope"': (
+                "expected a non-empty sequence"
+            ),
+            "on:\n  push:\n  merge_group:\n    types: []": (
+                "expected a non-empty sequence"
+            ),
+            'on:\n  push:\n  workflow_call:\n    inputs: "nope"': (
+                "workflow_call.inputs must be a mapping"
+            ),
+        }
+        for trigger, reason in cases.items():
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                    evaluation.reason,
+                )
+                self.assertIn(reason, evaluation.reason)
 
     def test_filter_scalar_shape_is_not_understood(self) -> None:
         evaluation = self.evaluate_trigger("on:\n  push:\n    branches: main")
@@ -630,9 +693,13 @@ class ProofInventoryTests(unittest.TestCase):
     def test_empty_missing_anchor_and_alias_never_credit_by_silence(self) -> None:
         cases = {
             "on:": "on: is empty",
+            "on: {}": "on: is empty",
+            "on: []": "on: sequence is empty",
             "name: no trigger": "no top-level on: block",
-            "on: &trig": "anchors, aliases, and tags are unsupported",
-            "on: *trig": "anchors, aliases, and tags are unsupported",
+            # An anchor with no alias is a no-op, so this is an empty `on:`
+            # wearing a label; an alias with no anchor is not YAML at all.
+            "on: &trig": "on: is empty",
+            "on: *trig": "found undefined alias",
         }
         for trigger, reason in cases.items():
             with self.subTest(trigger=trigger):
@@ -642,6 +709,196 @@ class ProofInventoryTests(unittest.TestCase):
                     inventory.TriggerDisposition.NOT_UNDERSTOOD,
                 )
                 self.assertIn(reason, evaluation.reason)
+
+    def test_indentation_style_does_not_change_the_verdict(self) -> None:
+        """The gate reads YAML, not a house formatting convention.
+
+        A block sequence may be indented at or below its parent key, and both
+        styles are universal. An earlier revision pinned six spaces as a
+        literal prefix, so the four-space form matched nothing and the filter
+        was reported *empty* -- a reason a maintainer can see is false.
+        """
+        equivalent = (
+            'on:\n  push:\n    branches: ["main"]',
+            "on:\n  push:\n    branches:\n    - main",
+            "on:\n  push:\n    branches:\n      - main",
+            "on:\n  push:\n    branches:\n        - main",
+            "on:\n  push:\n    branches:\n      - >-\n        main",
+            'on:\n   push:\n     branches: ["main"]',
+            'on:\n  "push":\n    branches: ["main"]',
+            'on:\n  push:\n    "branches": ["main"]',
+            'on: {push: {branches: ["main"]}}',
+        )
+        for trigger in equivalent:
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.FIRES,
+                    evaluation.reason,
+                )
+
+    def test_quoted_on_key_is_the_same_key(self) -> None:
+        """yamllint's default `truthy` rule flags bare `on:` in every workflow.
+
+        Quoting the key is one of the two standard answers to that warning.
+        It must not read as a workflow with no trigger at all.
+        """
+        for trigger in ('"on":\n  push:', "'on':\n  push:"):
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.FIRES,
+                    evaluation.reason,
+                )
+
+    def test_anchors_and_aliases_resolve(self) -> None:
+        """GitHub Actions has supported YAML anchors since 2025-09-18.
+
+        Sharing one protected-branch list between two events is the use the
+        feature was shipped for.
+        """
+        evaluation = self.evaluate_trigger(
+            'on:\n  push:\n    branches: &protected ["main"]\n'
+            "  pull_request:\n    branches: *protected"
+        )
+        self.assertEqual(
+            evaluation.disposition,
+            inventory.TriggerDisposition.FIRES,
+            evaluation.reason,
+        )
+
+    def test_duplicate_keys_never_resolve_by_last_one_wins(self) -> None:
+        """PyYAML's own constructor keeps the last duplicate silently.
+
+        That would let a filter excluding main be overwritten by a permissive
+        copy -- or the reverse -- with nothing in the report to show for it.
+        """
+        cases = {
+            'on:\n  push:\n    branches: ["nope"]\non:\n  push:': (
+                "multiple top-level on: blocks"
+            ),
+            'on:\n  push:\n    branches: ["nope"]\n  push:': "duplicate key 'push'",
+            'on:\n  push:\n    branches: ["nope"]\n    branches: ["main"]': (
+                "duplicate key 'branches'"
+            ),
+            'on: {push: {branches: ["nope"]}, push: {}}': "duplicate key 'push'",
+            "on: [push, push]": "duplicate event 'push'",
+        }
+        for trigger, reason in cases.items():
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                    evaluation.reason,
+                )
+                self.assertIn(reason, evaluation.reason)
+
+    def test_constructs_of_unverified_meaning_fail_closed(self) -> None:
+        """Explicit tags, merge keys and multi-document files are refused.
+
+        Whether GitHub honours any of them is not documented anywhere we
+        could find. Accepting a construct on an unverified premise is how a
+        gate starts crediting a workflow that never runs.
+        """
+        cases = {
+            'on:\n  push:\n    branches: !!seq ["main"]': "explicit YAML tag",
+            "on: !!map\n  push:": "explicit YAML tag",
+            'on:\n  push:\n    branches: !custom ["main"]': "explicit YAML tag",
+            'on:\n  push:\n    <<: {branches: ["main"]}': "unsupported push filter '<<'",
+            "on:\n  <<: {push: null}": "expected an event name, got '<<'",
+            "on:\n  push:\n---\non:\n  push:": "but found another document",
+            "on:\n\tpush:": "cannot read probe.yml as YAML",
+            "on:\n  1: null": "expected an event name, got '1'",
+            "on:\n  ? [push]\n  : null": "mapping keys must be strings",
+        }
+        for trigger, reason in cases.items():
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                    evaluation.reason,
+                )
+                self.assertIn(reason, evaluation.reason)
+
+    def test_unicode_space_is_scalar_data_and_fails_closed(self) -> None:
+        """YAML whitespace is space and tab; U+00A0 and friends are content.
+
+        Reading real YAML preserves that distinction natively, so a branch
+        pattern carrying a non-breaking space is refused as an unsupported
+        pattern character rather than silently trimmed to a name that matches.
+        """
+        nbsp = "\N{NO-BREAK SPACE}"
+        ideographic = "\N{IDEOGRAPHIC SPACE}"
+        cases = (
+            f"on:{nbsp}push",
+            f"on:\n  push:{nbsp}",
+            f"on:\n  push:\n    branches: [main{nbsp}]",
+            f"on:\n  push:\n    branches: [{nbsp}main]",
+            f"on:\n  push:\n    branches:\n      - main{nbsp}",
+            f"on:\n  push:\n    branches: [main{ideographic}]",
+        )
+        for trigger in cases:
+            with self.subTest(trigger=repr(trigger)):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                    evaluation.reason,
+                )
+
+    def test_pathological_yaml_costs_one_workflow_not_the_run(self) -> None:
+        """Depth and alias expansion are bounded, and bounded fail-closed.
+
+        Left unbounded, either aborts the whole run part-way through, which
+        reports nothing at all. One unreadable workflow must cost that
+        workflow its credit, not the report.
+        """
+        bomb = [f"a0: &a0 [{','.join(['x'] * 10)}]"]
+        for level in range(1, 7):
+            bomb.append(f"a{level}: &a{level} [" + ",".join([f"*a{level - 1}"] * 10) + "]")
+        bomb.append("on: {push: {branches: *a6}}")
+        cases = {
+            "on: " + "[" * 400 + "]" * 400: "nests deeper than this gate reads",
+            "\n".join(bomb): "expands past",
+            "on: &a\n  push: *a": "alias refers to itself",
+        }
+        for trigger, reason in cases.items():
+            with self.subTest(reason=reason):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                    evaluation.reason,
+                )
+                self.assertIn(reason, evaluation.reason)
+
+    def test_second_event_cannot_rescue_a_refuted_push(self) -> None:
+        """Tolerating other events must not soften the push verdict itself."""
+        cases = {
+            'on:\n  push:\n    paths: ["docs/**"]\n  merge_group:': (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            'on:\n  push:\n    branches: ["release"]\n  workflow_call:': (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            'on:\n  push:\n    tags: ["v*"]\n  merge_group:': (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            "on:\n  merge_group:\n  workflow_call:": (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            'on:\n  push:\n    branches-ignore: ["*", "!main"]\n  merge_group:': (
+                inventory.TriggerDisposition.NOT_UNDERSTOOD
+            ),
+        }
+        for trigger, expected in cases.items():
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(evaluation.disposition, expected, evaluation.reason)
 
     def test_default_branch_filter_refutes_main(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
