@@ -37,8 +37,17 @@ class ProofInventoryTests(unittest.TestCase):
         )
         (root / ".github/workflows/ci.yml").write_text(
             "name: CI\non: [push, pull_request]\njobs:\n  build:\n    steps:\n"
-            "      - run: lake build\n"
-            "      - run: lake test\n",
+            "      - id: control_a\n        run: lake build\n"
+            "      - id: control_b\n        run: lake test\n",
+            encoding="utf-8",
+        )
+        (root / "proof-build-targets.toml").write_text(
+            "[[invocation]]\n"
+            'workflow = "ci.yml"\njob = "build"\nstep = "control_a"\n'
+            'kind = "build"\ntarget = ""\nguard = ""\n\n'
+            "[[invocation]]\n"
+            'workflow = "ci.yml"\njob = "build"\nstep = "control_b"\n'
+            'kind = "test"\ntarget = ""\nguard = ""\n',
             encoding="utf-8",
         )
         (root / "Test/CiRoot.lean").write_text(
@@ -48,6 +57,56 @@ class ProofInventoryTests(unittest.TestCase):
             "theorem wired : True := by trivial\n", encoding="utf-8"
         )
         return root
+
+    def add_step(self, root: Path, step_id: str, script: str, step_if: str | None = None) -> None:
+        workflow = root / ".github/workflows/ci.yml"
+        block = f"      - id: {step_id}\n"
+        if step_if is not None:
+            block += f"        if: {step_if}\n"
+        body = "\n".join(f"          {line}" for line in script.splitlines())
+        block += f"        run: |\n{body}\n"
+        workflow.write_text(workflow.read_text(encoding="utf-8") + block, encoding="utf-8")
+
+    def add_row(self, root: Path, **fields: str) -> None:
+        manifest = root / "proof-build-targets.toml"
+        row = "\n[[invocation]]\n" + "".join(f'{key} = "{value}"\n' for key, value in fields.items())
+        manifest.write_text(manifest.read_text(encoding="utf-8") + row, encoding="utf-8")
+
+    def plant_orphan(self, root: Path, module: str = "Host.Planted") -> None:
+        path = root / (module.replace(".", "/") + ".lean")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("theorem planted : True := by trivial\n", encoding="utf-8")
+
+    def assert_construction_does_not_reach(self, script: str, step_if: str | None = None) -> None:
+        """A never-executed construction must not launder the planted orphan."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.plant_orphan(root)
+            self.add_step(root, "control_probe", script, step_if)
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("ORPHANED\tHost.Planted", result.stdout)
+            self.assertNotIn("REACHED\tHost.Planted", result.stdout)
+
+    def assert_declaration_refused(self, script: str, step_if: str | None = None) -> None:
+        """Declaring the construction on purpose must be refused, not honoured."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.plant_orphan(root)
+            self.add_step(root, "control_probe", script, step_if)
+            self.add_row(
+                root,
+                workflow="ci.yml",
+                job="build",
+                step="control_probe",
+                kind="build",
+                target="Host.Planted",
+                guard="",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("ORPHANED\tHost.Planted", result.stdout)
+            self.assertNotIn("REACHED\tHost.Planted", result.stdout)
 
     def run_gate(self, root: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -198,16 +257,164 @@ class ProofInventoryTests(unittest.TestCase):
             workflow = root / ".github/workflows/ci.yml"
             workflow.write_text(
                 "name: CI\non: push\njobs:\n  build:\n    steps:\n"
-                "      - run: |\n"
+                "      - id: control_a\n"
+                "        run: |\n"
                 "          # lake build Host.NotACommand\n"
                 '          echo "lake build Host.NotACommand"\n'
+                "          echo lake build Host.AlsoNotACommand\n"
                 "          lake build\n",
                 encoding="utf-8",
             )
-            invocations = inventory.extract_invocations(root)
-            self.assertEqual(len(invocations), 1)
-            self.assertEqual(invocations[0].kind, "build")
-            self.assertEqual(invocations[0].target, "")
+            steps = inventory.read_workflow_steps(root)
+            found, errors = inventory.discover_lake_commands(steps)
+            self.assertEqual(errors, [])
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0].kind, "build")
+            self.assertEqual(found[0].target, "")
+
+    # -- the five never-executed constructions, each named, each tested -------
+    #
+    # Layer one: none of them may grant REACHED, because nothing found in
+    # workflow text grants anything. Layer two: declaring one on purpose in
+    # proof-build-targets.toml must be refused rather than honoured.
+
+    def test_w1_echoed_lake_command_does_not_reach(self) -> None:
+        self.assert_construction_does_not_reach("echo lake build Host.Planted")
+
+    def test_w1_echoed_lake_command_cannot_be_declared(self) -> None:
+        self.assert_declaration_refused("echo lake build Host.Planted")
+
+    def test_w2_constant_false_branch_does_not_reach(self) -> None:
+        self.assert_construction_does_not_reach(
+            "if false; then\n  lake build Host.Planted\nfi"
+        )
+
+    def test_w2_constant_false_branch_cannot_be_declared(self) -> None:
+        self.assert_declaration_refused(
+            "if false; then\n  lake build Host.Planted\nfi"
+        )
+
+    def test_w3_heredoc_body_does_not_reach(self) -> None:
+        self.assert_construction_does_not_reach(
+            'cat > /tmp/never.sh <<"EOF"\nlake build Host.Planted\nEOF\necho wrote it'
+        )
+
+    def test_w3_heredoc_body_cannot_be_declared(self) -> None:
+        self.assert_declaration_refused(
+            'cat > /tmp/never.sh <<"EOF"\nlake build Host.Planted\nEOF\necho wrote it'
+        )
+
+    def test_w4_statically_disabled_step_does_not_reach(self) -> None:
+        self.assert_construction_does_not_reach(
+            "lake build Host.Planted", step_if="${{ false }}"
+        )
+
+    def test_w4_statically_disabled_step_cannot_be_declared(self) -> None:
+        self.assert_declaration_refused(
+            "lake build Host.Planted", step_if="${{ false }}"
+        )
+
+    def test_w5_command_after_unconditional_exit_does_not_reach(self) -> None:
+        self.assert_construction_does_not_reach("exit 0\nlake build Host.Planted")
+
+    def test_w5_command_after_unconditional_exit_cannot_be_declared(self) -> None:
+        self.assert_declaration_refused("exit 0\nlake build Host.Planted")
+
+    # -- the parser is used only to refute -----------------------------------
+
+    def test_line_continuation_does_not_destroy_the_inventory(self) -> None:
+        """A trailing backslash previously zeroed every counter in the report."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.add_step(root, "control_probe", "lake build \\\n  Host.Wired")
+            report = inventory.evaluate(root)
+            self.assertEqual(len(report.rows), 1)
+            self.assertTrue(
+                any("undeclared lake invocation" in error for error in report.errors),
+                report.errors,
+            )
+
+    def test_undeclared_live_invocation_fails_the_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.add_step(root, "control_probe", "lake build Host.Wired")
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("undeclared lake invocation", result.stderr)
+
+    def test_declared_step_that_does_not_exist_fails_the_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.add_row(
+                root,
+                workflow="ci.yml",
+                job="build",
+                step="control_imaginary",
+                kind="build",
+                target="Host.Wired",
+                guard="",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("declared workflow/job/step does not exist", result.stderr)
+
+    def test_guard_drift_is_detected(self) -> None:
+        """Removing a step's if: guard must not pass silently."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.add_step(root, "control_probe", "lake build Host.Wired", step_if="${{ true }}")
+            self.add_row(
+                root,
+                workflow="ci.yml",
+                job="build",
+                step="control_probe",
+                kind="build",
+                target="Host.Wired",
+                guard="",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("declared guard", result.stderr)
+
+    def test_rejected_row_confers_no_reachability(self) -> None:
+        """A row that fails the cross-check must not still print REACHED."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Test/CiRoot.lean").write_text("", encoding="utf-8")
+            self.plant_orphan(root, "Host.Solo")
+            self.add_row(
+                root,
+                workflow="ci.yml",
+                job="build",
+                step="control_imaginary",
+                kind="build",
+                target="Host.Solo",
+                guard="",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("ORPHANED\tHost.Solo", result.stdout)
+            self.assertNotIn("REACHED\tHost.Solo", result.stdout)
+
+    def test_conditional_early_exit_leaves_later_commands_alive(self) -> None:
+        """golden-path.yml:92-102 -- a guarded exit 0 must not kill the builds."""
+        commands = inventory.analyze_shell(
+            'if git diff --quiet; then\n  echo no changes\n  exit 0\nfi\n'
+            "lake build Host.Wired\n"
+        )
+        build = next(command for command in commands if command.words[0] == "lake")
+        self.assertFalse(build.dead)
+        self.assertTrue(build.conditional)
+
+    def test_command_position_survives_a_semicolon_and_a_pipe(self) -> None:
+        """ci.yml:191 -- `set -o pipefail; lake exe axiom_check 2>&1 | tee f`."""
+        commands = inventory.analyze_shell(
+            "set -o pipefail; lake exe axiom_check 2>&1 | tee /tmp/axioms.txt\n"
+        )
+        build = next(command for command in commands if command.words[0] == "lake")
+        self.assertEqual(build.words, ("lake", "exe", "axiom_check"))
+        self.assertFalse(build.dead)
+        self.assertFalse(build.conditional)
 
     def test_exception_is_named_and_not_laundered_as_reached(self) -> None:
         self.assertEqual(

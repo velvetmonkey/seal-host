@@ -3,9 +3,22 @@
 """Fail closed unless every explicit theorem/lemma module is built by CI.
 
 REACHED means that a local module is in the transitive source-import closure of
-a concrete ``lake test``, ``lake build``, or ``lake exe`` command extracted
-from a checked-in GitHub Actions workflow. Lake declarations that no workflow
-invokes do not confer reachability.
+a lake invocation DECLARED in ``proof-build-targets.toml``. That manifest is the
+sole authority for which commands CI runs. Lake declarations that no manifest
+row invokes confer nothing, and neither does any text found in a workflow.
+
+Workflow text is still read, but only in REFUTING positions. For every declared
+row the workflow must still contain the corresponding command in shell command
+position, at the declared job and step, under the declared guard; if it does
+not, the gate fails. Any live command-position lake invocation that no row
+accounts for also fails the gate. Neither check can make the gate pass.
+
+That asymmetry is deliberate. Whether a line of shell will actually run is not
+a function of its text -- it depends on runner secrets, event payloads, matrix
+expansion and files the workflow shells out to -- so a predicate over the text
+that GRANTS reachability must guess on an undecidable middle, and guessing
+"yes" is invisible when wrong. Predicates here may only ever take reachability
+away. See docs/LIMITATIONS.md.
 """
 
 from __future__ import annotations
@@ -16,7 +29,6 @@ from pathlib import Path
 import argparse
 import json
 import re
-import shlex
 import subprocess
 import sys
 import tomllib
@@ -31,9 +43,16 @@ THEOREM_DECL = re.compile(
 IMPORT_TOKEN = re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$"
 )
-RUN_KEY = re.compile(r"^(\s*)(?:-\s*)?run:\s*(.*?)\s*$")
 EXCLUDED_PARTS = {".git", ".lake", "node_modules", "target", "wasm-spike"}
 EXTERNAL_LAKE_EXES = {"cache"}
+MANIFEST_NAME = "proof-build-targets.toml"
+
+JOBS_KEY = re.compile(r"^jobs:\s*$")
+JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+STEP_START = re.compile(r"^      -\s+(\S.*)$")
+STEP_KEY = re.compile(r"^        ([A-Za-z0-9_-]+):\s*(.*?)\s*$")
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=", re.S)
+FD_REDIRECT = re.compile(r"\d+(?:>>|>&|<&|>|<)")
 
 # RULED by Ben on 2026-08-01. This theorem-bearing module is deliberately not
 # walked by CI because its kernel reduction cost was measured at 6.0 GiB RSS /
@@ -52,17 +71,67 @@ class InventoryError(RuntimeError):
 
 @dataclass(frozen=True)
 class BuildInvocation:
+    """One lake command, located by workflow/job/step rather than by line.
+
+    Declared rows carry ``line=0`` until the cross-check finds them; discovered
+    commands carry the line they were found on. ``guard`` records the condition
+    under which the command runs, verbatim, so a conditional invocation is
+    visible in the manifest diff instead of being silently counted or dropped.
+    """
+
     workflow: str
-    line: int
+    job: str
+    step: str
     kind: str
     target: str
+    guard: str = ""
+    line: int = 0
+    dead: bool = False
+    dead_reason: str = ""
+
+    @property
+    def coordinate(self) -> tuple[str, str, str, str, str]:
+        return (self.workflow, self.job, self.step, self.kind, self.target)
 
     @property
     def label(self) -> str:
         rendered = f"lake {self.kind}"
         if self.target:
             rendered += f" {self.target}"
-        return f"{self.workflow}:{self.line} ({rendered})"
+        where = f"{self.workflow}:{self.job}:{self.step}"
+        if self.line:
+            where += f"@{self.line}"
+        return f"{where} ({rendered})"
+
+
+@dataclass(frozen=True)
+class WorkflowStep:
+    workflow: str
+    job: str
+    step: str
+    if_expr: str
+    script: str
+    script_line: int
+
+    @property
+    def label(self) -> str:
+        return f"{self.workflow}:{self.job}:{self.step}"
+
+
+@dataclass(frozen=True)
+class ShellToken:
+    kind: str
+    text: str
+    line: int
+
+
+@dataclass(frozen=True)
+class ShellCommand:
+    words: tuple[str, ...]
+    line: int
+    conditional: bool
+    dead: bool
+    dead_reason: str
 
 
 @dataclass(frozen=True)
@@ -89,6 +158,9 @@ class Inventory:
     roots: tuple[str, ...]
     scanned: int
     errors: tuple[str, ...]
+    discovered: tuple[BuildInvocation, ...] = ()
+    notes: tuple[str, ...] = ()
+    verified: int = 0
 
     @property
     def passed(self) -> bool:
@@ -241,92 +313,619 @@ def read_sources(root: Path) -> tuple[dict[str, Source], list[str], set[str]]:
     return sources, errors, unreadable
 
 
-def workflow_run_lines(path: Path) -> list[tuple[int, str]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    commands: list[tuple[int, str]] = []
-    index = 0
-    while index < len(lines):
-        match = RUN_KEY.match(lines[index])
-        if match is None:
-            index += 1
+def skip_heredoc_body(script: str, index: int, delimiter: str) -> tuple[int, int]:
+    """Consume a heredoc body. Its contents are data, never commands."""
+    consumed = 0
+    while index < len(script):
+        end = script.find("\n", index)
+        text = script[index:] if end == -1 else script[index:end]
+        index = len(script) if end == -1 else end + 1
+        consumed += 1
+        if text.strip() == delimiter:
+            return index, consumed
+    raise InventoryError(f"unterminated heredoc {delimiter!r}")
+
+
+def consume_substitution(script: str, index: int) -> tuple[int, int]:
+    """Consume a ``$(...)``/``<(...)`` region from its ``(``, respecting quotes.
+
+    Parenthesis counting alone is not enough: a substitution routinely contains
+    quoted text with unbalanced parentheses in it, as release.yml:73 does.
+    """
+    depth = 0
+    newlines = 0
+    length = len(script)
+    while index < length:
+        char = script[index]
+        if char == "\\" and index + 1 < length:
+            newlines += script[index + 1] == "\n"
+            index += 2
             continue
-        indent = len(match.group(1))
-        value = match.group(2)
-        if value.startswith(("|", ">")):
+        if char == "'":
+            end = script.find("'", index + 1)
+            if end == -1:
+                raise InventoryError("unterminated single quote")
+            newlines += script.count("\n", index, end)
+            index = end + 1
+            continue
+        if char == '"':
             index += 1
-            while index < len(lines):
-                line = lines[index]
-                if line.strip() and len(line) - len(line.lstrip()) <= indent:
-                    break
-                if line.strip():
-                    commands.append((index + 1, line.strip()))
+            while index < length and script[index] != '"':
+                if script[index] == "\\" and index + 1 < length:
+                    newlines += script[index + 1] == "\n"
+                    index += 2
+                    continue
+                if script.startswith("$(", index):
+                    index, extra = consume_substitution(script, index + 1)
+                    newlines += extra
+                    continue
+                newlines += script[index] == "\n"
                 index += 1
+            if index >= length:
+                raise InventoryError("unterminated double quote")
+            index += 1
             continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        commands.append((index + 1, value))
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1, newlines
+        elif char == "\n":
+            newlines += 1
         index += 1
+    raise InventoryError("unterminated command substitution")
+
+
+def scan_shell_word(script: str, index: int) -> tuple[str, int, int]:
+    """Return (text, next_index, newlines) for one shell word.
+
+    Quotes, backslash escapes, command substitutions and process substitutions
+    are consumed whole. Commands nested inside a substitution are deliberately
+    not analysed: missing them under-extracts, which is the safe direction.
+    """
+    start = index
+    out: list[str] = []
+    newlines = 0
+    length = len(script)
+    while index < length:
+        char = script[index]
+        if char == "\\":
+            if index + 1 >= length:
+                raise InventoryError("trailing backslash in shell word")
+            if script[index + 1] == "\n":
+                newlines += 1
+                index += 2
+                continue
+            out.append(script[index + 1])
+            index += 2
+            continue
+        if char == "'":
+            end = script.find("'", index + 1)
+            if end == -1:
+                raise InventoryError("unterminated single quote")
+            chunk = script[index + 1 : end]
+            newlines += chunk.count("\n")
+            out.append(chunk)
+            index = end + 1
+            continue
+        if char == '"':
+            index += 1
+            while index < length and script[index] != '"':
+                if script[index] == "\\" and index + 1 < length:
+                    if script[index + 1] == "\n":
+                        newlines += 1
+                    out.append(script[index + 1])
+                    index += 2
+                    continue
+                if script.startswith("$(", index):
+                    end, extra = consume_substitution(script, index + 1)
+                    out.append(script[index:end])
+                    newlines += extra
+                    index = end
+                    continue
+                if script[index] == "\n":
+                    newlines += 1
+                out.append(script[index])
+                index += 1
+            if index >= length:
+                raise InventoryError("unterminated double quote")
+            index += 1
+            continue
+        if char == "`":
+            end = script.find("`", index + 1)
+            if end == -1:
+                raise InventoryError("unterminated backquote")
+            chunk = script[index : end + 1]
+            newlines += chunk.count("\n")
+            out.append(chunk)
+            index = end + 1
+            continue
+        if script.startswith(("$(", "<(", ">("), index):
+            end, extra = consume_substitution(script, index + 1)
+            out.append(script[index:end])
+            newlines += extra
+            index = end
+            continue
+        if char in " \t\n;|&<>()":
+            break
+        out.append(char)
+        index += 1
+    if index == start:
+        raise InventoryError(f"cannot tokenise shell text at {script[start:start + 20]!r}")
+    return "".join(out), index, newlines
+
+
+def tokenize_shell(script: str) -> list[ShellToken]:
+    """Tokenise a shell script, keeping operator structure and line numbers.
+
+    ``shlex`` cannot do this job: it discards the operators that decide command
+    position, and it raises on ordinary input such as a trailing ``\\`` line
+    continuation, which previously destroyed the whole inventory.
+    """
+    tokens: list[ShellToken] = []
+    index = 0
+    line = 1
+    length = len(script)
+    pending_heredocs: list[str] = []
+    redirect_pending = False
+    while index < length:
+        char = script[index]
+        if char == "\n":
+            tokens.append(ShellToken("newline", "\n", line))
+            index += 1
+            line += 1
+            while pending_heredocs:
+                index, consumed = skip_heredoc_body(script, index, pending_heredocs.pop(0))
+                line += consumed
+            continue
+        if char in " \t":
+            index += 1
+            continue
+        if char == "\\" and index + 1 < length and script[index + 1] == "\n":
+            index += 2
+            line += 1
+            continue
+        if char == "#":
+            end = script.find("\n", index)
+            index = length if end == -1 else end
+            continue
+        if script.startswith(("<<-", "<<"), index):
+            index += 3 if script.startswith("<<-", index) else 2
+            while index < length and script[index] in " \t":
+                index += 1
+            delimiter, index, extra = scan_shell_word(script, index)
+            line += extra
+            pending_heredocs.append(delimiter)
+            continue
+        if script.startswith(("<(", ">("), index):
+            word, index, extra = scan_shell_word(script, index)
+            tokens.append(ShellToken("word", word, line))
+            line += extra
+            continue
+        fd_redirect = FD_REDIRECT.match(script, index)
+        if fd_redirect:
+            tokens.append(ShellToken("op", fd_redirect.group(0), line))
+            index = fd_redirect.end()
+            redirect_pending = True
+            continue
+        operator = next(
+            (
+                candidate
+                for candidate in (";;", "&&", "||", ">>", ">&", "<&", ";", "|", "&", "(", ")", "<", ">")
+                if script.startswith(candidate, index)
+            ),
+            None,
+        )
+        if operator is not None:
+            tokens.append(ShellToken("op", operator, line))
+            index += len(operator)
+            redirect_pending = operator in {">>", ">&", "<&", "<", ">"}
+            continue
+        word, index, extra = scan_shell_word(script, index)
+        tokens.append(ShellToken("redirect-target" if redirect_pending else "word", word, line))
+        redirect_pending = False
+        line += extra
+    return tokens
+
+
+BLOCK_OPENERS = {"if": "fi", "while": "done", "until": "done", "for": "done", "case": "esac"}
+BLOCK_CLOSERS = {"fi": "if", "done": ("while", "until", "for"), "esac": "case"}
+STATIC_FALSE = {"false", "/bin/false", "/usr/bin/false"}
+
+DEAD_AFTER_EXIT = "it follows an unconditional exit in the same block"
+DEAD_CONSTANT_BRANCH = "it is inside a branch whose condition is the constant false"
+DEAD_STEP_IF = "the step's if: expression is the constant false"
+
+
+def analyze_shell(script: str) -> list[ShellCommand]:
+    """Split a script into commands, recording command position and reachability.
+
+    A word is a command only in command position, so ``echo lake build X`` is a
+    call to ``echo``. Conditional context is RECORDED rather than decided: a
+    command inside ``if``/``while``/``case``/``&&`` is marked conditional, not
+    dropped, because whether it runs is a runtime fact. Only statically dead
+    positions -- after an unconditional ``exit``, or under a literal ``false``
+    condition -- are marked dead, and dead commands can never be declared.
+    """
+    tokens = tokenize_shell(script)
+    commands: list[ShellCommand] = []
+    stack: list[dict[str, object]] = [
+        {"kind": "top", "conditional": False, "dead": False, "reason": "", "escaped": False}
+    ]
+    words: list[str] = []
+    start_line = 0
+    last_command: list[str] = []
+    next_conditional = False
+
+    def flush() -> None:
+        nonlocal words, start_line, next_conditional, last_command
+        if not words:
+            return
+        top = stack[-1]
+        conditional = bool(top["conditional"]) or next_conditional or bool(top["escaped"])
+        payload = list(words)
+        while payload and ASSIGNMENT.match(payload[0]):
+            payload.pop(0)
+        words = []
+        next_conditional = False
+        if not payload:
+            return
+        last_command = payload
+        commands.append(
+            ShellCommand(
+                tuple(payload),
+                start_line,
+                conditional,
+                bool(top["dead"]),
+                str(top["reason"]),
+            )
+        )
+        if payload[0] in {"exit", "return"} and not top["dead"]:
+            if conditional:
+                # An early exit that may or may not fire makes everything after
+                # it in this block conditional too -- golden-path.yml:92-94.
+                top["escaped"] = True
+            else:
+                top["dead"] = True
+                top["reason"] = DEAD_AFTER_EXIT
+
+    def pop_block(expected: object) -> None:
+        if len(stack) <= 1:
+            return
+        kinds = expected if isinstance(expected, tuple) else (expected,)
+        if stack[-1]["kind"] not in kinds:
+            return
+        popped = stack.pop()
+        if popped["dead"] and not popped["conditional"]:
+            stack[-1]["dead"] = True
+            stack[-1]["reason"] = popped["reason"]
+        if popped["escaped"] or (popped["conditional"] and popped["dead"]):
+            # A conditional exit inside the block can skip everything after it.
+            stack[-1]["escaped"] = True
+
+    for token in tokens:
+        if token.kind == "redirect-target":
+            continue
+        if token.kind == "newline":
+            flush()
+            continue
+        if token.kind == "op":
+            if token.text in {";", ";;", "&", "|"}:
+                flush()
+            elif token.text in {"&&", "||"}:
+                flush()
+                next_conditional = True
+            elif token.text == "(":
+                flush()
+                stack.append({**stack[-1], "kind": "subshell"})
+            elif token.text == ")":
+                flush()
+                pop_block("subshell")
+            continue
+        word = token.text
+        if not words:
+            if word == "{":
+                stack.append({**stack[-1], "kind": "group"})
+                continue
+            if word == "}":
+                pop_block("group")
+                continue
+            if word in BLOCK_OPENERS:
+                stack.append({**stack[-1], "kind": word})
+                continue
+            if word in {"then", "do"}:
+                top = stack[-1]
+                if top["kind"] in BLOCK_OPENERS:
+                    top["conditional"] = True
+                    if last_command and last_command[0] in STATIC_FALSE and len(last_command) == 1:
+                        top["dead"] = True
+                        top["reason"] = DEAD_CONSTANT_BRANCH
+                continue
+            if word in {"else", "elif"}:
+                top = stack[-1]
+                top["conditional"] = True
+                top["dead"] = stack[-2]["dead"] if len(stack) > 1 else False
+                top["reason"] = stack[-2]["reason"] if len(stack) > 1 else ""
+                continue
+            if word in BLOCK_CLOSERS:
+                pop_block(BLOCK_CLOSERS[word])
+                continue
+            if word in {"!", "time"}:
+                continue
+        words.append(word)
+        if len(words) == 1:
+            start_line = token.line
+    flush()
     return commands
 
 
-def shell_words(line: str) -> list[str]:
-    try:
-        return shlex.split(line, comments=True, posix=True)
-    except ValueError as error:
-        raise InventoryError(f"cannot parse workflow shell line {line!r}: {error}") from error
+def unquote_scalar(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
-def extract_invocations(root: Path) -> tuple[BuildInvocation, ...]:
+def build_step(workflow: str, job: str, lines: list[tuple[int, str]]) -> WorkflowStep:
+    step_id = ""
+    if_expr = ""
+    script = ""
+    script_line = lines[0][0]
+    index = 0
+    while index < len(lines):
+        line_number, text = lines[index]
+        index += 1
+        match = STEP_KEY.match(text)
+        if match is None:
+            continue
+        key, value = match.group(1), match.group(2)
+        if key == "id":
+            step_id = unquote_scalar(value)
+        elif key == "if":
+            if_expr = unquote_scalar(value)
+        elif key == "run":
+            if not value.startswith(("|", ">")):
+                script = unquote_scalar(value)
+                script_line = line_number
+                continue
+            body: list[tuple[int, str]] = []
+            while index < len(lines):
+                body_number, body_text = lines[index]
+                if body_text.strip() and not body_text.startswith("         "):
+                    break
+                body.append((body_number, body_text))
+                index += 1
+            widths = [len(text) - len(text.lstrip()) for _, text in body if text.strip()]
+            pad = min(widths) if widths else 0
+            script = "\n".join(text[pad:] if text.strip() else "" for _, text in body)
+            script_line = body[0][0] if body else line_number
+    return WorkflowStep(workflow, job, step_id or f"line{lines[0][0]}", if_expr, script, script_line)
+
+
+def read_workflow_steps(root: Path) -> tuple[WorkflowStep, ...]:
+    """Read workflow/job/step coordinates and run blocks without a YAML package.
+
+    No tracked script in this repository imports a YAML library; the same
+    line-structural convention is used by scripts/ci_control_aggregate.py.
+    """
     workflow_dir = root / ".github" / "workflows"
     paths = sorted([*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")])
     if not paths:
         raise InventoryError(f"no GitHub Actions workflows found under {workflow_dir}")
-    invocations: list[BuildInvocation] = []
-    stop_tokens = {"|", "||", "&&", ";", "then", "fi", "2>&1"}
+    steps: list[WorkflowStep] = []
     for path in paths:
-        for line_number, line in workflow_run_lines(path):
-            if re.search(r"\blake\b", line) is None:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        name = path.name
+        job = ""
+        in_jobs = False
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if JOBS_KEY.match(line):
+                in_jobs = True
+                index += 1
                 continue
-            words = shell_words(line)
-            for index, word in enumerate(words):
-                if word != "lake" or index + 1 >= len(words):
-                    continue
-                kind = words[index + 1]
-                if kind not in {"test", "build", "exe"}:
-                    continue
-                arguments: list[str] = []
-                for argument in words[index + 2 :]:
-                    if argument in stop_tokens or argument.startswith((">", "2>")):
-                        break
-                    if argument.startswith("-"):
-                        continue
-                    arguments.append(argument)
-                if kind == "test":
-                    invocations.append(
-                        BuildInvocation(str(path.relative_to(root)), line_number, kind, "")
-                    )
-                elif kind == "exe":
-                    if not arguments:
-                        raise InventoryError(f"{path}:{line_number}: lake exe has no target")
-                    invocations.append(
-                        BuildInvocation(
-                            str(path.relative_to(root)), line_number, kind, arguments[0]
-                        )
-                    )
-                elif arguments:
-                    invocations.extend(
-                        BuildInvocation(
-                            str(path.relative_to(root)), line_number, kind, target
-                        )
-                        for target in arguments
-                    )
-                else:
-                    invocations.append(
-                        BuildInvocation(str(path.relative_to(root)), line_number, kind, "")
-                    )
-    if not invocations:
-        raise InventoryError("workflows contain no lake test/build/exe invocations")
-    return tuple(invocations)
+            if line and not line[0].isspace() and not JOBS_KEY.match(line):
+                in_jobs = False
+            job_match = JOB_KEY.match(line)
+            if in_jobs and job_match:
+                job = job_match.group(1)
+                index += 1
+                continue
+            step_match = STEP_START.match(line)
+            if step_match is None or not job:
+                index += 1
+                continue
+            collected = [(index + 1, "        " + step_match.group(1))]
+            index += 1
+            while index < len(lines):
+                text = lines[index]
+                if text.strip() and not text.startswith("        "):
+                    break
+                collected.append((index + 1, text))
+                index += 1
+            steps.append(build_step(name, job, collected))
+    return tuple(steps)
+
+
+def is_statically_false(expression: str) -> bool:
+    text = expression.strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    return text.strip() == "false"
+
+
+def lake_invocations_in(command: ShellCommand, step: WorkflowStep, step_dead: bool) -> list[BuildInvocation]:
+    if len(command.words) < 2 or command.words[0] != "lake":
+        return []
+    kind = command.words[1]
+    if kind not in {"test", "build", "exe"}:
+        return []
+    arguments = [word for word in command.words[2:] if not word.startswith("-")]
+    guard_parts: list[str] = []
+    if step.if_expr:
+        guard_parts.append(f"step-if: {step.if_expr}")
+    if command.conditional:
+        guard_parts.append("shell-conditional")
+    dead = command.dead or step_dead
+    reason = DEAD_STEP_IF if step_dead else command.dead_reason
+    line = step.script_line + command.line - 1
+
+    def make(target: str) -> BuildInvocation:
+        return BuildInvocation(
+            step.workflow,
+            step.job,
+            step.step,
+            kind,
+            target,
+            "; ".join(guard_parts),
+            line,
+            dead,
+            reason,
+        )
+
+    if kind == "test":
+        return [make("")]
+    if kind == "exe":
+        return [make(arguments[0])] if arguments else [make("")]
+    return [make(target) for target in arguments] if arguments else [make("")]
+
+
+def discover_lake_commands(
+    steps: tuple[WorkflowStep, ...]
+) -> tuple[tuple[BuildInvocation, ...], list[str]]:
+    """Find every command-position lake invocation. Used ONLY to refute."""
+    found: list[BuildInvocation] = []
+    errors: list[str] = []
+    for step in steps:
+        if not step.script:
+            continue
+        try:
+            commands = analyze_shell(step.script)
+        except InventoryError as error:
+            errors.append(f"{step.label}: cannot parse the run block: {error}")
+            continue
+        step_dead = is_statically_false(step.if_expr)
+        for command in commands:
+            found.extend(lake_invocations_in(command, step, step_dead))
+    return tuple(found), errors
+
+
+def read_manifest(root: Path) -> tuple[BuildInvocation, ...]:
+    path = root / MANIFEST_NAME
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise InventoryError(f"cannot read {MANIFEST_NAME}: {error}") from error
+    rows = data.get("invocation")
+    if not isinstance(rows, list) or not rows:
+        raise InventoryError(f"{MANIFEST_NAME} declares no [[invocation]] entries")
+    declared: list[BuildInvocation] = []
+    seen: set[tuple[str, ...]] = set()
+    for position, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise InventoryError(f"{MANIFEST_NAME} invocation {position} is not a table")
+        fields: dict[str, str] = {}
+        for key in ("workflow", "job", "step", "kind", "target", "guard"):
+            value = row.get(key)
+            if not isinstance(value, str):
+                raise InventoryError(
+                    f"{MANIFEST_NAME} invocation {position} has no string {key}"
+                )
+            fields[key] = value
+        if fields["kind"] not in {"test", "build", "exe"}:
+            raise InventoryError(
+                f"{MANIFEST_NAME} invocation {position} has kind {fields['kind']!r}, "
+                "expected test, build or exe"
+            )
+        entry = BuildInvocation(**fields)
+        if entry.coordinate in seen:
+            raise InventoryError(f"{MANIFEST_NAME} declares {entry.label} twice")
+        seen.add(entry.coordinate)
+        declared.append(entry)
+    return tuple(declared)
+
+
+def cross_check(
+    declared: tuple[BuildInvocation, ...],
+    discovered: tuple[BuildInvocation, ...],
+    steps: tuple[WorkflowStep, ...],
+) -> tuple[list[str], list[str], set[tuple[str, ...]]]:
+    """Refute declarations against the tree. Never grants anything.
+
+    Returns the coordinates that survived. A row that fails here confers no
+    reachability at all: it is not enough for the process to exit non-zero
+    while the row still prints REACHED, because a reader believes the row.
+    """
+    errors: list[str] = []
+    notes: list[str] = []
+    verified: set[tuple[str, ...]] = set()
+    known = {(step.workflow, step.job, step.step) for step in steps}
+    live: dict[tuple[str, ...], list[BuildInvocation]] = {}
+    dead: dict[tuple[str, ...], list[BuildInvocation]] = {}
+    for item in discovered:
+        if item.dead:
+            dead.setdefault(item.coordinate, []).append(item)
+            notes.append(
+                f"{item.label}: present but statically cannot run "
+                f"({item.dead_reason}); it confers no reachability"
+            )
+            continue
+        live.setdefault(item.coordinate, []).append(item)
+    for entry in declared:
+        if (entry.workflow, entry.job, entry.step) not in known:
+            errors.append(f"{entry.label}: declared workflow/job/step does not exist")
+            continue
+        matches = live.get(entry.coordinate)
+        if not matches:
+            buried = dead.get(entry.coordinate)
+            if buried:
+                errors.append(
+                    f"{entry.label}: declared, but the command at that step "
+                    f"statically cannot run ({buried[0].dead_reason}); "
+                    "a dead command may not be declared"
+                )
+            else:
+                errors.append(
+                    f"{entry.label}: declared command is not in shell command "
+                    "position at that step"
+                )
+            continue
+        guards = sorted({match.guard for match in matches})
+        if entry.guard not in guards:
+            errors.append(
+                f"{entry.label}: declared guard {entry.guard!r} but the tree has {guards}"
+            )
+            continue
+        verified.add(entry.coordinate)
+    declared_coordinates = {entry.coordinate for entry in declared}
+    for coordinate, matches in sorted(live.items()):
+        if coordinate not in declared_coordinates:
+            errors.append(
+                f"{matches[0].label}: undeclared lake invocation; "
+                f"add it to {MANIFEST_NAME} or remove it"
+            )
+    return errors, notes, verified
+
+
+def locate_declared(
+    declared: tuple[BuildInvocation, ...], discovered: tuple[BuildInvocation, ...]
+) -> tuple[BuildInvocation, ...]:
+    """Stamp declared rows with the line the cross-check found them on."""
+    lines = {item.coordinate: item.line for item in discovered if not item.dead}
+    return tuple(
+        BuildInvocation(
+            entry.workflow,
+            entry.job,
+            entry.step,
+            entry.kind,
+            entry.target,
+            entry.guard,
+            lines.get(entry.coordinate, 0),
+        )
+        for entry in declared
+    )
 
 
 def module_name_from_artifact(path: Path, base: Path, suffix: str) -> str:
@@ -560,10 +1159,19 @@ def evaluate(root: Path = ROOT, extra_upstream_roots: tuple[Path, ...] = ()) -> 
     sources, source_errors, unreadable = read_sources(root)
     errors = list(source_errors)
     try:
-        invocations = extract_invocations(root)
+        steps = read_workflow_steps(root)
+        declared = read_manifest(root)
         package = read_lakefile(root)
     except (InventoryError, OSError, UnicodeDecodeError) as error:
         return Inventory((), (), (), len(sources) + len(unreadable), (str(error),))
+
+    discovered, discovery_errors = discover_lake_commands(steps)
+    errors.extend(discovery_errors)
+    check_errors, notes, verified = cross_check(declared, discovered, steps)
+    errors.extend(check_errors)
+    invocations = locate_declared(declared, discovered)
+    # Only rows the cross-check confirmed may confer reachability.
+    confirmed = tuple(entry for entry in invocations if entry.coordinate in verified)
 
     upstream, upstream_errors = upstream_modules(root, extra_upstream_roots)
     errors.extend(upstream_errors)
@@ -576,7 +1184,7 @@ def evaluate(root: Path = ROOT, extra_upstream_roots: tuple[Path, ...] = ()) -> 
     uncertain = transitive_dependents(graph, uncertain)
 
     resolved, target_errors = resolve_build_roots(
-        package, invocations, set(sources), upstream
+        package, confirmed, set(sources), upstream
     )
     errors.extend(target_errors)
 
@@ -619,6 +1227,9 @@ def evaluate(root: Path = ROOT, extra_upstream_roots: tuple[Path, ...] = ()) -> 
         tuple(sorted(roots)),
         len(sources) + len(unreadable),
         tuple(sorted(set(errors))),
+        discovered,
+        tuple(sorted(set(notes))),
+        len(confirmed),
     )
 
 
@@ -627,9 +1238,13 @@ def print_report(inventory: Inventory) -> None:
         status: sum(row.status == status for row in inventory.rows)
         for status in ("REACHED", "EXCEPTED", "ORPHANED", "UNCLASSIFIED")
     }
+    live = sum(not item.dead for item in inventory.discovered)
     print(
         f"scanned={inventory.scanned} theorem-bearing={len(inventory.rows)} "
-        f"workflow-invocations={len(inventory.invocations)} build-roots={len(inventory.roots)}"
+        f"declared-invocations={len(inventory.invocations)} "
+        f"verified-invocations={inventory.verified} "
+        f"discovered-live={live} discovered-dead={len(inventory.discovered) - live} "
+        f"build-roots={len(inventory.roots)}"
     )
     print(
         "  ".join(f"{status}={counts[status]}" for status in counts)
@@ -664,9 +1279,12 @@ def main() -> int:
                 {
                     "scanned": inventory.scanned,
                     "roots": inventory.roots,
-                    "invocations": [asdict(item) for item in inventory.invocations],
+                    "declared": [asdict(item) for item in inventory.invocations],
+                    "verified": inventory.verified,
+                    "discovered": [asdict(item) for item in inventory.discovered],
                     "rows": [asdict(row) for row in inventory.rows],
                     "errors": inventory.errors,
+                    "notes": inventory.notes,
                 },
                 indent=2,
             )
@@ -674,6 +1292,8 @@ def main() -> int:
     else:
         print_report(inventory)
     sys.stdout.flush()
+    for note in inventory.notes:
+        print(f"PROOF INVENTORY NOTE: {note}", file=sys.stderr)
     for error in inventory.errors:
         print(f"PROOF INVENTORY UNCLASSIFIED: {error}", file=sys.stderr)
     for row in inventory.rows:

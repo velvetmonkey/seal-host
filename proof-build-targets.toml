@@ -1,0 +1,276 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# DECLARED CI LAKE INVOCATIONS -- the sole authority for REACHED.
+#
+# scripts/proof_inventory.py computes REACHED from the transitive import
+# closure of the targets named here and from nothing else. No text found in a
+# workflow can add a row to this file, because whether a line of shell will
+# actually run is not a function of its text. Workflow text is read only to
+# REFUTE: every row below must still correspond to a lake command in shell
+# command position, at the named job and step, under the recorded guard, and
+# any live lake command not named here fails the gate. Neither check can make
+# the gate pass. See docs/LIMITATIONS.md.
+#
+# To add a build: add the command to the workflow AND add a row here. Adding
+# only the row fails the cross-check; adding only the command fails the
+# undeclared-invocation check. Both edits are visible in one diff.
+#
+# `guard` records, verbatim, the condition under which the command runs. An
+# empty guard asserts the command runs whenever its job runs. A guard is
+# DATA, not an excuse: a guarded invocation still confers REACHED, but the
+# reader can see what it is conditional on.
+#
+# declared_by: orphanfix lane, 2026-08-04, derived from the tree at 9f12745 and
+#   hand-checked row by row against the cited workflow lines.
+# NOT OWNER-RULED: this repository has no CODEOWNERS file, so no named owner
+#   has signed these 27 assertions. That gap is real and is recorded in
+#   /home/monkey/orphanfix-report.md under UNVERIFIED.
+
+# ---------------------------------------------------------------- ci.yml
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_20"
+kind     = "test"
+target   = ""
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:178
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_08"
+kind     = "build"
+target   = ""
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:187
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_09"
+kind     = "exe"
+target   = "axiom_check"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:191
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_11"
+kind     = "exe"
+target   = "host_unit_tests"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:210
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_12"
+kind     = "exe"
+target   = "dx_surface_tests"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:214
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_13"
+kind     = "exe"
+target   = "policy_server_identity_tests"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:218
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_14"
+kind     = "exe"
+target   = "sha256_selfcheck"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:222
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_16"
+kind     = "build"
+target   = "Test.A2DivergenceClassification"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:227
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_17"
+kind     = "build"
+target   = "perimeter_probe"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:235
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_17"
+kind     = "exe"
+target   = "perimeter_probe"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:236
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_31"
+kind     = "test"
+target   = ""
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:323
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_11"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:332
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_27"
+kind     = "build"
+target   = "SealV2.EffectEnvelope"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:366
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_16"
+kind     = "build"
+target   = ""
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:386
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_17"
+kind     = "build"
+target   = "downstream_parser_oracle"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:390
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_21"
+kind     = "exe"
+target   = "honesty_matrix"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+# ci.yml:418
+
+# ---------------------------------------------------------------- golden-path.yml
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "deterministic-shell"
+step     = "control_22"
+kind     = "test"
+target   = ""
+guard    = ""
+# golden-path.yml:81
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "deterministic-shell"
+step     = "control_06"
+kind     = "exe"
+target   = "cache"
+guard    = "shell-conditional"
+# golden-path.yml:97
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "deterministic-shell"
+step     = "control_06"
+kind     = "build"
+target   = ""
+guard    = "shell-conditional"
+# golden-path.yml:98
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "deterministic-shell"
+step     = "control_06"
+kind     = "exe"
+target   = "axiom_check"
+guard    = "shell-conditional"
+# golden-path.yml:99
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "deterministic-shell"
+step     = "control_06"
+kind     = "exe"
+target   = "host_unit_tests"
+guard    = "shell-conditional"
+# golden-path.yml:101
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "deterministic-shell"
+step     = "control_06"
+kind     = "exe"
+target   = "dx_surface_tests"
+guard    = "shell-conditional"
+# golden-path.yml:102
+
+# ---------------------------------------------------------------- public-export.yml
+[[invocation]]
+workflow = "public-export.yml"
+job      = "export"
+step     = "control_14"
+kind     = "test"
+target   = ""
+guard    = ""
+# public-export.yml:51
+
+# ---------------------------------------------------------------- release.yml
+[[invocation]]
+workflow = "release.yml"
+job      = "build"
+step     = "control_19"
+kind     = "test"
+target   = ""
+guard    = ""
+# release.yml:105
+
+[[invocation]]
+workflow = "release.yml"
+job      = "build"
+step     = "control_09"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = ""
+# release.yml:108
+
+# ---------------------------------------------------------------- security.yml
+[[invocation]]
+workflow = "security.yml"
+job      = "fuzz-hostile-ingress"
+step     = "control_12"
+kind     = "test"
+target   = ""
+guard    = ""
+# security.yml:94
+
+[[invocation]]
+workflow = "security.yml"
+job      = "fuzz-hostile-ingress"
+step     = "control_07"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = ""
+# security.yml:97
+

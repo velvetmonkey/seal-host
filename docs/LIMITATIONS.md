@@ -69,13 +69,31 @@ the reasons below.
 
 The workflow-build inventory measures a separate, broader wire. Of the same 53
 theorem-bearing modules, 52 are in the transitive source-import closure of a
-concrete `lake test`, `lake build`, or `lake exe` command in a checked-in GitHub
-Actions workflow. It gives no credit to a Lake target merely because it is
-declared. Under this measure `Test.A2DivergenceClassification` is reached
-because CI explicitly runs `lake build Test.A2DivergenceClassification`; only
-`Host.CanonicalL0Liveness` remains outside the wire, reported as `EXCEPTED=1`
-under the ruling above.
+`lake test`, `lake build`, or `lake exe` command **declared in
+[`proof-build-targets.toml`](../proof-build-targets.toml)**. It gives no credit
+to a Lake target merely because it is declared in `lakefile.toml`. Under this
+measure `Test.A2DivergenceClassification` is reached because `ci.yml`'s
+`control_16` is declared to run `lake build Test.A2DivergenceClassification`;
+only `Host.CanonicalL0Liveness` remains outside the wire, reported as
+`EXCEPTED=1` under the ruling above.
+
+**Read the workflow-build claim precisely, because it is narrower than it
+looks.** The manifest is a set of maintainer assertions that CI runs those 27
+commands. It is not a derivation from workflow text: whether shell actually
+runs depends on runner secrets, event payloads, matrix expansion and invoked
+scripts. The workflow text is therefore read only in the refuting direction.
+Every declared row must correspond to a command in shell command position at
+the named job and step, under its recorded `guard`; a row that fails that check
+confers nothing and fails the build. Any live command-position `lake` invocation
+that no row declares also fails the build. Neither check can make the gate pass.
+
+This does not establish that the declared commands ran, their jobs were
+scheduled, `continue-on-error: true` did not swallow a failure, or the builds
+succeeded. Those are facts about a CI run, not the workflow text.
 
 `scripts/proof_inventory.py` fails the build with `ORPHAN PROOF MODULE` for any
-other theorem-bearing module outside the workflow-derived closures. It also
-fails closed on any import it cannot resolve and on circular local imports.
+other theorem-bearing module outside the declared closures. It also fails
+closed on any import it cannot resolve, on circular local imports, on a
+declared row the workflow no longer supports, and on a `lake` invocation no row
+declares. Its errors are the only thing that gates: read `$?`, not the printed
+counters, which are all zero when the instrument cannot produce an inventory.
