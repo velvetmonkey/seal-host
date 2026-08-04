@@ -362,10 +362,12 @@ jobs:
         continue-on-error: true
         run: lake exe honesty_matrix > /tmp/honesty.json
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # Downstream of control_21 and of nothing else: with a dead producer this
+      # gate has NO finding of its own, and must not be able to report one.
       - id: control_22
         continue-on-error: true
         run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' && steps.control_21.outcome == 'success' }}
       - id: control_23
         continue-on-error: true
         run: node scripts/conformance_bridge.mjs --wasm
