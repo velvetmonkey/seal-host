@@ -27,8 +27,10 @@ jobs:
         run: test -n "$SEAL_CI_READ_TOKEN"
       - id: control_03
         continue-on-error: true
-        name: Configure private build dependency access
-        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
       - id: control_04
         continue-on-error: true
         uses: leanprover/lean-action@v1.5.0

@@ -126,9 +126,10 @@ jobs:
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean build."
       - id: control_03
         continue-on-error: true
-        name: Configure private Lake dependency auth
+        name: Guard Lean test-driver wiring and configure private dependency auth
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
+          python3 scripts/lean_test_driver_gate.py
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
@@ -256,9 +257,10 @@ jobs:
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean/Rust conformance."
       - id: control_03
         continue-on-error: true
-        name: Configure private Lake dependency auth
+        name: Guard Lean test-driver wiring and configure private dependency auth
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
+          python3 scripts/lean_test_driver_gate.py
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
@@ -524,8 +526,10 @@ jobs:
         run: python3 test/test_ci_control_aggregate.py -v
       - id: control_10
         continue-on-error: true
-        name: Every CI workflow isolates and aggregates its control steps
-        run: python3 test/test_ci_control_reporting.py -v
+        name: Lean driver and CI reporting controls fail closed
+        run: |
+          python3 test/test_lean_test_driver_gate.py -v
+          python3 test/test_ci_control_reporting.py -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
