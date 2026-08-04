@@ -21,7 +21,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_CORE = ROOT / "wasm-spike" / "build_core.sh"
 
-# Deliberately below today's inventory of 26 so one omitted module reaches the
+# Deliberately below today's inventory of 27 so one omitted module reaches the
 # named closure diagnostic instead of being hidden behind the floor. The exact
 # value is pinned in test/test_wasm_module_closure_gate.py.
 MODULE_COUNT_FLOOR = 25

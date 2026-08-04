@@ -30,7 +30,7 @@ CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 # pre-parse guards reached through Host/Canonical.
 MODULES=(
   Ffi
-  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step Host/UnicodeKeys
+  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/JsonWire Host/Kernel Host/Registry Host/Sha256 Host/Step Host/UnicodeKeys
   Host/SurrogateEscapes Host/NestingDepth
   Host/Principal Host/Provenance
   Kernels
