@@ -27,12 +27,14 @@ config, approval-record, and receipt contracts are in
 
 ## Proof build-wire residual
 
-**As of 2026-08-01, after the wiring work:** five of the six modules named in
-the earlier version of this residual are now in the `Test/Axioms.lean` import
-closure and are built by release CI. Verified in run `30693805679`, whose build
-log contains `Built` lines for `Host.DurabilityA6`, `Host.EgressPerimeter`,
-`Host.EgressStrength`, `Host.PolicyOverlap` and `Host.StrictPerimeter`, along
-with the newer `Host.SpawnSeam` and `Host.AuditSeam`.
+**As of 2026-08-04:** the repository contains 53 modules with explicit
+`theorem`/`lemma` commands. Of those, 52 are in the transitive source-import
+closure of a concrete `lake test`, `lake build`, or `lake exe` command in a
+checked-in GitHub Actions workflow. This definition deliberately gives no
+credit to a Lake target merely because it is declared. In particular,
+`Test.A2DivergenceClassification` is reached because CI explicitly runs `lake
+build Test.A2DivergenceClassification`, while the `Ffi` and `Test` library globs
+do not confer reachability by themselves.
 
 **One module remains outside the wire, and this is a ruling, not an oversight.**
 `Host.CanonicalL0Liveness` was DROPPED FROM THE RELEASE CLAIM by Ben on
@@ -40,7 +42,8 @@ with the newer `Host.SpawnSeam` and `Host.AuditSeam`.
 2026-07-31, which the release pipeline will not carry. Nothing in the public
 claim surface asserts that its theorems are built or axiom-checked. The source
 remains in the tree and remains visible in every generated proof inventory as
-`reserved=1`, so the exclusion is stated rather than silent.
+`EXCEPTED=1`, with this reason, so the exclusion is stated rather than silent.
 
 `scripts/proof_inventory.py` fails the build with `ORPHAN PROOF MODULE` for any
-other theorem-bearing `Host/` source that is not in the closure.
+other theorem-bearing module outside the workflow-derived closures. It also
+fails closed on any import it cannot resolve and on circular local imports.
