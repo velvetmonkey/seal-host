@@ -51,6 +51,31 @@ CLOSURE_O=$(ls build-stdlib-closure/*.o 2>/dev/null)
 # that Kernels_Temporal + Consensus_Checker reference; DCE keeps only those.
 SPEC_O=$(ls build-spec/*.o 2>/dev/null)
 
+# --- Link-set audit gate, fail-closed --------------------------------------
+# The stub warrant is proven per-link, never assumed per-name: the audit must
+# POSITIVELY pass over exactly the objects linked below. A nonzero exit
+# (offenders, unparseable object, unmodelled relocation, missing tool) refuses
+# the link — and so does exit 0 without the printed PASS verdict, so a silent
+# or truncated audit can never read as success.
+AUDIT_LOG=build-core/link_set_audit.log
+rm -f "$AUDIT_LOG"
+echo "[build_wasm] link-set audit (gate: no PASS verdict, no link)"
+set +e
+./audit_link_set.sh > "$AUDIT_LOG" 2>&1
+audit_rc=$?
+set -e
+if [ "$audit_rc" -ne 0 ]; then
+  tail -n 40 "$AUDIT_LOG" >&2
+  echo "[build_wasm] LINK-SET AUDIT FAILED rc=$audit_rc; refusing to link" >&2
+  exit 1
+fi
+if ! grep -q '^\[link-set-audit\] PASS fail-closed initializer-state rule$' "$AUDIT_LOG"; then
+  tail -n 40 "$AUDIT_LOG" >&2
+  echo "[build_wasm] audit exited 0 but printed no PASS verdict; refusing to link" >&2
+  exit 1
+fi
+echo "[build_wasm] link-set audit PASS ($AUDIT_LOG)"
+
 echo "[build_wasm] linking seal.js / seal.wasm ($UNDEF)"
 emcc -O2 \
   build-core/*.o build-seal/*.o build-pkg/*.o $STDLIB_O $CLOSURE_O $SPEC_O \
