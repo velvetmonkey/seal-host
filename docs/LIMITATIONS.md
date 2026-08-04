@@ -30,8 +30,9 @@ config, approval-record, and receipt contracts are in
 **As of 2026-08-04:** the repository contains 53 modules with explicit
 `theorem`/`lemma` commands. Of those, 52 are in the transitive source-import
 closure of one of 24 `lake test`, `lake build`, or `lake exe` commands
-**declared in [`proof-build-targets.toml`](../proof-build-targets.toml) whose
-workflow trigger admits a push to the default branch**. This definition
+**declared in [`proof-build-targets.toml`](../proof-build-targets.toml) with
+`push_main = true`, whose workflow trigger admits an unconditional push to the
+default branch**. This definition
 deliberately gives no credit to a Lake target merely because it is declared in
 `lakefile.toml`. In particular, `Test.A2DivergenceClassification` is reached
 because `ci.yml`'s `control_16` is declared to run `lake build
@@ -43,7 +44,9 @@ manifest contains 27 *assertions by a maintainer* about commands in CI. Three
 are not credited for the default-branch push inventory: the manual-only
 `public-export.yml:export:control_14` and the two tag-only declarations
 `release.yml:build:control_19` and `release.yml:build:control_09`. They remain
-named as `TRIGGER-EXCEPTED`, with the trigger reason, rather than disappearing.
+declared with `push_main = false` and named as `TRIGGER-EXCEPTED`, with the
+trigger reason, rather than disappearing. Widening either workflow's `on:` text
+cannot change that manifest assertion or restore credit.
 
 The manifest is not a derivation from workflow text, and deliberately so:
 whether a line of shell will actually run depends on runner secrets, event
@@ -58,8 +61,25 @@ job and step, under the recorded `guard`; a row that fails that check confers
 nothing and fails the build. Any live command-position `lake` invocation that
 no row declares also fails the build. Neither check can make the gate pass.
 A workflow trigger that does not admit a push to `main` likewise removes that
-row's credit. Trigger syntax the checker cannot classify fails the gate and
-confers no credit; uncertainty is never read as liveness.
+row's credit. Trigger evaluation is a closed world with three outcomes:
+`FIRES`, `DOES NOT FIRE`, and `NOT UNDERSTOOD`. The implemented event names are
+`push`, `pull_request`, `schedule`, and `workflow_dispatch`; the implemented
+`push` fields are `branches`, `branches-ignore`, `tags`, `tags-ignore`, `paths`,
+and `paths-ignore`. Scalar and sequence `on:` forms, block mappings, and flow
+mappings are implemented. The non-push configurations implemented today are an
+empty `pull_request` or `workflow_dispatch` value and a `schedule` sequence
+containing only `cron` mappings whose five fields are `*` or one range-valid
+integer. Ref filters implement literal characters, `*`/`**`, and ordered `!`
+negation in positive `branches`/`tags` lists. Any other event, field,
+configuration, value shape, or syntax is `NOT UNDERSTOOD`: every declaration
+in that workflow loses credit, every row is printed as
+`TRIGGER-NOT-UNDERSTOOD`, and the gate exits non-zero. Uncertainty is never
+read as liveness.
+
+A `paths`- or `paths-ignore`-filtered push is conditional on a changed-file set,
+so it is not an unconditional push-to-main witness. Either filter produces
+`DOES NOT FIRE` for this inventory and removes the workflow's credit; the gate
+does not guess which files a future push will touch.
 A row's `guard` field records verbatim what the invocation is conditional on
 (a step `if:`, a shell branch, or nothing), so a conditional build is visible
 rather than silently counted or silently dropped.
