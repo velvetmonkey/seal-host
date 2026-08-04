@@ -55,7 +55,7 @@ jobs:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
         run: python3 scripts/ci_control_aggregate.py
 
-  fuzz-hostile-ingress:
+  fuzz-hostile-ingress-lean:
     runs-on: ubuntu-24.04
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
@@ -90,8 +90,49 @@ jobs:
         run: bash .lake/packages/mcp-seal/c/build.sh
       - id: control_12
         continue-on-error: true
-        name: Run aggregate Lean tests after native link dependency build
-        run: lake test
+        name: Run aggregate Lean tests after native link dependency build with disk telemetry
+        run: python3 scripts/ci_disk_telemetry.py security-lean-aggregate -- lake test
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
+  fuzz-hostile-ingress:
+    needs: fuzz-hostile-ingress-lean
+    runs-on: ubuntu-24.04
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Require private build access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+      - id: control_05
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_06
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
       - id: control_07
         continue-on-error: true
         run: lake build +Ffi:c.o.export
