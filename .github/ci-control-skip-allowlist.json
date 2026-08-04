@@ -29,7 +29,7 @@
       "workflow": "ci.yml",
       "job": "build",
       "id": "control_20",
-      "reason": "This control runs aggregate Lean tests linked against private mcp-seal and reads lint status from the token-gated lean-action step."
+      "reason": "On the tokenless path there is no credential, so Lake cannot fetch the private mcp-seal dependency and this control cannot link or run the aggregate Lean tests; it also reads lint status from the token-gated lean-action step."
     },
     {
       "workflow": "ci.yml",
@@ -233,7 +233,7 @@
       "workflow": "ci.yml",
       "job": "rust-conformance",
       "id": "control_31",
-      "reason": "This control runs aggregate Lean tests linked against private mcp-seal and reads lint status from the token-gated lean-action step."
+      "reason": "On the tokenless path there is no credential, so Lake cannot fetch the private mcp-seal dependency and this control cannot link or run the aggregate Lean tests; it also reads lint status from the token-gated lean-action step."
     },
     {
       "workflow": "ci.yml",
