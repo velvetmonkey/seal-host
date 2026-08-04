@@ -67,6 +67,7 @@ private def cfgOf (sections : String) : Except String Host.TrustedConfig :=
     >>= Seal.parsePolicyBundle) >>= Host.ofBundle
 
 def main : IO Unit := do
+  check "runner-capacity planted failure reaches aggregate" false
   -- combineVerdicts: fail-closed truth table
   check "empty -> deny" (combineVerdicts [] == .deny)
   check "[allow] -> allow" (combineVerdicts [mkV .allow] == .allow)
