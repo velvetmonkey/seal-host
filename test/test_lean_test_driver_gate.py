@@ -204,6 +204,46 @@ def dependent_starts(job: Job, predecessor_results: dict[str, str]) -> bool:
     return implicit_gate
 
 
+def aggregate_step_block(job_text: str, marker: str) -> str:
+    """The one step in `job_text` whose body contains `marker`.
+
+    Refuses zero or several matches rather than returning an empty block, so a
+    renamed or duplicated aggregate step fails instead of being checked
+    vacuously.
+    """
+    starts = [match.start() for match in re.finditer(r"(?m)^      - (?=\S)", job_text)]
+    if not starts:
+        raise WorkflowParseError("no steps found in job block")
+    bounds = zip(starts, starts[1:] + [len(job_text)])
+    blocks = [job_text[start:end] for start, end in bounds if marker in job_text[start:end]]
+    if len(blocks) != 1:
+        raise WorkflowParseError(
+            f"expected exactly one step containing {marker!r}, found {len(blocks)}"
+        )
+    return blocks[0]
+
+
+def step_continues_on_error(step_block: str) -> bool:
+    """Whether a step is declared unable to fail its job.
+
+    A step-level `continue-on-error` on the aggregate step is the one masking
+    that job-level modelling misses: every control is already
+    continue-on-error, so the aggregate step is the only thing left that can
+    turn a reported failure into a red job. Anything but a literal true/false
+    is refused rather than guessed.
+    """
+    values = re.findall(r"(?m)^        continue-on-error:(?:[ ]+(.*?))?\s*$", step_block)
+    if not values:
+        return False
+    if len(values) > 1:
+        raise WorkflowParseError("duplicate continue-on-error in one step")
+    if values[0] not in ("true", "false"):
+        raise WorkflowParseError(
+            f"step continue-on-error must be literal true/false, got {values[0]!r}"
+        )
+    return values[0] == "true"
+
+
 class LeanTestDriverGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -448,6 +488,26 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertIn("SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}", lean_block)
                 self.assertIn("run: python3 scripts/ci_control_aggregate.py", lean_block)
 
+                # Every control in the job already carries continue-on-error,
+                # so the aggregate step is the only thing left that can turn a
+                # reported control failure into a red job. Let it continue on
+                # error and the job goes green on failed Lean tests -- and the
+                # edge asserted above then carries that green faithfully to the
+                # dependent, which is worse than having no edge at all.
+                try:
+                    aggregate = aggregate_step_block(
+                        lean_block, "run: python3 scripts/ci_control_aggregate.py"
+                    )
+                    masked = step_continues_on_error(aggregate)
+                except WorkflowParseError as error:
+                    self.fail(f"{filename}: {lean_job}: {error}")
+                self.assertFalse(
+                    masked,
+                    f"{filename}: the {lean_job} aggregate step carries step-level "
+                    f"continue-on-error, so it can never fail the job; "
+                    f"{downstream_job} would start on failed Lean tests",
+                )
+
 
 class DependentGatingModelTests(unittest.TestCase):
     """The gating model itself must fail closed on anything it cannot decide."""
@@ -531,6 +591,52 @@ class DependentGatingModelTests(unittest.TestCase):
                 {"lean-aggregate": reported_predecessor_result(upstream, "failure")},
             )
         )
+
+    def test_aggregate_step_masking_is_detected(self) -> None:
+        plain = (
+            "      - id: control_01\n"
+            "        continue-on-error: true\n"
+            "        run: lake test\n"
+            "      - name: Require every isolated CI step to pass\n"
+            "        run: python3 scripts/ci_control_aggregate.py\n"
+        )
+        masked = plain.replace(
+            "      - name: Require every isolated CI step to pass\n",
+            "      - name: Require every isolated CI step to pass\n"
+            "        continue-on-error: true\n",
+        )
+        marker = "run: python3 scripts/ci_control_aggregate.py"
+        self.assertFalse(step_continues_on_error(aggregate_step_block(plain, marker)))
+        self.assertTrue(step_continues_on_error(aggregate_step_block(masked, marker)))
+        # The masking must be read off the aggregate step alone: control_01 is
+        # continue-on-error in both, and that is correct and expected.
+        self.assertTrue(
+            step_continues_on_error(aggregate_step_block(plain, "run: lake test"))
+        )
+
+    def test_unreadable_step_shapes_are_refused(self) -> None:
+        marker = "run: python3 scripts/ci_control_aggregate.py"
+        step = "      - name: aggregate\n        run: python3 scripts/ci_control_aggregate.py\n"
+        for text in (
+            # no steps at all
+            "    steps:\n",
+            # the marker is absent, so the check would otherwise pass vacuously
+            "      - id: control_01\n        run: lake test\n",
+            # two aggregate steps: which one decides is not knowable
+            step + step,
+        ):
+            with self.subTest(text=text):
+                with self.assertRaises(WorkflowParseError):
+                    aggregate_step_block(text, marker)
+        for block in (
+            "      - name: aggregate\n        continue-on-error: ${{ inputs.soft }}\n",
+            "      - name: aggregate\n        continue-on-error:\n",
+            "      - name: aggregate\n        continue-on-error: true\n"
+            "        continue-on-error: false\n",
+        ):
+            with self.subTest(block=block):
+                with self.assertRaises(WorkflowParseError):
+                    step_continues_on_error(block)
 
     def test_unreadable_workflow_shapes_are_refused(self) -> None:
         for text in (
