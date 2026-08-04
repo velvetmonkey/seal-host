@@ -49,10 +49,8 @@ the reasons below.
    Nothing in the public claim surface asserts that its theorems are built or
    axiom-checked. The source remains in the tree and remains visible in every
    generated proof inventory as `reserved=1` / `EXCLUDED`, so the exclusion is
-   stated rather than silent. `scripts/proof_inventory.py` fails the build with
-   `ORPHAN PROOF MODULE` for any *other* theorem-bearing `Host/` source that is
-   not in the closure; `scripts/proof_reach.py` fails on any non-excluded
-   `ORPHANED` module repo-wide.
+   stated rather than silent. `scripts/proof_reach.py` fails on any
+   non-excluded `ORPHANED` module repo-wide.
 
 2. **`Test.A2DivergenceClassification` — permanent exclusion, not an axiom pin.**
    Theorem-bearing since 2026-07-30 (`b5f6ad8`). Classification criterion and
@@ -68,24 +66,33 @@ the reasons below.
    silent.
 
 The workflow-build inventory measures a separate, broader wire. Of the same 53
-theorem-bearing modules, 52 are in the transitive source-import closure of a
-`lake test`, `lake build`, or `lake exe` command **declared in
-[`proof-build-targets.toml`](../proof-build-targets.toml)**. It gives no credit
-to a Lake target merely because it is declared in `lakefile.toml`. Under this
-measure `Test.A2DivergenceClassification` is reached because `ci.yml`'s
-`control_16` is declared to run `lake build Test.A2DivergenceClassification`;
-only `Host.CanonicalL0Liveness` remains outside the wire, reported as
-`EXCEPTED=1` under the ruling above.
+theorem-bearing modules, 52 are in the transitive source-import closure of one
+of 24 `lake test`, `lake build`, or `lake exe` commands **declared in
+[`proof-build-targets.toml`](../proof-build-targets.toml) whose workflow trigger
+admits a push to the default branch**. It gives no credit to a Lake target
+merely because it is declared in `lakefile.toml`. Under this measure
+`Test.A2DivergenceClassification` is reached because `ci.yml`'s `control_16` is
+declared to run `lake build Test.A2DivergenceClassification`; only
+`Host.CanonicalL0Liveness` remains outside the wire, reported as `EXCEPTED=1`
+under the ruling above.
 
 **Read the workflow-build claim precisely, because it is narrower than it
-looks.** The manifest is a set of maintainer assertions that CI runs those 27
-commands. It is not a derivation from workflow text: whether shell actually
+looks.** The manifest contains 27 maintainer assertions about commands in CI.
+Three are not credited for the default-branch push inventory: the manual-only
+`public-export.yml:export:control_14` and the two tag-only declarations
+`release.yml:build:control_19` and `release.yml:build:control_09`. They remain
+named as `TRIGGER-EXCEPTED`, with the trigger reason, rather than disappearing.
+
+The manifest is not a derivation from workflow text: whether shell actually
 runs depends on runner secrets, event payloads, matrix expansion and invoked
 scripts. The workflow text is therefore read only in the refuting direction.
 Every declared row must correspond to a command in shell command position at
 the named job and step, under its recorded `guard`; a row that fails that check
 confers nothing and fails the build. Any live command-position `lake` invocation
 that no row declares also fails the build. Neither check can make the gate pass.
+A workflow trigger that does not admit a push to `main` likewise removes that
+row's credit. Trigger syntax the checker cannot classify fails the gate and
+confers no credit; uncertainty is never read as liveness.
 
 This does not establish that the declared commands ran, their jobs were
 scheduled, `continue-on-error: true` did not swallow a failure, or the builds

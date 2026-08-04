@@ -4,12 +4,13 @@
 #
 # scripts/proof_inventory.py computes REACHED from the transitive import
 # closure of the targets named here and from nothing else. No text found in a
-# workflow can add a row to this file, because whether a line of shell will
-# actually run is not a function of its text. Workflow text is read only to
-# REFUTE: every row below must still correspond to a lake command in shell
-# command position, at the named job and step, under the recorded guard, and
-# any live lake command not named here fails the gate. Neither check can make
-# the gate pass. See docs/LIMITATIONS.md.
+# workflow can add a row to this file. Workflow text is read only to REFUTE:
+# every row below must still correspond to a lake command in shell command
+# position, at the named job and step, under the recorded guard, and its
+# workflow trigger must admit a push to the default branch. A non-admitting
+# trigger removes credit and is listed as TRIGGER-EXCEPTED; an unclassifiable
+# trigger fails closed. No text-derived predicate can grant coverage. See
+# docs/LIMITATIONS.md.
 #
 # To add a build: add the command to the workflow AND add a row here. Adding
 # only the row fails the cross-check; adding only the command fails the
@@ -273,4 +274,3 @@ kind     = "build"
 target   = "+Ffi:c.o.export"
 guard    = ""
 # security.yml:97
-

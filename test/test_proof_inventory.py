@@ -72,6 +72,22 @@ class ProofInventoryTests(unittest.TestCase):
         row = "\n[[invocation]]\n" + "".join(f'{key} = "{value}"\n' for key, value in fields.items())
         manifest.write_text(manifest.read_text(encoding="utf-8") + row, encoding="utf-8")
 
+    def add_workflow(self, root: Path, name: str, trigger: str, target: str) -> None:
+        (root / ".github/workflows" / name).write_text(
+            f"name: Trigger probe\n{trigger}\njobs:\n  probe:\n    steps:\n"
+            f"      - id: control_probe\n        run: lake build {target}\n",
+            encoding="utf-8",
+        )
+        self.add_row(
+            root,
+            workflow=name,
+            job="probe",
+            step="control_probe",
+            kind="build",
+            target=target,
+            guard="",
+        )
+
     def plant_orphan(self, root: Path, module: str = "Host.Planted") -> None:
         path = root / (module.replace(".", "/") + ".lean")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,6 +373,109 @@ class ProofInventoryTests(unittest.TestCase):
             result = self.run_gate(root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("declared workflow/job/step does not exist", result.stderr)
+
+    def test_manual_only_workflow_is_named_and_cannot_grant_reachability(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Test/CiRoot.lean").write_text("", encoding="utf-8")
+            self.add_workflow(
+                root,
+                "manual-probe.yml",
+                "on:\n  workflow_dispatch:",
+                "Host.Wired",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=2", result.stdout)
+            self.assertIn("trigger-excepted=1", result.stdout)
+            self.assertIn(
+                "TRIGGER-EXCEPTED\tmanual-probe.yml:probe:control_probe",
+                result.stdout,
+            )
+            self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_tag_only_workflow_is_named_and_cannot_grant_reachability(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "Test/CiRoot.lean").write_text("", encoding="utf-8")
+            self.add_workflow(
+                root,
+                "tag-probe.yml",
+                'on:\n  push:\n    tags: ["v*"]',
+                "Host.Wired",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("TRIGGER-EXCEPTED\ttag-probe.yml:probe:control_probe", result.stdout)
+            self.assertIn("push trigger is tag-only", result.stdout)
+            self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_inverse_removing_push_loses_each_ci_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]", "on: [pull_request]"
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=0", result.stdout)
+            self.assertIn("trigger-excepted=2", result.stdout)
+            self.assertIn("ci.yml:build:control_a", result.stdout)
+            self.assertIn("ci.yml:build:control_b", result.stdout)
+            self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_unparseable_trigger_fails_closed_without_credit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]", "on: {push: null}"
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=0", result.stdout)
+            self.assertIn("cannot classify workflow trigger", result.stderr)
+            self.assertIn("flow mappings are unsupported", result.stderr)
+            self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_default_branch_filter_refutes_main(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]",
+                    "on:\n  push:\n    branches: [develop]\n  pull_request:",
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("push.branches excludes refs/heads/main", result.stdout)
+            self.assertIn("credited-invocations=0", result.stdout)
+
+    def test_extended_branch_pattern_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]",
+                    'on:\n  push:\n    branches: ["ma+n"]\n  pull_request:',
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=0", result.stdout)
+            self.assertIn("unsupported branch-pattern metacharacters", result.stderr)
 
     def test_guard_drift_is_detected(self) -> None:
         """Removing a step's if: guard must not pass silently."""
