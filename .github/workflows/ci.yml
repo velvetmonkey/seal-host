@@ -139,6 +139,35 @@ jobs:
         with:
           use-github-cache: false
           build: false
+      # FAIL-CLOSED companion to the lean-action step above. lean-action runs
+      # `lake check-test` / `lake check-lint` first and, when they fail, prints
+      # "will not run lake test" and still reports the step SUCCESSFUL with an
+      # EMPTY test-status/lint-status. lakefile.toml configures no testDriver
+      # and no lintDriver, so `lake test` and `lake lint` have never once run
+      # in this CI and the control was green for it. Assert the statuses, so a
+      # silently-skipped suite is RED instead of invisible.
+      - id: control_20
+        continue-on-error: true
+        name: Fail closed if lean-action did not actually run lake test and lake lint
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        env:
+          LEAN_ACTION_TEST_STATUS: ${{ steps.control_04.outputs.test-status }}
+          LEAN_ACTION_LINT_STATUS: ${{ steps.control_04.outputs.lint-status }}
+        run: |
+          set -uo pipefail
+          rc=0
+          for pair in "test:${LEAN_ACTION_TEST_STATUS}" "lint:${LEAN_ACTION_LINT_STATUS}"; do
+            phase=${pair%%:*}
+            status=${pair#*:}
+            if [ -z "$status" ]; then
+              echo "::error::lake ${phase} did not run: lean-action left ${phase}-status EMPTY, which is what it reports when \`lake check-${phase}\` fails and it skips the phase. A skipped suite is not a passing suite; configure ${phase}Driver in lakefile.toml."
+              rc=1
+            elif [ "$status" != "SUCCESS" ]; then
+              echo "::error::lake ${phase} did not pass: lean-action reported ${phase}-status='${status}' (expected SUCCESS)."
+              rc=1
+            fi
+          done
+          exit $rc
       - id: control_05
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update
@@ -253,6 +282,34 @@ jobs:
         with:
           use-github-cache: false
           build: false
+      # FAIL-CLOSED companion to the lean-action step above; see the twin at
+      # ci.yml:build:control_20 for the full reasoning. lean-action's
+      # auto-config path prints "lake check-test failed -> will not run lake
+      # test" and leaves test-status EMPTY while the step still reports
+      # success, so an unrun suite is currently indistinguishable from a
+      # passing one.
+      - id: control_31
+        continue-on-error: true
+        name: Fail closed if lean-action did not actually run lake test and lake lint
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        env:
+          LEAN_ACTION_TEST_STATUS: ${{ steps.control_06.outputs.test-status }}
+          LEAN_ACTION_LINT_STATUS: ${{ steps.control_06.outputs.lint-status }}
+        run: |
+          set -uo pipefail
+          rc=0
+          for pair in "test:${LEAN_ACTION_TEST_STATUS}" "lint:${LEAN_ACTION_LINT_STATUS}"; do
+            phase=${pair%%:*}
+            status=${pair#*:}
+            if [ -z "$status" ]; then
+              echo "::error::lake ${phase} did not run: lean-action left ${phase}-status EMPTY, which is what it reports when \`lake check-${phase}\` fails and it skips the phase. A skipped suite is not a passing suite; configure ${phase}Driver in lakefile.toml."
+              rc=1
+            elif [ "$status" != "SUCCESS" ]; then
+              echo "::error::lake ${phase} did not pass: lean-action reported ${phase}-status='${status}' (expected SUCCESS)."
+              rc=1
+            fi
+          done
+          exit $rc
       - id: control_07
         continue-on-error: true
         uses: actions/setup-node@v7.0.0
@@ -362,10 +419,12 @@ jobs:
         continue-on-error: true
         run: lake exe honesty_matrix > /tmp/honesty.json
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # Downstream of control_21 and of nothing else: with a dead producer this
+      # gate has NO finding of its own, and must not be able to report one.
       - id: control_22
         continue-on-error: true
         run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' && steps.control_21.outcome == 'success' }}
       - id: control_23
         continue-on-error: true
         run: node scripts/conformance_bridge.mjs --wasm

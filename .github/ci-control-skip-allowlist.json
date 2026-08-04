@@ -28,6 +28,12 @@
     {
       "workflow": "ci.yml",
       "job": "build",
+      "id": "control_20",
+      "reason": "This gate reads the status outputs of the token-gated lean-action step, which does not run on the tokenless path."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
       "id": "control_06",
       "reason": "The PINS gate reads the checked-out private mcp-seal source tree as part of its anti-drift checks."
     },
@@ -221,7 +227,13 @@
       "workflow": "ci.yml",
       "job": "rust-conformance",
       "id": "control_22",
-      "reason": "This renderer checks the honesty JSON emitted by the token-dependent preceding Lean control."
+      "reason": "This renderer checks the honesty JSON emitted by the token-dependent preceding Lean control, and is deliberately skipped when that producer (control_21) failed: with a dead producer this gate has no finding of its own, and control_21 already fails the job."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_31",
+      "reason": "This gate reads the status outputs of the token-gated lean-action step, which does not run on the tokenless path."
     },
     {
       "workflow": "ci.yml",
