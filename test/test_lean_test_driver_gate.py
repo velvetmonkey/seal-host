@@ -153,7 +153,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertLess(action, build, workflow)
                 self.assertLess(build, test, workflow)
 
-        self.assertEqual(action_count, 7, "review every lean-action call site")
+        self.assertEqual(action_count, 8, "review every lean-action call site")
         self.assertEqual(test_count, 6, "review every aggregate lake test call site")
 
     def test_split_aggregate_jobs_are_required_predecessors(self) -> None:

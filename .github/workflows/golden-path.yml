@@ -128,6 +128,23 @@ jobs:
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
+      - id: control_04
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+
+      - id: control_05
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+
       - id: control_07
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
