@@ -44,10 +44,10 @@ class ProofInventoryTests(unittest.TestCase):
         (root / "proof-build-targets.toml").write_text(
             "[[invocation]]\n"
             'workflow = "ci.yml"\njob = "build"\nstep = "control_a"\n'
-            'kind = "build"\ntarget = ""\nguard = ""\n\n'
+            'kind = "build"\ntarget = ""\nguard = ""\npush_main = true\n\n'
             "[[invocation]]\n"
             'workflow = "ci.yml"\njob = "build"\nstep = "control_b"\n'
-            'kind = "test"\ntarget = ""\nguard = ""\n',
+            'kind = "test"\ntarget = ""\nguard = ""\npush_main = true\n',
             encoding="utf-8",
         )
         (root / "Test/CiRoot.lean").write_text(
@@ -67,9 +67,10 @@ class ProofInventoryTests(unittest.TestCase):
         block += f"        run: |\n{body}\n"
         workflow.write_text(workflow.read_text(encoding="utf-8") + block, encoding="utf-8")
 
-    def add_row(self, root: Path, **fields: str) -> None:
+    def add_row(self, root: Path, push_main: bool = True, **fields: str) -> None:
         manifest = root / "proof-build-targets.toml"
         row = "\n[[invocation]]\n" + "".join(f'{key} = "{value}"\n' for key, value in fields.items())
+        row += f"push_main = {'true' if push_main else 'false'}\n"
         manifest.write_text(manifest.read_text(encoding="utf-8") + row, encoding="utf-8")
 
     def add_workflow(self, root: Path, name: str, trigger: str, target: str) -> None:
@@ -132,6 +133,12 @@ class ProofInventoryTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             check=False,
         )
+
+    def evaluate_trigger(self, trigger: str) -> inventory.TriggerEvaluation:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.yml"
+            path.write_text(f"name: probe\n{trigger}\njobs:\n", encoding="utf-8")
+            return inventory.workflow_trigger_evaluation(path)
 
     def assert_orphan_source(self, source: str) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -374,6 +381,20 @@ class ProofInventoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("declared workflow/job/step does not exist", result.stderr)
 
+    def test_manifest_must_explicitly_declare_push_main_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            manifest = root / "proof-build-targets.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "push_main = true\n", "", 1
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("has no boolean push_main", result.stderr)
+
     def test_manual_only_workflow_is_named_and_cannot_grant_reachability(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
@@ -393,6 +414,42 @@ class ProofInventoryTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_widening_an_excepted_trigger_cannot_grant_credit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/manual-probe.yml"
+            workflow.write_text(
+                "name: probe\non:\n  workflow_dispatch:\njobs:\n  probe:\n    steps:\n"
+                "      - id: control_probe\n        run: lake build Host.Wired\n",
+                encoding="utf-8",
+            )
+            self.add_row(
+                root,
+                push_main=False,
+                workflow="manual-probe.yml",
+                job="probe",
+                step="control_probe",
+                kind="build",
+                target="Host.Wired",
+                guard="",
+            )
+            before = self.run_gate(root)
+            self.assertEqual(before.returncode, 0, before.stdout + before.stderr)
+            self.assertIn("credited-invocations=2", before.stdout)
+            self.assertIn("trigger-excepted=1", before.stdout)
+
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on:\n  workflow_dispatch:", "on: push"
+                ),
+                encoding="utf-8",
+            )
+            after = self.run_gate(root)
+            self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+            self.assertIn("credited-invocations=2", after.stdout)
+            self.assertIn("trigger-excepted=1", after.stdout)
+            self.assertIn("workflow text cannot upgrade it", after.stdout)
 
     def test_tag_only_workflow_is_named_and_cannot_grant_reachability(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -428,13 +485,13 @@ class ProofInventoryTests(unittest.TestCase):
             self.assertIn("ci.yml:build:control_b", result.stdout)
             self.assertIn("ORPHANED\tHost.Wired", result.stdout)
 
-    def test_unparseable_trigger_fails_closed_without_credit(self) -> None:
+    def test_unknown_trigger_construct_fails_closed_without_credit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
             workflow = root / ".github/workflows/ci.yml"
             workflow.write_text(
                 workflow.read_text(encoding="utf-8").replace(
-                    "on: [push, pull_request]", "on: {push: null}"
+                    "on: [push, pull_request]", "on: {push: {batch-size: [1]}}"
                 ),
                 encoding="utf-8",
             )
@@ -442,8 +499,149 @@ class ProofInventoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("credited-invocations=0", result.stdout)
             self.assertIn("cannot classify workflow trigger", result.stderr)
-            self.assertIn("flow mappings are unsupported", result.stderr)
+            self.assertIn("unsupported push filter 'batch-size'", result.stderr)
+            self.assertIn("TRIGGER-NOT-UNDERSTOOD\tci.yml:build:control_a", result.stdout)
+            self.assertIn("TRIGGER-NOT-UNDERSTOOD\tci.yml:build:control_b", result.stdout)
             self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_flow_mapping_trigger_is_implemented_and_fires(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]",
+                    "on: {push: {branches: [main]}}",
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=2", result.stdout)
+            self.assertNotIn("TRIGGER-NOT-UNDERSTOOD", result.stdout)
+
+    def test_paths_filter_removes_credit_as_conditional(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]",
+                    'on:\n  push:\n    paths: ["docs/**"]\n  pull_request:',
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=0", result.stdout)
+            self.assertIn("trigger-excepted=2", result.stdout)
+            self.assertIn(
+                "push.paths makes the main-branch push file-dependent", result.stdout
+            )
+            self.assertIn("ORPHANED\tHost.Wired", result.stdout)
+
+    def test_paths_ignore_filter_removes_credit_as_conditional(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "on: [push, pull_request]",
+                    'on:\n  push:\n    paths-ignore: ["**"]\n  pull_request:',
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("credited-invocations=0", result.stdout)
+            self.assertIn(
+                "push.paths-ignore makes the main-branch push file-dependent",
+                result.stdout,
+            )
+
+    def test_unknown_event_fails_even_when_push_is_present(self) -> None:
+        evaluation = self.evaluate_trigger("on: [push, merge_group]")
+        self.assertEqual(
+            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
+        )
+        self.assertIn("unsupported event 'merge_group'", evaluation.reason)
+
+    def test_invalid_ref_pattern_is_not_understood(self) -> None:
+        evaluation = self.evaluate_trigger(
+            'on:\n  push:\n    branches-ignore: ["*", "!main"]'
+        )
+        self.assertEqual(
+            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
+        )
+        self.assertIn("negative patterns are unsupported", evaluation.reason)
+
+    def test_cron_outside_implemented_subset_is_not_understood(self) -> None:
+        evaluation = self.evaluate_trigger(
+            'on:\n  push:\n  schedule:\n    - cron: "60 3 * * 1"'
+        )
+        self.assertEqual(
+            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
+        )
+        self.assertIn("outside the implemented simple five-field subset", evaluation.reason)
+
+    def test_unimplemented_non_push_configuration_fails_closed(self) -> None:
+        evaluation = self.evaluate_trigger(
+            "on:\n  push:\n  pull_request:\n    types: [opened]"
+        )
+        self.assertEqual(
+            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
+        )
+        self.assertIn(
+            "configuration for event 'pull_request' is not implemented",
+            evaluation.reason,
+        )
+
+    def test_filter_scalar_shape_is_not_understood(self) -> None:
+        evaluation = self.evaluate_trigger("on:\n  push:\n    branches: main")
+        self.assertEqual(
+            evaluation.disposition, inventory.TriggerDisposition.NOT_UNDERSTOOD
+        )
+        self.assertIn("expected a non-empty sequence", evaluation.reason)
+
+    def test_supported_trigger_forms_have_explicit_outcomes(self) -> None:
+        cases = {
+            "on: push": inventory.TriggerDisposition.FIRES,
+            "on: [push]": inventory.TriggerDisposition.FIRES,
+            "on: {push: {branches: [main]}}": inventory.TriggerDisposition.FIRES,
+            "on:\n  push:\n    branches-ignore: [main]": (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            'on:\n  push:\n    branches: ["main*"]': inventory.TriggerDisposition.FIRES,
+            'on:\n  push:\n    branches: ["releases/**"]': (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            'on:\n  push:\n    branches: ["*", "!main"]': (
+                inventory.TriggerDisposition.DOES_NOT_FIRE
+            ),
+            'on:\n  push:\n    tags: ["v*"]': inventory.TriggerDisposition.DOES_NOT_FIRE,
+            'on:\n  push:\n    tags-ignore: ["v*"]': inventory.TriggerDisposition.FIRES,
+            'on:\n  push:\n  schedule:\n    - cron: "17 3 * * 1"': inventory.TriggerDisposition.FIRES,
+        }
+        for trigger, expected in cases.items():
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(evaluation.disposition, expected, evaluation.reason)
+
+    def test_empty_missing_anchor_and_alias_never_credit_by_silence(self) -> None:
+        cases = {
+            "on:": "on: is empty",
+            "name: no trigger": "no top-level on: block",
+            "on: &trig": "anchors, aliases, and tags are unsupported",
+            "on: *trig": "anchors, aliases, and tags are unsupported",
+        }
+        for trigger, reason in cases.items():
+            with self.subTest(trigger=trigger):
+                evaluation = self.evaluate_trigger(trigger)
+                self.assertEqual(
+                    evaluation.disposition,
+                    inventory.TriggerDisposition.NOT_UNDERSTOOD,
+                )
+                self.assertIn(reason, evaluation.reason)
 
     def test_default_branch_filter_refutes_main(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -475,7 +673,7 @@ class ProofInventoryTests(unittest.TestCase):
             result = self.run_gate(root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("credited-invocations=0", result.stdout)
-            self.assertIn("unsupported branch-pattern metacharacters", result.stderr)
+            self.assertIn("unsupported push.branches pattern characters", result.stderr)
 
     def test_guard_drift_is_detected(self) -> None:
         """Removing a step's if: guard must not pass silently."""
