@@ -30,7 +30,7 @@ class WasmModuleClosureGateTests(unittest.TestCase):
     def test_current_wasm_modules_are_closed_under_local_imports(self) -> None:
         report = gate.evaluate()
         self.assertTrue(report.passed, "\n".join(report.errors))
-        self.assertEqual(len(report.parsed_modules), 26)
+        self.assertEqual(len(report.parsed_modules), 27)
         self.assertEqual(report.missing, ())
 
     def test_empty_modules_array_hits_non_vacuity_floor(self) -> None:

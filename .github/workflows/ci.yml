@@ -187,7 +187,7 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_09
         continue-on-error: true
-        run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
+        run: set -o pipefail; lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_10
         continue-on-error: true
