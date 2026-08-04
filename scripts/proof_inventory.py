@@ -37,6 +37,15 @@ import subprocess
 import sys
 import tomllib
 
+try:
+    import yaml
+except ModuleNotFoundError as error:  # pragma: no cover - provisioning failure
+    raise SystemExit(
+        "PROOF INVENTORY: PyYAML is required to read workflow triggers as YAML "
+        "(apt-get install python3-yaml, or pip install pyyaml). Refusing to "
+        "run: a gate that cannot read the trigger must not report coverage."
+    ) from error
+
 
 ROOT = Path(__file__).resolve().parents[1]
 THEOREM_DECL = re.compile(
@@ -782,171 +791,276 @@ def read_workflow_steps(root: Path) -> tuple[WorkflowStep, ...]:
     return tuple(steps)
 
 
-TRIGGER_KEY = re.compile(r"^on:\s*(.*?)\s*$")
-TRIGGER_EVENT_KEY = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_-]*):\s*(.*?)\s*$")
-TRIGGER_FILTER_KEY = re.compile(r"^    ([A-Za-z_][A-Za-z0-9_-]*):\s*(.*?)\s*$")
-TRIGGER_LIST_ITEM = re.compile(r"^      -\s+(.+?)\s*$")
-TRIGGER_SCHEDULE_ITEM = re.compile(r"^    -\s+cron:\s*(.+?)\s*$")
+# The `on:` block is read as YAML, because it is YAML. An earlier revision
+# pinned indentation as literal string prefixes -- `^  ` for event keys,
+# `^    ` for filter keys, `^      -` for list items -- which made the gate
+# reject valid workflows over whitespace. A branch list written as a block
+# sequence at four spaces instead of six matched no prefix, so the filter
+# collected nothing and was reported as *empty*: a reason a maintainer can
+# see with their own eyes is false. Quoting the top-level key as `"on":` --
+# the standard answer to yamllint's `truthy` warning -- read as no trigger at
+# all. Neither is a defect GitHub recognises, and a gate that red-lines
+# honest syntax with a false reason gets routed around rather than obeyed.
+#
+# Reading real YAML widens what parses, so the closed world is re-established
+# above the parser rather than inside it: every event name must be in
+# GitHub's documented vocabulary, every event's configuration keys must be in
+# that event's documented key set, and anything else -- an unknown key, an
+# explicit tag, a duplicate key, an unresolvable alias, a construct this gate
+# does not implement -- is NOT UNDERSTOOD, which removes credit and fails the
+# gate. Silence is never credit.
 TRIGGER_ATOM = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
-SUPPORTED_EVENTS = {"pull_request", "push", "schedule", "workflow_dispatch"}
-PUSH_FILTERS = {
-    "branches",
-    "branches-ignore",
-    "tags",
-    "tags-ignore",
-    "paths",
-    "paths-ignore",
+
+YAML_STR_TAG = "tag:yaml.org,2002:str"
+YAML_NULL_TAG = "tag:yaml.org,2002:null"
+YAML_SEQ_TAG = "tag:yaml.org,2002:seq"
+YAML_MAP_TAG = "tag:yaml.org,2002:map"
+
+# GitHub's documented `on:` vocabulary and each event's documented
+# configuration keys, transcribed from the machine-readable workflow schema
+# (json.schemastore.org/github-workflow.json, 113286 bytes, retrieved
+# 2026-08-04), whose `on:` mapping is `additionalProperties: false` over
+# exactly these thirty-five names. The distinction this table draws is the
+# load-bearing one: a key that is *not* an event name -- `defaults`, say --
+# makes the workflow file invalid, so it runs on nothing and refusing it is
+# correct; an event name this gate does not interpret is merely another way
+# for the workflow to start, which cannot take away the push being judged.
+EVENT_CONFIG_KEYS: dict[str, frozenset[str]] = {
+    "branch_protection_rule": frozenset({"types"}),
+    "check_run": frozenset({"types"}),
+    "check_suite": frozenset({"types"}),
+    "create": frozenset(),
+    "delete": frozenset(),
+    "deployment": frozenset(),
+    "deployment_status": frozenset(),
+    "discussion": frozenset({"types"}),
+    "discussion_comment": frozenset({"types"}),
+    "fork": frozenset(),
+    "gollum": frozenset(),
+    "issue_comment": frozenset({"types"}),
+    "issues": frozenset({"types"}),
+    "label": frozenset({"types"}),
+    "merge_group": frozenset({"types"}),
+    "milestone": frozenset({"types"}),
+    "page_build": frozenset(),
+    "project": frozenset({"types"}),
+    "project_card": frozenset({"types"}),
+    "project_column": frozenset({"types"}),
+    "public": frozenset(),
+    "pull_request": frozenset(
+        {"branches", "branches-ignore", "paths", "paths-ignore", "tags",
+         "tags-ignore", "types"}
+    ),
+    "pull_request_review": frozenset({"types"}),
+    "pull_request_review_comment": frozenset({"types"}),
+    "pull_request_target": frozenset(
+        {"branches", "branches-ignore", "paths", "paths-ignore", "tags",
+         "tags-ignore", "types"}
+    ),
+    "push": frozenset(
+        {"branches", "branches-ignore", "paths", "paths-ignore", "tags",
+         "tags-ignore"}
+    ),
+    "registry_package": frozenset({"types"}),
+    "release": frozenset({"types"}),
+    "repository_dispatch": frozenset(),
+    "schedule": frozenset(),
+    "status": frozenset(),
+    "watch": frozenset(),
+    "workflow_call": frozenset({"inputs", "outputs", "secrets"}),
+    "workflow_dispatch": frozenset({"inputs"}),
+    "workflow_run": frozenset({"types", "workflows"}),
 }
+PUSH_FILTERS = set(EVENT_CONFIG_KEYS["push"])
+# Of the configuration keys above, these carry a sequence of pattern strings;
+# the remainder (`inputs`, `outputs`, `secrets`) carry a mapping.
+EVENT_FILTER_KEYS = frozenset(
+    {"branches", "branches-ignore", "paths", "paths-ignore", "tags",
+     "tags-ignore", "types", "workflows"}
+)
+
+# An alias graph can be made to expand without bound, and a cyclic one would
+# not terminate at all. Neither belongs in a workflow trigger.
+MAX_TRIGGER_NODES = 10_000
 
 
 TriggerNode = str | None | list["TriggerNode"] | dict[str, "TriggerNode"]
 
 
-class FlowTriggerParser:
-    """Parse only the YAML flow subset whose semantics this gate implements."""
+class _TriggerResolver(yaml.resolver.BaseResolver):
+    """Resolve plain scalars as text, with YAML 1.2 core ``null`` the exception.
 
-    def __init__(self, text: str, context: str):
-        self.text = text
+    PyYAML implements YAML 1.1, in which ``on``, ``yes`` and ``no`` are
+    booleans -- ``yaml.safe_load`` on a workflow returns the key ``True``,
+    not ``"on"``, so the 1.1 schema would hide the very key this gate looks
+    for, and would silently retype a branch honestly named ``on``. GitHub
+    reads workflows with a 1.2-style core schema. Keeping plain scalars as
+    text is therefore both closer to GitHub and the conservative choice: a
+    value that stays a string is checked by the filter validators, whereas a
+    value quietly retyped to a bool is checked by nothing.
+    """
+
+
+_TriggerResolver.add_implicit_resolver(
+    YAML_NULL_TAG, re.compile(r"^(?:~|null|Null|NULL|)$"), ["~", "n", "N", ""]
+)
+
+
+class _TriggerComposer(yaml.composer.Composer):
+    """Record explicit YAML tags rather than letting them resolve away.
+
+    An explicit tag is indistinguishable from an implicit one once composed,
+    and this gate refuses explicit tags: whether GitHub honours them is not
+    documented anywhere we could find, and accepting a construct on an
+    unverified premise is how a gate starts granting credit for a workflow
+    that never runs.
+    """
+
+    def compose_node(self, parent, index):  # type: ignore[override]
+        tag = getattr(self.peek_event(), "tag", None)
+        node = super().compose_node(parent, index)
+        if tag is not None and getattr(node, "explicit_tag", None) is None:
+            node.explicit_tag = tag
+        return node
+
+
+class _TriggerLoader(
+    yaml.reader.Reader,
+    yaml.scanner.Scanner,
+    yaml.parser.Parser,
+    _TriggerComposer,
+    _TriggerResolver,
+):
+    """Compose-only loader: a node graph, never constructed Python objects."""
+
+    def __init__(self, stream):
+        yaml.reader.Reader.__init__(self, stream)
+        yaml.scanner.Scanner.__init__(self)
+        yaml.parser.Parser.__init__(self)
+        _TriggerComposer.__init__(self)
+        _TriggerResolver.__init__(self)
+
+
+class _TriggerBuilder:
+    """Turn a composed node graph into the trigger shapes this gate reads.
+
+    PyYAML's own constructor is deliberately not used. It resolves duplicate
+    mapping keys by keeping the last -- so ``push:`` written twice would be
+    silently reduced to whichever copy came second, which is a laundering
+    route -- and it honours merge keys and tags whose GitHub behaviour is
+    unverified. Every one of those is refused here instead.
+    """
+
+    def __init__(self, context: str):
         self.context = context
-        self.index = 0
+        self.budget = MAX_TRIGGER_NODES
+        self.active: set[int] = set()
 
-    def fail(self, detail: str) -> InventoryError:
-        return InventoryError(f"cannot parse {self.context}: {detail}")
+    def fail(self, node, detail: str) -> InventoryError:
+        mark = node.start_mark
+        return InventoryError(
+            f"cannot parse {self.context} at line {mark.line + 1} "
+            f"column {mark.column + 1}: {detail}"
+        )
 
-    def skip_space(self) -> None:
-        while self.index < len(self.text) and self.text[self.index].isspace():
-            self.index += 1
-
-    def quoted(self) -> str:
-        quote = self.text[self.index]
-        start = self.index
-        self.index += 1
-        if quote == "'":
-            value: list[str] = []
-            while self.index < len(self.text):
-                character = self.text[self.index]
-                self.index += 1
-                if character != "'":
-                    value.append(character)
-                    continue
-                if self.index < len(self.text) and self.text[self.index] == "'":
-                    value.append("'")
-                    self.index += 1
-                    continue
-                return "".join(value)
-            raise self.fail(f"unterminated quoted scalar at column {start + 1}")
-        escaped = False
-        while self.index < len(self.text):
-            character = self.text[self.index]
-            self.index += 1
-            if character == '"' and not escaped:
-                token = self.text[start:self.index]
-                try:
-                    value = json.loads(token)
-                except json.JSONDecodeError as error:
-                    raise self.fail(f"invalid quoted scalar at column {start + 1}") from error
-                if not isinstance(value, str):
-                    raise self.fail(f"non-string scalar at column {start + 1}")
-                return value
-            escaped = character == "\\" and not escaped
-            if character != "\\":
-                escaped = False
-        raise self.fail(f"unterminated quoted scalar at column {start + 1}")
-
-    def bare(self, delimiters: str) -> TriggerNode:
-        start = self.index
-        while self.index < len(self.text) and self.text[self.index] not in delimiters:
-            self.index += 1
-        value = self.text[start:self.index].strip()
-        if not value:
-            raise self.fail(f"empty scalar at column {start + 1}")
-        if value in {"null", "~"}:
-            return None
-        if value.startswith(("&", "*", "!")):
-            raise self.fail(f"anchors, aliases, and tags are unsupported at column {start + 1}")
-        return value
-
-    def value(self) -> TriggerNode:
-        self.skip_space()
-        if self.index >= len(self.text):
-            raise self.fail("missing value")
-        character = self.text[self.index]
-        if character == "[":
-            return self.sequence()
-        if character == "{":
-            return self.mapping()
-        if character in {"'", '"'}:
-            return self.quoted()
-        return self.bare(",]}")
-
-    def sequence(self) -> list[TriggerNode]:
-        self.index += 1
-        result: list[TriggerNode] = []
-        self.skip_space()
-        if self.index < len(self.text) and self.text[self.index] == "]":
-            self.index += 1
-            return result
-        while True:
-            result.append(self.value())
-            self.skip_space()
-            if self.index >= len(self.text):
-                raise self.fail("unterminated flow sequence")
-            character = self.text[self.index]
-            self.index += 1
-            if character == "]":
-                return result
-            if character != ",":
-                raise self.fail(f"expected ',' or ']' at column {self.index}")
-
-    def key(self) -> str:
-        self.skip_space()
-        if self.index >= len(self.text):
-            raise self.fail("missing mapping key")
-        if self.text[self.index] in {"'", '"'}:
-            key = self.quoted()
-        else:
-            node = self.bare(":,}")
-            if not isinstance(node, str):
-                raise self.fail("mapping key is not a string")
-            key = node
-        self.skip_space()
-        if self.index >= len(self.text) or self.text[self.index] != ":":
-            raise self.fail(f"mapping key {key!r} has no ':'")
-        self.index += 1
-        return key
-
-    def mapping(self) -> dict[str, TriggerNode]:
-        self.index += 1
-        result: dict[str, TriggerNode] = {}
-        self.skip_space()
-        if self.index < len(self.text) and self.text[self.index] == "}":
-            self.index += 1
-            return result
-        while True:
-            key = self.key()
-            if key in result:
-                raise self.fail(f"duplicate mapping key {key!r}")
-            result[key] = self.value()
-            self.skip_space()
-            if self.index >= len(self.text):
-                raise self.fail("unterminated flow mapping")
-            character = self.text[self.index]
-            self.index += 1
-            if character == "}":
-                return result
-            if character != ",":
-                raise self.fail(f"expected ',' or '}}' at column {self.index}")
-
-    def parse(self) -> TriggerNode:
-        result = self.value()
-        self.skip_space()
-        if self.index != len(self.text):
-            raise self.fail(f"trailing text at column {self.index + 1}")
-        return result
+    def build(self, node) -> TriggerNode:
+        self.budget -= 1
+        if self.budget < 0:
+            raise InventoryError(
+                f"cannot parse {self.context}: trigger expands past "
+                f"{MAX_TRIGGER_NODES} nodes"
+            )
+        explicit = getattr(node, "explicit_tag", None)
+        if explicit is not None:
+            raise self.fail(node, f"explicit YAML tag {explicit!r} is unsupported")
+        if isinstance(node, yaml.nodes.ScalarNode):
+            if node.tag == YAML_NULL_TAG:
+                return None
+            if node.tag != YAML_STR_TAG:
+                raise self.fail(node, f"unsupported scalar type {node.tag!r}")
+            return node.value
+        if id(node) in self.active:
+            raise self.fail(node, "alias refers to itself")
+        self.active.add(id(node))
+        try:
+            if isinstance(node, yaml.nodes.SequenceNode):
+                if node.tag != YAML_SEQ_TAG:
+                    raise self.fail(node, f"unsupported sequence type {node.tag!r}")
+                return [self.build(item) for item in node.value]
+            if isinstance(node, yaml.nodes.MappingNode):
+                if node.tag != YAML_MAP_TAG:
+                    raise self.fail(node, f"unsupported mapping type {node.tag!r}")
+                mapping: dict[str, TriggerNode] = {}
+                for key_node, value_node in node.value:
+                    key = self.build(key_node)
+                    if not isinstance(key, str):
+                        raise self.fail(key_node, "mapping keys must be strings")
+                    if key in mapping:
+                        raise self.fail(key_node, f"duplicate key {key!r}")
+                    mapping[key] = self.build(value_node)
+                return mapping
+            raise self.fail(node, "unsupported YAML construct")
+        finally:
+            self.active.discard(id(node))
 
 
-def parse_flow_trigger(value: str, context: str) -> TriggerNode:
-    return FlowTriggerParser(value, context).parse()
+def _yaml_detail(error: yaml.YAMLError) -> str:
+    problem = getattr(error, "problem", None) or "invalid YAML"
+    mark = getattr(error, "problem_mark", None)
+    if mark is None:
+        return problem
+    return f"{problem} at line {mark.line + 1} column {mark.column + 1}"
+
+
+def read_trigger_node(path: Path, workflow: str) -> TriggerNode:
+    """Return the value of the workflow's single top-level ``on:`` key.
+
+    The key is matched as a composed YAML key, so a quoted ``"on":`` is the
+    same key as a bare ``on:``. Only the ``on:`` subtree is built; the rest
+    of the file is left as nodes, so a construct this gate refuses inside
+    ``jobs:`` is not this gate's business.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+        document = yaml.compose(text, Loader=_TriggerLoader)
+    except yaml.YAMLError as error:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: "
+            f"cannot read {workflow} as YAML: {_yaml_detail(error)}"
+        ) from error
+    except RecursionError as error:
+        # PyYAML parses by recursive descent, so nesting deep enough to
+        # exhaust the interpreter stack raises here rather than returning a
+        # document. Left uncaught it would abort the whole run part-way
+        # through, which reports nothing at all; one unreadable workflow must
+        # cost that workflow its credit, not the report.
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: "
+            f"{workflow} nests deeper than this gate reads"
+        ) from error
+    if document is None:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: no top-level on: block"
+        )
+    if not isinstance(document, yaml.nodes.MappingNode) or document.tag != YAML_MAP_TAG:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: "
+            f"{workflow} is not a YAML mapping"
+        )
+    found = [
+        value_node
+        for key_node, value_node in document.value
+        if isinstance(key_node, yaml.nodes.ScalarNode)
+        and key_node.tag == YAML_STR_TAG
+        and getattr(key_node, "explicit_tag", None) is None
+        and key_node.value == "on"
+    ]
+    if len(found) != 1:
+        detail = "no top-level on: block" if not found else "multiple top-level on: blocks"
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: {detail}"
+        )
+    return _TriggerBuilder(f"{workflow} on").build(found[0])
 
 
 def require_trigger_atom(value: TriggerNode, context: str) -> str:
@@ -964,68 +1078,6 @@ def require_string_sequence(value: TriggerNode, context: str) -> tuple[str, ...]
             raise InventoryError(f"cannot parse {context}: expected non-empty string values")
         result.append(item)
     return tuple(result)
-
-
-def parse_push_filters(lines: list[str], workflow: str) -> dict[str, tuple[str, ...]]:
-    filters: dict[str, tuple[str, ...]] = {}
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if not line.strip() or line.lstrip().startswith("#"):
-            index += 1
-            continue
-        match = TRIGGER_FILTER_KEY.match(line)
-        if match is None:
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: "
-                f"cannot parse push filter line {line.strip()!r}"
-            )
-        key, value = match.groups()
-        if key not in PUSH_FILTERS:
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: unsupported push filter {key!r}"
-            )
-        if key in filters:
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: duplicate push filter {key!r}"
-            )
-        index += 1
-        if value:
-            filters[key] = require_string_sequence(
-                parse_flow_trigger(value, f"{workflow} push.{key}"),
-                f"{workflow} push.{key}",
-            )
-            continue
-        items: list[str] = []
-        while index < len(lines):
-            nested = lines[index]
-            if not nested.strip() or nested.lstrip().startswith("#"):
-                index += 1
-                continue
-            item = TRIGGER_LIST_ITEM.match(nested)
-            if item is None:
-                break
-            parsed = parse_flow_trigger(item.group(1), f"{workflow} push.{key}")
-            if not isinstance(parsed, str) or not parsed:
-                raise InventoryError(
-                    f"cannot parse {workflow} push.{key}: expected a non-empty string"
-                )
-            items.append(parsed)
-            index += 1
-        if not items:
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: push filter {key!r} is empty"
-            )
-        filters[key] = tuple(items)
-    if "branches" in filters and "branches-ignore" in filters:
-        raise InventoryError(
-            f"{workflow}: cannot classify workflow trigger: push has both branches and branches-ignore"
-        )
-    if "tags" in filters and "tags-ignore" in filters:
-        raise InventoryError(
-            f"{workflow}: cannot classify workflow trigger: push has both tags and tags-ignore"
-        )
-    return filters
 
 
 def push_filters_from_node(
@@ -1095,68 +1147,7 @@ def branch_matches(patterns: tuple[str, ...], branch: str) -> bool:
     return matched
 
 
-def block_trigger_events(
-    lines: list[str], start: int, workflow: str
-) -> dict[str, tuple[TriggerNode, list[str]]]:
-    events: dict[str, tuple[TriggerNode, list[str]]] = {}
-    index = start + 1
-    current = ""
-    while index < len(lines):
-        line = lines[index]
-        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
-            break
-        index += 1
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        event_match = TRIGGER_EVENT_KEY.match(line)
-        if event_match:
-            current, value = event_match.groups()
-            if current in events:
-                raise InventoryError(
-                    f"{workflow}: cannot classify workflow trigger: duplicate event {current!r}"
-                )
-            node = parse_flow_trigger(value, f"{workflow} on.{current}") if value else None
-            events[current] = (node, [])
-            continue
-        if not current or not line.startswith("    "):
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: "
-                f"cannot parse on: line {line.strip()!r}"
-            )
-        events[current][1].append(line)
-    return events
-
-
-def validate_non_push_event(
-    event: str, node: TriggerNode, lines: list[str], workflow: str
-) -> None:
-    if event in {"pull_request", "workflow_dispatch"}:
-        if lines or node not in (None, {}):
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: "
-                f"configuration for event {event!r} is not implemented"
-            )
-        return
-    if event != "schedule":
-        raise InventoryError(
-            f"{workflow}: cannot classify workflow trigger: unsupported event {event!r}"
-        )
-    if lines:
-        if node is not None:
-            raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: schedule has two value forms"
-            )
-        schedules: list[dict[str, TriggerNode]] = []
-        for line in lines:
-            match = TRIGGER_SCHEDULE_ITEM.match(line)
-            if match is None:
-                raise InventoryError(
-                    f"{workflow}: cannot classify workflow trigger: "
-                    f"cannot parse schedule line {line.strip()!r}"
-                )
-            cron = parse_flow_trigger(match.group(1), f"{workflow} schedule.cron")
-            schedules.append({"cron": cron})
-        node = schedules
+def validate_schedule(node: TriggerNode, workflow: str) -> None:
     if not isinstance(node, list) or not node:
         raise InventoryError(
             f"{workflow}: cannot classify workflow trigger: "
@@ -1186,57 +1177,84 @@ def validate_non_push_event(
             )
 
 
-def parse_workflow_trigger(path: Path) -> dict[str, tuple[TriggerNode, list[str]]]:
-    workflow = path.name
-    lines = path.read_text(encoding="utf-8").splitlines()
-    starts = [index for index, line in enumerate(lines) if TRIGGER_KEY.match(line)]
-    if len(starts) != 1:
-        detail = "no top-level on: block" if not starts else "multiple top-level on: blocks"
+def validate_non_push_event(event: str, node: TriggerNode, workflow: str) -> None:
+    """Refuse configuration that cannot be read; tolerate what cannot matter.
+
+    ``on:`` is a disjunction. A second event is another way for the workflow
+    to start and can never withdraw the push-to-main being judged, so an
+    event this gate does not interpret needs no interpretation to leave the
+    push verdict sound. What is *not* tolerated is a key GitHub does not
+    recognise: the ``on:`` mapping is closed, so an unrecognised key makes
+    the workflow file invalid, and an invalid workflow runs on nothing at
+    all -- which is exactly the state a declared-but-dead build wants to be
+    mistaken for.
+    """
+    if node is None:
+        return
+    if event == "schedule":
+        validate_schedule(node, workflow)
+        return
+    if not isinstance(node, dict):
         raise InventoryError(
-            f"{workflow}: cannot classify workflow trigger: {detail}"
+            f"{workflow}: cannot classify workflow trigger: "
+            f"unsupported configuration for event {event!r}"
         )
-    start = starts[0]
-    header = TRIGGER_KEY.match(lines[start])
-    assert header is not None
-    inline = header.group(1)
-    events: dict[str, tuple[TriggerNode, list[str]]] = {}
-    if inline:
-        node = parse_flow_trigger(inline, f"{workflow} on")
-        if isinstance(node, str):
-            event = require_trigger_atom(node, f"{workflow} on")
-            events[event] = (None, [])
-        elif isinstance(node, list):
-            if not node:
-                raise InventoryError(
-                    f"{workflow}: cannot classify workflow trigger: on: sequence is empty"
-                )
-            for item in node:
-                event = require_trigger_atom(item, f"{workflow} on")
-                if event in events:
-                    raise InventoryError(
-                        f"{workflow}: cannot classify workflow trigger: duplicate event {event!r}"
-                    )
-                events[event] = (None, [])
-        elif isinstance(node, dict):
-            for event, value in node.items():
-                require_trigger_atom(event, f"{workflow} on")
-                events[event] = (value, [])
-        else:
+    unknown = sorted(set(node) - EVENT_CONFIG_KEYS[event])
+    if unknown:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: "
+            f"unsupported configuration key {unknown[0]!r} for event {event!r}"
+        )
+    # Tolerating an event is not tolerating any shape written under it. A
+    # value GitHub's schema rejects invalidates the whole workflow file just
+    # as an unknown key does, and an invalid workflow runs on nothing -- so
+    # the shapes are checked even though the values are never interpreted.
+    for key, value in node.items():
+        if key in EVENT_FILTER_KEYS:
+            require_string_sequence(value, f"{workflow} {event}.{key}")
+        elif not isinstance(value, dict):
             raise InventoryError(
-                f"{workflow}: cannot classify workflow trigger: on: has unsupported scalar {node!r}"
+                f"{workflow}: cannot classify workflow trigger: "
+                f"{event}.{key} must be a mapping"
             )
-    else:
-        events = block_trigger_events(lines, start, workflow)
+
+
+def parse_workflow_trigger(path: Path) -> dict[str, TriggerNode]:
+    workflow = path.name
+    node = read_trigger_node(path, workflow)
+    events: dict[str, TriggerNode] = {}
+    if isinstance(node, str):
+        events[require_trigger_atom(node, f"{workflow} on")] = None
+    elif isinstance(node, list):
+        if not node:
+            raise InventoryError(
+                f"{workflow}: cannot classify workflow trigger: on: sequence is empty"
+            )
+        for item in node:
+            event = require_trigger_atom(item, f"{workflow} on")
+            if event in events:
+                raise InventoryError(
+                    f"{workflow}: cannot classify workflow trigger: duplicate event {event!r}"
+                )
+            events[event] = None
+    elif isinstance(node, dict):
+        for event, value in node.items():
+            require_trigger_atom(event, f"{workflow} on")
+            events[event] = value
+    elif node is not None:
+        raise InventoryError(
+            f"{workflow}: cannot classify workflow trigger: on: has unsupported value {node!r}"
+        )
     if not events:
         raise InventoryError(f"{workflow}: cannot classify workflow trigger: on: is empty")
-    unknown = sorted(set(events) - SUPPORTED_EVENTS)
+    unknown = sorted(set(events) - set(EVENT_CONFIG_KEYS))
     if unknown:
         raise InventoryError(
             f"{workflow}: cannot classify workflow trigger: unsupported event {unknown[0]!r}"
         )
-    for event, (node, nested) in events.items():
+    for event, value in events.items():
         if event != JUDGED_EVENT:
-            validate_non_push_event(event, node, nested, workflow)
+            validate_non_push_event(event, value, workflow)
     return events
 
 
@@ -1252,7 +1270,7 @@ def workflow_trigger_evaluation(path: Path) -> TriggerEvaluation:
     workflow = path.name
     try:
         events = parse_workflow_trigger(path)
-    except (InventoryError, OSError, UnicodeDecodeError) as error:
+    except (InventoryError, OSError, UnicodeDecodeError, RecursionError) as error:
         return TriggerEvaluation(TriggerDisposition.NOT_UNDERSTOOD, str(error))
     if JUDGED_EVENT not in events:
         named = ", ".join(sorted(events))
@@ -1262,15 +1280,7 @@ def workflow_trigger_evaluation(path: Path) -> TriggerEvaluation:
             f"to refs/heads/{JUDGED_BRANCH}",
         )
     try:
-        push_value, push_lines = events[JUDGED_EVENT]
-        if push_lines:
-            if push_value is not None:
-                raise InventoryError(
-                    f"{workflow}: cannot classify workflow trigger: push has two value forms"
-                )
-            filters = parse_push_filters(push_lines, workflow)
-        else:
-            filters = push_filters_from_node(push_value, workflow)
+        filters = push_filters_from_node(events[JUDGED_EVENT], workflow)
         for key in ("branches", "branches-ignore", "tags", "tags-ignore"):
             if key in filters:
                 validate_ref_patterns(

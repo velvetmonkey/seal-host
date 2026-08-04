@@ -181,6 +181,15 @@ jobs:
         continue-on-error: true
         name: Gate every explicit theorem/lemma module against CI build closures
         run: |
+          # The trigger reader parses the on: block as YAML rather than
+          # matching indentation as literal text. PyYAML is not guaranteed on
+          # the runner image, so provision it explicitly; if every route
+          # fails the step fails, which is the correct direction -- a gate
+          # that cannot read the trigger must not report coverage.
+          python3 -c 'import yaml' 2>/dev/null \
+            || python3 -m pip install --break-system-packages pyyaml==6.0.2 \
+            || python3 -m pip install pyyaml==6.0.2 \
+            || sudo apt-get install -y -qq python3-yaml
           python3 scripts/proof_inventory.py
           python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
