@@ -108,7 +108,17 @@ jobs:
         run: cargo install cargo-fuzz --locked
       - id: control_11
         continue-on-error: true
-        run: cargo +nightly fuzz run hostile_ingress -- -max_total_time=60 -timeout=5
+        name: Build and run hostile-ingress fuzz target with disk telemetry
+        run: |
+          df -h .
+          du -sh target fuzz/target 2>/dev/null || true
+          status=0
+          python3 ../scripts/ci_disk_telemetry.py security-fuzz -- \
+            cargo +nightly fuzz run hostile_ingress -- -max_total_time=60 -timeout=5 \
+            || status=$?
+          df -h .
+          du -sh target fuzz/target 2>/dev/null || true
+          exit "$status"
         working-directory: rust
 
       - name: Require every isolated CI step to pass
