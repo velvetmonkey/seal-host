@@ -25,12 +25,16 @@ def main (args : List String) : IO UInt32 := do
   let entries := leanPath.splitOn sep |>.filter fun e =>
     e ≠ rootLib.toString && !e.isEmpty
   let fixed := sep.intercalate (rootLib.toString :: entries)
-  let lake := (← IO.getEnv "LAKE").getD "lake"
-  let build ← IO.Process.spawn { cmd := lake, args := #["build", "batteries/runLinter"] }
-  if (← build.wait) != 0 then
-    IO.eprintln "lint driver: failed to build batteries/runLinter"
-    return 1
   let bin := cwd / ".lake" / "packages" / "batteries" / ".lake" / "build" / "bin" / "runLinter"
+  -- Build the real linter only when its binary is absent. A nested `lake
+  -- build` while `lake lint` is running the driver deadlocks on the
+  -- workspace, so the common case must not spawn lake at all.
+  unless (← bin.pathExists) do
+    let lake := (← IO.getEnv "LAKE").getD "lake"
+    let build ← IO.Process.spawn { cmd := lake, args := #["build", "batteries/runLinter"] }
+    if (← build.wait) != 0 then
+      IO.eprintln "lint driver: failed to build batteries/runLinter"
+      return 1
   unless (← bin.pathExists) do
     IO.eprintln s!"lint driver: runLinter binary not found at {bin}"
     return 1

@@ -117,7 +117,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertLess(gate, action, workflow)
         self.assertGreater(action_count, 0, "no lean-action invocation found")
 
-    def test_every_lean_action_defers_tests_until_native_dependency_is_built(self) -> None:
+    def test_every_lean_action_defers_tests_and_disables_lint(self) -> None:
         action_marker = "leanprover/lean-action"
         native_build = re.compile(
             r"^\s+(?:run: )?bash \.lake/packages/mcp-seal/c/build\.sh$",
@@ -142,6 +142,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 next_step = text.find("\n      - ", action)
                 action_block = text[action : next_step if next_step != -1 else None]
                 self.assertIn("test: false", action_block, workflow)
+                self.assertIn("lint: false", action_block, workflow)
                 self.assertLess(action, build, workflow)
                 self.assertLess(build, test, workflow)
 

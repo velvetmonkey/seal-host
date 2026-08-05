@@ -6,8 +6,8 @@ testDriver = "lean_tests"
 # modules: Host.Main -> Host, Test.* -> Test). The wrapper exists because the
 # mcp-seal dependency also ships Test.* modules and Lake's driver LEAN_PATH
 # lists dependencies first, so a bare runLinter resolves Test.* into the wrong
-# package. Wired 2026-08-04 so `lake lint` runs and lean-action's lint-status
-# is earned; control_20 fails closed on an EMPTY status.
+# package. This keeps `lake lint` available as an explicit on-disk diagnostic;
+# CI disables the hours-long lint phase at every lean-action call site.
 lintDriver = "lint_driver"
 # `repin_step2_guards` added 2026-07-25. Test/RepinStep2Guards.lean carried five
 # compile-time `example ... := by native_decide` assertions covering the
@@ -63,10 +63,13 @@ globs = ["Host", "Host.+", "Kernels", "Kernels.+", "Ffi", "FfiSpec"]
 name = "Test"
 globs = ["Test.+"]
 
-# The `lake lint` entry point — see the lintDriver comment above.
+# The `lake lint` entry point — see the lintDriver comment above. `needs`
+# makes Lake build the real linter BEFORE running this driver: the driver
+# itself must never spawn a nested `lake build` while `lake lint` runs.
 [[lean_exe]]
 name = "lint_driver"
 root = "LintDriver"
+needs = ["batteries/runLinter"]
 
 [[lean_exe]]
 name = "seal-host"

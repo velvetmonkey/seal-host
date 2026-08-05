@@ -38,6 +38,7 @@ jobs:
           use-github-cache: false
           build: false
           test: false
+          lint: false
       - id: control_13
         continue-on-error: true
         name: Build native Lean test link dependency

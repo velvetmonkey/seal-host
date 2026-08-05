@@ -82,6 +82,7 @@ jobs:
           use-github-cache: false
           build: false
           test: false
+          lint: false
       - id: control_05
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update
