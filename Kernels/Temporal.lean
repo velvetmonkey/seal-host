@@ -14,7 +14,11 @@ structure TemporalPolicy where
   name : String
   trigger : List String
   forbidden : List String
-  deriving Repr
+  -- No `deriving Repr`: the derived instance specializes `List.repr'` shared
+  -- with LeanSearchClient's generated C, retaining code in the wasm link that
+  -- reads globals only `initialize_LeanSearchClient_*` (never run there) would
+  -- assign. The link-set audit (wasm-spike/link_set_audit.py) rejects that
+  -- link; re-deriving will turn the kernel build red.
 
 /-- The per-position trace state the monitor predicate reads: the tool that
     executed at this position, and whether a trigger executed strictly
