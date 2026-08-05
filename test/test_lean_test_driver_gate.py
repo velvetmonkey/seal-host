@@ -123,7 +123,11 @@ class LeanTestDriverGateTests(unittest.TestCase):
             r"^\s+(?:run: )?bash \.lake/packages/mcp-seal/c/build\.sh$",
             re.MULTILINE,
         )
-        explicit_test = re.compile(r"^\s+(?:run: )?lake test$", re.MULTILINE)
+        explicit_test = re.compile(
+            r"^\s+(?:run: )?(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?"
+            r"lake test$",
+            re.MULTILINE,
+        )
         action_count = 0
 
         for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
@@ -136,17 +140,20 @@ class LeanTestDriverGateTests(unittest.TestCase):
             tests = [match.start() for match in explicit_test.finditer(text)]
             action_count += len(actions)
             self.assertEqual(len(builds), len(actions), workflow)
-            self.assertEqual(len(tests), len(actions), workflow)
 
-            for action, build, test in zip(actions, builds, tests, strict=True):
+            for action in actions:
                 next_step = text.find("\n      - ", action)
                 action_block = text[action : next_step if next_step != -1 else None]
                 self.assertIn("test: false", action_block, workflow)
                 self.assertIn("lint: false", action_block, workflow)
+
+            for test in tests:
+                action = max(position for position in actions if position < test)
+                build = max(position for position in builds if position < test)
                 self.assertLess(action, build, workflow)
                 self.assertLess(build, test, workflow)
 
-        self.assertEqual(action_count, 6, "review every lean-action call site")
+        self.assertEqual(action_count, 7, "review every lean-action call site")
 
 
 if __name__ == "__main__":
