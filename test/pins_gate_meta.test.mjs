@@ -256,7 +256,23 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   const shifted = parseCiRunSteps(reindented);
   // Reviewed 2026-08-05: retiring both controls' lint-status predicates leaves
   // their `lake test` run steps in place, so the 76-step inventory is unchanged.
-  assert.equal(normal.length, 76, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed again 2026-08-05 (Ben's ruling, this pulse): 76 -> 82. The runner
+  // disk-capacity fix splits the Lean aggregate out of `rust-conformance` into a
+  // new `rust-conformance-lean` job, which adds SIX run steps to ci.yml:
+  //   1. mcp-seal package fetch      `test -d .lake/packages/mcp-seal || lake update`
+  //   2. native mcp-seal C build     `bash .lake/packages/mcp-seal/c/build.sh`
+  //   3. Lean aggregate under telemetry
+  //                                  `ci_disk_telemetry.py ci-lean-aggregate -- lake ...`
+  //   4. the new job's own           `ci_control_aggregate.py` fail-closed step
+  //   5. `control_32`, the free-ballast step that makes runner headroom measurable
+  //   6. the rust release build under telemetry
+  //                                  `ci_disk_telemetry.py ci-rust-release -- cargo ...`
+  // Every pre-existing step survives: `control_31` (`lake test`) MOVED to the lean
+  // job rather than being deleted, and the real cargo suite stays put. This bump is
+  // the tripwire doing its job, not a silenced control. The run-step FLOOR test
+  // below is untouched and still guards the real minimum.
+  assert.equal(normal.length, 82, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
