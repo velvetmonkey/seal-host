@@ -4,17 +4,107 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 import textwrap
+from typing import Any
 import unittest
 
+try:
+    import yaml
+except ModuleNotFoundError:
+    yaml = None
 
-ROOT = Path(__file__).resolve().parents[1]
-GATE = ROOT / "scripts" / "lean_test_driver_gate.py"
+
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("LEAN_WORKFLOW_ROOT", SOURCE_ROOT)).resolve()
+GATE = SOURCE_ROOT / "scripts" / "lean_test_driver_gate.py"
+
+
+@dataclass(frozen=True)
+class Workflow:
+    path: Path
+    text: str
+    document: dict[str, Any]
+
+
+def load_workflows(root: Path = ROOT) -> list[Workflow]:
+    workflow_dir = root / ".github" / "workflows"
+    paths = sorted((*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")))
+    if not paths:
+        raise RuntimeError(f"no workflow files found in {workflow_dir}")
+
+    workflows = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        if yaml is not None:
+            try:
+                document = yaml.safe_load(text)
+            except yaml.YAMLError as error:
+                raise RuntimeError(f"cannot parse workflow {path}: {error}") from error
+        else:
+            try:
+                parsed = subprocess.run(
+                    ["yq", "-o=json", ".", str(path)],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+            except OSError as error:
+                raise RuntimeError(
+                    f"cannot parse workflow {path}: no YAML parser is available"
+                ) from error
+            if parsed.returncode != 0:
+                raise RuntimeError(
+                    f"cannot parse workflow {path}: {parsed.stderr.strip()}"
+                )
+            try:
+                document = json.loads(parsed.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError(
+                    f"cannot parse workflow {path}: yq returned invalid JSON"
+                ) from error
+        if not isinstance(document, dict) or not isinstance(document.get("jobs"), dict):
+            raise RuntimeError(f"workflow {path} has no jobs mapping")
+        workflows.append(Workflow(path=path, text=text, document=document))
+    return workflows
+
+
+def lean_action_sites(
+    workflows: list[Workflow],
+) -> list[tuple[Workflow, str, int, dict[str, Any]]]:
+    sites = []
+    for workflow in workflows:
+        for job_name, job in workflow.document["jobs"].items():
+            if not isinstance(job, dict):
+                raise RuntimeError(
+                    f"workflow {workflow.path} job {job_name} is not a mapping"
+                )
+            steps = job.get("steps", [])
+            if not isinstance(steps, list):
+                raise RuntimeError(
+                    f"workflow {workflow.path} job {job_name} steps is not a sequence"
+                )
+            for step_index, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    raise RuntimeError(
+                        f"workflow {workflow.path} job {job_name} has a non-mapping step"
+                    )
+                uses = step.get("uses")
+                if (
+                    isinstance(uses, str)
+                    and uses.split("@", maxsplit=1)[0] == "leanprover/lean-action"
+                ):
+                    sites.append((workflow, str(job_name), step_index, step))
+    if not sites:
+        raise RuntimeError("zero lean-action call sites found in workflow sources")
+    return sites
 
 
 class LeanTestDriverGateTests(unittest.TestCase):
@@ -117,43 +207,88 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertLess(gate, action, workflow)
         self.assertGreater(action_count, 0, "no lean-action invocation found")
 
+    def test_workflow_discovery_and_parsing_fail_closed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "no workflow files found"):
+            load_workflows(self.root)
+
+        workflow_dir = self.root / ".github" / "workflows"
+        workflow_dir.mkdir(parents=True)
+        (workflow_dir / "broken.yml").write_text(
+            "jobs: [unterminated\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(RuntimeError, "cannot parse workflow"):
+            load_workflows(self.root)
+
+    def test_zero_lean_action_sites_fails_closed(self) -> None:
+        workflow_dir = self.root / ".github" / "workflows"
+        workflow_dir.mkdir(parents=True)
+        (workflow_dir / "empty.yml").write_text(
+            "jobs:\n  ordinary:\n    steps:\n      - run: true\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "zero lean-action call sites"):
+            lean_action_sites(load_workflows(self.root))
+
+    def test_every_lean_action_disables_implicit_tests(self) -> None:
+        sites = lean_action_sites(load_workflows())
+        self.assertEqual(len(sites), 8, "review every lean-action call site")
+        for workflow, job_name, step_index, step in sites:
+            with self.subTest(
+                workflow=workflow.path.name,
+                job=job_name,
+                step=step_index,
+            ):
+                inputs = step.get("with")
+                self.assertIsInstance(inputs, dict)
+                self.assertIs(
+                    inputs.get("test") if isinstance(inputs, dict) else None,
+                    False,
+                    "every lean-action call site must set test: false",
+                )
+
     def test_every_aggregate_test_has_a_native_prerequisite(self) -> None:
-        action_marker = "leanprover/lean-action"
         native_build = re.compile(
-            r"^\s+(?:run: )?bash \.lake/packages/mcp-seal/c/build\.sh$",
+            r"^\s*bash \.lake/packages/mcp-seal/c/build\.sh\s*$",
             re.MULTILINE,
         )
         explicit_test = re.compile(
-            r"^\s+(?:run: )?(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?lake test$",
+            r"^\s*(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?lake test\s*$",
             re.MULTILINE,
         )
-        action_count = 0
         test_count = 0
 
-        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
-            text = workflow.read_text(encoding="utf-8")
-            actions = [match.start() for match in re.finditer(action_marker, text)]
-            if not actions:
-                continue
+        for workflow in load_workflows():
+            for job_name, job in workflow.document["jobs"].items():
+                if not isinstance(job, dict):
+                    raise RuntimeError(
+                        f"workflow {workflow.path} job {job_name} is not a mapping"
+                    )
+                steps = job.get("steps", [])
+                if not isinstance(steps, list):
+                    raise RuntimeError(
+                        f"workflow {workflow.path} job {job_name} steps is not a sequence"
+                    )
+                build_steps = []
+                for step_index, step in enumerate(steps):
+                    if not isinstance(step, dict):
+                        raise RuntimeError(
+                            f"workflow {workflow.path} job {job_name} has a non-mapping step"
+                        )
+                    command = step.get("run")
+                    if not isinstance(command, str):
+                        continue
+                    if native_build.search(command):
+                        build_steps.append(step_index)
+                    if not explicit_test.search(command):
+                        continue
+                    test_count += 1
+                    with self.subTest(workflow=workflow.path.name, job=job_name):
+                        self.assertTrue(
+                            any(build < step_index for build in build_steps),
+                            "every aggregate lake test must follow its native build "
+                            "in the same job",
+                        )
 
-            builds = [match.start() for match in native_build.finditer(text)]
-            tests = [match.start() for match in explicit_test.finditer(text)]
-            action_count += len(actions)
-            test_count += len(tests)
-            self.assertLessEqual(len(tests), len(builds), workflow)
-
-            for test in tests:
-                action = max((item for item in actions if item < test), default=-1)
-                build = max((item for item in builds if item < test), default=-1)
-                self.assertGreater(action, -1, workflow)
-                self.assertGreater(build, -1, workflow)
-                next_step = text.find("\n      - ", action)
-                action_block = text[action : next_step if next_step != -1 else None]
-                self.assertIn("test: false", action_block, workflow)
-                self.assertLess(action, build, workflow)
-                self.assertLess(build, test, workflow)
-
-        self.assertEqual(action_count, 8, "review every lean-action call site")
         self.assertEqual(test_count, 6, "review every aggregate lake test call site")
 
     def test_split_aggregate_jobs_are_required_predecessors(self) -> None:
@@ -162,13 +297,15 @@ class LeanTestDriverGateTests(unittest.TestCase):
             ("security.yml", "fuzz-hostile-ingress-lean", "fuzz-hostile-ingress"),
         )
         for filename, lean_job, downstream_job in expected:
-            workflow = (ROOT / ".github" / "workflows" / filename).read_text(
-                encoding="utf-8"
-            )
+            path = ROOT / ".github" / "workflows" / filename
+            loaded = next(item for item in load_workflows() if item.path == path)
+            workflow = loaded.text
+            document = loaded.document
+            downstream = document["jobs"][downstream_job]
             with self.subTest(workflow=filename):
-                self.assertRegex(
-                    workflow,
-                    rf"(?m)^  {downstream_job}:\n    needs: {lean_job}$",
+                self.assertEqual(downstream.get("needs"), lean_job)
+                self.assertNotIn(
+                    "if", downstream, "downstream job must not be conditional"
                 )
                 lean_start = workflow.index(f"  {lean_job}:\n")
                 downstream_start = workflow.index(f"  {downstream_job}:\n")
