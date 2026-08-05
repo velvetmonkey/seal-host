@@ -649,6 +649,7 @@ jobs:
     if: ${{ always() }}
     needs:
       - build
+      - rust-conformance-lean
       - rust-conformance
       - contract-freeze
       - cargo-audit
