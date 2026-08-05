@@ -648,6 +648,8 @@ jobs:
   release-evidence:
     if: ${{ always() }}
     needs:
+      - export-surface
+      - kernel-hash-footprint
       - build
       - rust-conformance-lean
       - rust-conformance
