@@ -33,8 +33,9 @@ inside the closure. The five Host modules that a 2026-08-01 residual once named
 as excluded — `Host.DurabilityA6`, `Host.EgressPerimeter`,
 `Host.EgressStrength`, `Host.PolicyOverlap`, `Host.StrictPerimeter` — are direct
 imports of `Test/Axioms.lean` (wired `4eb6bb4`) and are built under
-`lake exe axiom_check`. Release CI run `30693805679` already carried `Built`
-lines for those five plus `Host.SpawnSeam` and `Host.AuditSeam`.
+`lake exe axiom_check`. CI run `30693805679` (workflow `ci.yml`, not
+`release.yml`) already carried `Built` lines for those five plus
+`Host.SpawnSeam` and `Host.AuditSeam`.
 
 **Two theorem-bearing modules remain outside the `Test.Axioms` closure:**
 
@@ -48,9 +49,15 @@ lines for those five plus `Host.SpawnSeam` and `Host.AuditSeam`.
    `ORPHAN PROOF MODULE` for any *other* theorem-bearing `Host/` source that is
    not in the closure.
 
-2. **`Test.A2DivergenceClassification` — outside the Host inventory's field of
-   view.** Theorem-bearing since 2026-07-30 (`b5f6ad8`), imported by nothing,
-   no executable root, reachable only through the non-default `Test.+` library
-   glob. The Host-scoped inventory gate does not see `Test/` sources; the
-   residual names it here so the public sentence matches the measured census
-   (51/53), not only the Host subset.
+2. **`Test.A2DivergenceClassification` — outside the axiom-gate wire.**
+   Theorem-bearing since 2026-07-30 (`b5f6ad8`). It is imported by nothing on a
+   default target, has no executable root, and is reachable only through the
+   non-default `Test.+` library glob — so it is not in the `Test.Axioms`
+   closure and is not axiom-gated by `lake exe axiom_check`. CI does build it
+   every run as `control_16` in `.github/workflows/ci.yml`
+   (`lake build Test.A2DivergenceClassification`); run `30693805679` shows it
+   `Built`. That build is not an axiom pin: the module carries seven
+   `#print axioms` command lines and zero `#guard_msgs`, so the prints are
+   unasserted and cannot fail the build. The Host-scoped inventory gate does
+   not see `Test/` sources; the residual names the module here so the public
+   sentence matches the measured census (51/53), not only the Host subset.
