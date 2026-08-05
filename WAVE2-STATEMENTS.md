@@ -29,12 +29,14 @@ transcript (Test/Axioms.lean convention — drift fails the build via the
 `axiom_check`. For proof coverage, the relevant wire remains the
 `Test.Axioms` closure: landed seal-host Wave-2 modules are imported there and
 their guarded pins run through `axiom_check`. In particular,
-`Host.CanonicalL0` is live through `Host.CompositionBytes`; only its companion
-`Host.CanonicalL0Liveness` remains outside that closure. This paragraph is not
-a repository-wide coverage claim: the other modules listed in
-`docs/LIMITATIONS.md#proof-build-wire-residual` remain unwired. New proof
-modules are not made live merely by the `Ffi` library glob; they need an actual
-default-target import path.
+`Host.CanonicalL0` is live through `Host.CompositionBytes`; its companion
+`Host.CanonicalL0Liveness` remains outside that closure (release-claim ruling).
+This paragraph is not a repository-wide coverage claim: measured 2026-08-05,
+two theorem-bearing modules sit outside `Test.Axioms` —
+`Host.CanonicalL0Liveness` and `Test.A2DivergenceClassification` — named in
+`docs/LIMITATIONS.md#proof-build-wire-residual`. New proof modules are not made
+live merely by the `Ffi` library glob; they need an actual default-target
+import path.
 
 **Verdict summary.**
 

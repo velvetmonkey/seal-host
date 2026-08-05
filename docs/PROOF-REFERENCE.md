@@ -37,11 +37,22 @@ build. The composition-algebra rows are pinned **inline** at the bottom of
 `Host/Composition.lean` (the same `#guard_msgs` mechanism), so their footprints
 are enforced whenever that module builds.
 
-**Build-wire residual (2026-08-01).** This is not repository-wide coverage.
-The current `Test.Axioms` import closure excludes the theorem-bearing modules
-`Host.CanonicalL0Liveness`, `Host.DurabilityA6`, `Host.EgressPerimeter`,
-`Host.EgressStrength`, `Host.PolicyOverlap`, and `Host.StrictPerimeter`.
-Their inline guards therefore do not run under `lake exe axiom_check`; see
+**Build-wire residual (2026-08-05).** This is not repository-wide coverage.
+Of 53 theorem-bearing modules in the tracked tree, 51 are inside the
+`Test.Axioms` import closure. Two remain outside it and are therefore not
+built or axiom-pinned by `lake exe axiom_check`:
+
+- `Host.CanonicalL0Liveness` — DROPPED FROM THE RELEASE CLAIM (Ben, 2026-08-01);
+  reserved in `scripts/proof_inventory.py`.
+- `Test.A2DivergenceClassification` — theorem-bearing since 2026-07-30, imported
+  by nothing on a default target, reachable only via the non-default `Test.+`
+  library glob.
+
+Five modules that an earlier residual (2026-08-01) listed as excluded are now
+**inside** that closure as direct imports of `Test/Axioms.lean` (wired
+`4eb6bb4`, 2026-08-01): `Host.DurabilityA6`, `Host.EgressPerimeter`,
+`Host.EgressStrength`, `Host.PolicyOverlap`, and `Host.StrictPerimeter`. Their
+inline `#guard_msgs` pins therefore run whenever `axiom_check` builds. See
 [LIMITATIONS.md](LIMITATIONS.md#proof-build-wire-residual).
 
 Two rows deserve a closer look. The record-chain rows (`head_after_append`, `tamper_evident`) carry an **empty** axiom footprint — stronger than the family's usual minimal classical fragment: collision resistance (A-CR) and genesis freshness (A-GEN) enter `tamper_evident` as explicit hypotheses in the statement, not as axioms, so the theorem itself is axiom-free. The two bridge rows are instances of the abstract coordination-free impossibility proven in [crdt-lean](https://github.com/velvetmonkey/crdt-lean) (`Crdt/AuthorityFrontier.lean`), applied to this repo's real consume seam (`validateAndConsumeWithStore`) as a TTL-scoped instance mapping.

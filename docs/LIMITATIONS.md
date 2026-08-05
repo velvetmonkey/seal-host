@@ -27,20 +27,37 @@ config, approval-record, and receipt contracts are in
 
 ## Proof build-wire residual
 
-**As of 2026-08-01, after the wiring work:** five of the six modules named in
-the earlier version of this residual are now in the `Test/Axioms.lean` import
-closure and are built by release CI. Verified in run `30693805679`, whose build
-log contains `Built` lines for `Host.DurabilityA6`, `Host.EgressPerimeter`,
-`Host.EgressStrength`, `Host.PolicyOverlap` and `Host.StrictPerimeter`, along
-with the newer `Host.SpawnSeam` and `Host.AuditSeam`.
+**As of 2026-08-05 (source walk of the `Test.Axioms` import closure on
+`88f5e92` tip):** of 53 theorem-bearing modules in the tracked tree, 51 are
+inside the closure. The five Host modules that a 2026-08-01 residual once named
+as excluded — `Host.DurabilityA6`, `Host.EgressPerimeter`,
+`Host.EgressStrength`, `Host.PolicyOverlap`, `Host.StrictPerimeter` — are direct
+imports of `Test/Axioms.lean` (wired `4eb6bb4`) and are built under
+`lake exe axiom_check`. CI run `30693805679` (workflow `ci.yml`, not
+`release.yml`) already carried `Built` lines for those five plus
+`Host.SpawnSeam` and `Host.AuditSeam`.
 
-**One module remains outside the wire, and this is a ruling, not an oversight.**
-`Host.CanonicalL0Liveness` was DROPPED FROM THE RELEASE CLAIM by Ben on
-2026-08-01. Its kernel reduction measured 6.0 GiB RSS and 1h51m CPU on
-2026-07-31, which the release pipeline will not carry. Nothing in the public
-claim surface asserts that its theorems are built or axiom-checked. The source
-remains in the tree and remains visible in every generated proof inventory as
-`reserved=1`, so the exclusion is stated rather than silent.
+**Two theorem-bearing modules remain outside the `Test.Axioms` closure:**
 
-`scripts/proof_inventory.py` fails the build with `ORPHAN PROOF MODULE` for any
-other theorem-bearing `Host/` source that is not in the closure.
+1. **`Host.CanonicalL0Liveness` — a ruling, not an oversight.** DROPPED FROM
+   THE RELEASE CLAIM by Ben on 2026-08-01. Its kernel reduction measured 6.0 GiB
+   RSS and 1h51m CPU on 2026-07-31, which the release pipeline will not carry.
+   Nothing in the public claim surface asserts that its theorems are built or
+   axiom-checked. The source remains in the tree and remains visible in every
+   generated proof inventory as `reserved=1`, so the exclusion is stated rather
+   than silent. `scripts/proof_inventory.py` fails the build with
+   `ORPHAN PROOF MODULE` for any *other* theorem-bearing `Host/` source that is
+   not in the closure.
+
+2. **`Test.A2DivergenceClassification` — outside the axiom-gate wire.**
+   Theorem-bearing since 2026-07-30 (`b5f6ad8`). It is imported by nothing on a
+   default target, has no executable root, and is reachable only through the
+   non-default `Test.+` library glob — so it is not in the `Test.Axioms`
+   closure and is not axiom-gated by `lake exe axiom_check`. CI does build it
+   every run as `control_16` in `.github/workflows/ci.yml`
+   (`lake build Test.A2DivergenceClassification`); run `30693805679` shows it
+   `Built`. That build is not an axiom pin: the module carries seven
+   `#print axioms` command lines and zero `#guard_msgs`, so the prints are
+   unasserted and cannot fail the build. The Host-scoped inventory gate does
+   not see `Test/` sources; the residual names the module here so the public
+   sentence matches the measured census (51/53), not only the Host subset.
