@@ -8,11 +8,16 @@ namespace Host
     its session state, and the host-side IO that gathers its evidence
     (clock, approval file, …) before each pure `decide`. -/
 structure Registered where
+  /-- The verified kernel itself. -/
   kernel : Kernel
+  /-- This kernel's section of the loaded `TrustedConfig`. -/
   config : kernel.Config
+  /-- The kernel's live session state, mutated only by `dispatch`. -/
   stateRef : IO.Ref kernel.State
+  /-- Host-side IO gathering this kernel's per-call evidence. -/
   gather : CanonicalAction → IO kernel.Evidence
 
+/-- The full set of kernel instances mediating this session, in dispatch order. -/
 abbrev Registry := List Registered
 
 /-- Fail-closed combination: allow iff at least one kernel gated the call AND
@@ -77,9 +82,13 @@ def dispatch (registry : Registry) (act : CanonicalAction) :
     ref state, commit discipline) remains TCB; the composition theorems in
     `Host.Composition` quantify over this pure model. -/
 structure PureInst where
+  /-- The verified kernel itself. -/
   kernel : Kernel
+  /-- This kernel's config section. -/
   config : kernel.Config
+  /-- The evidence gathered for the one call under consideration. -/
   evidence : kernel.Evidence
+  /-- The session state the kernel decides against. -/
   state : kernel.State
 
 /-- The verdict list phase 1 of `dispatch` produces for these instances, as a

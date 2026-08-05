@@ -1017,6 +1017,9 @@ info: 'Host.ReceiptIdentity.caller_authenticator_satisfiable' depends on axioms:
 -/
 #guard_msgs in #print axioms Host.ReceiptIdentity.caller_authenticator_satisfiable
 
+/-- The axiom gate's runtime entry point is a no-op banner: every check in
+    this module is a compile-time `#guard_msgs` pin, so building the exe IS
+    the gate. -/
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
 

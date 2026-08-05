@@ -254,8 +254,8 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
     .join("\n");
   const normal = parseCiRunSteps(ci);
   const shifted = parseCiRunSteps(reindented);
-  // Reviewed 2026-08-04: e86cfe6 adds build:control_20 and
-  // rust-conformance:control_31 to the prior 74-step inventory (74 + 2 = 76).
+  // Reviewed 2026-08-05: retiring both controls' lint-status predicates leaves
+  // their `lake test` run steps in place, so the 76-step inventory is unchanged.
   assert.equal(normal.length, 76, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,

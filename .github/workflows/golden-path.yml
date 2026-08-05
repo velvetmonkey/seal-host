@@ -66,6 +66,7 @@ jobs:
           use-github-cache: false
           build: false
           test: false
+          lint: false
 
       - id: control_21
         continue-on-error: true

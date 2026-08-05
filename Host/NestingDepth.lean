@@ -31,13 +31,21 @@ namespace Host.NestingDepth
     the recorded downstream readers. -/
 def maxNestingDepth : Nat := 128
 
+/-- Character-scan state for the bracket-depth guard. -/
 structure DepthScan where
+  /-- Currently inside a string literal. -/
   inString : Bool := false
+  /-- The previous character was an unconsumed backslash inside a string. -/
   escaped : Bool := false
+  /-- Current container nesting depth. -/
   depth : Nat := 0
+  /-- Maximum depth reached so far. -/
   worst : Nat := 0
   deriving Repr
 
+/-- One character step of the depth scan: tracks string-literal and escape
+    state so brackets inside strings never count, and folds `{`/`[` and
+    `}`/`]` into the running and worst depth. -/
 def depthScanStep (st : DepthScan) (c : Char) : DepthScan :=
   if st.inString then
     if st.escaped then { st with escaped := false }

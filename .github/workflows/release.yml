@@ -85,6 +85,7 @@ jobs:
           use-github-cache: false
           build: false
           test: false
+          lint: false
       - id: control_05
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
