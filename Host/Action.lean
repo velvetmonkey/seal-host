@@ -19,10 +19,17 @@ namespace Host
       on `argsJson` (the V1 view) whether or not it is canonical, so legitimate
       multiline/Unicode tool arguments are mediated, not refused. -/
 structure CanonicalAction where
+  /-- The MCP tool name being called (`params.name` on the wire). -/
   tool : String
+  /-- The V1 `Lean.Json` view of the call arguments — the decision-bearing
+      input every kernel classifies on. -/
   argsJson : Lean.Json
+  /-- The SealV2 canonical AST of the full wire line when the line is
+      canonical; `none` otherwise. Audit artifact, not a mediation gate. -/
   ast? : Option SealV2.AST
+  /-- The raw wire line exactly as received, byte-for-byte. -/
   raw : String
+  /-- The JSON-RPC `id` of the request, echoed into verdict responses. -/
   requestId : Lean.Json
 
 end Host

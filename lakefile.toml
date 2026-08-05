@@ -1,6 +1,14 @@
 name = "seal-host"
 version = "0.1.0"
 testDriver = "lean_tests"
+# Lint driver: a thin wrapper (LintDriver.lean) around Batteries' runLinter,
+# which derives its module list from this package's defaultTargets (their root
+# modules: Host.Main -> Host, Test.* -> Test). The wrapper exists because the
+# mcp-seal dependency also ships Test.* modules and Lake's driver LEAN_PATH
+# lists dependencies first, so a bare runLinter resolves Test.* into the wrong
+# package. Wired 2026-08-04 so `lake lint` runs and lean-action's lint-status
+# is earned; control_20 fails closed on an EMPTY status.
+lintDriver = "lint_driver"
 # `repin_step2_guards` added 2026-07-25. Test/RepinStep2Guards.lean carried five
 # compile-time `example ... := by native_decide` assertions covering the
 # duplicate-key mediation bypass and the Unicode canonical-equivalence key case,
@@ -54,6 +62,11 @@ globs = ["Host", "Host.+", "Kernels", "Kernels.+", "Ffi", "FfiSpec"]
 [[lean_lib]]
 name = "Test"
 globs = ["Test.+"]
+
+# The `lake lint` entry point — see the lintDriver comment above.
+[[lean_exe]]
+name = "lint_driver"
+root = "LintDriver"
 
 [[lean_exe]]
 name = "seal-host"

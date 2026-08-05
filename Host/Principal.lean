@@ -103,19 +103,27 @@ namespace Host
     (`principals` bundle section) — the key→principal binding is out-of-band
     trust established at config-signing time, never a request field. -/
 structure PrincipalKey where
+  /-- Operator-chosen principal identifier. -/
   id : String
+  /-- Ed25519 verifying key, hex-encoded. -/
   pubkey : String
   deriving Repr, BEq
 
+/-- The signed-config list of registered principal keys; `verifyEnvelope`
+    reads the FIRST id match. -/
 abbrev PrincipalRegistry := List PrincipalKey
 
 /-- Raw request-envelope fields exactly as marshalled off the step-input JSON.
     Rust passes them through UNINTERPRETED (never a principal string); only
     `verifyEnvelope` gives them meaning. -/
 structure Envelope where
+  /-- The registry id the sender claims; meaningful only via `verifyEnvelope`. -/
   keyId : String
+  /-- Ed25519 signature over the envelope's signed message, hex-encoded. -/
   sigHex : String
+  /-- Per-request replay nonce, hex-encoded. -/
   nonceHex : String
+  /-- Sender-claimed issuance time (milliseconds since the Unix epoch). -/
   issuedAt : Nat
   deriving Repr, BEq
 
@@ -282,6 +290,7 @@ theorem envelope_message_binds_authority_and_keyId
     is free, construction is not. -/
 structure AuthenticatedPrincipal where
   private mk ::
+  /-- The verified principal id — observation is free, construction is not. -/
   id : String
   deriving Repr, BEq, DecidableEq
 
@@ -399,7 +408,9 @@ restated here as `envelope_constrained_excludes_totality`. -/
 /-- An enveloped request: the judged line plus its envelope — the request type
     at which Route 2's send relation is credential-constrained. -/
 structure EnvelopedLine where
+  /-- The judged wire line, byte-exact. -/
   line : String
+  /-- The envelope presented for that line. -/
   env : Envelope
 
 /-- The Route-2 credential reader: `verifyEnvelope`, projected to the plain
