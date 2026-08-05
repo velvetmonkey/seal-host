@@ -224,7 +224,66 @@ jobs:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
         run: python3 scripts/ci_control_aggregate.py
 
+  # Aggregate Lean tests burn ~2.5 GiB on a cold runner (measured on
+  # golden-path / security lean-aggregate jobs). Co-locating that growth with
+  # cargo test + cargo build --release on one runner is the ENOSPC that killed
+  # rust-conformance on main. Split the aggregate onto a fresh required
+  # predecessor; the Rust job reinstalls only the Lean toolchain pieces it
+  # needs for FFI and targeted lake builds.
+  rust-conformance-lean:
+    runs-on: ubuntu-latest
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        name: Skip private Lean aggregate without dependency token
+        if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
+        run: |
+          echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean aggregate."
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+      - id: control_06
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - id: control_09
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_10
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_31
+        continue-on-error: true
+        name: Run aggregate Lean tests with disk telemetry
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 scripts/ci_disk_telemetry.py ci-lean-aggregate -- lake test
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   rust-conformance:
+    needs: rust-conformance-lean
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
@@ -238,6 +297,35 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
         run: |
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean/Rust conformance."
+      # Hosted ubuntu-latest starts with only ~5 GB free after Lean setup, but a
+      # full rust/target (debug suite + release bins) is ~9 GB locally. Job
+      # split removes the ~2.5 GB lake-test co-location tax; free unused runner
+      # SDKs so cargo test + cargo build --release still have headroom.
+      - id: control_32
+        continue-on-error: true
+        name: Free unused runner SDKs before private conformance (disk headroom)
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          set -uo pipefail
+          python3 scripts/ci_disk_telemetry.py ci-free-ballast -- \
+            bash -euo pipefail -c '
+              df -h /
+              # Keep Python, Node, Docker, and anything setup-rust-toolchain
+              # needs. Remove only large hosted SDKs this job never uses.
+              sudo rm -rf \
+                /usr/share/dotnet \
+                /usr/local/lib/android \
+                /opt/ghc \
+                /usr/local/share/powershell \
+                /usr/share/swift \
+                /usr/local/.ghcup \
+                /opt/hostedtoolcache/CodeQL \
+                /opt/hostedtoolcache/go \
+                /opt/hostedtoolcache/Ruby \
+                2>/dev/null || true
+              sudo apt-get clean || true
+              df -h /
+            '
       - id: control_03
         continue-on-error: true
         name: Guard Lean test-driver wiring and configure private dependency auth
@@ -288,11 +376,6 @@ jobs:
         continue-on-error: true
         run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_31
-        continue-on-error: true
-        name: Run aggregate Lean tests
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: lake test
       - id: control_11
         continue-on-error: true
         run: lake build +Ffi:c.o.export
@@ -344,8 +427,9 @@ jobs:
         working-directory: rust
       - id: control_15
         continue-on-error: true
-        run: cargo build --release --bins
+        name: Build release bins with disk telemetry
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 ../scripts/ci_disk_telemetry.py ci-rust-release -- cargo build --release --bins
         working-directory: rust
       - id: control_16
         continue-on-error: true

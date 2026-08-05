@@ -9,7 +9,86 @@ on:
 # failure back into a failing job; never remove that aggregate while
 # continue-on-error is present.
 jobs:
+  lean-aggregate:
+    runs-on: ubuntu-latest
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - id: control_02
+        continue-on-error: true
+        name: Require private dependency access
+        run: |
+          test -n "$SEAL_CI_READ_TOKEN" || {
+            echo "::error::SEAL_CI_READ_TOKEN is required; aggregate Lean tests were not run."
+            exit 1
+          }
+
+      - id: control_04
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+
+      - id: control_05
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+
+      - id: control_21
+        continue-on-error: true
+        name: Build native Lean test link dependency
+        run: |
+          set -euo pipefail
+          test -d .lake/packages/mcp-seal || lake update
+          bash .lake/packages/mcp-seal/c/build.sh
+
+      - id: control_22
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build with disk telemetry
+        run: python3 scripts/ci_disk_telemetry.py golden-lean-aggregate -- lake test
+
+      - id: control_06
+        continue-on-error: true
+        name: Changed proven Lean surface must re-prove axiom-clean
+        run: |
+          set -o pipefail
+          PUSH_BASE="${{ github.event.before }}"
+          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
+            PUSH_BASE="$(git merge-base origin/main HEAD)"
+          fi
+          if git diff --quiet "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'; then
+            echo "No Lean changes in this push; proof gate not needed."
+            exit 0
+          fi
+          echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
+          lake exe cache get
+          lake build
+          lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
+          ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"
+          lake exe host_unit_tests
+          lake exe dx_surface_tests
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   deterministic-shell:
+    needs: lean-aggregate
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
@@ -68,40 +147,6 @@ jobs:
           test: false
           lint: false
 
-      - id: control_21
-        continue-on-error: true
-        name: Build native Lean test link dependency
-        run: |
-          set -euo pipefail
-          test -d .lake/packages/mcp-seal || lake update
-          bash .lake/packages/mcp-seal/c/build.sh
-
-      - id: control_22
-        continue-on-error: true
-        name: Run aggregate Lean tests after native link dependency build
-        run: lake test
-
-      - id: control_06
-        continue-on-error: true
-        name: Changed proven Lean surface must re-prove axiom-clean
-        run: |
-          set -o pipefail
-          PUSH_BASE="${{ github.event.before }}"
-          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
-            PUSH_BASE="$(git merge-base origin/main HEAD)"
-          fi
-          if git diff --quiet "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'; then
-            echo "No Lean changes in this push; proof gate not needed."
-            exit 0
-          fi
-          echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
-          lake exe cache get
-          lake build
-          lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
-          ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"
-          lake exe host_unit_tests
-          lake exe dx_surface_tests
-
       - id: control_07
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -134,16 +179,18 @@ jobs:
         continue-on-error: true
         name: Deterministic shell acceptance (no model, no operator auth)
         run: |
-          set -o pipefail
-          C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
-          ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
-          python3 demo/doctrine_check.py "$C1_ARTIFACT"
-          python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
-            --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
-          cmp "$C1_ARTIFACT/receipt-strip.md" "$C1_ARTIFACT/receipt-strip.regenerated.md"
-          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c1.txt"
-          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
-          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
+          python3 scripts/ci_disk_telemetry.py golden-rust-acceptance -- \
+            bash -euo pipefail -c '
+              C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
+              ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
+              python3 demo/doctrine_check.py "$C1_ARTIFACT"
+              python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
+                --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
+              cmp "$C1_ARTIFACT/receipt-strip.md" "$C1_ARTIFACT/receipt-strip.regenerated.md"
+              grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c1.txt"
+              grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
+              grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
+            '
 
       # Runs after C1 because golden_path.py's named-target build is what
       # produces rust/target/debug/seal-host-rs on the runner.

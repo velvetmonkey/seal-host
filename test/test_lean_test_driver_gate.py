@@ -119,15 +119,6 @@ class LeanTestDriverGateTests(unittest.TestCase):
 
     def test_every_lean_action_defers_tests_and_disables_lint(self) -> None:
         action_marker = "leanprover/lean-action"
-        native_build = re.compile(
-            r"^\s+(?:run: )?bash \.lake/packages/mcp-seal/c/build\.sh$",
-            re.MULTILINE,
-        )
-        explicit_test = re.compile(
-            r"^\s+(?:run: )?(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?"
-            r"lake test$",
-            re.MULTILINE,
-        )
         action_count = 0
 
         for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
@@ -136,24 +127,76 @@ class LeanTestDriverGateTests(unittest.TestCase):
             if not actions:
                 continue
 
-            builds = [match.start() for match in native_build.finditer(text)]
-            tests = [match.start() for match in explicit_test.finditer(text)]
             action_count += len(actions)
-            self.assertEqual(len(builds), len(actions), workflow)
-
             for action in actions:
                 next_step = text.find("\n      - ", action)
                 action_block = text[action : next_step if next_step != -1 else None]
                 self.assertIn("test: false", action_block, workflow)
                 self.assertIn("lint: false", action_block, workflow)
 
-            for test in tests:
-                action = max(position for position in actions if position < test)
-                build = max(position for position in builds if position < test)
-                self.assertLess(action, build, workflow)
-                self.assertLess(build, test, workflow)
+        # 9 after the capacity splits: ci build + ci rust-conformance-lean +
+        # ci rust-conformance + golden lean-aggregate + golden deterministic-shell
+        # + public-export + release + security lean + security fuzz.
+        self.assertEqual(action_count, 9, "review every lean-action call site")
 
-        self.assertEqual(action_count, 7, "review every lean-action call site")
+    def test_every_aggregate_test_has_a_native_prerequisite(self) -> None:
+        """Each lake test must follow a native build in the same job.
+
+        Downstream capacity-split jobs may reinstall lean-action without an
+        aggregate lake test; those sites do not need a native build here.
+        """
+        native_build = re.compile(
+            r"bash \.lake/packages/mcp-seal/c/build\.sh",
+        )
+        explicit_test = re.compile(
+            r"(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?lake test\s*$",
+            re.MULTILINE,
+        )
+        test_count = 0
+
+        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+            text = workflow.read_text(encoding="utf-8")
+            # Split into job blocks: lines starting with exactly two spaces + name + colon
+            job_starts = [
+                match.start()
+                for match in re.finditer(r"(?m)^  [A-Za-z0-9_-]+:\s*$", text)
+            ]
+            for index, start in enumerate(job_starts):
+                end = job_starts[index + 1] if index + 1 < len(job_starts) else len(text)
+                block = text[start:end]
+                builds = [match.start() for match in native_build.finditer(block)]
+                for test in explicit_test.finditer(block):
+                    test_count += 1
+                    self.assertTrue(
+                        any(build < test.start() for build in builds),
+                        f"{workflow}: lake test without preceding native build in job",
+                    )
+
+        self.assertEqual(test_count, 6, "review every aggregate lake test call site")
+
+    def test_split_aggregate_jobs_are_required_predecessors(self) -> None:
+        expected = (
+            ("golden-path.yml", "lean-aggregate", "deterministic-shell"),
+            ("security.yml", "fuzz-hostile-ingress-lean", "fuzz-hostile-ingress"),
+            ("ci.yml", "rust-conformance-lean", "rust-conformance"),
+        )
+        for filename, lean_job, downstream_job in expected:
+            path = ROOT / ".github" / "workflows" / filename
+            text = path.read_text(encoding="utf-8")
+            self.assertRegex(
+                text,
+                rf"(?m)^  {re.escape(downstream_job)}:\n"
+                rf"    needs: {re.escape(lean_job)}\n",
+            )
+            lean_start = text.index(f"  {lean_job}:\n")
+            downstream_start = text.index(f"  {downstream_job}:\n")
+            lean_block = text[lean_start:downstream_start]
+            self.assertIn("bash .lake/packages/mcp-seal/c/build.sh", lean_block)
+            self.assertRegex(lean_block, r"(?m)-- lake test$")
+            self.assertIn("SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}", lean_block)
+            self.assertIn(
+                "run: python3 scripts/ci_control_aggregate.py", lean_block
+            )
 
 
 if __name__ == "__main__":

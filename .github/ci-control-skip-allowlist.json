@@ -105,9 +105,51 @@
     },
     {
       "workflow": "ci.yml",
+      "job": "rust-conformance-lean",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance-lean",
+      "id": "control_03",
+      "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance-lean",
+      "id": "control_06",
+      "reason": "Tokenless CI suppresses the private Lean aggregate as a unit; this Lean toolchain setup action itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance-lean",
+      "id": "control_09",
+      "reason": "Lake must fetch the manifest-pinned private dependencies, including mcp-seal, on a clean runner."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance-lean",
+      "id": "control_10",
+      "reason": "The crypto build script lives in the private mcp-seal Lake package fetched with the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance-lean",
+      "id": "control_31",
+      "reason": "On the tokenless path there is no credential, so Lake cannot fetch the private mcp-seal dependency and this control cannot link or run the aggregate Lean tests."
+    },
+    {
+      "workflow": "ci.yml",
       "job": "rust-conformance",
       "id": "control_02",
       "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_32",
+      "reason": "Disk ballast free is only needed when the private conformance suite runs; tokenless CI skips the suite as a unit."
     },
     {
       "workflow": "ci.yml",
@@ -228,12 +270,6 @@
       "job": "rust-conformance",
       "id": "control_22",
       "reason": "This renderer checks the honesty JSON emitted by the token-dependent preceding Lean control, and is deliberately skipped when that producer (control_21) failed: with a dead producer this gate has no finding of its own, and control_21 already fails the job."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance",
-      "id": "control_31",
-      "reason": "On the tokenless path there is no credential, so Lake cannot fetch the private mcp-seal dependency and this control cannot link or run the aggregate Lean tests."
     },
     {
       "workflow": "ci.yml",
