@@ -416,6 +416,53 @@ fn persist_decision(
     }
 }
 
+/// Two-phase burn, phase 2 (G2 cut (a), ruled by Ben 2026-08-06): at
+/// RECORDED — the durable authorization-decision receipt exists — the
+/// consumed approval's nonce flips from reserved hold to committed burn.
+/// The receipt (file fsync + rename + dir fsync) and the burn (SQLite) live
+/// in different stores, so the two acts cannot be one atomic commit; the
+/// burn follows the receipt IMMEDIATELY, and a failure here refuses the
+/// forward (fail closed): forwarding on an uncommitted burn would let a
+/// later crash's recovery un-burn a used approval.
+fn commit_consumed_approval_nonce(
+    a3: &mut a3::A3Filter,
+    pending: &[providers::ApprovalRecord],
+    consumed: &Option<String>,
+    now_ms: u64,
+) -> Result<(), ()> {
+    let Some(target) = consumed else {
+        return Ok(());
+    };
+    let Some(record) = pending.iter().find(|record| &record.target == target) else {
+        return Ok(());
+    };
+    // Nonceless channels (control-file / interactive) keep in-memory replay
+    // state only; there is no durable hold to commit.
+    let Some(nonce) = &record.nonce else {
+        return Ok(());
+    };
+    a3.commit_nonce(nonce, now_ms).map_err(|error| {
+        eprintln!(
+            "{}",
+            json!({
+                "error": "approval nonce burn commit failure",
+                "detail": error.to_string()
+            })
+        );
+    })
+}
+
+/// Test-only crash injection for the G2 crash suite (T1/T3). Armed ONLY via
+/// SEAL_TEST_CRASH_POINT in the environment; production never sets it.
+/// `abort()` so the process dies without unwinding — a real process death,
+/// not a simulated recovery call.
+fn maybe_test_crash(armed: Option<&str>, point: &str) {
+    if armed == Some(point) {
+        eprintln!("{}", json!({"seal_test_crash_point": point}));
+        std::process::abort();
+    }
+}
+
 fn consume_pending_approval(records: &mut Vec<providers::ApprovalRecord>, target: Option<String>) {
     if let Some(target) = target {
         if let Some(index) = records.iter().position(|record| record.target == target) {
@@ -1215,6 +1262,8 @@ fn run() -> i32 {
         }
     };
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
+    // G2 crash-suite hook; None on every production launch.
+    let test_crash_point = std::env::var("SEAL_TEST_CRASH_POINT").ok();
     let mut approval_context_drop_counter: u64 = 0;
     // M.2/M.2a: select the transparent MCP era from the received entry-call
     // shape. There is intentionally no legacy default; a V2.3 mediated call
@@ -1784,6 +1833,8 @@ fn run() -> i32 {
                         continue;
                     }
                 }
+                // T1 window: the nonce is reserved, RECORDED has not happened.
+                maybe_test_crash(test_crash_point.as_deref(), "g2-before-record");
                 let consumed = match persist_decision(
                     &mut authorization_decisions,
                     DecisionInput {
@@ -1807,6 +1858,16 @@ fn run() -> i32 {
                         continue;
                     }
                 };
+                if commit_consumed_approval_nonce(&mut a3, &pending_approvals, &consumed, now)
+                    .is_err()
+                {
+                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                // T3 window: receipt durable, burn durable, child untouched.
+                maybe_test_crash(test_crash_point.as_deref(), "g2-after-burn");
                 consume_pending_approval(&mut pending_approvals, consumed);
                 // P2-c passive observability tap: an ALLOW about to be forwarded
                 // with an UNRECOVERABLE request (reduced-scope authorization
@@ -2013,6 +2074,19 @@ fn run() -> i32 {
                                             continue;
                                         }
                                     };
+                                    if commit_consumed_approval_nonce(
+                                        &mut a3,
+                                        &pending_approvals,
+                                        &consumed,
+                                        retry_now,
+                                    )
+                                    .is_err()
+                                    {
+                                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
                                     consume_pending_approval(&mut pending_approvals, consumed);
                                     if write_child(&mut child_in, &forward, &readiness).is_err() {
                                         let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
@@ -2455,7 +2529,7 @@ mod tests {
                     "ttl_seconds": 120,
                     "replay_store": {
                         "sqlite_path": "/tmp/replay.sqlite",
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "namespace_encoding_version": 1
                     }
                 },

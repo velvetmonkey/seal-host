@@ -74,7 +74,7 @@ impl Host {
                     "ttl_seconds": 120,
                     "replay_store": {
                         "sqlite_path": dir.join("replay.sqlite").to_str().unwrap(),
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "namespace_encoding_version": 1
                     }
                 },

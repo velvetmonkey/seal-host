@@ -63,7 +63,7 @@ consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
       "ttl_seconds": 120,
       "replay_store": {
         "sqlite_path": "/var/lib/seal-host/replay.sqlite",
-        "schema_version": 1,
+        "schema_version": 2,
         "namespace_encoding_version": 1
       }
     },
@@ -84,10 +84,12 @@ consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
   clamped to at most 300 seconds by the parser.
 - The production Ed25519 channel requires `replay_store`. Its
   `schema_version` and `namespace_encoding_version` are expected lineage from
-  the authority-signed payload; this release supports exactly `1` and `1`.
-  The SQLite store carries the same pair in its singleton
-  `replay_store_lineage` metadata table. Missing, unsupported, transitional,
-  or unequal values refuse startup.
+  the authority-signed payload; this release supports exactly `2` and `1`
+  (schema 2 is the G2 two-phase burn: a nonce row is reserved before Lean and
+  committed at RECORDED; schema 1's single-phase burn is obsolete and
+  refused — re-initialize the store). The SQLite store carries the same pair
+  in its singleton `replay_store_lineage` metadata table. Missing,
+  unsupported, transitional, or unequal values refuse startup.
 - Normal startup never creates or stamps a replay database. On a genuinely
   absent path, an operator must first run the host with the signed config,
   trust-root `--pubkey`, and `--initialize-replay-store`. Initialization

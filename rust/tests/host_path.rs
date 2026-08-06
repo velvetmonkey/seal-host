@@ -47,6 +47,8 @@ struct Oracle {
     stderr_lines: Receiver<String>,
     dir: PathBuf,
     args: Vec<String>,
+    /// Extra environment for the spawned host (G2 crash-point injection).
+    env: Vec<(String, String)>,
 }
 
 /// Deterministic approval signing key for the ed25519 channel tests. MUST
@@ -132,6 +134,15 @@ impl Oracle {
         Oracle::spawn_channel(tag, true, false)
     }
 
+    /// Production channel plus extra environment — used by the G2 crash
+    /// suite to arm SEAL_TEST_CRASH_POINT in the host process.
+    fn spawn_signed_with_env(tag: &str, env: &[(&str, &str)]) -> Oracle {
+        let mut o = Oracle::spawn_channel(tag, true, false);
+        // Re-spawn with the env armed; the first process only set up state.
+        o.restart_with_env(env);
+        o
+    }
+
     fn spawn_numeric_observer(tag: &str) -> Oracle {
         Oracle::spawn_channel(tag, false, true)
     }
@@ -158,7 +169,7 @@ impl Oracle {
         if signed {
             approval["replay_store"] = serde_json::json!({
                 "sqlite_path": dir.join("replay.sqlite").to_str().unwrap(),
-                "schema_version": 1,
+                "schema_version": 2,
                 "namespace_encoding_version": 1
             });
         }
@@ -275,7 +286,7 @@ for line in sys.stdin:
             args.push("/bin/cat".to_string());
         }
 
-        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&args);
+        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&args, &[]);
         Oracle {
             child,
             stdin,
@@ -284,12 +295,14 @@ for line in sys.stdin:
             stderr_lines,
             dir,
             args,
+            env: Vec::new(),
         }
     }
 
     #[allow(clippy::type_complexity)]
     fn spawn_process(
         args: &[String],
+        env: &[(String, String)],
     ) -> (
         Child,
         ChildStdin,
@@ -297,7 +310,11 @@ for line in sys.stdin:
         Receiver<Vec<u8>>,
         Receiver<String>,
     ) {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"));
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -355,12 +372,22 @@ for line in sys.stdin:
     fn restart(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&self.args);
+        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&self.args, &self.env);
         self.child = child;
         self.stdin = stdin;
         self.lines = lines;
         self.raw = raw;
         self.stderr_lines = stderr_lines;
+    }
+
+    /// Restart with a REPLACED extra environment (arm or disarm a crash
+    /// point) on the same state directory.
+    fn restart_with_env(&mut self, env: &[(&str, &str)]) {
+        self.env = env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        self.restart();
     }
 
     fn append_token_line(&mut self, line: &str) {
@@ -2039,5 +2066,211 @@ fn reduced_scope_forward_attempt_emits_observability_signal() {
     assert!(
         !no_signal,
         "a parseable ALLOW must not emit the reduced-scope signal"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G2 cut (a) crash suite — two-phase approval burn (ruled by Ben 2026-08-06).
+// The host process is genuinely killed (abort at an env-armed crash point),
+// never "simulated" by calling recovery in-process.
+
+/// Every `nonces` row as (nonce, committed_at): `None` = open hold (reserved,
+/// not RECORDED), `Some(_)` = committed burn.
+fn replay_rows(o: &Oracle) -> Vec<(String, Option<i64>)> {
+    let conn = rusqlite::Connection::open(o.dir.join("replay.sqlite")).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT nonce, committed_at FROM nonces ORDER BY nonce")
+        .unwrap();
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    rows
+}
+
+/// G2 T1 — crash between reserve and RECORDED. The host dies (SIGABRT) after
+/// the kernel ALLOW but before the authorization decision persists. The
+/// crashed window must leave NO receipt and a reclaimable hold; after a clean
+/// restart the byte-identical token is usable again.
+#[test]
+fn g2_t1_crash_between_reserve_and_recorded_recovers_the_approval() {
+    let mut o =
+        Oracle::spawn_signed_with_env("g2-t1", &[("SEAL_TEST_CRASH_POINT", "g2-before-record")]);
+    let call = guarded_call(211, "drop table g2_t1");
+    o.send(&call);
+    let blocked = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(is_block(&blocked));
+    let target = block_target(&blocked).expect("block names its approval target");
+    let framed = block_framed_subject(&blocked).expect("block emits its framed subject");
+
+    let decisions_before = o.receipts().len();
+    o.approve_v2(&target, &framed, "n-g2-t1");
+    println!(
+        "T1 state before crash send: replay_rows={:?} decisions={decisions_before}",
+        replay_rows(&o)
+    );
+
+    o.send(&call);
+    let status = o.child.wait().unwrap();
+    println!("T1 kill: host process exited {status:?} at crash point g2-before-record");
+    assert!(
+        !status.success(),
+        "the host must actually die at the crash point"
+    );
+
+    let rows = replay_rows(&o);
+    println!(
+        "T1 state after crash: replay_rows={rows:?} decisions={}",
+        o.receipts().len()
+    );
+    assert_eq!(
+        rows,
+        vec![("n-g2-t1".to_string(), None)],
+        "the crash window holds a reservation, never a committed burn"
+    );
+    assert_eq!(
+        o.receipts().len(),
+        decisions_before,
+        "no RECORDED receipt exists for the crashed ALLOW"
+    );
+
+    // Clean restart on the same state: startup recovery reclaims the hold.
+    o.restart_with_env(&[]);
+    o.send(&call);
+    let challenged = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(
+        is_block(&challenged),
+        "fresh approval challenge after restart"
+    );
+    assert_eq!(
+        replay_rows(&o),
+        vec![],
+        "recovery reclaimed the unrecorded hold: state as if never presented"
+    );
+
+    // Byte-identical re-presentation of the SAME signed token (same nonce).
+    o.approve_v2(&target, &framed, "n-g2-t1");
+    o.send(&call);
+    assert_eq!(o.expect_raw(), framed, "the recovered approval forwards");
+    assert_eq!(o.expect_line(), call);
+    let rows = replay_rows(&o);
+    println!(
+        "T1 state after recovery + reuse: replay_rows={rows:?} decisions={}",
+        o.receipts().len()
+    );
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].1.is_some(),
+        "this time the burn committed at RECORDED"
+    );
+}
+
+/// G2 T2 — double-spend blocked while the reservation is OPEN. Two
+/// byte-identical tokens enter the same poll: the first takes the durable
+/// hold, the second drops as `replayed_nonce` in `a3.filter`, which runs
+/// strictly BEFORE the kernel step and therefore before any commit — the
+/// refusal comes from the open hold, not from a burn. (The pure-store shape
+/// of the same property, with no commit ever, is
+/// `a3::tests::second_presentation_fails_while_reservation_open`.)
+#[test]
+fn g2_t2_second_presentation_fails_while_reservation_open() {
+    let mut o = Oracle::spawn_signed("g2-t2");
+    let call = guarded_call(221, "drop table g2_t2");
+    o.send(&call);
+    let blocked = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(is_block(&blocked));
+    let target = block_target(&blocked).unwrap();
+    let framed = block_framed_subject(&blocked).unwrap();
+
+    o.approve_v2(&target, &framed, "n-g2-dup");
+    o.approve_v2(&target, &framed, "n-g2-dup"); // identical second presentation
+    o.send(&call);
+    assert_eq!(o.expect_raw(), framed, "exactly one forward");
+    assert_eq!(o.expect_line(), call);
+    let stderr = o.drain_stderr(Duration::from_millis(300));
+    assert!(
+        stderr.iter().any(|l| l.contains("replayed_nonce")),
+        "second presentation must drop while the first holds an open reservation: {stderr:?}"
+    );
+    let rows = replay_rows(&o);
+    println!("T2 state after single forward: replay_rows={rows:?}");
+    assert_eq!(rows.len(), 1, "one hold total, no second row");
+    assert!(rows[0].1.is_some(), "the consumed approval committed");
+
+    o.send(&call);
+    assert!(
+        is_block(&o.expect_line()),
+        "the burned approval cannot fire a second forward"
+    );
+}
+
+/// G2 T3 — crash AFTER RECORDED, before the child write. Receipt persisted,
+/// burn committed, process killed. Recovery must NOT un-burn the used
+/// approval (that would be a worse defect than the one this lane fixes);
+/// the receipt must survive; re-presenting the token is a replay.
+#[test]
+fn g2_t3_crash_after_recorded_keeps_burn_and_receipt() {
+    let mut o =
+        Oracle::spawn_signed_with_env("g2-t3", &[("SEAL_TEST_CRASH_POINT", "g2-after-burn")]);
+    let call = guarded_call(231, "drop table g2_t3");
+    o.send(&call);
+    let blocked = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(is_block(&blocked));
+    let target = block_target(&blocked).unwrap();
+    let framed = block_framed_subject(&blocked).unwrap();
+
+    let decisions_before = o.receipts().len();
+    o.approve_v2(&target, &framed, "n-g2-t3");
+    o.send(&call);
+    let status = o.child.wait().unwrap();
+    println!("T3 kill: host process exited {status:?} at crash point g2-after-burn");
+    assert!(!status.success());
+    assert!(
+        o.lines.recv_timeout(Duration::from_secs(2)).is_err(),
+        "no forward escaped before the crash"
+    );
+
+    let rows = replay_rows(&o);
+    println!(
+        "T3 state after crash: replay_rows={rows:?} decisions={}",
+        o.receipts().len()
+    );
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].1.is_some(), "the burn committed at RECORDED");
+    assert_eq!(
+        o.receipts().len(),
+        decisions_before + 1,
+        "the RECORDED receipt survives the crash"
+    );
+
+    o.restart_with_env(&[]);
+    o.send(&call);
+    let challenged = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(is_block(&challenged));
+    let rows = replay_rows(&o);
+    assert_eq!(rows.len(), 1, "recovery must not un-burn a committed nonce");
+    assert!(rows[0].1.is_some());
+
+    o.approve_v2(&target, &framed, "n-g2-t3"); // byte-identical re-presentation
+    o.send(&call);
+    assert!(
+        is_block(&o.expect_line()),
+        "a burned approval stays burned across restart"
+    );
+    let stderr = o.drain_stderr(Duration::from_millis(300));
+    assert!(
+        stderr.iter().any(|l| l.contains("replayed_nonce")),
+        "the re-presented token must be refused as a replay: {stderr:?}"
+    );
+    println!(
+        "T3 state after restart + replay attempt: replay_rows={:?} decisions={}",
+        replay_rows(&o),
+        o.receipts().len()
     );
 }

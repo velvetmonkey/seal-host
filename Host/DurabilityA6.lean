@@ -4,27 +4,36 @@
 # A6 cross-restart durability, as an ordering property
 
 `CLAIMS.md` (A6) closes cross-restart replay durability for the host's
-Ed25519 signed-token production channel on operational evidence: accepted
-nonces are written to SQLite (`rust/src/replay_store.rs`, WAL +
-`synchronous=FULL`) BEFORE the approval reaches Lean
-(`rust/src/a3.rs::persist_nonce`). This module makes the durability argument
-itself formal: it models the ORDER of store-write, acknowledgement and
-process termination — not SQLite — states the property the claim needs, and
-proves exactly which hypotheses the storage layer must supply.
+Ed25519 signed-token production channel on operational evidence. Since the
+G2 two-phase burn (ruled by Ben 2026-08-06) the production order is:
+`rust/src/a3.rs::reserve_nonce` durably HOLDS the nonce in SQLite
+(`rust/src/replay_store.rs`, WAL + `synchronous=FULL`) before the approval
+reaches Lean; the burn is durably COMMITTED (`A3Filter::commit_nonce`) only
+at RECORDED — after the authorization-decision receipt persists — and
+strictly before the child forward; startup recovery reclaims holds that
+never reached RECORDED. This module makes the durability argument itself
+formal: it models the ORDER of store-write, acknowledgement and process
+termination — not SQLite — states the property the claim needs, and proves
+exactly which hypotheses the storage layer must supply. In this model
+`commit` maps to the production COMMIT at RECORDED and `ack` to the child
+forward; the pre-Lean reservation and its startup reclaim are host-layer
+machinery BELOW this model's abstraction and are covered by the Rust crash
+suite (`rust/tests/host_path.rs`, G2 T1-T4), not by these theorems.
 
 ## The model
 
 An abstract token store run is a trace of events over an opaque token type:
 
 * `Ev.commit b t` — the store ACCEPTS token `t` (the check-and-record step,
-  production `insert_returning_is_new` returning `true`). The flag `b`
+  production `commit_reservation` at RECORDED returning `true`). The flag `b`
   records whether the write was persistent at the moment the call returned:
   `b = true` is what `synchronous=FULL` buys (WAL fsynced before COMMIT
   returns); `b = false` models a lazily-synced commit that the process may
   outlive.
-* `Ev.ack t` — the host acknowledges `t`: the approval is released to the
-  kernel. Only a token accepted in the CURRENT process epoch and not yet
-  acknowledged can be acknowledged (`pending`).
+* `Ev.ack t` — the host acknowledges `t`: the approved effect is released
+  downstream (production: the single child forward). Only a token accepted
+  in the CURRENT process epoch and not yet acknowledged can be acknowledged
+  (`pending`).
 * `Ev.reject t` — a re-presented token is refused; no state changes.
 * `Ev.crash` — process termination at an arbitrary point, immediately
   followed by restart: volatile state is lost, durable state survives.
@@ -59,8 +68,8 @@ single-epoch tests — the failure only exists across a crash.
   accept call returns (`Ev.commit true`; SQLite `synchronous=FULL` + WAL).
   The counter-model shows the property fails without it.
 * **H2 write-ahead-of-ack** — acknowledgement only via `pending`, entered at
-  commit: the record precedes the approval's release (`a3.rs` forwards only
-  after `insert_returning_is_new` commits).
+  commit: the durable record precedes the release (the host forwards to the
+  child only after `commit_reservation` commits at RECORDED).
 * **H3 atomic check-and-record** — `Step.commit` requires the token absent
   from `visible`: insert-if-absent under the store's uniqueness constraint
   (`nonces` PRIMARY KEY).

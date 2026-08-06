@@ -67,14 +67,17 @@ fn substitute(from: &Path, to: &Path) {
     std::fs::rename(from, to).unwrap();
 }
 
-/// Consume `nonce` in the store at `path`, then close it. Returns nothing:
-/// the observable effect is durable state in the store.
+/// Consume `nonce` in the store at `path`, then close it. Two-phase: the
+/// nonce is reserved by `filter` and COMMITTED (as at RECORDED), so the burn
+/// is durable across the reopen below — an uncommitted hold would instead be
+/// reclaimed by startup recovery, which is not what this test probes.
 fn consume(path: &Path, nonce: &str, now_ms: u64) {
     let store = Box::new(SqliteReplayStore::open(path, ReplayStoreLineage::CURRENT).unwrap());
     let mut a3 = A3Filter::with_store(TTL_MS, store, now_ms).unwrap();
     let (ok, dropped) = a3.filter(vec![record(nonce, now_ms)], now_ms);
     assert_eq!(ok.len(), 1, "first use of {nonce} must be accepted");
     assert!(dropped.is_empty());
+    a3.commit_nonce(nonce, now_ms).unwrap();
 }
 
 /// ITEM 1 — the guard. A stale-but-host-owned 0600 store renamed into the
