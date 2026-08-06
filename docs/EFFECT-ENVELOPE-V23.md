@@ -3,10 +3,11 @@
 Status: **gated behind `--envelope-v23`**. The manifest-pinned Lean source
 package defines and proves the `seal.effect/v2` message shape, and Rust
 independently reconstructs and verifies the same bytes. The shipped runtime
-artifact has not yet been repinned and integrated to return the V2.3
-authenticated principal, so the independent kernel-principal cross-check
-still refuses V2.3 mediated calls. The flag is for client integration and
-frisking, not a pre-repin authorization path.
+has not been integrated to return the V2.3 authenticated principal from the
+kernel: Rust verifies the V2.3 tuple, but the independent kernel-principal
+cross-check still refuses V2.3 mediated calls (Lean still authenticates only
+the V2.2 principal-envelope domain). The flag is for client integration and
+frisking, not an authorization path.
 
 There is no V2.2 compatibility window inside V2.3 mode. A line containing
 `seal_env` must satisfy the strict V2.3 wrapper and envelope shapes or it is
@@ -154,9 +155,12 @@ remain three distinct signed identities.
 this shape. `rust/tests/canonical_boundary.rs` exhausts the C0 alphabet at
 every reachable seat and exercises the production full-domain equality gate;
 `rust/tests/mrtr_signed_shape.rs` retains the four presence-mode comparison.
-The coordinated repin and encoder cutover moved the trusted kernel,
+That **encoder-shape cutover** (Phase-M metadata and MRTR seats under the
+unchanged `seal.effect/v2` tag) moved the trusted kernel twin,
 signatures/vectors, artifacts, and active Rust encoder as one contract. No
-pre-Phase-M encoder remains live under the unchanged `seal.effect/v2` tag.
+pre-Phase-M encoder remains live. This is not the principal-return
+integration required before V2.3 mediated calls can pass the host cross-check
+(see Status above).
 
 ## Exact signed bytes
 
