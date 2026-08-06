@@ -44,16 +44,22 @@ class CiControlAggregateTests(unittest.TestCase):
         workflow: str = "ci.yml",
         job: str = "build",
         clear_identity: bool = False,
+        workflow_ref: str | None = None,
+        job_env: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         if clear_identity:
             env.pop("GITHUB_WORKFLOW_REF", None)
             env.pop("GITHUB_JOB", None)
         else:
-            env["GITHUB_WORKFLOW_REF"] = (
-                f"velvetmonkey/seal-host/.github/workflows/{workflow}@refs/heads/test"
-            )
-            env["GITHUB_JOB"] = job
+            if workflow_ref is not None:
+                env["GITHUB_WORKFLOW_REF"] = workflow_ref
+            else:
+                env["GITHUB_WORKFLOW_REF"] = (
+                    f"velvetmonkey/seal-host/.github/workflows/{workflow}"
+                    "@refs/heads/test"
+                )
+            env["GITHUB_JOB"] = job if job_env is None else job_env
         if steps is None:
             env.pop("SEAL_CONTROL_STEPS", None)
         else:
@@ -141,10 +147,81 @@ class CiControlAggregateTests(unittest.TestCase):
     def test_missing_identity_fails_closed(self) -> None:
         result = self.run_aggregate(full_success_steps(), clear_identity=True)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "cannot identify workflow and job for control completeness",
-            result.stdout,
+        self.assertIn("GITHUB_WORKFLOW_REF is missing", result.stdout)
+
+    def test_workflow_ref_missing_at_ref_fails(self) -> None:
+        """No @ref at all must not resolve as a workflow path."""
+        result = self.run_aggregate(
+            full_success_steps(),
+            workflow_ref="velvetmonkey/seal-host/.github/workflows/ci.yml",
         )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("missing @ref", result.stdout)
+        self.assertIn("GITHUB_WORKFLOW_REF rejected", result.stdout)
+
+    def test_workflow_ref_empty_at_ref_fails(self) -> None:
+        result = self.run_aggregate(
+            full_success_steps(),
+            workflow_ref="velvetmonkey/seal-host/.github/workflows/ci.yml@",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("empty @ref", result.stdout)
+        self.assertIn("GITHUB_WORKFLOW_REF rejected", result.stdout)
+
+    def test_workflow_ref_whitespace_at_ref_fails(self) -> None:
+        result = self.run_aggregate(
+            full_success_steps(),
+            workflow_ref="velvetmonkey/seal-host/.github/workflows/ci.yml@   ",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("@ref is empty or whitespace-only", result.stdout)
+
+    def test_workflow_ref_not_under_workflows_dir_fails(self) -> None:
+        result = self.run_aggregate(
+            full_success_steps(),
+            workflow_ref="velvetmonkey/seal-host/not-workflows/ci.yml@refs/heads/test",
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("not under .github/workflows/", result.stdout)
+
+    def test_workflow_ref_unknown_workflow_file_fails(self) -> None:
+        result = self.run_aggregate(
+            full_success_steps(),
+            workflow_ref=(
+                "velvetmonkey/seal-host/.github/workflows/"
+                "does-not-exist.yml@refs/heads/test"
+            ),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("not present under .github/workflows/", result.stdout)
+        self.assertIn("does-not-exist.yml", result.stdout)
+
+    def test_workflow_ref_path_traversal_file_fails(self) -> None:
+        result = self.run_aggregate(
+            full_success_steps(),
+            workflow_ref=(
+                "velvetmonkey/seal-host/.github/workflows/"
+                "../ci.yml@refs/heads/test"
+            ),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("single path segment", result.stdout)
+
+    def test_empty_or_whitespace_job_fails(self) -> None:
+        for job_env in ("", "   ", "\t"):
+            with self.subTest(job_env=repr(job_env)):
+                result = self.run_aggregate(
+                    full_success_steps(), job_env=job_env
+                )
+                self.assertEqual(
+                    result.returncode, 1, result.stdout + result.stderr
+                )
+                if job_env == "":
+                    self.assertIn("GITHUB_JOB is missing", result.stdout)
+                else:
+                    self.assertIn(
+                        "GITHUB_JOB is empty or whitespace-only", result.stdout
+                    )
 
     def test_unknown_job_fails_closed(self) -> None:
         result = self.run_aggregate(
@@ -152,10 +229,9 @@ class CiControlAggregateTests(unittest.TestCase):
             job="does-not-exist",
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "no controls declared for ci.yml:does-not-exist",
-            result.stdout,
-        )
+        self.assertIn("GITHUB_JOB rejected", result.stdout)
+        self.assertIn("does not exist in workflow 'ci.yml'", result.stdout)
+        self.assertIn("does-not-exist", result.stdout)
 
     def test_failure_remains_red_after_continue_on_error(self) -> None:
         steps = full_success_steps()
