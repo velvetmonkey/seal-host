@@ -61,6 +61,12 @@ class CiControlReportingTests(unittest.TestCase):
                 self.assertTrue(jobs, f"no jobs parsed from {workflow}")
                 for job, steps in jobs.items():
                     with self.subTest(workflow=workflow.name, job=job):
+                        if workflow.name == "release.yml" and job == "ci-acceptance":
+                            gate = "\n".join("\n".join(step) for step in steps)
+                            self.assertIn("run: python3 scripts/tag_release_gate.py", gate)
+                            self.assertNotIn("continue-on-error", gate)
+                            continue
+
                         reporting_steps = steps
                         if workflow.name == "release.yml" and job == "publish":
                             publication = "\n".join(steps[-1])
@@ -115,11 +121,13 @@ class CiControlReportingTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertRegex(
             workflow,
-            r"(?m)^  build:\n    if: \$\{\{ !cancelled\(\) \}\}\n    needs: fleet-gate$",
+            r"(?m)^  build:\n    if: \$\{\{ !cancelled\(\) \}\}\n"
+            r"    needs:\n      - ci-acceptance\n      - fleet-gate$",
         )
         self.assertRegex(
             workflow,
-            r"(?m)^  publish:\n    needs:\n      - fleet-gate\n      - build$",
+            r"(?m)^  publish:\n    needs:\n      - ci-acceptance\n"
+            r"      - fleet-gate\n      - build$",
         )
 
 
