@@ -35,7 +35,7 @@ kernel allows)**. Composition is itself proven invariant-preserving
 
 | Kernel | Stops | Proof anchor |
 |---|---|---|
-| **S** safety | prompt-injected destructive/exfil call without an un-mintable, target-bound, one-shot human approval | `SealCore.no_allow_guarded_without_matching_approval_in_state` |
+| **S** safety | prompt-injected destructive/exfil call without an un-mintable, target-bound, one-shot approval record (record origin/custody is a declared assumption, not part of the theorem) | `SealCore.no_allow_guarded_without_matching_approval_in_state` |
 | **T** temporal | replay-after-revoke, out-of-order sequence attacks (each call legal, the order not) | `Temporal.monitor_sound`, `gateTrace_sealSafe` |
 | **C** consensus | single compromised approver, rogue node, silent roster swap on high-stakes actions | `Consensus.Checker.agreement` |
 | **V** convergence | divergent / last-writer-wins writes to replicated state | `Crdt.converged_states_agree`, `Crdt.ORSet.add_wins` |

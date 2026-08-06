@@ -402,8 +402,10 @@ workflow.
 
 This guide stands up the **`compatible`** profile. What that means precisely:
 
-- **Enforced at runtime:** a policy-covered `tools/call` requires a matching live human
-  approval and an allowing kernel verdict; seam failures block; every decision emits
+- **Enforced at runtime:** a policy-covered `tools/call` forwards only after every
+  applicable kernel returns Allow; a call configured as guarded additionally requires a
+  matching live approval record (an explicit-policy Allow consumes none and is labelled
+  `authorization: "explicit_policy_allow"`); seam failures block; every decision emits
   replayable evidence.
 - **NOT the deployed runtime gate:** strict `canonical-l0` canonical-parser rejection is
   proved and modelled but is not the route this host runs. The host is not proved
