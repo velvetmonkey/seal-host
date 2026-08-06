@@ -95,7 +95,7 @@ from liveness, and `hACR` lifts that to part-list equality.
 |---|---|
 | `SealCore.no_allow_guarded_without_matching_approval_in_state` | allow ⇒ live (authority tracing at one step) |
 | `SealCore.approval_binds_to_target` | hash≠ ⇒ not live (separation) |
-| `SealCore.confused_deputy_blocks_from_single_other_approval` | the step-level refusal exemplar |
+| `SealCore.approval_not_transferable_across_targets` | the step-level refusal exemplar (single other approval ⇒ block) |
 | `SealCore.consumed_approval_not_live` / `fresh_approval_live` / `expired_not_live` | one-shot + freshness discipline |
 | `SealV2.decide_emit_unique` | value-level: every Allow carries a `ValidCapability` witness (held, session-bound, target-equal approval) |
 
@@ -134,7 +134,7 @@ the named assurance-case hypothesis `hACR`; the old FNV path is confined to
 2. **Not-held refused:** instance of `approval_binds_to_target` at two
    concrete distinct part-lists from the exemplar universe.
 3. **Cross-approval refusal:** cite the landed
-   `confused_deputy_blocks_from_single_other_approval` (already the
+   `approval_not_transferable_across_targets` (already the
    refusal witness; re-witnessing optional, council Q5).
 4. **Adequacy discharge:** `Adequate U₀` for a concrete small universe
    `U₀` by `decide` (decidability instance probe-confirmed). Council Q5:

@@ -5,7 +5,7 @@
 
 **Stops the unapproved prod action before it ever reaches your real MCP server.**
 
-An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching human approval for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident authorization decision.
+An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching live approval record for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident authorization decision.
 
 One command shows the full loop over a fake ledger in seconds (block with 64-hex target, signed approval via CLI, action or explicit refused, side-effect or audit).
 
