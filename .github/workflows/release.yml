@@ -6,12 +6,25 @@ on:
     tags: ["v*"]
 
 permissions:
+  actions: read
   contents: read
 
 # Control steps report independently and aggregate before any irreversible
 # publication. A failed fleet gate does not hide build evidence, but it still
 # prevents the publish job from starting.
 jobs:
+  ci-acceptance:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: Require this tag push's full CI release evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/tag_release_gate.py
+
   fleet-gate:
     runs-on: ubuntu-24.04
     steps:
@@ -43,7 +56,9 @@ jobs:
 
   build:
     if: ${{ !cancelled() }}
-    needs: fleet-gate
+    needs:
+      - ci-acceptance
+      - fleet-gate
     name: linux-${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -188,6 +203,7 @@ jobs:
 
   publish:
     needs:
+      - ci-acceptance
       - fleet-gate
       - build
     runs-on: ubuntu-24.04
@@ -219,7 +235,7 @@ jobs:
         run: python3 scripts/ci_control_aggregate.py
 
       # Publication is an effect, not a control. It runs only after every
-      # pre-publication control above and both prerequisite jobs succeeded.
+      # pre-publication control above and all prerequisite jobs succeeded.
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}
