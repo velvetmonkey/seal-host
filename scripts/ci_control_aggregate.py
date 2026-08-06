@@ -46,6 +46,23 @@ def workflow_controls() -> set[Control]:
     return controls
 
 
+def declared_control_ids(workflow: str, job: str) -> set[str] | None:
+    """Control ids declared for one job, derived from workflow YAML.
+
+    Returns None when the workflow tree cannot be inspected.
+    """
+    try:
+        known = workflow_controls()
+    except OSError as error:
+        print(f"::error::CI workflow controls cannot be inspected: {error}")
+        return None
+    return {
+        control.control_id
+        for control in known
+        if control.workflow == workflow and control.job == job
+    }
+
+
 def load_allowlist(path: Path) -> dict[Control, str] | None:
     try:
         raw = path.read_text(encoding="utf-8")
@@ -136,6 +153,17 @@ def load_allowlist(path: Path) -> dict[Control, str] | None:
 
 
 def current_context() -> tuple[str, str] | None:
+    """Resolve the (workflow file name, job id) this aggregate is measuring.
+
+    Identity is taken from GitHub Actions ambient environment variables that
+    are always present on hosted runners for a job step:
+
+    - GITHUB_WORKFLOW_REF: owner/repo/.github/workflows/<file>@ref
+    - GITHUB_JOB: the job id in that workflow
+
+    No extra workflow input is required. Returning None means identity cannot
+    be resolved; callers must fail closed rather than skip completeness.
+    """
     workflow_ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
     job = os.environ.get("GITHUB_JOB", "")
     marker = "/.github/workflows/"
@@ -151,6 +179,27 @@ def current_context() -> tuple[str, str] | None:
 def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
     allowed = load_allowlist(allowlist_path)
     if allowed is None:
+        return 1
+
+    # Completeness needs identity first. Missing identity must fail the job
+    # rather than silently disable the census check.
+    context = current_context()
+    if context is None:
+        print(
+            "::error::cannot identify workflow and job for control completeness; "
+            "GITHUB_WORKFLOW_REF or GITHUB_JOB is missing or invalid"
+        )
+        return 1
+    workflow, job = context
+
+    declared = declared_control_ids(workflow, job)
+    if declared is None:
+        return 1
+    if not declared:
+        print(
+            f"::error::no controls declared for {workflow}:{job}; "
+            "refusing to pass without a measurement census"
+        )
         return 1
 
     raw = os.environ.get("SEAL_CONTROL_STEPS")
@@ -173,6 +222,20 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
         for name, value in steps.items()
         if name.startswith("control_") or name == "attest"
     }
+
+    missing = sorted(declared - set(controls))
+    if missing:
+        for name in missing:
+            print(
+                f"::error::declared CI control missing from measurement: "
+                f"{workflow}:{job}:{name}"
+            )
+        print(
+            f"FAIL: {len(missing)} missing, {len(controls)} reported, "
+            f"{len(declared)} declared"
+        )
+        return 1
+
     if not controls:
         print("::error::no control results were reported; refusing to pass vacuously")
         return 1
@@ -180,6 +243,7 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
     failed: list[str] = []
     skipped: list[str] = []
     malformed: list[str] = []
+    passed: list[str] = []
     for name, result in controls.items():
         if not isinstance(result, dict) or not isinstance(result.get("outcome"), str):
             malformed.append(name)
@@ -189,50 +253,57 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
             failed.append(name)
         elif outcome == "skipped":
             skipped.append(name)
-        elif outcome != "success":
+        elif outcome == "success":
+            passed.append(name)
+        else:
             malformed.append(f"{name} ({outcome})")
 
     unallowed_skips: list[str] = []
-    context = current_context() if skipped else None
-    if skipped and context is None:
-        print(
-            "::error::cannot identify workflow and job for skipped controls; "
-            "GITHUB_WORKFLOW_REF or GITHUB_JOB is invalid"
-        )
-        unallowed_skips.extend(skipped)
-    elif context is not None:
-        workflow, job = context
-        for name in skipped:
-            control = Control(workflow, job, name)
-            reason = allowed.get(control)
-            if reason is None:
-                print(
-                    "::error::isolated CI step skipped without allowlist entry: "
-                    f"{control.label()}"
-                )
-                unallowed_skips.append(name)
-            else:
-                print(
-                    f"::notice::isolated CI step allowed to skip: {control.label()} — "
-                    f"{reason}"
-                )
+    for name in skipped:
+        control = Control(workflow, job, name)
+        reason = allowed.get(control)
+        if reason is None:
+            print(
+                "::error::isolated CI step skipped without allowlist entry: "
+                f"{control.label()}"
+            )
+            unallowed_skips.append(name)
+        else:
+            print(
+                f"::notice::isolated CI step allowed to skip: {control.label()} — "
+                f"{reason}"
+            )
 
     for name in failed:
         print(f"::error::isolated CI step failed: {name}")
     for name in malformed:
         print(f"::error::isolated CI step has no passing terminal outcome: {name}")
 
-    if failed or malformed or unallowed_skips:
+    # Floor: at least one successful observation is required. An all-skipped
+    # payload (even when every skip is allowlisted) measures nothing and must
+    # not pass. This is the same defect class as a missing control — green
+    # that did not observe the system under test.
+    empty_success = not passed and not failed and not malformed and not unallowed_skips
+    if empty_success and skipped:
+        print(
+            "::error::no successful control observations; every reported control "
+            "was skipped (allowlisted or otherwise). A measurement with zero "
+            "successes is not a pass."
+        )
+
+    if failed or malformed or unallowed_skips or empty_success:
         print(
             f"FAIL: {len(failed)} failed, {len(malformed)} invalid, "
             f"{len(unallowed_skips)} unallowed skips, {len(skipped)} skipped, "
-            f"{len(controls)} reported"
+            f"{len(passed)} passed, {len(controls)} reported, "
+            f"{len(declared)} declared"
         )
         return 1
 
     print(
-        f"PASS: {len(controls) - len(skipped)} passed, "
-        f"{len(skipped)} skipped, {len(controls)} reported"
+        f"PASS: {len(passed)} passed, "
+        f"{len(skipped)} skipped, {len(controls)} reported, "
+        f"{len(declared)} declared"
     )
     return 0
 
