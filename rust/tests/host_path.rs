@@ -31,6 +31,7 @@ use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -148,6 +149,20 @@ impl Oracle {
     }
 
     fn spawn_channel(tag: &str, signed: bool, numeric_observer: bool) -> Oracle {
+        Oracle::spawn_channel_with(tag, signed, numeric_observer, None, false)
+    }
+
+    fn spawn_crash_recorder(tag: &str, crash_point: &str) -> Oracle {
+        Oracle::spawn_channel_with(tag, true, false, Some(crash_point), true)
+    }
+
+    fn spawn_channel_with(
+        tag: &str,
+        signed: bool,
+        numeric_observer: bool,
+        crash_point: Option<&str>,
+        durable_receiver: bool,
+    ) -> Oracle {
         let dir =
             std::env::temp_dir().join(format!("seal-host-oracle-{}-{}", std::process::id(), tag));
         std::fs::create_dir_all(&dir).unwrap();
@@ -254,7 +269,28 @@ impl Oracle {
             ]);
         }
         args.push("--".to_string());
-        if numeric_observer {
+        if durable_receiver {
+            const DURABLE_RECEIVER: &str = r#"
+import os
+import sys
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+try:
+    while True:
+        chunk = os.read(0, 1)
+        if not chunk:
+            break
+        os.write(fd, chunk)
+        os.fsync(fd)
+finally:
+    os.close(fd)
+"#;
+            args.extend([
+                "/usr/bin/python3".to_string(),
+                "-c".to_string(),
+                DURABLE_RECEIVER.to_string(),
+                dir.join("receiver.bin").to_str().unwrap().to_string(),
+            ]);
+        } else if numeric_observer {
             const OBSERVER: &str = r#"
 import json
 import sys
@@ -286,7 +322,15 @@ for line in sys.stdin:
             args.push("/bin/cat".to_string());
         }
 
-        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&args, &[]);
+        let env = crash_point
+            .map(|point| {
+                vec![(
+                    seal_host_rs::crash_injection::CRASH_POINT_ENV.to_string(),
+                    point.to_string(),
+                )]
+            })
+            .unwrap_or_default();
+        let (child, stdin, lines, raw, stderr_lines) = Oracle::spawn_process(&args, &env);
         Oracle {
             child,
             stdin,
@@ -295,7 +339,7 @@ for line in sys.stdin:
             stderr_lines,
             dir,
             args,
-            env: Vec::new(),
+            env,
         }
     }
 
@@ -318,9 +362,8 @@ for line in sys.stdin:
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn seal-host-rs");
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().expect("spawn seal-host-rs");
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
@@ -514,6 +557,149 @@ fn m7_state_inventory(o: &Oracle) -> String {
             .iter()
             .any(|name| name == ".seal-audit-head.state"),
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DurableCutState {
+    authorization_decisions: usize,
+    receiver_hex: String,
+}
+
+struct CrashCutSpec {
+    name: &'static str,
+    crash_point: &'static str,
+    expected_before: DurableCutState,
+    expected_after_kill: DurableCutState,
+    expected_after_recovery: DurableCutState,
+}
+
+fn durable_cut_state(o: &Oracle) -> DurableCutState {
+    let authorization_decisions = if o.receipt_dir().is_dir() {
+        o.receipts()
+            .into_iter()
+            .filter(|record| record["record_type"] == "seal.authorization-decision")
+            .count()
+    } else {
+        0
+    };
+    let receiver_bytes = std::fs::read(o.dir.join("receiver.bin")).unwrap_or_default();
+    DurableCutState {
+        authorization_decisions,
+        receiver_hex: hex::encode(receiver_bytes),
+    }
+}
+
+fn print_cut_state(label: &str, state: &DurableCutState) {
+    println!(
+        "{label}: authorization_decisions={} receiver_hex={}",
+        state.authorization_decisions, state.receiver_hex
+    );
+}
+
+/// Drive a named crash cut against the real host process. A case is entirely
+/// described by its armed point and exact durable states before the trigger,
+/// after the kill, and after a fresh process has booted over the same files.
+/// Reaching the expected files is insufficient: the harness also requires an
+/// intentional SIGABRT and the named marker from the dying process.
+fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Oracle {
+    let mut oracle = Oracle::spawn_crash_recorder(spec.name, spec.crash_point);
+
+    let before = durable_cut_state(&oracle);
+    print_cut_state("T1 durable state before kill", &before);
+    assert_eq!(before, spec.expected_before);
+
+    trigger(&mut oracle);
+    let status = oracle.child.wait().expect("wait for crash-injected host");
+    let crash_stderr = oracle.drain_stderr(Duration::from_millis(100));
+    println!(
+        "T1 process exit: status={status:?} signal={:?} crash_point={}",
+        status.signal(),
+        spec.crash_point
+    );
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGABRT),
+        "a crash cut cannot pass unless the real host exited by SIGABRT"
+    );
+    assert!(
+        crash_stderr.iter().any(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|value| {
+                    value["seal_test_crash_point"]
+                        .as_str()
+                        .map(|point| point == spec.crash_point)
+                })
+                .unwrap_or(false)
+        }),
+        "dying process did not evidence the armed crash point: {crash_stderr:?}"
+    );
+
+    // The receiver fsyncs each byte. Give the orphaned child time to consume
+    // the pipe byte and observe EOF after the host's abort.
+    let mut after_kill = durable_cut_state(&oracle);
+    for _ in 0..200 {
+        if after_kill == spec.expected_after_kill {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        after_kill = durable_cut_state(&oracle);
+    }
+    print_cut_state("T1 durable state after kill", &after_kill);
+    assert_eq!(after_kill, spec.expected_after_kill);
+
+    oracle.restart();
+    // Prove the replacement process completed boot and is mediating input;
+    // this malformed frame is refused locally and cannot alter either durable
+    // state component measured by this cut.
+    oracle.send_bytes(&[0xff, b'\n']);
+    assert_eq!(oracle.expect_line(), SEAM_ERROR_RESPONSE.trim_end());
+    // A startup retry is delivered to a different process asynchronously;
+    // allow that receiver time to fsync before declaring the state unchanged.
+    std::thread::sleep(Duration::from_millis(100));
+    let after_recovery = durable_cut_state(&oracle);
+    print_cut_state("T1 durable state after recovery", &after_recovery);
+    assert_eq!(after_recovery, spec.expected_after_recovery);
+    oracle
+}
+
+#[test]
+fn g2_cut_d_partial_child_write_is_not_retried_on_restart() {
+    let expected_before = DurableCutState {
+        authorization_decisions: 0,
+        receiver_hex: String::new(),
+    };
+    let expected_recorded_only = DurableCutState {
+        authorization_decisions: 1,
+        receiver_hex: "7b".to_string(),
+    };
+    let spec = CrashCutSpec {
+        name: "g2-cut-d",
+        crash_point: "g2-d-during-child-write",
+        expected_before,
+        expected_after_kill: expected_recorded_only.clone(),
+        expected_after_recovery: expected_recorded_only,
+    };
+    let oracle = drive_crash_cut(spec, |oracle| {
+        oracle.send(
+            r#"{"jsonrpc":"2.0","id":800,"method":"tools/call","params":{"name":"m7.echo","arguments":{"message":"cut-d"}}}"#,
+        );
+    });
+
+    // The one persisted record is RECORDED-only: today's runtime has no
+    // release_status or operation_id field to imply that the ambiguous write
+    // completed. Cut (d)'s required fail-safe is therefore no automatic retry.
+    let receipts = oracle.receipts();
+    let receipt = receipts
+        .iter()
+        .find(|record| record["verdict"] == "ALLOW")
+        .expect("crashed release has a durable ALLOW record");
+    for forbidden_release_claim in ["release_status", "operation_id", "durability_class"] {
+        assert!(
+            receipt.get(forbidden_release_claim).is_none(),
+            "ambiguous child write must not gain a {forbidden_release_claim} claim"
+        );
+    }
 }
 
 #[test]

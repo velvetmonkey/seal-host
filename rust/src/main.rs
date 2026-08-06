@@ -46,6 +46,7 @@ use seal_host_rs::authorization_decision::{
     request_parts, sha256_hex, ApprovalIdentity, AuthorizationDecisionWriter, DecisionInput,
     SignedConfig,
 };
+use seal_host_rs::crash_injection;
 use seal_host_rs::envelope_v23::{
     self, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
 };
@@ -572,6 +573,26 @@ fn write_frame(output: &OutputSender, line: &str) -> Result<(), ()> {
 }
 
 fn write_child(child: &mut impl Write, bytes: &[u8], ready: &AtomicBool) -> Result<(), ()> {
+    // Cut (d) injection is deliberately inside the write: one byte may have
+    // reached the receiver, but no complete MCP frame has. Recovery must not
+    // infer whether the receiver acted and must not retry without receiver
+    // dedupe keyed by a receiver-visible operation_id.
+    if std::env::var_os(crash_injection::CRASH_POINT_ENV).as_deref()
+        == Some(std::ffi::OsStr::new("g2-d-during-child-write"))
+        && !bytes.is_empty()
+    {
+        child
+            .write_all(&bytes[..1])
+            .and_then(|_| child.flush())
+            .map_err(|error| {
+                ready.store(false, Ordering::Release);
+                eprintln!(
+                    "{}",
+                    json!({"error": format!("downstream child transport failed: {error}")})
+                );
+            })?;
+        crash_injection::abort_if_armed("g2-d-during-child-write");
+    }
     child
         .write_all(bytes)
         .and_then(|_| child.flush())
