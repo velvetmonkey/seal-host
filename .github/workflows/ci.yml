@@ -184,6 +184,19 @@ jobs:
           python3 scripts/proof_inventory.py
           python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # G1 repo-wide reachability gate. Fails closed on unresolved imports
+      # (including typo of a local root and absent upstream modules), on any
+      # ORPHANED theorem-bearing module outside PERMANENT_EXCLUSIONS, and on
+      # UNCLASSIFIED rows. Exit 2 means the inventory could not be produced at
+      # all. Requires .lake/packages (control_04/05) so upstream names resolve.
+      # An instrument that always exits 0 is not a gate — do not soften this.
+      - id: control_33
+        continue-on-error: true
+        name: Gate repo-wide proof-module reachability (G1)
+        run: |
+          python3 scripts/proof_reach.py
+          python3 -m unittest discover -s test -p 'test_proof_reach.py' -v
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_19
         continue-on-error: true
         name: Proof-reference citation gate
