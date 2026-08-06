@@ -15,6 +15,8 @@ if ROOT is None or not ROOT.is_dir():
 
 EXPECTED_KERNEL = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec"
 TEXT_SUFFIXES = {".c", ".cjs", ".css", ".html", ".js", ".json", ".lean", ".md", ".mjs", ".py", ".rs", ".sh", ".toml", ".txt", ".yml", ".yaml"}
+TEXT_NAMES = {"Dockerfile", "Dockerfile.release"}
+NON_TEXT_DIRS = Path("rust/tests/corpora/JSONTestSuite").parts
 SKIP_DIRS = {".git", ".lake", "node_modules", "target"}
 FORBIDDEN_NAMES = {".env", "id_rsa", "id_ed25519"}
 SECRETS = {
@@ -22,7 +24,7 @@ SECRETS = {
     "private key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "AWS key": re.compile(rb"AKIA[0-9A-Z]{16}"),
 }
-HOME = re.compile(r"/home/[A-Za-z0-9._-]+/")
+HOME = re.compile(rb"/home/[A-Za-z0-9._-]+/")
 
 failures: list[str] = []
 if not (ROOT / "LICENSE").is_file() or not (ROOT / "NOTICE").is_file():
@@ -37,19 +39,37 @@ for path in sorted(ROOT.rglob("*")):
     if path.name in FORBIDDEN_NAMES or path.suffix.lower() in {".key", ".p12", ".pfx"}:
         failures.append(f"forbidden public filename: {relative}")
         continue
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        failures.append(f"unable to classify public file {relative}: {error}")
+        continue
+
+    try:
+        data.decode("utf-8")
+        is_utf8 = True
+    except UnicodeDecodeError:
+        is_utf8 = False
+
     for label, pattern in SECRETS.items():
         if pattern.search(data):
             failures.append(f"possible {label}: {relative}")
-    if path.suffix in TEXT_SUFFIXES or path.name in {"Dockerfile", "Dockerfile.release"}:
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            failures.append(f"non-UTF-8 public text file: {relative}")
-            continue
-        scrubbed = HOME.sub("/workspace/operator/", text)
-        if scrubbed != text:
-            path.write_text(scrubbed, encoding="utf-8")
+
+    is_declared_text = path.suffix in TEXT_SUFFIXES or path.name in TEXT_NAMES
+    is_corpus = relative.parts[: len(NON_TEXT_DIRS)] == NON_TEXT_DIRS
+    if is_declared_text and not is_corpus and not is_utf8:
+        failures.append(f"non-UTF-8 public text file: {relative}")
+
+    home_matches = list(HOME.finditer(data))
+    if home_matches and (b"\x00" in data or not is_utf8):
+        kind = "NUL-bearing" if b"\x00" in data else "non-UTF-8"
+        for match in home_matches:
+            failures.append(
+                f"refusing HOME rewrite in {kind} file: {relative} "
+                f"at byte offset {match.start()}"
+            )
+    elif home_matches:
+        path.write_bytes(HOME.sub(b"/workspace/operator/", data))
 
 kernel = ROOT / "receipt-verifier/wasm/seal.wasm"
 if not kernel.is_file():
