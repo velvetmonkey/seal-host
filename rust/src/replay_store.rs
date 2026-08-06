@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Durable replay store for signed-token nonces.
+//! Durable replay store for signed-token nonces — two-phase burn.
 //!
-//! A nonce must be persisted before its approval record can flow to Lean.
+//! Phase 1 (`reserve_returning_is_new`): before an approval record flows to
+//! Lean its nonce is durably HELD. A hold blocks any second presentation of
+//! the same nonce exactly as a burn does, but it is not yet a burn.
+//!
+//! Phase 2 (`commit_reservation`): when the authorization decision is
+//! RECORDED (the durable receipt exists), the hold is flipped to a committed
+//! burn. Only a committed burn survives startup recovery.
+//!
+//! Recovery (`reclaim_uncommitted`): on startup, holds that never reached
+//! RECORDED are deleted — a crash between reserve and RECORDED must leave
+//! the approval usable again, with no receipt and no burned nonce (G2 cut
+//! (a), ruled by Ben 2026-08-06).
+//!
 //! The SQLite implementation is the production channel; the in-memory
 //! implementation keeps legacy/demo/tests lightweight.
 
@@ -37,12 +49,26 @@ impl From<rusqlite::Error> for ReplayStoreError {
 }
 
 pub trait ReplayStore {
-    fn insert_returning_is_new(
+    /// Phase 1: durably hold the nonce. Returns `false` when any hold or
+    /// committed burn for this nonce already exists.
+    fn reserve_returning_is_new(
         &mut self,
         nonce: &str,
         issued_at: u64,
         expiry_at: u64,
     ) -> Result<bool, ReplayStoreError>;
+    /// Phase 2: at RECORDED, flip an open hold to a committed burn. Returns
+    /// `false` when no open hold exists (already committed, or never
+    /// reserved) — the caller must treat that as a refusal, never as a
+    /// silent re-burn.
+    fn commit_reservation(
+        &mut self,
+        nonce: &str,
+        committed_at_ms: u64,
+    ) -> Result<bool, ReplayStoreError>;
+    /// Startup recovery: delete every hold that never reached RECORDED and
+    /// return how many were reclaimed. Committed burns are never touched.
+    fn reclaim_uncommitted(&mut self) -> Result<usize, ReplayStoreError>;
     fn load_unexpired(&mut self, now_ms: u64) -> Result<Vec<StoredNonce>, ReplayStoreError>;
     fn prune_expired(&mut self, now_ms: u64) -> Result<(), ReplayStoreError>;
 }
@@ -65,8 +91,11 @@ pub struct ReplayStoreLineage {
 }
 
 impl ReplayStoreLineage {
+    /// Schema 2: two-phase burn. `nonces.committed_at` is NULL for an open
+    /// reservation and set at RECORDED. Schema 1 (single-phase burn on
+    /// insert) is obsolete and refused; re-initialize the store.
     pub const CURRENT: Self = Self {
-        schema_version: 1,
+        schema_version: 2,
         namespace_encoding_version: 1,
     };
 
@@ -125,7 +154,8 @@ impl SqliteReplayStore {
                 "CREATE TABLE nonces (
                     nonce TEXT PRIMARY KEY,
                     issued_at INTEGER NOT NULL,
-                    expiry_at INTEGER NOT NULL
+                    expiry_at INTEGER NOT NULL,
+                    committed_at INTEGER
                 );
                 CREATE TABLE replay_store_lineage (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -243,6 +273,20 @@ impl SqliteReplayStore {
 }
 
 impl SqliteReplayStore {
+    /// Test-only READ-ONLY committed-state probe: `None` = absent,
+    /// `Some(false)` = open hold, `Some(true)` = committed burn.
+    #[cfg(test)]
+    pub fn nonce_state(&self, nonce: &str) -> Option<bool> {
+        self.conn
+            .query_row(
+                "SELECT committed_at IS NOT NULL FROM nonces WHERE nonce = ?1",
+                params![nonce],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
     /// Test-only READ-ONLY presence probe. Not part of the production trait
     /// (nothing in the live path asks "is this nonce present" without
     /// committing); tests must observe the store without mutating it.
@@ -261,7 +305,7 @@ impl SqliteReplayStore {
 }
 
 impl ReplayStore for SqliteReplayStore {
-    fn insert_returning_is_new(
+    fn reserve_returning_is_new(
         &mut self,
         nonce: &str,
         issued_at: u64,
@@ -271,7 +315,8 @@ impl ReplayStore for SqliteReplayStore {
         let expiry_at = to_i64("expiry_at", expiry_at)?;
         let tx = self.conn.transaction()?;
         let inserted = match tx.execute(
-            "INSERT INTO nonces (nonce, issued_at, expiry_at) VALUES (?1, ?2, ?3)",
+            "INSERT INTO nonces (nonce, issued_at, expiry_at, committed_at)
+             VALUES (?1, ?2, ?3, NULL)",
             params![nonce, issued_at, expiry_at],
         ) {
             Ok(1) => true,
@@ -285,6 +330,29 @@ impl ReplayStore for SqliteReplayStore {
         };
         tx.commit()?;
         Ok(inserted)
+    }
+
+    fn commit_reservation(
+        &mut self,
+        nonce: &str,
+        committed_at_ms: u64,
+    ) -> Result<bool, ReplayStoreError> {
+        let committed_at_ms = to_i64("committed_at", committed_at_ms)?;
+        let tx = self.conn.transaction()?;
+        let flipped = tx.execute(
+            "UPDATE nonces SET committed_at = ?2
+             WHERE nonce = ?1 AND committed_at IS NULL",
+            params![nonce, committed_at_ms],
+        )?;
+        tx.commit()?;
+        Ok(flipped == 1)
+    }
+
+    fn reclaim_uncommitted(&mut self) -> Result<usize, ReplayStoreError> {
+        let tx = self.conn.transaction()?;
+        let reclaimed = tx.execute("DELETE FROM nonces WHERE committed_at IS NULL", [])?;
+        tx.commit()?;
+        Ok(reclaimed)
     }
 
     fn load_unexpired(&mut self, now_ms: u64) -> Result<Vec<StoredNonce>, ReplayStoreError> {
@@ -314,7 +382,8 @@ impl ReplayStore for SqliteReplayStore {
 
 #[derive(Default)]
 pub struct InMemoryReplayStore {
-    entries: HashMap<String, (u64, u64)>,
+    /// nonce -> (issued_at, expiry_at, committed_at). `None` = open hold.
+    entries: HashMap<String, (u64, u64, Option<u64>)>,
 }
 
 impl InMemoryReplayStore {
@@ -336,7 +405,7 @@ impl InMemoryReplayStore {
 }
 
 impl ReplayStore for InMemoryReplayStore {
-    fn insert_returning_is_new(
+    fn reserve_returning_is_new(
         &mut self,
         nonce: &str,
         issued_at: u64,
@@ -346,16 +415,37 @@ impl ReplayStore for InMemoryReplayStore {
             return Ok(false);
         }
         self.entries
-            .insert(nonce.to_string(), (issued_at, expiry_at));
+            .insert(nonce.to_string(), (issued_at, expiry_at, None));
         Ok(true)
+    }
+
+    fn commit_reservation(
+        &mut self,
+        nonce: &str,
+        committed_at_ms: u64,
+    ) -> Result<bool, ReplayStoreError> {
+        match self.entries.get_mut(nonce) {
+            Some((_, _, committed_at @ None)) => {
+                *committed_at = Some(committed_at_ms);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn reclaim_uncommitted(&mut self) -> Result<usize, ReplayStoreError> {
+        let before = self.entries.len();
+        self.entries
+            .retain(|_, (_, _, committed_at)| committed_at.is_some());
+        Ok(before - self.entries.len())
     }
 
     fn load_unexpired(&mut self, now_ms: u64) -> Result<Vec<StoredNonce>, ReplayStoreError> {
         Ok(self
             .entries
             .iter()
-            .filter(|(_, (_, expiry_at))| *expiry_at >= now_ms)
-            .map(|(nonce, (_, expiry_at))| StoredNonce {
+            .filter(|(_, (_, expiry_at, _))| *expiry_at >= now_ms)
+            .map(|(nonce, (_, expiry_at, _))| StoredNonce {
                 nonce: nonce.clone(),
                 expiry_at: *expiry_at,
             })
@@ -364,7 +454,7 @@ impl ReplayStore for InMemoryReplayStore {
 
     fn prune_expired(&mut self, now_ms: u64) -> Result<(), ReplayStoreError> {
         self.entries
-            .retain(|_, (_, expiry_at)| *expiry_at >= now_ms);
+            .retain(|_, (_, expiry_at, _)| *expiry_at >= now_ms);
         Ok(())
     }
 }
@@ -403,21 +493,22 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_reopens_unexpired_nonce() {
+    fn sqlite_reopens_committed_nonce() {
         let path = temp_db_path("reopen");
         initialize(&path);
         {
             let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
             assert!(store
-                .insert_returning_is_new("nonce-1", 1_000, 10_000)
+                .reserve_returning_is_new("nonce-1", 1_000, 10_000)
                 .unwrap());
             assert!(!store
-                .insert_returning_is_new("nonce-1", 1_000, 10_000)
+                .reserve_returning_is_new("nonce-1", 1_000, 10_000)
                 .unwrap());
+            assert!(store.commit_reservation("nonce-1", 1_500).unwrap());
         }
         {
             let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
-            assert!(store.contains_nonce("nonce-1"));
+            assert_eq!(store.nonce_state("nonce-1"), Some(true));
             assert_eq!(
                 store.load_unexpired(2_000).unwrap(),
                 vec![StoredNonce {
@@ -430,13 +521,57 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_commit_flips_only_an_open_hold() {
+        let path = temp_db_path("commit");
+        initialize(&path);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+        assert!(
+            !store.commit_reservation("never-reserved", 1_000).unwrap(),
+            "committing without a reservation must refuse"
+        );
+        assert!(store
+            .reserve_returning_is_new("nonce-1", 1_000, 10_000)
+            .unwrap());
+        assert_eq!(store.nonce_state("nonce-1"), Some(false));
+        assert!(store.commit_reservation("nonce-1", 1_500).unwrap());
+        assert_eq!(store.nonce_state("nonce-1"), Some(true));
+        assert!(
+            !store.commit_reservation("nonce-1", 2_000).unwrap(),
+            "a burn must not be silently re-committed"
+        );
+        remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn sqlite_reclaim_deletes_only_uncommitted_holds() {
+        let path = temp_db_path("reclaim");
+        initialize(&path);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+        assert!(store
+            .reserve_returning_is_new("held", 1_000, 10_000)
+            .unwrap());
+        assert!(store
+            .reserve_returning_is_new("burned", 1_000, 10_000)
+            .unwrap());
+        assert!(store.commit_reservation("burned", 1_500).unwrap());
+        assert_eq!(store.reclaim_uncommitted().unwrap(), 1);
+        assert_eq!(store.nonce_state("held"), None, "open hold reclaimed");
+        assert_eq!(
+            store.nonce_state("burned"),
+            Some(true),
+            "recovery must never un-burn a committed nonce"
+        );
+        remove_sqlite_files(&path);
+    }
+
+    #[test]
     fn sqlite_prunes_expired_nonces() {
         let path = temp_db_path("prune");
         initialize(&path);
         let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
-        assert!(store.insert_returning_is_new("old", 1_000, 2_000).unwrap());
+        assert!(store.reserve_returning_is_new("old", 1_000, 2_000).unwrap());
         assert!(store
-            .insert_returning_is_new("fresh", 3_000, 5_000)
+            .reserve_returning_is_new("fresh", 3_000, 5_000)
             .unwrap());
 
         assert_eq!(
@@ -479,7 +614,7 @@ mod tests {
                 schema_version INTEGER NOT NULL,
                 namespace_encoding_version INTEGER NOT NULL
             );
-            INSERT INTO replay_store_lineage VALUES (1, 1, 2);",
+            INSERT INTO replay_store_lineage VALUES (1, 2, 2);",
         )
         .unwrap();
         drop(conn);
@@ -499,15 +634,46 @@ mod tests {
         assert!(unsupported
             .to_string()
             .contains("unsupported or transitional expected replay-store schema version 0"));
+
+        // Schema 1 (single-phase burn on insert) is obsolete, not grandfathered.
+        let obsolete = ReplayStoreLineage {
+            schema_version: 1,
+            namespace_encoding_version: 1,
+        }
+        .require_supported()
+        .unwrap_err();
+        assert!(obsolete
+            .to_string()
+            .contains("unsupported or transitional expected replay-store schema version 1"));
         remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn memory_store_two_phase_matches_sqlite_semantics() {
+        let mut store = InMemoryReplayStore::default();
+        assert!(store
+            .reserve_returning_is_new("held", 1_000, 9_000)
+            .unwrap());
+        assert!(store
+            .reserve_returning_is_new("burned", 1_000, 9_000)
+            .unwrap());
+        assert!(!store
+            .reserve_returning_is_new("held", 1_000, 9_000)
+            .unwrap());
+        assert!(store.commit_reservation("burned", 1_500).unwrap());
+        assert!(!store.commit_reservation("burned", 1_600).unwrap());
+        assert!(!store.commit_reservation("missing", 1_600).unwrap());
+        assert_eq!(store.reclaim_uncommitted().unwrap(), 1);
+        assert!(!store.contains_nonce("held"));
+        assert!(store.contains_nonce("burned"));
     }
 
     #[test]
     fn memory_store_prunes_expired_nonces() {
         let mut store = InMemoryReplayStore::default();
-        assert!(store.insert_returning_is_new("old", 1_000, 2_000).unwrap());
+        assert!(store.reserve_returning_is_new("old", 1_000, 2_000).unwrap());
         assert!(store
-            .insert_returning_is_new("fresh", 3_000, 5_000)
+            .reserve_returning_is_new("fresh", 3_000, 5_000)
             .unwrap());
         store.prune_expired(3_000).unwrap();
         assert_eq!(store.len(), 1);

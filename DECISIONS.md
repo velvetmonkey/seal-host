@@ -139,3 +139,25 @@ already written down is not a finding.
 as computed, a fabricated line number, fabricated paper citations, and one misattributed venue. The
 findings around them were often real. The reviewers are useful and are never quoted without
 checking.
+
+---
+
+## 2026-08-06 — Two-phase approval burn (G2 cut (a))
+
+**Decision (Ben, 2026-08-06 18:43).** Adopt the two-phase burn: reserve the nonce before Lean,
+commit it at RECORDED, and reclaim unrecorded holds in startup recovery. The section 8 cut (a)
+requirement stands as written; rewriting the requirement to bless the deployed order was
+explicitly rejected.
+
+**Why.** The deployed order durably burned the approval nonce in SQLite before the approval
+reached Lean and before any authorization-decision receipt existed. A crash in that interval left
+a burned approval with no RECORDED receipt: the caller paid, nothing was authorised, and neither
+the user nor the approving human could audit what happened. This is the two-phase answer the
+2026-07-24 deferral above said the design needed before freshness logic could move.
+
+**Residual, stated loud.** The receipt is a file-store act and the burn is a SQLite act; they
+cannot be one atomic commit. The burn follows the receipt immediately, so a crash exactly between
+them leaves a RECORDED receipt whose hold is reclaimed on restart — the same approval can then
+produce a second receipt. It can never produce a second child forward: the forward always follows
+a successful durable commit. Implementation and crash evidence: `rust/src/a3.rs`,
+`rust/src/replay_store.rs` (schema 2), `rust/tests/host_path.rs` G2 T1–T4.

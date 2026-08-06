@@ -52,8 +52,11 @@ for deployability.** Everything in Shape 1, plus:
 - A3 (`a3.rs`) plus the replay store (`replay_store.rs`): nonce replay set,
   SQLite durable nonce persistence for the Ed25519 signed-token production
   channel, TTL freshness, future-skew rejection, and the wall clock itself.
-  SQLite runs with WAL and `synchronous=FULL`; the nonce insert is
-  write-ahead before an approval reaches Lean. A database-wide metadata stamp
+  SQLite runs with WAL and `synchronous=FULL`; the nonce is reserved
+  (durable hold) write-ahead before an approval reaches Lean, and the burn
+  commits at RECORDED, after the authorization-decision receipt and before
+  the child forward; startup recovery reclaims unrecorded holds (G2 cut (a),
+  two-phase ruling 2026-08-06). A database-wide metadata stamp
   must match the schema and namespace-encoding lineage selected by the
   authority-signed config before startup can serve; normal startup does not
   create or adopt a store. The Lean kernels prove

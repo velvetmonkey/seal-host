@@ -5,7 +5,7 @@
     "approval": {
       "control_file": "/ABS/PATH/.seal/unused-approvals.ndjson",
       "ttl_seconds": 120,
-      "replay_store": {"sqlite_path": "/ABS/PATH/.seal/replay.sqlite", "schema_version": 1, "namespace_encoding_version": 1}
+      "replay_store": {"sqlite_path": "/ABS/PATH/.seal/replay.sqlite", "schema_version": 2, "namespace_encoding_version": 1}
     },
     "tools": [
       {"name": "read_text_file", "mode": "allow", "match": {"type": "starts_with", "arg": "path", "value": "/ABS/PATH/safe-read/"}},

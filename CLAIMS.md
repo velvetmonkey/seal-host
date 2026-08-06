@@ -67,10 +67,19 @@ qualifiers still apply to what the theorems prove, not to build reachability.
 - **A4 (atomic consume)** discharged by the host `Mutex` carrying M6 atomic-consume; concurrency-tested 16->1 Allow.
 - **A5 (single-use replay)** discharged by construction: the store IS `listReplayStore`.
 - **A6 (cross-restart durability)** closed for the host's Ed25519 signed-token
-  production channel: accepted nonces are written to SQLite before an
-  approval reaches Lean, with WAL plus `synchronous=FULL`. The legacy
-  control-file/interactive demo channels keep in-memory replay state and do
-  not claim cross-restart replay protection.
+  production channel, two-phase since the G2 cut (a) ruling (Ben,
+  2026-08-06): a nonce is durably RESERVED in SQLite (WAL plus
+  `synchronous=FULL`) before its approval reaches Lean — the hold blocks any
+  second presentation — and the burn is durably COMMITTED only at RECORDED,
+  after the authorization-decision receipt persists and before the child
+  forward. Startup recovery reclaims holds that never reached RECORDED, so a
+  crash before RECORDED leaves the approval usable again with no receipt; a
+  committed burn is never reclaimed. The receipt (file store) and the burn
+  (SQLite) are two durable acts, not one: a crash exactly between them
+  leaves a RECORDED receipt with a reclaimable hold, so the same approval
+  can produce a second receipt after restart — never a second forward. The
+  legacy control-file/interactive demo channels keep in-memory replay state
+  and do not claim cross-restart replay protection.
 - **A7 (replay-store instance integrity) RULED AND ACCEPTED by Ben 2026-07-30**
   (council `5c3845e7`, shape (D): application-layer instance binding is not
   achievable against an attacker holding write access to the store path, so this

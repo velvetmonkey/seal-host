@@ -93,7 +93,7 @@ Minimal shape:
       "ttl_seconds": 120,
       "replay_store": {
         "sqlite_path": "/var/lib/seal-host/replay.sqlite",
-        "schema_version": 1,
+        "schema_version": 2,
         "namespace_encoding_version": 1
       }
     },
