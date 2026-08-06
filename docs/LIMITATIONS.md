@@ -37,27 +37,32 @@ imports of `Test/Axioms.lean` (wired `4eb6bb4`) and are built under
 `release.yml`) already carried `Built` lines for those five plus
 `Host.SpawnSeam` and `Host.AuditSeam`.
 
-**Two theorem-bearing modules remain outside the `Test.Axioms` closure:**
+**Two theorem-bearing modules remain outside the `Test.Axioms` closure.** Both
+are permanent exclusions under the repo-wide G1 gate
+(`scripts/proof_reach.py` → CI `control_33`), not silent oversights. G1's stop
+condition is zero `ORPHANED` rows; excluded modules appear as `EXCLUDED` with
+the reasons below.
 
 1. **`Host.CanonicalL0Liveness` — a ruling, not an oversight.** DROPPED FROM
    THE RELEASE CLAIM by Ben on 2026-08-01. Its kernel reduction measured 6.0 GiB
    RSS and 1h51m CPU on 2026-07-31, which the release pipeline will not carry.
    Nothing in the public claim surface asserts that its theorems are built or
    axiom-checked. The source remains in the tree and remains visible in every
-   generated proof inventory as `reserved=1`, so the exclusion is stated rather
-   than silent. `scripts/proof_inventory.py` fails the build with
+   generated proof inventory as `reserved=1` / `EXCLUDED`, so the exclusion is
+   stated rather than silent. `scripts/proof_inventory.py` fails the build with
    `ORPHAN PROOF MODULE` for any *other* theorem-bearing `Host/` source that is
-   not in the closure.
+   not in the closure; `scripts/proof_reach.py` fails on any non-excluded
+   `ORPHANED` module repo-wide.
 
-2. **`Test.A2DivergenceClassification` — outside the axiom-gate wire.**
-   Theorem-bearing since 2026-07-30 (`b5f6ad8`). It is imported by nothing on a
-   default target, has no executable root, and is reachable only through the
-   non-default `Test.+` library glob — so it is not in the `Test.Axioms`
-   closure and is not axiom-gated by `lake exe axiom_check`. CI does build it
-   every run as `control_16` in `.github/workflows/ci.yml`
-   (`lake build Test.A2DivergenceClassification`); run `30693805679` shows it
-   `Built`. That build is not an axiom pin: the module carries seven
-   `#print axioms` command lines and zero `#guard_msgs`, so the prints are
-   unasserted and cannot fail the build. The Host-scoped inventory gate does
-   not see `Test/` sources; the residual names the module here so the public
-   sentence matches the measured census (51/53), not only the Host subset.
+2. **`Test.A2DivergenceClassification` — permanent exclusion, not an axiom pin.**
+   Theorem-bearing since 2026-07-30 (`b5f6ad8`). Classification criterion and
+   unasserted `#print axioms` for A2 parser divergence; not part of the
+   axiom-footprint claim. It is imported by nothing on a default target, has
+   no executable root, and is addressable only through the non-default `Test.+`
+   library glob — so it is not in the `Test.Axioms` closure and is not
+   axiom-gated by `lake exe axiom_check`. CI builds it every run as
+   `control_16` (`lake build Test.A2DivergenceClassification`); that build is
+   a compile-time guard, not an axiom pin (seven `#print axioms` lines, zero
+   `#guard_msgs`). The Host-scoped inventory gate does not see `Test/`
+   sources; the G1 gate names it here as `EXCLUDED` so the public sentence
+   matches the measured census (51/53) and the exclusion is not silent.
