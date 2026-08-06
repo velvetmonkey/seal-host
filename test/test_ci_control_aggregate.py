@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
@@ -10,11 +11,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 AGGREGATE = ROOT / "scripts" / "ci_control_aggregate.py"
 sys.path.insert(0, str(ROOT / "scripts"))
+import ci_control_aggregate as aggregate  # noqa: E402
 from ci_control_aggregate import Control, workflow_controls  # noqa: E402
 
 
@@ -36,6 +39,13 @@ def full_success_steps(
 
 
 class CiControlAggregateTests(unittest.TestCase):
+    def controls_from_yaml(self, source: str) -> set[Control]:
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            workflows = Path(directory)
+            (workflows / "probe.yml").write_text(source, encoding="utf-8")
+            with mock.patch.object(aggregate, "WORKFLOWS", workflows):
+                return workflow_controls()
+
     def run_aggregate(
         self,
         steps: object | None,
@@ -83,6 +93,108 @@ class CiControlAggregateTests(unittest.TestCase):
             workflow_controls(),
         )
         self.assertIn("control_33", declared_ids("ci.yml", "build"))
+
+    def test_bare_control_id_is_declared(self) -> None:
+        controls = self.controls_from_yaml(
+            "jobs:\n  build:\n    steps:\n      - id: control_01\n"
+        )
+        self.assertIn(Control("probe.yml", "build", "control_01"), controls)
+
+    def test_single_quoted_control_id_is_declared(self) -> None:
+        controls = self.controls_from_yaml(
+            "jobs:\n  build:\n    steps:\n      - id: 'control_02'\n"
+        )
+        self.assertIn(Control("probe.yml", "build", "control_02"), controls)
+
+    def test_double_quoted_control_id_is_declared(self) -> None:
+        controls = self.controls_from_yaml(
+            'jobs:\n  build:\n    steps:\n      - id: "control_03"\n'
+        )
+        self.assertIn(Control("probe.yml", "build", "control_03"), controls)
+
+    def test_control_id_with_trailing_comment_is_declared(self) -> None:
+        controls = self.controls_from_yaml(
+            "jobs:\n  build:\n    steps:\n      - id: control_04 # measured gate\n"
+        )
+        self.assertIn(Control("probe.yml", "build", "control_04"), controls)
+
+    def test_unparseable_workflow_fails_loudly(self) -> None:
+        source = (
+            "jobs:\n"
+            "  build:\n"
+            "    matrix: [unterminated\n"
+            "    steps:\n"
+            "      - id: control_01\n"
+        )
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            workflows = Path(directory)
+            workflow = workflows / "malformed.yml"
+            workflow.write_text(source, encoding="utf-8")
+            allowlist = workflows / "allowlist.json"
+            allowlist.write_text(
+                json.dumps({"version": 1, "controls": []}), encoding="utf-8"
+            )
+            with mock.patch.object(aggregate, "WORKFLOWS", workflows):
+                with self.assertRaises(aggregate.WorkflowParseError) as raised:
+                    workflow_controls()
+                resolved = aggregate.resolve_identity(
+                    workflow_ref=(
+                        "velvetmonkey/seal-host/.github/workflows/"
+                        "malformed.yml@refs/heads/test"
+                    ),
+                    job="build",
+                )
+                with mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+                    exit_code = aggregate.main(allowlist)
+        message = str(raised.exception)
+        self.assertIn("malformed.yml", message)
+        self.assertIn("not valid YAML", message)
+        self.assertIsInstance(resolved, str)
+        self.assertIn("malformed.yml", resolved)
+        self.assertIn("not valid YAML", resolved)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("malformed.yml", output.getvalue())
+        self.assertIn("not valid YAML", output.getvalue())
+
+    def test_quoted_control_id_cannot_hide_from_completeness(self) -> None:
+        source = (
+            "jobs:\n"
+            "  build:\n"
+            "    steps:\n"
+            "      - id: control_01\n"
+            '      - id: "control_02"\n'
+        )
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            temporary = Path(directory)
+            workflows = temporary / "workflows"
+            workflows.mkdir()
+            (workflows / "probe.yml").write_text(source, encoding="utf-8")
+            allowlist = temporary / "allowlist.json"
+            allowlist.write_text(
+                json.dumps({"version": 1, "controls": []}), encoding="utf-8"
+            )
+            environment = {
+                "GITHUB_WORKFLOW_REF": (
+                    "velvetmonkey/seal-host/.github/workflows/"
+                    "probe.yml@refs/heads/test"
+                ),
+                "GITHUB_JOB": "build",
+                "SEAL_CONTROL_STEPS": json.dumps(
+                    {"control_01": {"outcome": "success"}}
+                ),
+            }
+            with (
+                mock.patch.object(aggregate, "WORKFLOWS", workflows),
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                exit_code = aggregate.main(allowlist)
+        self.assertEqual(exit_code, 1)
+        self.assertIn(
+            "declared CI control missing from measurement: "
+            "probe.yml:build:control_02",
+            output.getvalue(),
+        )
 
     def test_honest_full_payload_is_green(self) -> None:
         steps = full_success_steps()

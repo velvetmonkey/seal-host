@@ -11,6 +11,15 @@ import re
 import sys
 from typing import NamedTuple
 
+try:
+    import yaml
+except ModuleNotFoundError:
+    print(
+        "::error::PyYAML is required to inspect CI workflows; "
+        "refusing to fall back to text scanning"
+    )
+    raise SystemExit(1)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ALLOWLIST = ROOT / ".github" / "ci-control-skip-allowlist.json"
@@ -28,21 +37,47 @@ class Control(NamedTuple):
         return ":".join(self)
 
 
+class WorkflowParseError(Exception):
+    """A workflow file could be read but was not valid YAML."""
+
+
+def workflow_jobs(workflow_path: Path) -> dict[object, object]:
+    """Parse a workflow and return its top-level jobs mapping, if present."""
+    try:
+        with workflow_path.open(encoding="utf-8") as stream:
+            document = yaml.safe_load(stream)
+    except yaml.YAMLError as error:
+        raise WorkflowParseError(
+            f"workflow file {str(workflow_path)!r} is not valid YAML: {error}"
+        ) from error
+
+    if not isinstance(document, dict):
+        return {}
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict):
+        return {}
+    return jobs
+
+
 def workflow_controls() -> set[Control]:
-    """Read workflow/job/control coordinates without requiring a YAML package."""
+    """Read workflow/job/control coordinates from parsed workflow YAML."""
     controls: set[Control] = set()
     for workflow in sorted((*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml"))):
-        current_job: str | None = None
-        for line in workflow.read_text(encoding="utf-8").splitlines():
-            job = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
-            if job:
-                current_job = job.group(1)
+        for job, job_definition in workflow_jobs(workflow).items():
+            if not isinstance(job, str) or not isinstance(job_definition, dict):
                 continue
-            control = re.fullmatch(
-                r"      - id: (control_[A-Za-z0-9_-]+|attest)", line
-            )
-            if control and current_job is not None:
-                controls.add(Control(workflow.name, current_job, control.group(1)))
+            steps = job_definition.get("steps")
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                control_id = step.get("id")
+                if (
+                    isinstance(control_id, str)
+                    and CONTROL_ID.fullmatch(control_id) is not None
+                ):
+                    controls.add(Control(workflow.name, job, control_id))
     return controls
 
 
@@ -53,7 +88,7 @@ def declared_control_ids(workflow: str, job: str) -> set[str] | None:
     """
     try:
         known = workflow_controls()
-    except OSError as error:
+    except (OSError, WorkflowParseError) as error:
         print(f"::error::CI workflow controls cannot be inspected: {error}")
         return None
     return {
@@ -102,7 +137,7 @@ def load_allowlist(path: Path) -> dict[Control, str] | None:
 
     try:
         known = workflow_controls()
-    except OSError as error:
+    except (OSError, WorkflowParseError) as error:
         print(f"::error::CI workflow controls cannot be inspected: {error}")
         return None
     allowed: dict[Control, str] = {}
@@ -256,22 +291,11 @@ def parse_workflow_ref(workflow_ref: str | None) -> tuple[str, str] | str:
 
 def job_ids_in_workflow(workflow_path: Path) -> set[str]:
     """Job ids declared under the workflow's top-level jobs: mapping."""
-    jobs: set[str] = set()
-    in_jobs = False
-    for line in workflow_path.read_text(encoding="utf-8").splitlines():
-        if re.fullmatch(r"jobs:\s*(?:#.*)?", line):
-            in_jobs = True
-            continue
-        if not in_jobs:
-            continue
-        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
-            # Next top-level key ends the jobs mapping.
-            in_jobs = False
-            continue
-        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?", line)
-        if match:
-            jobs.add(match.group(1))
-    return jobs
+    return {
+        job
+        for job in workflow_jobs(workflow_path)
+        if isinstance(job, str) and JOB_ID.fullmatch(job) is not None
+    }
 
 
 def resolve_identity(
@@ -318,6 +342,8 @@ def resolve_identity(
         known_jobs = job_ids_in_workflow(workflow_path)
     except OSError as error:
         return f"workflow file {workflow!r} cannot be read: {error}"
+    except WorkflowParseError as error:
+        return str(error)
 
     if job not in known_jobs:
         return (
