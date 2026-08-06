@@ -359,7 +359,7 @@ for line in sys.stdin:
         for (key, value) in env {
             command.env(key, value);
         }
-        let mut child = command
+        command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -769,12 +769,28 @@ fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Ora
     // state component measured by this cut.
     oracle.send_bytes(&[0xff, b'\n']);
     assert_eq!(oracle.expect_line(), SEAM_ERROR_RESPONSE.trim_end());
-    // A startup retry is delivered to a different process asynchronously;
-    // allow that receiver time to fsync before declaring the state unchanged.
-    std::thread::sleep(Duration::from_millis(100));
-    let after_recovery = durable_cut_state(&oracle);
+    // A startup retry is delivered to a different process asynchronously and
+    // the receiver fsyncs every byte, so a positive recovery needs bounded
+    // time to drain. Poll until the expected state appears...
+    let mut after_recovery = durable_cut_state(&oracle);
+    for _ in 0..200 {
+        if after_recovery == spec.expected_after_recovery {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        after_recovery = durable_cut_state(&oracle);
+    }
     print_cut_state("T1 durable state after recovery", &after_recovery);
     assert_eq!(after_recovery, spec.expected_after_recovery);
+    // ...then hold and re-assert, so a forbidden late write (an unsafe replay
+    // landing after a transient match) still turns the cut red instead of
+    // slipping in behind a single early sample.
+    std::thread::sleep(Duration::from_millis(150));
+    let settled = durable_cut_state(&oracle);
+    assert_eq!(
+        settled, spec.expected_after_recovery,
+        "durable state changed after the recovery snapshot settled"
+    );
     oracle
 }
 
@@ -2538,10 +2554,13 @@ fn g2_t1_crash_between_reserve_and_recorded_recovers_the_approval() {
     );
 
     // Byte-identical re-presentation of the SAME signed token (same nonce).
+    // The recovered approval forwards; the mediated frame is the approved
+    // bytes plus exactly the one reserved operation_id member.
     o.approve_v2(&target, &framed, "n-g2-t1");
     o.send(&call);
-    assert_eq!(o.expect_raw(), framed, "the recovered approval forwards");
-    assert_eq!(o.expect_line(), call);
+    let raw_id = assert_forwarded_with_operation_id(&o.expect_raw(), &framed);
+    let line_id = assert_line_forwarded_with_operation_id(&o.expect_line(), &call);
+    assert_eq!(raw_id, line_id);
     let rows = replay_rows(&o);
     println!(
         "T1 state after recovery + reuse: replay_rows={rows:?} decisions={}",
@@ -2575,8 +2594,10 @@ fn g2_t2_second_presentation_fails_while_reservation_open() {
     o.approve_v2(&target, &framed, "n-g2-dup");
     o.approve_v2(&target, &framed, "n-g2-dup"); // identical second presentation
     o.send(&call);
-    assert_eq!(o.expect_raw(), framed, "exactly one forward");
-    assert_eq!(o.expect_line(), call);
+    // Exactly one forward: the approved bytes plus the one operation_id member.
+    let raw_id = assert_forwarded_with_operation_id(&o.expect_raw(), &framed);
+    let line_id = assert_line_forwarded_with_operation_id(&o.expect_line(), &call);
+    assert_eq!(raw_id, line_id);
     let stderr = o.drain_stderr(Duration::from_millis(300));
     assert!(
         stderr.iter().any(|l| l.contains("replayed_nonce")),
@@ -2635,6 +2656,15 @@ fn g2_t3_crash_after_recorded_keeps_burn_and_receipt() {
     );
 
     o.restart_with_env(&[]);
+    // The crash landed after RECORDED: the durable receipt is fresh PENDING
+    // release authority, so startup recovery resumes the release exactly once
+    // and it must be the approved bytes plus the one operation_id member —
+    // the reservation is FINISHED from the receipt, never re-spent.
+    let recovered_line = o.expect_line();
+    let recovered_raw = o.expect_raw();
+    let raw_id = assert_forwarded_with_operation_id(&recovered_raw, &framed);
+    let line_id = assert_line_forwarded_with_operation_id(&recovered_line, &call);
+    assert_eq!(raw_id, line_id);
     o.send(&call);
     let challenged = o.expect_line();
     let _ = o.expect_raw();
