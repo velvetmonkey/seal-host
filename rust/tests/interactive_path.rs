@@ -13,6 +13,9 @@
 //! call stayed blocked — the defect fixed alongside this test. A fast answer
 //! cannot catch that regression; the slow one is the point.
 
+#[path = "support/operation_forward.rs"]
+mod operation_forward;
+
 use ed25519_dalek::{Signer, SigningKey};
 use std::ffi::CString;
 use std::io::{BufRead, BufReader, Write};
@@ -240,10 +243,7 @@ fn interactive_yes_after_slow_human_answer_forwards() {
     h.answer("y\n");
 
     let echoed = h.expect_line();
-    assert_eq!(
-        echoed, call,
-        "a slow 'y' must still mint the approval and forward the call"
-    );
+    operation_forward::assert_operation_forward(&echoed, &call);
     let stderr = h.drain_stderr(Duration::from_millis(200));
     assert!(
         !stderr.iter().any(|l| l.contains("future_issued_at")),

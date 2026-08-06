@@ -35,6 +35,9 @@
 //! `CARGO_BIN_EXE_seal-host-rs` and a missing `libsealffi.so` is a link
 //! failure.
 
+#[path = "support/operation_forward.rs"]
+mod operation_forward;
+
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -358,7 +361,11 @@ impl Topo {
         let mut paths: Vec<_> = std::fs::read_dir(self.dir.join("seal-receipts"))
             .expect("receipt dir must exist after mediated calls")
             .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("receipt-") && name.ends_with(".json"))
+            })
             .collect();
         paths.sort();
         paths
@@ -438,7 +445,7 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
                 "[{ctx}] {tool} must block, got: {response}"
             );
         } else {
-            assert_eq!(response, line, "[{ctx}] {tool} must forward verbatim");
+            operation_forward::assert_operation_forward(&response, &line);
         }
         responses.push(response);
     }
@@ -460,7 +467,7 @@ fn run_config(mask: u8, cal: CalVariant, tag: &str) -> Vec<Outcome> {
             "[{ctx}] {tool} authorization-decision record type"
         );
         assert_eq!(
-            receipt["record_version"], 2,
+            receipt["record_version"], 3,
             "[{ctx}] {tool} authorization-decision record version"
         );
         assert_eq!(receipt["tool"], tool, "[{ctx}] receipt order");
@@ -632,16 +639,16 @@ fn explicit_allow_is_policy_relative_and_emits_no_authorized_status() {
         Some(0),
         "host must exit cleanly after EOF; stderr={stderr_text}"
     );
-    assert_eq!(
-        response.trim_end(),
-        call,
-        "explicit allow must reach the child"
-    );
+    operation_forward::assert_operation_forward(response.trim_end(), &call);
 
     let mut paths: Vec<_> = std::fs::read_dir(dir.join("seal-receipts"))
         .expect("authorization-decision directory")
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("receipt-") && name.ends_with(".json"))
+        })
         .collect();
     paths.sort();
     assert_eq!(

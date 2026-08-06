@@ -26,6 +26,7 @@ use seal_host_rs::providers::{
     approval_v2_signature_preimage, canonical_approval_v2_payload, ApprovalRecordV2Payload,
     ApprovalRenderer,
 };
+use seal_host_rs::release::{ReadableDurabilityClass, ReleaseStatus, ReleaseStore};
 use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
@@ -468,7 +469,11 @@ for line in sys.stdin:
         let mut paths: Vec<_> = std::fs::read_dir(self.receipt_dir())
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("receipt-") && name.ends_with(".json"))
+            })
             .collect();
         paths.sort();
         paths
@@ -535,6 +540,50 @@ fn guarded_call(id: u64, sql: &str) -> String {
     )
 }
 
+/// A mediated ALLOW forwards the exact authorized frame with one reserved,
+/// receiver-visible top-level member appended. Removing that one member must
+/// recover the byte-identical approved frame, including its delimiter.
+fn assert_forwarded_with_operation_id(actual: &[u8], approved: &[u8]) -> String {
+    fn split_terminator(frame: &[u8]) -> (&[u8], &[u8]) {
+        if let Some(body) = frame.strip_suffix(b"\r\n") {
+            (body, b"\r\n")
+        } else if let Some(body) = frame.strip_suffix(b"\n") {
+            (body, b"\n")
+        } else {
+            (frame, b"")
+        }
+    }
+
+    let (actual_body, actual_terminator) = split_terminator(actual);
+    let (approved_body, approved_terminator) = split_terminator(approved);
+    assert_eq!(
+        actual_terminator, approved_terminator,
+        "operation-id forwarding must preserve the authorized delimiter"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(actual_body).unwrap();
+    let operation_id = parsed["operation_id"]
+        .as_str()
+        .expect("mediated forward carries operation_id")
+        .to_string();
+    assert_eq!(operation_id.len(), 64);
+    assert!(operation_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    let suffix = format!(",\"operation_id\":\"{operation_id}\"}}");
+    assert!(
+        actual_body.ends_with(suffix.as_bytes()),
+        "operation_id must be the only appended wire member"
+    );
+    let reconstructed_len = actual_body.len() - suffix.len();
+    let mut reconstructed = actual_body[..reconstructed_len].to_vec();
+    reconstructed.push(b'}');
+    assert_eq!(reconstructed, approved_body);
+    operation_id
+}
+
+fn assert_line_forwarded_with_operation_id(actual: &str, approved: &str) -> String {
+    assert_forwarded_with_operation_id(actual.as_bytes(), approved.as_bytes())
+}
+
 fn m7_state_inventory(o: &Oracle) -> String {
     let mut receipt_entries: Vec<_> = std::fs::read_dir(o.receipt_dir())
         .unwrap()
@@ -551,7 +600,7 @@ fn m7_state_inventory(o: &Oracle) -> String {
         "receipt_dir_entries={receipt_entries:?} authorization_decisions={} audit_head_present={} approval_bytes={approvals_bytes} token_bytes={tokens_bytes} replay_rows={replay_rows}",
         receipt_entries
             .iter()
-            .filter(|name| name.ends_with(".json"))
+            .filter(|name| name.starts_with("receipt-") && name.ends_with(".json"))
             .count(),
         receipt_entries
             .iter()
@@ -560,9 +609,23 @@ fn m7_state_inventory(o: &Oracle) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum DurableReceiverState {
+    Empty,
+    Partial {
+        hex: String,
+    },
+    Complete {
+        frames: usize,
+        operation_ids_match_signed_receipts: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DurableCutState {
-    authorization_decisions: usize,
-    receiver_hex: String,
+    release_statuses: Vec<ReleaseStatus>,
+    durability_classes: Vec<ReadableDurabilityClass>,
+    operation_state_entries: usize,
+    receiver: DurableReceiverState,
 }
 
 struct CrashCutSpec {
@@ -574,26 +637,78 @@ struct CrashCutSpec {
 }
 
 fn durable_cut_state(o: &Oracle) -> DurableCutState {
-    let authorization_decisions = if o.receipt_dir().is_dir() {
-        o.receipts()
-            .into_iter()
-            .filter(|record| record["record_type"] == "seal.authorization-decision")
-            .count()
-    } else {
-        0
-    };
+    let store = ReleaseStore::open(o.receipt_dir()).expect("open signed release store");
+    let mut receipt_paths: Vec<_> = std::fs::read_dir(o.receipt_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("receipt-") && name.ends_with(".json"))
+        })
+        .collect();
+    receipt_paths.sort();
+    let releases: Vec<_> = receipt_paths
+        .iter()
+        .map(|path| {
+            store
+                .read_verified(path)
+                .unwrap_or_else(|error| {
+                    panic!("signed receipt {} did not verify: {error}", path.display())
+                })
+                .1
+                .expect("crash-cut receipt is an ALLOW release")
+        })
+        .collect();
+    let release_statuses = releases.iter().map(|release| release.status).collect();
+    let durability_classes = releases
+        .iter()
+        .map(|release| release.durability_class)
+        .collect();
+    let mut signed_operation_ids: Vec<_> = releases
+        .iter()
+        .map(|release| release.operation_id.clone())
+        .collect();
+    signed_operation_ids.sort();
     let receiver_bytes = std::fs::read(o.dir.join("receiver.bin")).unwrap_or_default();
+    let receiver = if receiver_bytes.is_empty() {
+        DurableReceiverState::Empty
+    } else if !receiver_bytes.ends_with(b"\n") {
+        DurableReceiverState::Partial {
+            hex: hex::encode(receiver_bytes),
+        }
+    } else {
+        let mut received_operation_ids = Vec::new();
+        for line in receiver_bytes.split(|byte| *byte == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            let frame: serde_json::Value = serde_json::from_slice(line).unwrap_or_else(|error| {
+                panic!("durable receiver has a bad complete frame: {error}")
+            });
+            received_operation_ids.push(
+                frame["operation_id"]
+                    .as_str()
+                    .expect("forwarded frame carries operation_id")
+                    .to_string(),
+            );
+        }
+        received_operation_ids.sort();
+        DurableReceiverState::Complete {
+            frames: received_operation_ids.len(),
+            operation_ids_match_signed_receipts: received_operation_ids == signed_operation_ids,
+        }
+    };
     DurableCutState {
-        authorization_decisions,
-        receiver_hex: hex::encode(receiver_bytes),
+        release_statuses,
+        durability_classes,
+        operation_state_entries: store.operation_count().expect("read operation state"),
+        receiver,
     }
 }
 
 fn print_cut_state(label: &str, state: &DurableCutState) {
-    println!(
-        "{label}: authorization_decisions={} receiver_hex={}",
-        state.authorization_decisions, state.receiver_hex
-    );
+    println!("{label}: {state:?}");
 }
 
 /// Drive a named crash cut against the real host process. A case is entirely
@@ -663,43 +778,134 @@ fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Ora
     oracle
 }
 
-#[test]
-fn g2_cut_d_partial_child_write_is_not_retried_on_restart() {
-    let expected_before = DurableCutState {
-        authorization_decisions: 0,
-        receiver_hex: String::new(),
-    };
-    let expected_recorded_only = DurableCutState {
-        authorization_decisions: 1,
-        receiver_hex: "7b".to_string(),
-    };
-    let spec = CrashCutSpec {
-        name: "g2-cut-d",
-        crash_point: "g2-d-during-child-write",
-        expected_before,
-        expected_after_kill: expected_recorded_only.clone(),
-        expected_after_recovery: expected_recorded_only,
-    };
-    let oracle = drive_crash_cut(spec, |oracle| {
-        oracle.send(
-            r#"{"jsonrpc":"2.0","id":800,"method":"tools/call","params":{"name":"m7.echo","arguments":{"message":"cut-d"}}}"#,
-        );
-    });
-
-    // The one persisted record is RECORDED-only: today's runtime has no
-    // release_status or operation_id field to imply that the ambiguous write
-    // completed. Cut (d)'s required fail-safe is therefore no automatic retry.
-    let receipts = oracle.receipts();
-    let receipt = receipts
-        .iter()
-        .find(|record| record["verdict"] == "ALLOW")
-        .expect("crashed release has a durable ALLOW record");
-    for forbidden_release_claim in ["release_status", "operation_id", "durability_class"] {
-        assert!(
-            receipt.get(forbidden_release_claim).is_none(),
-            "ambiguous child write must not gain a {forbidden_release_claim} claim"
-        );
+fn empty_cut_state() -> DurableCutState {
+    DurableCutState {
+        release_statuses: Vec::new(),
+        durability_classes: Vec::new(),
+        operation_state_entries: 0,
+        receiver: DurableReceiverState::Empty,
     }
+}
+
+fn recorded_cut_state(
+    status: ReleaseStatus,
+    operation_state_entries: usize,
+    receiver: DurableReceiverState,
+) -> DurableCutState {
+    DurableCutState {
+        release_statuses: vec![status],
+        durability_classes: vec![ReadableDurabilityClass::AssertedLocalFsync],
+        operation_state_entries,
+        receiver,
+    }
+}
+
+fn complete_receiver() -> DurableReceiverState {
+    DurableReceiverState::Complete {
+        frames: 1,
+        operation_ids_match_signed_receipts: true,
+    }
+}
+
+fn cut_request(cut: char) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 800,
+        "method": "tools/call",
+        "params": {
+            "name": "m7.echo",
+            "arguments": {"message": format!("cut-{cut}")},
+        },
+    })
+    .to_string()
+}
+
+#[test]
+fn g2_cut_b_recorded_receipt_redoes_state_and_releases_on_restart() {
+    let oracle = drive_crash_cut(
+        CrashCutSpec {
+            name: "g2-cut-b",
+            crash_point: "g2-b-after-recorded",
+            expected_before: empty_cut_state(),
+            expected_after_kill: recorded_cut_state(
+                ReleaseStatus::Pending,
+                0,
+                DurableReceiverState::Empty,
+            ),
+            expected_after_recovery: recorded_cut_state(
+                ReleaseStatus::Released,
+                1,
+                complete_receiver(),
+            ),
+        },
+        |oracle| oracle.send(&cut_request('b')),
+    );
+    assert_eq!(
+        oracle
+            .receipts()
+            .into_iter()
+            .find(|record| record["record_type"] == "seal.authorization-decision")
+            .expect("durable authorization decision")["record_version"],
+        3
+    );
+}
+
+#[test]
+fn g2_cut_c_committed_state_resumes_release_once_on_restart() {
+    drive_crash_cut(
+        CrashCutSpec {
+            name: "g2-cut-c",
+            crash_point: "g2-c-after-state-commit",
+            expected_before: empty_cut_state(),
+            expected_after_kill: recorded_cut_state(
+                ReleaseStatus::Pending,
+                1,
+                DurableReceiverState::Empty,
+            ),
+            expected_after_recovery: recorded_cut_state(
+                ReleaseStatus::Released,
+                1,
+                complete_receiver(),
+            ),
+        },
+        |oracle| oracle.send(&cut_request('c')),
+    );
+}
+
+#[test]
+fn g2_cut_d_partial_child_write_is_ambiguous_and_not_retried_on_restart() {
+    let ambiguous = recorded_cut_state(
+        ReleaseStatus::Unknown,
+        1,
+        DurableReceiverState::Partial {
+            hex: "7b".to_string(),
+        },
+    );
+    drive_crash_cut(
+        CrashCutSpec {
+            name: "g2-cut-d",
+            crash_point: "g2-d-during-child-write",
+            expected_before: empty_cut_state(),
+            expected_after_kill: ambiguous.clone(),
+            expected_after_recovery: ambiguous,
+        },
+        |oracle| oracle.send(&cut_request('d')),
+    );
+}
+
+#[test]
+fn g2_cut_e_released_operation_is_not_released_again_before_ack() {
+    let released = recorded_cut_state(ReleaseStatus::Released, 1, complete_receiver());
+    drive_crash_cut(
+        CrashCutSpec {
+            name: "g2-cut-e",
+            crash_point: "g2-e-after-released",
+            expected_before: empty_cut_state(),
+            expected_after_kill: released.clone(),
+            expected_after_recovery: released,
+        },
+        |oracle| oracle.send(&cut_request('e')),
+    );
 }
 
 #[test]
@@ -759,7 +965,7 @@ fn m7_version_gate_precedes_authority_and_preserves_positive_control() {
     o.send(positive);
     let positive_response = o.expect_line();
     println!("M7 POSITIVE RESPONSE={positive_response}");
-    assert_eq!(positive_response, positive);
+    assert_line_forwarded_with_operation_id(&positive_response, positive);
     println!("M7 STATE AFTER POSITIVE {}", m7_state_inventory(&o));
 }
 
@@ -776,13 +982,11 @@ fn meta_identity_live_host_projection_and_kernel_commitment_agree() {
     for line in [line_a, line_a, line_b] {
         o.send(line);
         let response: serde_json::Value = serde_json::from_str(&o.expect_line()).unwrap();
-        assert_eq!(
-            response
-                .pointer("/result/content/0/raw")
-                .and_then(|v| v.as_str()),
-            Some(line),
-            "live metadata control must reach the observer byte-identically"
-        );
+        let raw = response
+            .pointer("/result/content/0/raw")
+            .and_then(|value| value.as_str())
+            .expect("observer reports exact received frame");
+        assert_line_forwarded_with_operation_id(raw, line);
     }
 
     let receipts = o.receipts();
@@ -870,13 +1074,11 @@ fn non_object_metadata_allow_receipts_are_complete_and_distinct() {
         );
         o.send(&line);
         let response: serde_json::Value = serde_json::from_str(&o.expect_line()).unwrap();
-        assert_eq!(
-            response
-                .pointer("/result/content/0/raw")
-                .and_then(serde_json::Value::as_str),
-            Some(line.as_str()),
-            "{label}: mediated ALLOW did not reach the observer byte-identically"
-        );
+        let raw = response
+            .pointer("/result/content/0/raw")
+            .and_then(serde_json::Value::as_str)
+            .expect("observer reports exact received frame");
+        assert_line_forwarded_with_operation_id(raw, &line);
         expected.push((label, raw_metadata, line));
     }
 
@@ -999,13 +1201,11 @@ fn mrtr_identity_live_host_projection_and_kernel_commitment_agree() {
         for raw in [left, left, right] {
             o.send(raw);
             let response: serde_json::Value = serde_json::from_str(&o.expect_line()).unwrap();
-            assert_eq!(
-                response
-                    .pointer("/result/content/0/raw")
-                    .and_then(|value| value.as_str()),
-                Some(raw.as_str()),
-                "live MRTR control must reach the observer byte-identically"
-            );
+            let observed = response
+                .pointer("/result/content/0/raw")
+                .and_then(|value| value.as_str())
+                .expect("observer reports exact received frame");
+            assert_line_forwarded_with_operation_id(observed, raw);
         }
     }
 
@@ -1171,7 +1371,7 @@ fn numeric_agreement_refuses_at_wire_and_preserves_negative_control() {
         "NEGATIVE CTRL OBSERVER: raw={observer_raw} value={observer_value:e} kernel_request_sha256={}",
         negative_receipt["request_sha256"]
     );
-    assert_eq!(observer_raw, negative, "1e308 must forward verbatim");
+    assert_line_forwarded_with_operation_id(observer_raw, &negative);
     assert_eq!(observer_value, 1e308);
     assert_eq!(
         negative_receipt["request_sha256"], expected_hash,
@@ -1186,10 +1386,9 @@ fn numeric_agreement_refuses_at_wire_and_preserves_negative_control() {
     let safe_observation = &safe_observer["result"]["content"][0];
     println!("BOUNDARY SAFE REQUEST: {safe_boundary}");
     println!("BOUNDARY SAFE OBSERVER RESPONSE: {safe_response}");
-    assert_eq!(
-        safe_observation["raw"].as_str(),
-        Some(safe_boundary.as_str()),
-        "2^53 - 1 must be accepted and forwarded verbatim"
+    assert_line_forwarded_with_operation_id(
+        safe_observation["raw"].as_str().unwrap(),
+        &safe_boundary,
     );
     assert_eq!(safe_observation["value"].as_u64(), Some(9007199254740991));
 
@@ -1405,12 +1604,18 @@ fn mediation_obfuscation_and_one_shot_approval() {
     );
     o.approve_v2(&target, approved_frame.as_bytes(), "n-main-canonical");
     o.send(&approved);
-    assert_eq!(
-        o.expect_line(),
-        approved,
-        "approved canonical call must forward"
-    );
-    let receipts = o.receipts();
+    assert_line_forwarded_with_operation_id(&o.expect_line(), &approved);
+    let mut receipts = o.receipts();
+    for _ in 0..200 {
+        if receipts
+            .iter()
+            .any(|receipt| receipt["verdict"] == "ALLOW" && receipt["release_status"] == "RELEASED")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        receipts = o.receipts();
+    }
     let envelope: serde_json::Value =
         serde_json::from_slice(&std::fs::read(o.dir.join("trusted.json")).unwrap()).unwrap();
     let expected_payload = envelope["payload"].as_str().unwrap();
@@ -1436,7 +1641,16 @@ fn mediation_obfuscation_and_one_shot_approval() {
         .find(|receipt| receipt["verdict"] == "ALLOW")
         .expect("forwarded decision persisted an ALLOW authorization decision");
     assert_eq!(allow["record_type"], "seal.authorization-decision");
-    assert_eq!(allow["record_version"], 2);
+    assert_eq!(allow["record_version"], 3);
+    assert_eq!(allow["release_status"], "RELEASED");
+    assert_eq!(allow["durability_class"], "asserted_local_fsync");
+    assert_eq!(allow["operation_id"].as_str().unwrap().len(), 64);
+    assert_eq!(allow["signature"]["domain"], "seal.object-b/v1");
+    assert_eq!(allow["signature"]["algorithm"], "Ed25519");
+    assert_ne!(
+        allow["signature"]["public_key"], expected_pubkey,
+        "per-install receipt signing key must remain role-split from config authority"
+    );
     let effect_view = &allow["effect_view"];
     assert_eq!(effect_view["schema"], "seal.effect-view/v0");
     assert_eq!(effect_view["authoritative"], false);
@@ -1526,10 +1740,13 @@ fn terminator_shares_commitment_but_child_sees_original_bytes() {
     o.send_bytes(crlf_frame.as_bytes());
     let crlf_child = o.expect_raw();
 
-    // -- HALF 1: the child received byte-DIFFERENT lines --
+    // -- HALF 1: removing each distinct operation id recovers the exact
+    // authorized LF/CRLF frame. --
+    assert_forwarded_with_operation_id(&lf_child, lf_frame.as_bytes());
+    assert_forwarded_with_operation_id(&crlf_child, crlf_frame.as_bytes());
     assert_ne!(
         lf_child, crlf_child,
-        "the child must receive the original wire, so the terminators differ"
+        "the child must receive distinct operation-bearing frames"
     );
     assert!(
         lf_child.ends_with(b"}\n") && !lf_child.ends_with(b"}\r\n"),
@@ -1539,15 +1756,6 @@ fn terminator_shares_commitment_but_child_sees_original_bytes() {
         crlf_child.ends_with(b"}\r\n"),
         "CRLF call reaches the child terminated by \\r\\n: {crlf_child:?}"
     );
-    // The delta is EXACTLY the carriage return, nothing interior.
-    let mut crlf_stripped = crlf_child.clone();
-    let n = crlf_stripped.len();
-    crlf_stripped.remove(n - 2); // drop the \r before the trailing \n
-    assert_eq!(
-        crlf_stripped, lf_child,
-        "the only difference the child sees is the terminator's \\r"
-    );
-
     // -- HALF 2: both decisions share ONE kernel commitment --
     let allows: Vec<serde_json::Value> = o
         .receipts()
@@ -1738,12 +1946,8 @@ fn ed25519_approval_v2_forwards_the_exact_framed_subject() {
     let token = signed_v2_token(&target, &framed_bytes, shown_bytes, "n-v2-host-path");
     o.append_token_line(&token);
     o.send(&call);
-    assert_eq!(
-        o.expect_raw(),
-        framed_bytes,
-        "v2 evidence must not rewrite any forwarded byte"
-    );
-    assert_eq!(o.expect_line(), call);
+    assert_forwarded_with_operation_id(&o.expect_raw(), &framed_bytes);
+    assert_line_forwarded_with_operation_id(&o.expect_line(), &call);
 
     o.send(&call);
     assert!(
@@ -2172,7 +2376,7 @@ fn approval_target_binds_every_argument_key() {
         "n-target-scalar",
     );
     o.send(scalar_sibling);
-    assert_eq!(o.expect_line(), scalar_sibling);
+    assert_line_forwarded_with_operation_id(&o.expect_line(), scalar_sibling);
     o.send(nested_sibling);
     assert!(is_block(&o.expect_line()));
     o.approve_v2(
@@ -2181,7 +2385,7 @@ fn approval_target_binds_every_argument_key() {
         "n-target-nested",
     );
     o.send(nested_sibling);
-    assert_eq!(o.expect_line(), nested_sibling);
+    assert_line_forwarded_with_operation_id(&o.expect_line(), nested_sibling);
 }
 
 /// P2-c observability tap, recut 2026-07-31 to the seven-guard boundary. The
@@ -2239,11 +2443,7 @@ fn reduced_scope_forward_attempt_emits_observability_signal() {
         "n-reduced-parseable",
     );
     o.send(&parseable);
-    assert_eq!(
-        o.expect_line(),
-        parseable,
-        "parseable ALLOW forwards verbatim"
-    );
+    assert_line_forwarded_with_operation_id(&o.expect_line(), &parseable);
     let no_signal = o
         .drain_stderr(Duration::from_millis(400))
         .into_iter()

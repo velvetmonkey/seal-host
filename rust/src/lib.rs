@@ -16,6 +16,7 @@ pub mod output;
 pub mod providers;
 pub mod reachability;
 pub mod receipt;
+pub mod release;
 pub mod replay_store;
 pub mod route;
 pub mod secure_fs;

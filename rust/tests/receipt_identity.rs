@@ -14,6 +14,9 @@
 //! mutation drill in the D3 report plants exactly that and watches
 //! `approval_identity_ignores_self_asserted_caller` refuse it.
 
+#[path = "support/operation_forward.rs"]
+mod operation_forward;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::providers::{
@@ -181,7 +184,11 @@ impl Host {
         let mut paths: Vec<_> = std::fs::read_dir(self.dir.join("seal-receipts"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("receipt-") && name.ends_with(".json"))
+            })
             .collect();
         paths.sort();
         paths
@@ -280,11 +287,7 @@ fn allow_receipt_for(
     let target = block_target(&blocked);
     host.append_token_line(&signed_v2_token(seed, &target, call, nonce));
     host.send(call);
-    assert_eq!(
-        host.expect_line(),
-        call,
-        "signed approval must forward the call"
-    );
+    operation_forward::assert_operation_forward(&host.expect_line(), call);
     host.receipts()
         .into_iter()
         .rev()
