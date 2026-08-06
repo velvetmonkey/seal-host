@@ -105,6 +105,12 @@
     },
     {
       "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_33",
+      "reason": "On the tokenless path Lake cannot fetch the manifest-pinned private dependencies, so the import closure this gate walks cannot be resolved and no reachability inventory can be produced. Ben ruled 2026-08-06: the token is deliberately not supplied on that path, so the skip is the intended behaviour rather than an unexplained gap."
+    },
+    {
+      "workflow": "ci.yml",
       "job": "rust-conformance-lean",
       "id": "control_02",
       "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
