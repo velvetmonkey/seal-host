@@ -107,7 +107,7 @@ export const PIN_ROWS = Object.freeze([
     anchor: "nonce durable-consume vs decision ordering",
     check: "nonce-consume-ordering",
     fact:
-      "durable insert precedes survivor release and Lean decision; startup cache is rebuilt from the durable store",
+      "durable reservation precedes Lean; the decision receipt precedes burn commit, which precedes child forwarding; startup reclaims open holds before rebuilding the cache",
   },
 ]);
 
