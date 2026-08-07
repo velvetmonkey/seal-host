@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """G7 — end-to-end verified-mediation demo.
 
-Part A drives the full Rust host (all seven kernels, live audit certs) over
+The demo drives the full Rust host (all seven kernels, live audit certs) over
 real MCP stdio against a real tool server, demonstrating the six blocks:
 
   S  poisoned-source destructive call blocked (no approval)
@@ -12,12 +12,8 @@ real MCP stdio against a real tool server, demonstrating the six blocks:
   B  over-budget call denied (cap on executed db calls)
   HU human approval (Ed25519-signed token back-channel) unlocks a legit retry
 
-Part B puts the whole host in front of a REAL LangGraph agent: canary's
-offline P3 compliance pipeline, with SEAL_BIN pointed at the seal-host shim,
-so every vault write the agent makes is mediated by the verified host.
-
-Reproducible and offline: mock MCP server for Part A, canary's frozen
-fixtures for Part B, no API keys. Output: /tmp/seal-host-g7/G7-REPORT.md.
+Reproducible and offline: mock MCP server, no API keys.
+Output: /tmp/seal-host-g7/G7-REPORT.md.
 """
 
 import json
@@ -48,7 +44,6 @@ else:
     CONFIG_SK, PUBKEY = generate_keypair()
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 MOCK = ROOT / "test" / "integration" / "mock_mcp_server.py"
-CANARY = Path(os.environ.get("CANARY_ROOT", Path(__file__).resolve().parents[2] / "canary"))
 
 REPORT: list[str] = []
 AUDIT: list[str] = []
@@ -211,9 +206,9 @@ def blocked(r: dict) -> bool:
     return r["result"]["isError"] is True
 
 
-def part_a() -> None:
-    say("DEMO", "── Part A: six blocks under one fail-closed host ──")
-    tmp = WORK / "part-a"
+def run_demo() -> None:
+    say("DEMO", "── Six blocks under one fail-closed host ──")
+    tmp = WORK / "blocks"
     tmp.mkdir(parents=True)
     # The signed-token replay store lives here; the host requires a 0700
     # host-owned parent for it (bounds who can substitute the store).
@@ -293,7 +288,7 @@ def part_a() -> None:
     AUDIT.extend(l for l in stderr.splitlines() if l.startswith("{"))
 
     # New session for the T replay (budget cap already consumed above).
-    tmp2 = WORK / "part-a-replay"
+    tmp2 = WORK / "replay"
     tmp2.mkdir(parents=True)
     os.chmod(tmp2, 0o700)
     host2 = Host(tmp2)
@@ -314,7 +309,7 @@ def part_a() -> None:
 
     # HU — Ed25519 signed-token back-channel: a human-signed approval unlocks
     # a legit retry through a swappable channel (and A3 rejects its replay).
-    tmp3 = WORK / "part-a-ed25519"
+    tmp3 = WORK / "ed25519"
     tmp3.mkdir(parents=True)
     os.chmod(tmp3, 0o700)
     host3 = Host(tmp3)
@@ -340,27 +335,6 @@ def part_a() -> None:
     AUDIT.extend(l for l in stderr.splitlines() if l.startswith("{"))
 
 
-def part_b() -> None:
-    say("DEMO", "── Part B: whole host in front of a real LangGraph agent ──")
-    if not (CANARY / "demo" / "run_p3.py").exists():
-        say("AGENT", f"SKIPPED (canary not found at {CANARY}; set CANARY_ROOT)")
-        return
-    env = os.environ.copy()
-    env["SEAL_BIN"] = str(ROOT / "demo" / "seal_host_shim.py")
-    proc = subprocess.run(
-        ["uv", "run", "python", "demo/run_p3.py"],
-        cwd=CANARY, env=env, capture_output=True, text=True, timeout=600,
-    )
-    tail = "\n".join(proc.stdout.splitlines()[-12:])
-    REPORT.append(tail)
-    print(tail)
-    assert proc.returncode == 0, (
-        f"canary-through-seal-host failed (rc={proc.returncode}):\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
-    say("AGENT", "canary LangGraph pipeline ran through the verified host: "
-                 "report written via approved note/create; destructive "
-                 "note/delete blocked at the gate (see P3-REPORT.md)")
-
-
 def main() -> int:
     assert BIN.exists(), f"build first: cargo build (missing {BIN})"
     if WORK.exists():
@@ -368,8 +342,7 @@ def main() -> int:
     WORK.mkdir(parents=True)
     os.chmod(WORK, 0o700)
 
-    part_a()
-    part_b()
+    run_demo()
 
     report = WORK / "G7-REPORT.md"
     lines = ["# G7 — end-to-end verified-mediation demo", ""]

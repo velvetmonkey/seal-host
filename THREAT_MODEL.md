@@ -135,5 +135,4 @@ call blocked (S), an out-of-order replay blocked (T), a single-signer
 high-stakes action gated on quorum (C), a divergent write refused (V), an
 over-budget call denied (B), and a human (Ed25519-signed) approval unlocking a
 legitimate retry through a swappable back-channel — audit certificates emitted
-throughout — then the whole host placed in front of a real LangGraph agent
-(the canary compliance pipeline) mediating its live vault writes.
+throughout.
