@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import importlib.util
+import io
 from pathlib import Path
 import sys
 import tempfile
@@ -35,6 +37,11 @@ runs:
 
 
 class PyYamlCiCoverageTests(unittest.TestCase):
+    def run_main(self, root: Path) -> int:
+        # Expected failures must not become misleading GitHub error annotations.
+        with redirect_stdout(io.StringIO()):
+            return coverage.main(root)
+
     def fixture(self, workflow: str) -> tempfile.TemporaryDirectory[str]:
         temporary = tempfile.TemporaryDirectory(dir=ROOT)
         root = Path(temporary.name)
@@ -84,7 +91,7 @@ class PyYamlCiCoverageTests(unittest.TestCase):
             gate.write_text("print('independent')\n", encoding="utf-8")
             self.assertEqual(coverage.analyze(root), ())
             gate.write_text("import yaml\n", encoding="utf-8")
-            self.assertEqual(coverage.main(root), 1)
+            self.assertEqual(self.run_main(root), 1)
 
     def test_setup_must_precede_dependent_command(self) -> None:
         temporary = self.fixture(
@@ -99,7 +106,7 @@ class PyYamlCiCoverageTests(unittest.TestCase):
         with temporary:
             root = Path(temporary.name)
             (root / "scripts/gate.py").write_text("import yaml\n", encoding="utf-8")
-            self.assertEqual(coverage.main(root), 1)
+            self.assertEqual(self.run_main(root), 1)
 
     def test_setup_python_invalidates_earlier_provisioning(self) -> None:
         temporary = self.fixture(
@@ -115,7 +122,7 @@ class PyYamlCiCoverageTests(unittest.TestCase):
         with temporary:
             root = Path(temporary.name)
             (root / "scripts/gate.py").write_text("import yaml\n", encoding="utf-8")
-            self.assertEqual(coverage.main(root), 1)
+            self.assertEqual(self.run_main(root), 1)
 
     def test_unittest_discovery_is_an_invocation(self) -> None:
         temporary = self.fixture(
@@ -131,7 +138,7 @@ class PyYamlCiCoverageTests(unittest.TestCase):
             root = Path(temporary.name)
             (root / "test").mkdir()
             (root / "test/test_reader.py").write_text("import yaml\n", encoding="utf-8")
-            self.assertEqual(coverage.main(root), 0)
+            self.assertEqual(self.run_main(root), 0)
 
 
 if __name__ == "__main__":
