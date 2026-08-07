@@ -319,7 +319,8 @@ def checked_imports(
     upstream module all return messages (no default-allow for non-local names).
     """
     try:
-        imports = parse_imports(path)
+        source = strip_lean_comments(path.read_text(encoding="utf-8"))
+        imports = parse_imports(source, path)
     except (InventoryError, OSError, UnicodeDecodeError) as exc:
         return None, [f"{path}: {exc}"]
 
