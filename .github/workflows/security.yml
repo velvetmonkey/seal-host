@@ -21,6 +21,10 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         uses: actions/dependency-review-action@v5
@@ -37,6 +41,10 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -63,6 +71,10 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         name: Require private build access
@@ -109,6 +121,10 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         name: Require private build access

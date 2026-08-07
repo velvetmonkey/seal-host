@@ -31,6 +31,10 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         uses: actions/setup-node@v7.0.0
@@ -81,6 +85,10 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@v6.0.3
         with: { fetch-depth: 0 }
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         name: Require an exact release tag and private build access
@@ -213,6 +221,10 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         name: Require the promoted moving v1 Action tag

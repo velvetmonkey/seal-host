@@ -21,6 +21,10 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@v6.0.3
         with: { fetch-depth: 0 }
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         name: Require private build dependency access

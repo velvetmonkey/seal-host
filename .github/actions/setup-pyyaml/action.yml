@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Provision PyYAML for CI gates
+description: Ensure workflow-inspection gates can parse YAML and fail closed
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Prefer the runner's copy when it has one. Keep the two pip routes and
+        # the distro package fallback so this works across hosted Python images.
+        python3 -c 'import yaml' 2>/dev/null \
+          || python3 -m pip install --break-system-packages pyyaml==6.0.2 \
+          || python3 -m pip install pyyaml==6.0.2 \
+          || sudo apt-get install -y -qq python3-yaml

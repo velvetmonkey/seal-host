@@ -107,8 +107,9 @@ about a filter plainly containing `main`; quoting the top-level key as `"on":`,
 the standard answer to yamllint's default `truthy` warning, read as no trigger
 at all. Both now parse. So do anchors and aliases, which GitHub has supported
 since 2025-09-18, and any indentation YAML itself permits. This costs the gate
-a dependency on PyYAML, which `ci.yml` provisions explicitly; if it is missing
-the gate refuses to run rather than reporting coverage it could not check.
+a dependency on PyYAML, which every dependent CI job provisions through the
+shared local setup action; if it is missing the gates refuse to run rather than
+reporting coverage they could not check.
 
 Reading real YAML widens what parses, so the closed world is enforced above the
 parser instead. Event names are closed over GitHub's documented vocabulary of
