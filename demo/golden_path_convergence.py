@@ -214,7 +214,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     value["safety"]["approval"]["control_file"] = str(approvals)
     value["safety"]["approval"]["replay_store"] = {
         "sqlite_path": str(replay),
-        "schema_version": 1,
+        "schema_version": 2,
         "namespace_encoding_version": 1,
     }
     value["convergence"]["tools"][0]["op_arg"] = "op"
