@@ -7,6 +7,7 @@
 //! result before any ALLOW is forwarded.
 
 use crate::providers::ApprovalRecord;
+use crate::release::{RecoveryReport, ReleaseInput, ReleaseStatus, ReleaseStore, VerifiedRelease};
 use crate::{envelope_v23::canonical_json, lean, secure_fs};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -58,6 +59,9 @@ pub struct DecisionInput<'a> {
     pub approvals: &'a [ApprovalRecord],
     pub approval_identity: &'a ApprovalIdentity,
     pub approval_ttl_ms: u64,
+    /// Present exactly for an ALLOW. Its operation id, validity bound, exact
+    /// child frame and post-state binding become part of the signed receipt.
+    pub release: Option<&'a ReleaseInput>,
 }
 
 #[derive(Debug)]
@@ -66,6 +70,7 @@ pub struct AuthorizationDecisionWriter {
     next_entry: u64,
     native_executable_sha256: String,
     lean_ffi_sha256: String,
+    release_store: ReleaseStore,
 }
 
 #[derive(Debug, Clone)]
@@ -347,7 +352,7 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
         "record_type".into(),
         Value::String("seal.authorization-decision".into()),
     );
-    receipt.insert("record_version".into(), Value::from(2));
+    receipt.insert("record_version".into(), Value::from(3));
     if let Ok(parts) = &request_material {
         receipt.insert("tool".into(), Value::String(parts.tool.clone()));
         receipt.insert("arguments".into(), parts.arguments.clone());
@@ -522,11 +527,13 @@ impl AuthorizationDecisionWriter {
         let exe =
             std::env::current_exe().map_err(|e| format!("cannot identify host executable: {e}"))?;
         let ffi = lean::loaded_ffi_path().ok_or("cannot identify loaded Lean FFI artifact")?;
+        let release_store = ReleaseStore::open(&dir)?;
         Ok(Self {
             dir,
             next_entry: 0,
             native_executable_sha256: hash_file(&exe)?,
             lean_ffi_sha256: hash_file(&ffi)?,
+            release_store,
         })
     }
 
@@ -553,7 +560,8 @@ impl AuthorizationDecisionWriter {
             .get("canonical_request_sha256")
             .or_else(|| receipt.get("request_sha256"))
             .and_then(Value::as_str)
-            .ok_or("authorization decision lacks a request hash")?;
+            .ok_or("authorization decision lacks a request hash")?
+            .to_string();
         let consumed_target = receipt
             .get("approval")
             .and_then(|a| a.get("approval_identity"))
@@ -567,8 +575,10 @@ impl AuthorizationDecisionWriter {
                     .as_str()
                     .map(str::to_owned)
             });
+        self.release_store
+            .attach_and_sign(&mut receipt, input.release)?;
         let bytes = serde_json::to_string_pretty(&receipt)
-            .map_err(|e| format!("cannot serialize v2 authorization decision: {e}"))?
+            .map_err(|e| format!("cannot serialize v3 authorization decision: {e}"))?
             + "\n";
 
         loop {
@@ -608,6 +618,37 @@ impl AuthorizationDecisionWriter {
                 consumed_target,
             });
         }
+    }
+
+    pub fn commit_operation_state(&self, path: &Path) -> Result<bool, String> {
+        self.release_store.commit_operation_state(path)
+    }
+
+    pub fn transition_release(
+        &self,
+        path: &Path,
+        expected: ReleaseStatus,
+        next: ReleaseStatus,
+    ) -> Result<(), String> {
+        self.release_store.transition(path, expected, next)
+    }
+
+    pub fn recover_pending(
+        &self,
+        now: u64,
+        forward: impl FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<RecoveryReport, String> {
+        self.release_store.recover_pending(now, forward)
+    }
+
+    pub fn read_verified_release(&self, path: &Path) -> Result<Option<VerifiedRelease>, String> {
+        self.release_store
+            .read_verified(path)
+            .map(|(_, release)| release)
+    }
+
+    pub fn operation_count(&self) -> Result<usize, String> {
+        self.release_store.operation_count()
     }
 }
 
@@ -709,6 +750,7 @@ mod tests {
             approvals: &[],
             approval_identity: &identity,
             approval_ttl_ms: 1000,
+            release: None,
         })
     }
 

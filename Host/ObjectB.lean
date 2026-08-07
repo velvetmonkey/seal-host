@@ -6,8 +6,8 @@ import SealV2.EffectEnvelope
 import Lean.Data.Json
 
 /-!
-Object B's kernel model. `CorePayload` carries DECIDED + RECORDED data only;
-it has no RELEASED or EXECUTED field. `ObjectB ctx` is constructible only when
+Object B's kernel model. `CorePayload` carries the durable release status but
+has no EXECUTED field. `ObjectB ctx` is constructible only when
 the executable `Established` gate accepts the payload.
 
 `EstablishmentContext` is the explicit verifier-supplied assumption boundary:
@@ -23,9 +23,9 @@ signatures, or a wire encoding.
 
 The gate imposes no independent meaning or validity check on `schema`,
 `verificationProfile`, `recordedAt`, `sequenceNumber`, `postStateHash`,
-`receiptNonce`, `operationId`, or `kernelArtifactSha256`. The last two can be
-observed by deployment-supplied predicates, but this module does not constrain
-how those predicates use them.
+`receiptNonce`, `operationId`, `releaseStatus`, or `kernelArtifactSha256`.
+Operation and artifact identity can be observed by deployment-supplied
+predicates, but this module does not constrain how those predicates use them.
 -/
 
 namespace Host.ObjectB
@@ -61,9 +61,16 @@ inductive Verdict where
   deriving Repr, BEq, DecidableEq
 
 inductive DurabilityClass where
-  | localFsync
-  | replicatedQuorum
-  | externallyWitnessed
+  | assertedLocalFsync
+  | witnessedExternal
+  | unknown
+  deriving Repr, BEq, DecidableEq
+
+inductive ReleaseStatus where
+  | pending
+  | unknown
+  | released
+  | notApplicable
   deriving Repr, BEq, DecidableEq
 
 structure UntrustedWallTime where
@@ -113,6 +120,7 @@ structure CorePayload where
   verificationProfile : VerificationProfile
   logicalTime : Nat
   recordedAt : UntrustedWallTime
+  releaseStatus : ReleaseStatus
   durabilityClass : DurabilityClass
   operationId : OperationId
   sequenceNumber : Nat
@@ -331,7 +339,7 @@ def context : EstablishmentContext :=
       decide (seenInputs = inputs) && decide (raw = rawAllow) && decide (verdict = .allow)
     delegated := fun dep ref => decide (dep = deployment) && decide (ref = delegation)
     durablyRecorded := fun durability p =>
-      decide (durability = .localFsync) && decide (p.operationId = operation) }
+      decide (durability = .assertedLocalFsync) && decide (p.operationId = operation) }
 
 def payload : CorePayload :=
   { schema := .v1
@@ -352,7 +360,8 @@ def payload : CorePayload :=
     verificationProfile := .singleStepClosedV1
     logicalTime := 41
     recordedAt := ⟨1722513600⟩
-    durabilityClass := .localFsync
+    releaseStatus := .pending
+    durabilityClass := .assertedLocalFsync
     operationId := operation
     sequenceNumber := 17
     postStateHash := .stateless

@@ -44,8 +44,9 @@ use seal_host_rs::a3;
 use seal_host_rs::adapter_revision::McpRevisionSession;
 use seal_host_rs::authorization_decision::{
     request_parts, sha256_hex, ApprovalIdentity, AuthorizationDecisionWriter, DecisionInput,
-    SignedConfig,
+    PersistedAuthorizationDecision, SignedConfig,
 };
+use seal_host_rs::crash_injection;
 use seal_host_rs::envelope_v23::{
     self, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
 };
@@ -58,6 +59,7 @@ use seal_host_rs::limits::{
 use seal_host_rs::output::{OutputQueue, OutputSender};
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
+use seal_host_rs::release::{ReleaseInput, ReleaseStatus};
 use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::{
     numeric_agreement_refusal_response, route_of_classify, route_of_step_output,
@@ -400,11 +402,11 @@ fn production_preflight(args: &Args, replay_store_path: Option<&str>) -> Result<
 fn persist_decision(
     writer: &mut AuthorizationDecisionWriter,
     input: DecisionInput<'_>,
-) -> Result<Option<String>, ()> {
+) -> Result<PersistedAuthorizationDecision, ()> {
     match writer.persist(input) {
         Ok(decision) => {
             eprintln!("{}", json!({"authorization_decision": decision.path}));
-            Ok(decision.consumed_target)
+            Ok(decision)
         }
         Err(error) => {
             eprintln!(
@@ -461,6 +463,51 @@ fn maybe_test_crash(armed: Option<&str>, point: &str) {
         eprintln!("{}", json!({"seal_test_crash_point": point}));
         std::process::abort();
     }
+}
+
+fn release_recorded_allow(
+    writer: &AuthorizationDecisionWriter,
+    decision: &PersistedAuthorizationDecision,
+    release: &ReleaseInput,
+    child: &mut impl Write,
+    ready: &AtomicBool,
+) -> Result<(), ()> {
+    crash_injection::abort_if_armed("g2-b-after-recorded");
+    if let Err(error) = writer.commit_operation_state(&decision.path) {
+        eprintln!(
+            "{}",
+            json!({"error": "operation state commit failure", "detail": error})
+        );
+        return Err(());
+    }
+    crash_injection::abort_if_armed("g2-c-after-state-commit");
+    if let Err(error) = writer.transition_release(
+        &decision.path,
+        ReleaseStatus::Pending,
+        ReleaseStatus::Unknown,
+    ) {
+        eprintln!(
+            "{}",
+            json!({"error": "release attempt persistence failure", "detail": error})
+        );
+        return Err(());
+    }
+    if write_child(child, &release.frame, ready).is_err() {
+        return Err(());
+    }
+    if let Err(error) = writer.transition_release(
+        &decision.path,
+        ReleaseStatus::Unknown,
+        ReleaseStatus::Released,
+    ) {
+        eprintln!(
+            "{}",
+            json!({"error": "released status persistence failure", "detail": error})
+        );
+        return Err(());
+    }
+    crash_injection::abort_if_armed("g2-e-after-released");
+    Ok(())
 }
 
 fn consume_pending_approval(records: &mut Vec<providers::ApprovalRecord>, target: Option<String>) {
@@ -572,6 +619,26 @@ fn write_frame(output: &OutputSender, line: &str) -> Result<(), ()> {
 }
 
 fn write_child(child: &mut impl Write, bytes: &[u8], ready: &AtomicBool) -> Result<(), ()> {
+    // Cut (d) injection is deliberately inside the write: one byte may have
+    // reached the receiver, but no complete MCP frame has. Recovery must not
+    // infer whether the receiver acted and must not retry without receiver
+    // dedupe keyed by a receiver-visible operation_id.
+    if std::env::var_os(crash_injection::CRASH_POINT_ENV).as_deref()
+        == Some(std::ffi::OsStr::new("g2-d-during-child-write"))
+        && !bytes.is_empty()
+    {
+        child
+            .write_all(&bytes[..1])
+            .and_then(|_| child.flush())
+            .map_err(|error| {
+                ready.store(false, Ordering::Release);
+                eprintln!(
+                    "{}",
+                    json!({"error": format!("downstream child transport failed: {error}")})
+                );
+            })?;
+        crash_injection::abort_if_armed("g2-d-during-child-write");
+    }
     child
         .write_all(bytes)
         .and_then(|_| child.flush())
@@ -1398,6 +1465,37 @@ fn run() -> i32 {
         }
     });
 
+    let recovery = authorization_decisions.recover_pending(now_ms(), |frame| {
+        write_child(&mut child_in, frame, &readiness)
+            .map_err(|()| "startup release transport failed".to_string())
+    });
+    match recovery {
+        Ok(report) => {
+            eprintln!(
+                "{}",
+                json!({
+                    "startup_release_recovery": {
+                        "redone_state_transitions": report.redone_state_transitions,
+                        "released": report.released,
+                        "stale": report.stale,
+                    }
+                })
+            );
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"error": "startup release recovery failure", "detail": error})
+            );
+            readiness.store(false, Ordering::Release);
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = relay.join();
+            output_queue.shutdown();
+            return 4;
+        }
+    }
+
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
     let mut wire: Vec<u8> = Vec::new();
@@ -1833,9 +1931,22 @@ fn run() -> i32 {
                         continue;
                     }
                 }
+                let release = match ReleaseInput::prepare(&forward, now, ttl_ms) {
+                    Ok(release) => release,
+                    Err(error) => {
+                        eprintln!(
+                            "{}",
+                            json!({"error": "release authority construction failure", "detail": error})
+                        );
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
                 // T1 window: the nonce is reserved, RECORDED has not happened.
                 maybe_test_crash(test_crash_point.as_deref(), "g2-before-record");
-                let consumed = match persist_decision(
+                let decision = match persist_decision(
                     &mut authorization_decisions,
                     DecisionInput {
                         line,
@@ -1848,9 +1959,10 @@ fn run() -> i32 {
                         approvals: &pending_approvals,
                         approval_identity: &approval_identity,
                         approval_ttl_ms: ttl_ms,
+                        release: Some(&release),
                     },
                 ) {
-                    Ok(consumed) => consumed,
+                    Ok(decision) => decision,
                     Err(()) => {
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
                             break;
@@ -1858,8 +1970,13 @@ fn run() -> i32 {
                         continue;
                     }
                 };
-                if commit_consumed_approval_nonce(&mut a3, &pending_approvals, &consumed, now)
-                    .is_err()
+                if commit_consumed_approval_nonce(
+                    &mut a3,
+                    &pending_approvals,
+                    &decision.consumed_target,
+                    now,
+                )
+                .is_err()
                 {
                     if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
                         break;
@@ -1868,7 +1985,7 @@ fn run() -> i32 {
                 }
                 // T3 window: receipt durable, burn durable, child untouched.
                 maybe_test_crash(test_crash_point.as_deref(), "g2-after-burn");
-                consume_pending_approval(&mut pending_approvals, consumed);
+                consume_pending_approval(&mut pending_approvals, decision.consumed_target.clone());
                 // P2-c passive observability tap: an ALLOW about to be forwarded
                 // with an UNRECOVERABLE request (reduced-scope authorization
                 // decision) is a forced downgrade an operator must be able to
@@ -1882,7 +1999,15 @@ fn run() -> i32 {
                     reduced_scope_forward_attempts += 1;
                     eprintln!("{signal}");
                 }
-                if write_child(&mut child_in, &forward, &readiness).is_err() {
+                if release_recorded_allow(
+                    &authorization_decisions,
+                    &decision,
+                    &release,
+                    &mut child_in,
+                    &readiness,
+                )
+                .is_err()
+                {
                     let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                     break;
                 }
@@ -1912,6 +2037,7 @@ fn run() -> i32 {
                         approvals: &pending_approvals,
                         approval_identity: &approval_identity,
                         approval_ttl_ms: ttl_ms,
+                        release: None,
                     },
                 )
                 .is_err()
@@ -2051,7 +2177,22 @@ fn run() -> i32 {
                                             continue;
                                         }
                                     }
-                                    let consumed = match persist_decision(
+                                    let release = match ReleaseInput::prepare(
+                                        &forward, retry_now, ttl_ms,
+                                    ) {
+                                        Ok(release) => release,
+                                        Err(error) => {
+                                            eprintln!(
+                                                "{}",
+                                                json!({"error": "release authority construction failure", "detail": error})
+                                            );
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
+                                    };
+                                    let decision = match persist_decision(
                                         &mut authorization_decisions,
                                         DecisionInput {
                                             line,
@@ -2064,9 +2205,10 @@ fn run() -> i32 {
                                             approvals: &pending_approvals,
                                             approval_identity: &approval_identity,
                                             approval_ttl_ms: ttl_ms,
+                                            release: Some(&release),
                                         },
                                     ) {
-                                        Ok(consumed) => consumed,
+                                        Ok(decision) => decision,
                                         Err(()) => {
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
                                                 break;
@@ -2077,7 +2219,7 @@ fn run() -> i32 {
                                     if commit_consumed_approval_nonce(
                                         &mut a3,
                                         &pending_approvals,
-                                        &consumed,
+                                        &decision.consumed_target,
                                         retry_now,
                                     )
                                     .is_err()
@@ -2087,8 +2229,20 @@ fn run() -> i32 {
                                         }
                                         continue;
                                     }
-                                    consume_pending_approval(&mut pending_approvals, consumed);
-                                    if write_child(&mut child_in, &forward, &readiness).is_err() {
+                                    maybe_test_crash(test_crash_point.as_deref(), "g2-after-burn");
+                                    consume_pending_approval(
+                                        &mut pending_approvals,
+                                        decision.consumed_target.clone(),
+                                    );
+                                    if release_recorded_allow(
+                                        &authorization_decisions,
+                                        &decision,
+                                        &release,
+                                        &mut child_in,
+                                        &readiness,
+                                    )
+                                    .is_err()
+                                    {
                                         let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                                         break;
                                     }
@@ -2119,6 +2273,7 @@ fn run() -> i32 {
                                             approvals: &pending_approvals,
                                             approval_identity: &approval_identity,
                                             approval_ttl_ms: ttl_ms,
+                                            release: None,
                                         },
                                     )
                                     .is_err()
