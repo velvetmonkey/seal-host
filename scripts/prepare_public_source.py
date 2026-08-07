@@ -29,6 +29,11 @@ def run(*args: str, stdout=None) -> subprocess.CompletedProcess[bytes]:
 
 def rewrite_lakefile(path: Path, revision: str) -> None:
     text = path.read_text(encoding="utf-8")
+    private_link = 'moreLinkArgs = [".lake/packages/mcp-seal/c/build/libsealcrypto.o"]'
+    public_link = 'moreLinkArgs = ["vendor/mcp-seal/c/build/libsealcrypto.o"]'
+    if text.count(private_link) != 1:
+        fail(f"expected one private mcp-seal link path in {path}")
+    text = text.replace(private_link, public_link)
     blocks = list(re.finditer(r"(?ms)^\[\[require\]\]\n.*?(?=^\[\[|\Z)", text))
     matches = [
         match

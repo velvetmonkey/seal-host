@@ -40,7 +40,9 @@ class PublicExportDeterminismTests(unittest.TestCase):
 
     def test_export_vendors_the_private_source_dependency(self) -> None:
         exporter = (ROOT / "scripts/export_public.sh").read_text(encoding="utf-8")
+        preparer = (ROOT / "scripts/prepare_public_source.py").read_text(encoding="utf-8")
         self.assertIn("scripts/prepare_public_source.py", exporter)
+        self.assertIn('moreLinkArgs = ["vendor/mcp-seal/c/build/libsealcrypto.o"]', preparer)
 
 
 if __name__ == "__main__":
