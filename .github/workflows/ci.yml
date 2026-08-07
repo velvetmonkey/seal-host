@@ -570,15 +570,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
-      - id: control_90
-        continue-on-error: true
-        name: Provision PyYAML for workflow-inspection gates
-        uses: ./.github/actions/setup-pyyaml
       - id: control_02
         continue-on-error: true
         uses: actions/setup-python@v6.0.0
         with:
           python-version: "3.12.11"
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for workflow-inspection gates
+        uses: ./.github/actions/setup-pyyaml
       - id: control_03
         continue-on-error: true
         name: Install key-generation test dependency

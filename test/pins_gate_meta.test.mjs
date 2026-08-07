@@ -278,7 +278,12 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // The parser now decodes all 15 literal `run: |` bodies instead of counting
   // 15 indistinguishable `|` placeholders; 68 inline runs + 15 literal runs
   // derives the honest 83-step inventory. No pre-existing run step was removed.
-  assert.equal(normal.length, 83, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed 2026-08-07: 83 -> 84. The PyYAML provisioning coverage control
+  // adds exactly ONE literal run step: it runs the population guard and its
+  // fail-closed negative controls. Provisioning itself is a shared composite
+  // action, so it does not add a `run` step to this workflow inventory.
+  assert.equal(normal.length, 84, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
@@ -290,7 +295,7 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
 test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   const steps = parseCiRunSteps();
   const literalRuns = steps.filter((step) => step.run.includes("\n"));
-  assert.equal(literalRuns.length, 15);
+  assert.equal(literalRuns.length, 16);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),
     "a literal run block collapsed to its YAML scalar header",

@@ -213,16 +213,21 @@ def analyze(root: Path = ROOT) -> tuple[Finding, ...]:
             if not isinstance(steps, list):
                 continue
             provision_step: int | None = None
-            reached: list[tuple[int, set[Path]]] = []
+            reached: list[tuple[int, set[Path], int | None]] = []
             for index, step in enumerate(steps):
                 if not isinstance(step, dict):
                     continue
-                if step.get("uses") == SETUP_ACTION:
+                uses = step.get("uses")
+                if uses == SETUP_ACTION:
                     if "if" in step:
                         raise CoverageError(
                             f"{path.name}:{job_name}: PyYAML setup must be unconditional"
                         )
                     provision_step = index if provision_step is None else provision_step
+                elif isinstance(uses, str) and uses.startswith("actions/setup-python@"):
+                    # setup-python changes which interpreter `python3` names.
+                    # A package installed before it does not provision the new one.
+                    provision_step = None
                 command = step.get("run")
                 if not isinstance(command, str):
                     continue
@@ -232,16 +237,24 @@ def analyze(root: Path = ROOT) -> tuple[Finding, ...]:
                 entrypoints = command_entrypoints(root, command, Path(working))
                 hits = entrypoints & dependent
                 if hits:
-                    reached.append((index, hits))
+                    reached.append((index, hits, provision_step))
             if reached:
-                first_step = min(index for index, _hits in reached)
-                all_hits = sorted({hit for _index, hits in reached for hit in hits})
+                first_step = min(index for index, _hits, _provision in reached)
+                all_hits = sorted(
+                    {hit for _index, hits, _provision in reached for hit in hits}
+                )
+                provisions = [
+                    provision
+                    for index, _hits, provision in reached
+                    if provision is not None and provision < index
+                ]
+                fully_provisioned = len(provisions) == len(reached)
                 findings.append(
                     Finding(
                         Job(path.name, job_name),
                         first_step,
                         tuple(str(hit) for hit in all_hits),
-                        provision_step,
+                        min(provisions) if fully_provisioned else None,
                     )
                 )
     return tuple(sorted(findings, key=lambda item: item.job))

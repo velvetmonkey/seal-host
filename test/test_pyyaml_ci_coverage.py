@@ -101,6 +101,22 @@ class PyYamlCiCoverageTests(unittest.TestCase):
             (root / "scripts/gate.py").write_text("import yaml\n", encoding="utf-8")
             self.assertEqual(coverage.main(root), 1)
 
+    def test_setup_python_invalidates_earlier_provisioning(self) -> None:
+        temporary = self.fixture(
+            """
+            jobs:
+              changed-interpreter:
+                steps:
+                  - uses: ./.github/actions/setup-pyyaml
+                  - uses: actions/setup-python@v6
+                  - run: python3 scripts/gate.py
+            """
+        )
+        with temporary:
+            root = Path(temporary.name)
+            (root / "scripts/gate.py").write_text("import yaml\n", encoding="utf-8")
+            self.assertEqual(coverage.main(root), 1)
+
     def test_unittest_discovery_is_an_invocation(self) -> None:
         temporary = self.fixture(
             """
