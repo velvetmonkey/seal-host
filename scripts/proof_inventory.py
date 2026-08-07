@@ -746,10 +746,11 @@ def build_step(workflow: str, job: str, lines: list[tuple[int, str]]) -> Workflo
 
 
 def read_workflow_steps(root: Path) -> tuple[WorkflowStep, ...]:
-    """Read workflow/job/step coordinates and run blocks without a YAML package.
+    """Read workflow/job/step coordinates and run blocks for refuting checks.
 
-    No tracked script in this repository imports a YAML library; the same
-    line-structural convention is used by scripts/ci_control_aggregate.py.
+    The CI aggregate separately parses workflow YAML to census control IDs.
+    This reader tokenizes command-position text to refute declared invocations;
+    neither reader grants proof-inventory reachability.
     """
     workflow_dir = root / ".github" / "workflows"
     paths = sorted([*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")])

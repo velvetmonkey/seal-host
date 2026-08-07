@@ -67,7 +67,7 @@ the reasons below.
 
 The workflow-build inventory measures a separate, broader wire. Of the same 53
 theorem-bearing modules, 52 are in the transitive source-import closure of one
-of 24 `lake test`, `lake build`, or `lake exe` commands **declared in
+of 21 `lake test`, `lake build`, or `lake exe` commands **declared in
 [`proof-build-targets.toml`](../proof-build-targets.toml) with `push_main =
 true`, whose workflow trigger admits an unconditional push to the default
 branch**. It gives no credit to a Lake target merely because it is declared in
@@ -78,7 +78,7 @@ declared to run `lake build Test.A2DivergenceClassification`; only
 under the ruling above.
 
 **Read the workflow-build claim precisely, because it is narrower than it
-looks.** The manifest contains 27 maintainer assertions about commands in CI.
+looks.** The manifest contains 24 maintainer assertions about commands in CI.
 Three are not credited for the default-branch push inventory: the manual-only
 `public-export.yml:export:control_14` and the two tag-only declarations
 `release.yml:build:control_19` and `release.yml:build:control_09`. They remain
