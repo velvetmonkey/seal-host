@@ -318,6 +318,60 @@
       "job": "rust-conformance",
       "id": "control_30",
       "reason": "The secure-default golden path executes the Rust host linked to Lean FFI artifacts built from token-dependent private Lake dependencies."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_03",
+      "reason": "Disk ballast free is only needed when the token-dependent scratch-tree cargo builds run; the tokenless path never reaches them."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_04",
+      "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_05",
+      "reason": "The tokenless path cannot build the Lean FFI the G2 suite links, so the Rust toolchain it would feed is suppressed as a unit; this setup action itself does not require the token."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_06",
+      "reason": "The tokenless path suppresses the Lean FFI build as a unit; this Lean toolchain setup action itself does not require the token."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_07",
+      "reason": "Lake must fetch the manifest-pinned private dependencies, including mcp-seal, on a clean runner."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_08",
+      "reason": "The crypto build script lives in the private mcp-seal Lake package fetched with the token."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_09",
+      "reason": "The exported Lean FFI build imports manifest-pinned private Lake dependencies."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_10",
+      "reason": "The shared library the G2 crash tests link is built from objects produced by mcp-seal and the other private Lake dependencies."
     }
   ]
 }
