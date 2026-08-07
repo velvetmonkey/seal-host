@@ -474,6 +474,82 @@ function parseLakefile() {
   return { text, defaultTargets, executableForRoot };
 }
 
+function indentation(line) {
+  const prefix = line.match(/^[ \t]*/)[0];
+  if (prefix.includes("\t")) {
+    throw new Error("ci.yml uses a tab for YAML indentation");
+  }
+  return prefix.length;
+}
+
+function parseInlineRunScalar(value, lineNumber) {
+  const withoutComment = value.replace(/\s+#.*$/, "").trim();
+  if (withoutComment.startsWith('"')) {
+    try {
+      return JSON.parse(withoutComment);
+    } catch (error) {
+      throw new Error(
+        `ci.yml:${lineNumber} has an invalid double-quoted run scalar: ${error.message}`,
+      );
+    }
+  }
+  if (withoutComment.startsWith("'")) {
+    if (!withoutComment.endsWith("'") || withoutComment.length === 1) {
+      throw new Error(`ci.yml:${lineNumber} has an invalid single-quoted run scalar`);
+    }
+    return withoutComment.slice(1, -1).replaceAll("''", "'");
+  }
+  return withoutComment;
+}
+
+function parseCiRunValue(lines, lineIndex, fieldIndent, sourceValue) {
+  const value = sourceValue.trim();
+  const header = value.match(/^\|([1-9]?)([+-]?)(?:\s+#.*)?$/);
+  if (!header) {
+    if (/^[|>]/.test(value)) {
+      throw new Error(
+        `ci.yml:${lineIndex + 1} uses an unsupported run block scalar; ` +
+          "only YAML literal scalars (`|`, with optional indentation/chomping indicators) are accepted",
+      );
+    }
+    return {
+      value: parseInlineRunScalar(value, lineIndex + 1),
+      lastLine: lineIndex,
+    };
+  }
+
+  const explicitIndent = header[1] === "" ? null : Number(header[1]);
+  const chomp = header[2];
+  let contentIndent =
+    explicitIndent === null ? null : fieldIndent + explicitIndent;
+  const content = [];
+  let cursor = lineIndex + 1;
+  for (; cursor < lines.length; cursor += 1) {
+    const line = lines[cursor];
+    if (/^\s*$/.test(line)) {
+      content.push("");
+      continue;
+    }
+    const indent = indentation(line);
+    if (indent <= fieldIndent) break;
+    if (contentIndent === null) contentIndent = indent;
+    if (indent < contentIndent) {
+      throw new Error(
+        `ci.yml:${cursor + 1} is under-indented inside the run block opened at line ${lineIndex + 1}`,
+      );
+    }
+    content.push(line.slice(contentIndent));
+  }
+
+  let body = content.length === 0 ? "" : `${content.join("\n")}\n`;
+  if (chomp === "-") {
+    body = body.replace(/\n+$/, "");
+  } else if (chomp !== "+" && body !== "") {
+    body = `${body.replace(/\n+$/, "")}\n`;
+  }
+  return { value: body, lastLine: cursor - 1 };
+}
+
 export function parseCiRunSteps(
   text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8"),
 ) {
@@ -516,7 +592,16 @@ export function parseCiRunSteps(
           workingDirectory: null,
         };
         const inlineRun = sequenceItem[2].match(/^run:\s*(.*)$/);
-        if (inlineRun) current.run = inlineRun[1].trim();
+        if (inlineRun) {
+          const parsed = parseCiRunValue(
+            lines,
+            cursor,
+            stepIndent + 2,
+            inlineRun[1],
+          );
+          current.run = parsed.value;
+          cursor = parsed.lastLine;
+        }
         continue;
       }
       if (!current || indent <= stepIndent) continue;
@@ -525,7 +610,11 @@ export function parseCiRunSteps(
 
       const field = line.trim();
       const run = field.match(/^run:\s*(.*)$/);
-      if (run) current.run = run[1].trim();
+      if (run) {
+        const parsed = parseCiRunValue(lines, cursor, indent, run[1]);
+        current.run = parsed.value;
+        cursor = parsed.lastLine;
+      }
       const working = field.match(/^working-directory:\s*(\S+)\s*$/);
       if (working) current.workingDirectory = working[1];
     }
@@ -1060,33 +1149,50 @@ function checkNonceConsumeOrdering(ctx, row) {
   const a3Citation = "rust/src/a3.rs";
   const a3 = fs.readFileSync(path.join(ROOT, a3Citation), "utf8");
   const withStore = a3.indexOf("pub fn with_store(");
+  const reclaim = a3.indexOf(".reclaim_uncommitted()?", withStore);
   const load = a3.indexOf(".load_unexpired(now_ms)?", withStore);
   const construct = a3.indexOf("Ok(Self {", withStore);
-  const persist = a3.indexOf("fn persist_nonce(");
-  const durableInsert = a3.indexOf(".insert_returning_is_new(", persist);
-  const survivor = a3.indexOf("ok.push(r);", persist);
-  const startupRebuilds = withStore >= 0 && load > withStore && construct > load;
-  const burnBeforeSurvivor =
-    persist >= 0 && durableInsert > persist && survivor > durableInsert;
-  if (!startupRebuilds || !burnBeforeSurvivor) {
+  const reserve = a3.indexOf("fn reserve_nonce(");
+  const durableReserve = a3.indexOf(".reserve_returning_is_new(", reserve);
+  const filter = a3.indexOf("pub fn filter(", reserve);
+  const survivor = a3.indexOf("ok.push(r);", filter);
+  const startupReclaimsBeforeRebuild =
+    withStore >= 0 && reclaim > withStore && load > reclaim && construct > load;
+  const reservationBeforeSurvivor =
+    reserve >= 0 && durableReserve > reserve && filter > durableReserve && survivor > filter;
+  if (!startupReclaimsBeforeRebuild || !reservationBeforeSurvivor) {
     reportMismatch(
       ctx,
       row,
-      "startup cache rebuild plus durable nonce insert before record survival",
-      `${a3Citation}: startupRebuilds=${startupRebuilds}, durableInsertBeforeSurvivor=${burnBeforeSurvivor}`,
+      "startup reclamation before cache rebuild plus durable reservation before record survival",
+      `${a3Citation}: startupReclaimsBeforeRebuild=${startupReclaimsBeforeRebuild}, reservationBeforeSurvivor=${reservationBeforeSurvivor}`,
     );
   }
 
   const mainCitation = "rust/src/main.rs";
   const main = fs.readFileSync(path.join(ROOT, mainCitation), "utf8");
-  const filter = main.indexOf("let (records, a3_warnings) = a3.filter(");
-  const decision = main.indexOf("let step_output = match host.step(", filter);
-  if (filter < 0 || decision < 0 || filter > decision) {
+  const mainFilter = main.indexOf("let (records, a3_warnings) = a3.filter(");
+  const leanDecision = main.indexOf("let step_output = match host.step(", mainFilter);
+  const forwardRoute = main.indexOf("Route::Forward { audit } =>", leanDecision);
+  const receipt = main.indexOf("let consumed = match persist_decision(", forwardRoute);
+  const commit = main.indexOf(
+    "if commit_consumed_approval_nonce(",
+    receipt,
+  );
+  const childForward = main.indexOf("if write_child(", commit);
+  const hostOrdering =
+    mainFilter >= 0 &&
+    leanDecision > mainFilter &&
+    forwardRoute > leanDecision &&
+    receipt > forwardRoute &&
+    commit > receipt &&
+    childForward > commit;
+  if (!hostOrdering) {
     reportMismatch(
       ctx,
       row,
-      "A3 durable consume runs before the Lean decision",
-      `${mainCitation} does not order a3.filter before host.step`,
+      "reservation before Lean, then receipt, burn commit, and child forward",
+      `${mainCitation} does not preserve the two-phase host ordering`,
     );
   }
 
@@ -1096,10 +1202,51 @@ function checkNonceConsumeOrdering(ctx, row) {
     ctx,
     row,
     replay,
+    /INSERT INTO nonces \(nonce, issued_at, expiry_at, committed_at\)\s+VALUES \(\?1, \?2, \?3, NULL\)/,
+    "phase 1 stores an open reservation",
+    `${replayCitation} no longer inserts a NULL committed_at reservation`,
+  );
+  requireText(
+    ctx,
+    row,
+    replay,
+    /UPDATE nonces SET committed_at = \?2\s+WHERE nonce = \?1 AND committed_at IS NULL/,
+    "phase 2 commits only an open reservation",
+    `${replayCitation} no longer commits only a NULL committed_at reservation`,
+  );
+  requireText(
+    ctx,
+    row,
+    replay,
+    /DELETE FROM nonces WHERE committed_at IS NULL/,
+    "startup recovery reclaims only open reservations",
+    `${replayCitation} no longer limits reclamation to open reservations`,
+  );
+  requireText(
+    ctx,
+    row,
+    replay,
     /"synchronous",\s*"FULL"/,
     "the SQLite replay store requests FULL synchronous durability",
     `${replayCitation} no longer configures synchronous=FULL`,
   );
+
+  const hostPathCitation = "rust/tests/host_path.rs";
+  const hostPath = fs.readFileSync(path.join(ROOT, hostPathCitation), "utf8");
+  for (const testName of [
+    "g2_t1_crash_between_reserve_and_recorded_recovers_the_approval",
+    "g2_t2_second_presentation_fails_while_reservation_open",
+    "g2_t3_crash_after_recorded_keeps_burn_and_receipt",
+  ]) {
+    requireText(
+      ctx,
+      row,
+      hostPath,
+      new RegExp(`fn\\s+${testName}\\s*\\(`),
+      `live G2 crash control ${testName}`,
+      `${hostPathCitation} no longer declares ${testName}`,
+    );
+  }
 }
 
 function trackedSourceFiles(directory) {

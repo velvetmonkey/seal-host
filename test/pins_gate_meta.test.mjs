@@ -272,13 +272,38 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // job rather than being deleted, and the real cargo suite stays put. This bump is
   // the tripwire doing its job, not a silenced control. The run-step FLOOR test
   // below is untouched and still guards the real minimum.
-  assert.equal(normal.length, 82, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed 2026-08-07: 82 -> 83. G1 adds exactly ONE run step, control_33,
+  // whose literal block runs both `proof_reach.py` and its fail-closed tests.
+  // The parser now decodes all 15 literal `run: |` bodies instead of counting
+  // 15 indistinguishable `|` placeholders; 68 inline runs + 15 literal runs
+  // derives the honest 83-step inventory. No pre-existing run step was removed.
+  assert.equal(normal.length, 83, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
     "uniform reindent changed the parsed run-step inventory",
   );
   assert.deepEqual(shifted, normal, "uniform reindent changed parsed run-step semantics");
+});
+
+test("CI literal run blocks are parsed as commands, not scalar headers", () => {
+  const steps = parseCiRunSteps();
+  const literalRuns = steps.filter((step) => step.run.includes("\n"));
+  assert.equal(literalRuns.length, 15);
+  assert.ok(
+    literalRuns.every((step) => step.run !== "|"),
+    "a literal run block collapsed to its YAML scalar header",
+  );
+  assert.ok(
+    literalRuns.some(
+      (step) =>
+        step.run ===
+        "python3 scripts/proof_reach.py\n" +
+          "python3 -m unittest discover -s test -p 'test_proof_reach.py' -v\n",
+    ),
+    "control_33's two-command literal body was not decoded",
+  );
 });
 
 test("CI run-step floor fails below its pinned minimum", () => {
