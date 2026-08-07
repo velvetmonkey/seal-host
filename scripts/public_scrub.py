@@ -16,7 +16,10 @@ if ROOT is None or not ROOT.is_dir():
 EXPECTED_KERNEL = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec"
 TEXT_SUFFIXES = {".c", ".cjs", ".css", ".html", ".js", ".json", ".lean", ".md", ".mjs", ".py", ".rs", ".sh", ".toml", ".txt", ".yml", ".yaml"}
 TEXT_NAMES = {"Dockerfile", "Dockerfile.release"}
-NON_TEXT_DIRS = Path("rust/tests/corpora/JSONTestSuite").parts
+NON_TEXT_DIRS = (
+    Path("rust/tests/corpora/JSONTestSuite").parts,
+    Path("vendor/mcp-seal/test/external/vendor/json-testsuite").parts,
+)
 SKIP_DIRS = {".git", ".lake", "node_modules", "target"}
 FORBIDDEN_NAMES = {".env", "id_rsa", "id_ed25519"}
 SECRETS = {
@@ -56,7 +59,7 @@ for path in sorted(ROOT.rglob("*")):
             failures.append(f"possible {label}: {relative}")
 
     is_declared_text = path.suffix in TEXT_SUFFIXES or path.name in TEXT_NAMES
-    is_corpus = relative.parts[: len(NON_TEXT_DIRS)] == NON_TEXT_DIRS
+    is_corpus = any(relative.parts[: len(directory)] == directory for directory in NON_TEXT_DIRS)
     if is_declared_text and not is_corpus and not is_utf8:
         failures.append(f"non-UTF-8 public text file: {relative}")
 

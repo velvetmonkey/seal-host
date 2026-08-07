@@ -32,6 +32,9 @@ mkdir -p "$SOURCE" "$SIGNED"
 
 echo "==> assemble $REVISION"
 git -C "$ROOT" archive "$REVISION" | tar -xf - -C "$SOURCE"
+test -d "$ROOT/.lake/packages/mcp-seal" || (cd "$ROOT" && lake update)
+python3 "$SOURCE/scripts/prepare_public_source.py" \
+  "$SOURCE" "$ROOT/.lake/packages/mcp-seal"
 cp -a "$SOURCE" "$BUILD"
 
 echo "==> scrub"
@@ -44,8 +47,8 @@ cargo fmt --manifest-path "$BUILD/rust/Cargo.toml" --check
 bash -n "$BUILD/scripts"/*.sh
 
 echo "==> rebuild and test the exported tree"
-(cd "$BUILD" && { test -d .lake/packages/mcp-seal || lake update; })
-(cd "$BUILD/.lake/packages/mcp-seal" && bash c/build.sh)
+(cd "$BUILD" && lake update)
+(cd "$BUILD/vendor/mcp-seal" && bash c/build.sh)
 (cd "$BUILD" && lake build +Ffi:c.o.export && scripts/build_ffi_so.sh)
 (cd "$BUILD/rust" && cargo test --locked --no-fail-fast && cargo build --locked --release --bins)
 (cd "$BUILD" && python3 -m unittest discover -s demo/tests -v)
