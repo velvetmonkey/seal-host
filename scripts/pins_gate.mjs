@@ -1169,33 +1169,6 @@ function checkNonceConsumeOrdering(ctx, row) {
     );
   }
 
-  const mainCitation = "rust/src/main.rs";
-  const main = fs.readFileSync(path.join(ROOT, mainCitation), "utf8");
-  const mainFilter = main.indexOf("let (records, a3_warnings) = a3.filter(");
-  const leanDecision = main.indexOf("let step_output = match host.step(", mainFilter);
-  const forwardRoute = main.indexOf("Route::Forward { audit } =>", leanDecision);
-  const receipt = main.indexOf("let consumed = match persist_decision(", forwardRoute);
-  const commit = main.indexOf(
-    "if commit_consumed_approval_nonce(",
-    receipt,
-  );
-  const childForward = main.indexOf("if write_child(", commit);
-  const hostOrdering =
-    mainFilter >= 0 &&
-    leanDecision > mainFilter &&
-    forwardRoute > leanDecision &&
-    receipt > forwardRoute &&
-    commit > receipt &&
-    childForward > commit;
-  if (!hostOrdering) {
-    reportMismatch(
-      ctx,
-      row,
-      "reservation before Lean, then receipt, burn commit, and child forward",
-      `${mainCitation} does not preserve the two-phase host ordering`,
-    );
-  }
-
   const replayCitation = "rust/src/replay_store.rs";
   const replay = fs.readFileSync(path.join(ROOT, replayCitation), "utf8");
   requireText(
@@ -1231,22 +1204,236 @@ function checkNonceConsumeOrdering(ctx, row) {
     `${replayCitation} no longer configures synchronous=FULL`,
   );
 
+  // The two-phase host ordering (reservation before Lean, then receipt, burn
+  // commit, child forward) is witnessed BEHAVIOURALLY by the G2 crash suite,
+  // not by grepping variable names in main.rs. The gate cannot run the suite,
+  // so it establishes reachability instead: the tests exist, none is ignored,
+  // each arms a crash point the host really implements, and a CI cargo test
+  // step actually selects them.
+  const mainCitation = "rust/src/main.rs";
+  const main = fs.readFileSync(path.join(ROOT, mainCitation), "utf8");
   const hostPathCitation = "rust/tests/host_path.rs";
   const hostPath = fs.readFileSync(path.join(ROOT, hostPathCitation), "utf8");
-  for (const testName of [
-    "g2_t1_crash_between_reserve_and_recorded_recovers_the_approval",
-    "g2_t2_second_presentation_fails_while_reservation_open",
-    "g2_t3_crash_after_recorded_keeps_burn_and_receipt",
-  ]) {
-    requireText(
+  const ciSteps = parseCiRunSteps().filter(
+    (step) => step.workingDirectory === "rust",
+  );
+
+  const injector = extractFunction(main, "maybe_test_crash");
+  if (!injector || !injector.includes("std::process::abort()")) {
+    reportMismatch(
       ctx,
       row,
-      hostPath,
-      new RegExp(`fn\\s+${testName}\\s*\\(`),
-      `live G2 crash control ${testName}`,
-      `${hostPathCitation} no longer declares ${testName}`,
+      "maybe_test_crash aborts the process at an armed crash point",
+      `${mainCitation}: maybe_test_crash is ${injector ? "present but no longer calls std::process::abort()" : "missing"}`,
     );
   }
+
+  for (const test of G2_CRASH_TESTS) {
+    const witness = extractG2TestWitness(hostPath, test.name);
+    if (!witness) {
+      reportMismatch(
+        ctx,
+        row,
+        `live G2 crash control ${test.name}`,
+        `${hostPathCitation} no longer declares ${test.name}`,
+      );
+      continue;
+    }
+    if (!/#\[test\]/.test(witness.attributes)) {
+      reportMismatch(
+        ctx,
+        row,
+        `${test.name} is a #[test]`,
+        `${hostPathCitation}: ${test.name} carries no #[test] attribute, so no harness runs it`,
+      );
+    }
+    if (/#\[\s*ignore\b/.test(witness.attributes)) {
+      reportMismatch(
+        ctx,
+        row,
+        `${test.name} runs unconditionally`,
+        `${hostPathCitation}: ${test.name} is #[ignore]d; an ignored test is not a witness`,
+      );
+    }
+    if (test.crashPoint) {
+      const arming = new RegExp(
+        `\\(\\s*"SEAL_TEST_CRASH_POINT"\\s*,\\s*"${escaped(test.crashPoint)}"\\s*\\)`,
+      );
+      if (!arming.test(witness.body)) {
+        reportMismatch(
+          ctx,
+          row,
+          `${test.name} arms SEAL_TEST_CRASH_POINT=${test.crashPoint}`,
+          `${hostPathCitation}: ${test.name} no longer sets that crash point in its spawn environment`,
+        );
+      }
+      const injection = new RegExp(
+        `maybe_test_crash\\([^;]*"${escaped(test.crashPoint)}"\\s*\\)`,
+      );
+      if (!injection.test(main)) {
+        reportMismatch(
+          ctx,
+          row,
+          `crash point ${test.crashPoint} is a real injection site`,
+          `${mainCitation} has no maybe_test_crash(..., "${test.crashPoint}") call; the armed test would pass by never crashing`,
+        );
+      }
+    }
+    if (
+      !ciSteps.some((step) =>
+        cargoTestRunReachesTest(step.run, "host_path", test.name),
+      )
+    ) {
+      reportMismatch(
+        ctx,
+        row,
+        `a CI cargo test step in rust/ selects ${test.name}`,
+        `no ci.yml run step reaches --test host_path with ${test.name} unfiltered; the behavioural witness would not execute`,
+      );
+    }
+  }
+}
+
+const G2_CRASH_TESTS = Object.freeze([
+  {
+    name: "g2_t1_crash_between_reserve_and_recorded_recovers_the_approval",
+    crashPoint: "g2-before-record",
+  },
+  {
+    name: "g2_t2_second_presentation_fails_while_reservation_open",
+    crashPoint: null,
+  },
+  {
+    name: "g2_t3_crash_after_recorded_keeps_burn_and_receipt",
+    crashPoint: "g2-after-burn",
+  },
+]);
+
+// Slice of `source` from `fn name(` to the next top-level `fn`, or null.
+function extractFunction(source, name) {
+  const start = source.search(new RegExp(`^fn\\s+${escaped(name)}\\s*\\(`, "m"));
+  if (start === -1) return null;
+  const rest = source.slice(start + 1);
+  const next = rest.search(/^fn\s/m);
+  return source.slice(start, next === -1 ? source.length : start + 1 + next);
+}
+
+// A test's attribute block (contiguous #[...] / doc-comment lines above the
+// fn) and its body (up to the next #[test] or end of file), or null.
+function extractG2TestWitness(source, testName) {
+  const lines = source.split("\n");
+  const header = new RegExp(`^\\s*fn\\s+${escaped(testName)}\\s*\\(`);
+  const fnLine = lines.findIndex((line) => header.test(line));
+  if (fnLine === -1) return null;
+  let attrStart = fnLine;
+  while (attrStart > 0 && /^\s*(#\[|#!\[|\/\/)/.test(lines[attrStart - 1])) {
+    attrStart -= 1;
+  }
+  const attributes = lines.slice(attrStart, fnLine).join("\n");
+  const bodyStart = lines.slice(0, fnLine).join("\n").length;
+  const nextTest = source.indexOf("\n#[test]", bodyStart + 1);
+  const body = source.slice(bodyStart, nextTest === -1 ? source.length : nextTest);
+  return { attributes, body };
+}
+
+const CARGO_VALUE_FLAGS = new Set([
+  "--package",
+  "-p",
+  "--exclude",
+  "--features",
+  "--profile",
+  "--target",
+  "--target-dir",
+  "--manifest-path",
+  "--jobs",
+  "-j",
+  "--message-format",
+  "--color",
+  "--bin",
+  "--example",
+  "--bench",
+]);
+const CARGO_NON_TEST_TARGET_FLAGS = new Set([
+  "--lib",
+  "--bins",
+  "--bin",
+  "--doc",
+  "--examples",
+  "--example",
+  "--benches",
+  "--bench",
+]);
+const HARNESS_VALUE_FLAGS = new Set([
+  "--test-threads",
+  "--logfile",
+  "--format",
+  "--color",
+  "-Z",
+]);
+
+// Would `run` (one CI step's script) execute `testName` inside the named
+// integration test target? Conservative: anything unparseable counts as NOT
+// reaching the test, so novel CI shapes fail closed and must be classified.
+function cargoTestRunReachesTest(run, targetName, testName) {
+  return run
+    .split("\n")
+    .some((line) => cargoTestLineReachesTest(line.trim(), targetName, testName));
+}
+
+function cargoTestLineReachesTest(line, targetName, testName) {
+  let tokens = line.split(/\s+/).filter(Boolean);
+  while (tokens.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) {
+    tokens.shift();
+  }
+  if (tokens[0] !== "cargo" || tokens[1] !== "test") return false;
+  tokens = tokens.slice(2);
+  const separator = tokens.indexOf("--");
+  const cargoArgs = separator === -1 ? tokens : tokens.slice(0, separator);
+  const harnessArgs = separator === -1 ? [] : tokens.slice(separator + 1);
+
+  const testTargets = [];
+  const filters = [];
+  let allTargets = false;
+  let nonTestTargetOnly = false;
+  for (let i = 0; i < cargoArgs.length; i += 1) {
+    const arg = cargoArgs[i];
+    if (arg === "--test") {
+      testTargets.push(cargoArgs[++i]);
+    } else if (arg === "--all-targets") {
+      allTargets = true;
+    } else if (CARGO_NON_TEST_TARGET_FLAGS.has(arg)) {
+      nonTestTargetOnly = true;
+      if (CARGO_VALUE_FLAGS.has(arg)) i += 1;
+    } else if (arg.startsWith("-")) {
+      if (CARGO_VALUE_FLAGS.has(arg)) i += 1;
+    } else {
+      filters.push(arg);
+    }
+  }
+  const targetSelected =
+    allTargets ||
+    testTargets.includes(targetName) ||
+    (testTargets.length === 0 && !nonTestTargetOnly);
+  if (!targetSelected) return false;
+
+  const exact = harnessArgs.includes("--exact");
+  const matches = (pattern) =>
+    exact ? pattern === testName : testName.includes(pattern);
+  if (harnessArgs.includes("--ignored")) return false;
+  for (let i = 0; i < harnessArgs.length; i += 1) {
+    const arg = harnessArgs[i];
+    if (arg === "--skip") {
+      if (matches(harnessArgs[++i])) return false;
+    } else if (arg.startsWith("--skip=")) {
+      if (matches(arg.slice("--skip=".length))) return false;
+    } else if (arg.startsWith("-")) {
+      if (HARNESS_VALUE_FLAGS.has(arg)) i += 1;
+    } else {
+      filters.push(arg);
+    }
+  }
+  if (filters.length > 0 && !filters.some(matches)) return false;
+  return true;
 }
 
 function trackedSourceFiles(directory) {
