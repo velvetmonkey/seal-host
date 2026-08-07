@@ -113,6 +113,30 @@ class ProofReachFixture(unittest.TestCase):
             self.assertIn("REACHED=1", result.stdout)  # Host.Wired
             self.assertIn("ON_DEMAND=1", result.stdout)  # Host.SideOnly via side_exe
 
+    def test_import_resolution_branch_reads_module_imports(self) -> None:
+        """The CLI parses and resolves imports before classifying their modules."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_repo(directory)
+            (root / "Host/ImportedA.lean").write_text(
+                "theorem imported_a : True := by trivial\n", encoding="utf-8"
+            )
+            (root / "Host/ImportedB.lean").write_text(
+                "theorem imported_b : True := by trivial\n", encoding="utf-8"
+            )
+            (root / "Test/Axioms.lean").write_text(
+                "import Host.Wired Host.ImportedA Host.ImportedB\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", "-A"], cwd=root, check=True, capture_output=True
+            )
+
+            result = self.run_script(root)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("REACHED\tHost.ImportedA", result.stdout)
+            self.assertIn("REACHED\tHost.ImportedB", result.stdout)
+
     def test_t1_typo_of_local_root_fails_closed(self) -> None:
         """T1: one-character typo of a local import root → RED, named note."""
         with tempfile.TemporaryDirectory() as directory:
