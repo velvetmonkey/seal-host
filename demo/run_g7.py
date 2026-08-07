@@ -78,7 +78,7 @@ def config_payload(tmp: Path) -> dict:
                 "ttl_seconds": 120,
                 "replay_store": {
                     "sqlite_path": str(tmp / "replay.sqlite"),
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "namespace_encoding_version": 1,
                 },
             },
