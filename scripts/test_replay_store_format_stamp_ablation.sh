@@ -46,7 +46,6 @@ git -C "$MUTANT" apply <<'PATCH'
          secure_fs::validate_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
 PATCH
 
-export PATH="/home/monkey/.cargo/bin:$PATH"
 export SEAL_FFI_LIB_DIR="${SEAL_FFI_LIB_DIR:-$ROOT/.lake/build/lib}"
 export LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

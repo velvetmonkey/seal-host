@@ -457,13 +457,21 @@ three shipped manifests; the standing `npm test` CI gate is configured but
 has not run remotely for this change; operator verification is not applicable
 to this non-model authoring surface.
 
-## 1. Build and prepare the sandbox
+## 1. Get the release and prepare the sandbox
 
 From the `seal-host` checkout:
 
 ```bash
-bash scripts/build_all.sh
 export SEAL_HOST_ROOT="$PWD"
+mkdir -p "$PWD/.seal/release"
+chmod 700 "$PWD/.seal" "$PWD/.seal/release"
+cd "$PWD/.seal/release"
+gh release download v0.1.1 --repo velvetmonkey/seal-host \
+  --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar xzf seal-host-*-linux-x86_64.tar.gz
+export SEAL_BIN="$PWD/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs"
+cd "$SEAL_HOST_ROOT"
 umask 077
 mkdir -p "$PWD/.seal/receipts"
 touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
@@ -484,17 +492,19 @@ Render and sign the starter policy:
 ```bash
 sed "s#/ABS/PATH#$PWD#g" \
   profiles/policies-v1/sqlite-sandbox.payload.json > .seal/payload.json
-node ../seal-assurance-kit/bin/seal policy sign .seal/payload.json \
-  --key .seal/config.key --out .seal/trusted.json
+SEAL_CONFIG_SIGNING_KEY_HEX="$(tr -d '\r\n' < .seal/config.key)" \
+  python3 test/tools/sign_config.py .seal/payload.json > .seal/trusted.json
+chmod 600 .seal/trusted.json
+"$SEAL_BIN" --insecure-development-mode \
+  --config .seal/trusted.json --pubkey "$(cat .seal/config.pub)" \
+  --channel ed25519 --token-file .seal/approval-tokens.ndjson \
+  --approval-pubkey "$(cat .seal/approval.pub)" \
+  --initialize-replay-store
 ```
 
-The signer displays the effective kernel participation and asks you to
-acknowledge it with `y` before signing. Review that summary. For non-interactive
-CI only, add `--yes` after the same review to record the acknowledgement.
-
-The signer validates the policy shape, signs the exact compact payload, and
-prints the policy hash and public key. Compare the printed public key with
-`.seal/config.pub`; use that value for `CONFIG_PUBLIC_KEY_HEX` below.
+The signer validates the policy shape and signs the exact compact payload.
+Use `.seal/config.pub` for `CONFIG_PUBLIC_KEY_HEX` below and
+`.seal/approval.pub` for `APPROVAL_PUBLIC_KEY_HEX`.
 
 The starter is intentionally conservative: every declared tool is guarded and
 everything else denies. Current policy-v1 cannot express “allow these reads but
@@ -505,6 +515,8 @@ guard these writes.” Do not mistake this for policy-v2 safe-allow composition.
 Claude Code project configuration lives in `.mcp.json`; user configuration is
 stored in `~/.claude.json`. Project scope is easiest to review and roll back.
 Claude’s stdio format is documented at <https://code.claude.com/docs/en/mcp>.
+On Windows 11, run Claude Code inside Ubuntu WSL2 for this block: every command
+and path then stays Linux-native, and no `systemd` service is involved.
 
 Before Seal, an entry directly launches its implementation:
 
@@ -527,7 +539,7 @@ After Seal, the real command moves behind `--`:
   "mcpServers": {
     "sealSqliteSandbox": {
       "type": "stdio",
-      "command": "/ABS/PATH/rust/target/debug/seal-host-rs",
+      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
@@ -602,6 +614,38 @@ node ../seal-assurance-kit/bin/seal connect --client claude --desktop \
 # printed rollback:
 node ../seal-assurance-kit/bin/seal disconnect --client claude --desktop
 ```
+
+For Windows-side Claude Desktop with the host inside Ubuntu WSL2, use
+`wsl.exe` as the command. The executable and every later path are Linux paths
+inside the named distribution:
+
+```json
+{
+  "mcpServers": {
+    "sealSqliteSandbox": {
+      "command": "wsl.exe",
+      "args": [
+        "--distribution", "Ubuntu", "--exec",
+        "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+        "--config", "/home/<wsl-user>/seal-host/.seal/trusted.json",
+        "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
+        "--channel", "ed25519",
+        "--token-file", "/home/<wsl-user>/seal-host/.seal/approval-tokens.ndjson",
+        "--approval-pubkey", "APPROVAL_PUBLIC_KEY_HEX",
+        "--receipt-dir", "/home/<wsl-user>/seal-host/.seal/receipts",
+        "--production",
+        "--", "python3", "/home/<wsl-user>/seal-host/demo/sqlite_mcp_server.py",
+        "--database", "/home/<wsl-user>/seal-host/.seal/sandbox.sqlite"
+      ]
+    }
+  }
+}
+```
+
+Confirm the distribution name with `wsl.exe --list --quiet`; replace `Ubuntu`
+if it differs. This repository's Linux CI cannot execute Windows-side Claude
+Desktop or `wsl.exe`, so this is an explicit unverified integration surface,
+not part of the Linux-native evidence below.
 
 Rollback restores the backup and restarts Desktop:
 

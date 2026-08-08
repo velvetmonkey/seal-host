@@ -50,7 +50,7 @@ so it is portable, but an embedded key alone proves integrity, not who owns the
 key.
 
 ```sh
-export PATH=/home/monkey/.cargo/bin:$PATH
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 cd rust
 cargo run --bin seal-reachability-report -- \
   issue --config ../config/reachability-v0.deployment.json \
