@@ -12,6 +12,62 @@ permissions:
 # failure back into a failing job; never remove that aggregate while
 # continue-on-error is present.
 jobs:
+  q0-keyless-release-provenance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Install cosign for the hosted keyless probe
+        uses: sigstore/cosign-installer@v4.1.2
+        with: { cosign-release: v3.0.6 }
+      - id: control_03
+        continue-on-error: true
+        name: Prove Fulcio issuance and certificate-identity verification
+        run: |
+          q0_release="$RUNNER_TEMP/q0-release-provenance"
+          mkdir -p "$q0_release"
+          printf 'q0 keyless release probe\n' > "$q0_release/seal-host-q0-linux-x86_64.tar.gz"
+          printf '{"bomFormat":"CycloneDX","specVersion":"1.6"}\n' > "$q0_release/seal-host-q0-linux-x86_64.cdx.json"
+          (
+            cd "$q0_release"
+            sha256sum seal-host-q0-linux-x86_64.cdx.json seal-host-q0-linux-x86_64.tar.gz > SHA256SUMS
+          )
+          identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
+          python3 scripts/release_provenance.py create \
+            --release-dir "$q0_release" \
+            --output "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
+            --signer-identity "$identity" \
+            --oidc-issuer "https://token.actions.githubusercontent.com" \
+            --repository "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF" \
+            --commit "$GITHUB_SHA" \
+            --workflow ".github/workflows/public-export.yml" \
+            --run-id "$GITHUB_RUN_ID"
+          cosign sign-blob --yes \
+            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            "$q0_release/SEAL-RELEASE-PROVENANCE.json"
+          python3 scripts/release_provenance.py verify \
+            --release-dir "$q0_release" \
+            --statement "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
+            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   export:
     runs-on: ubuntu-24.04
     env:
@@ -76,36 +132,8 @@ jobs:
         run: cargo install cargo-cyclonedx --locked
       - id: control_09
         continue-on-error: true
-        name: Prove keyless release verification, then run and verify first export
+        name: Run and verify first export
         run: |
-          q0_release="$RUNNER_TEMP/q0-release-provenance"
-          mkdir -p "$q0_release"
-          printf 'q0 keyless release probe\n' > "$q0_release/seal-host-q0-linux-x86_64.tar.gz"
-          printf '{"bomFormat":"CycloneDX","specVersion":"1.6"}\n' > "$q0_release/seal-host-q0-linux-x86_64.cdx.json"
-          (
-            cd "$q0_release"
-            sha256sum seal-host-q0-linux-x86_64.cdx.json seal-host-q0-linux-x86_64.tar.gz > SHA256SUMS
-          )
-          identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
-          python3 scripts/release_provenance.py create \
-            --release-dir "$q0_release" \
-            --output "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
-            --signer-identity "$identity" \
-            --oidc-issuer "https://token.actions.githubusercontent.com" \
-            --repository "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF" \
-            --commit "$GITHUB_SHA" \
-            --workflow ".github/workflows/public-export.yml" \
-            --run-id "$GITHUB_RUN_ID"
-          cosign sign-blob --yes \
-            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
-            "$q0_release/SEAL-RELEASE-PROVENANCE.json"
-          python3 scripts/release_provenance.py verify \
-            --release-dir "$q0_release" \
-            --statement "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
-            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
-            --certificate-identity "$identity" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
           scripts/export_public.sh "$RUNNER_TEMP/public-export-a"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-a"
       - id: control_10
