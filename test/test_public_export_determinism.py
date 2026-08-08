@@ -25,6 +25,25 @@ class PublicExportDeterminismTests(unittest.TestCase):
         self.assertIn('(cd "$SIGNED" && sha256sum *.tar.gz *.cdx.json > SHA256SUMS)', exporter)
         self.assertNotIn('sha256sum "$SIGNED"/', exporter)
 
+    def test_final_tarball_gets_a_separate_credential_isolated_build(self) -> None:
+        workflow = (ROOT / ".github/workflows/public-export.yml").read_text(encoding="utf-8")
+        verifier = (ROOT / "scripts/verify_public_source_build.sh").read_text(encoding="utf-8")
+        self.assertIn("clean-source-build:", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("scripts/verify_public_source_build.sh", workflow)
+        self.assertIn("env -i", verifier)
+        self.assertIn("GIT_CONFIG_GLOBAL=/dev/null", verifier)
+        self.assertIn("GIT_CONFIG_NOSYSTEM=1", verifier)
+        self.assertIn("GIT_TERMINAL_PROMPT=0", verifier)
+        self.assertIn("GIT_SSH_COMMAND=/bin/false", verifier)
+        self.assertIn("LEANBUILD=lake", verifier)
+
+    def test_export_vendors_the_private_source_dependency(self) -> None:
+        exporter = (ROOT / "scripts/export_public.sh").read_text(encoding="utf-8")
+        preparer = (ROOT / "scripts/prepare_public_source.py").read_text(encoding="utf-8")
+        self.assertIn("scripts/prepare_public_source.py", exporter)
+        self.assertIn('moreLinkArgs = ["vendor/mcp-seal/c/build/libsealcrypto.o"]', preparer)
+
 
 if __name__ == "__main__":
     unittest.main()

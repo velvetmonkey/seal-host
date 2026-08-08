@@ -93,3 +93,47 @@ jobs:
         env:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
         run: python3 scripts/ci_control_aggregate.py
+
+  clean-source-build:
+    needs: export
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+        with:
+          persist-credentials: false
+      - id: control_02
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - id: control_03
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with: { toolchain: "1.96.0", cache: false }
+      - id: control_04
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: signed-public-export-${{ github.sha }}
+          path: ${{ runner.temp }}/public-export
+      - id: control_05
+        continue-on-error: true
+        name: Build the final source tarball with no private access
+        run: |
+          mapfile -t archives < <(find "$RUNNER_TEMP/public-export" -maxdepth 1 -name '*-source.tar.gz' -type f)
+          test "${#archives[@]}" -eq 1
+          scripts/verify_public_source_build.sh "${archives[0]}"
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

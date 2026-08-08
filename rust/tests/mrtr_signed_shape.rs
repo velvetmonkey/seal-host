@@ -202,7 +202,30 @@ fn live_phase_m_rust_lean_signed_shape_agreement() {
     // green without pretending the old pin is evidence; the required local
     // run supplies `81b2114` (or an explicit override).
     if spec_root == host_root {
-        let pinned = host_root.join(".lake/packages/mcp-seal/SealV2/EffectEnvelope.lean");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(host_root.join("lake-manifest.json"))
+                .expect("read host lake manifest"),
+        )
+        .expect("parse host lake manifest");
+        let package = manifest["packages"]
+            .as_array()
+            .expect("lake manifest packages")
+            .iter()
+            .find(|package| {
+                package["name"]
+                    .as_str()
+                    .is_some_and(|name| name.contains("mcp-seal"))
+            })
+            .expect("manifest-pinned mcp-seal package");
+        let package_root = match package["type"].as_str() {
+            Some("path") => host_root.join(
+                package["dir"]
+                    .as_str()
+                    .expect("path mcp-seal package has dir"),
+            ),
+            _ => host_root.join(".lake/packages/mcp-seal"),
+        };
+        let pinned = package_root.join("SealV2/EffectEnvelope.lean");
         let source = std::fs::read_to_string(&pinned).expect("read manifest-pinned effect spec");
         if !source.contains("def optMrtr") {
             eprintln!(
