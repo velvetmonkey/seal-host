@@ -9,6 +9,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+// The acceptance workflow invokes this file explicitly, so keep the scanner's
+// subject-identity refusal tests in the same fail-closed test entrypoint.
+import "./kernel_hash_footprint_subject_identity.test.mjs";
+
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
