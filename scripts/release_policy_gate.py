@@ -26,7 +26,9 @@ IDENTITY_HISTORY_ALLOWLIST = {
     Path("demo/RUN-STATE.md"): "047f931a195dbe18a4ca9af0fb6354ae9d4938aeaffca747d022149856060094",
     Path("docs/V31-DOWNSTREAM-PARSER-AGREEMENT.md"): "5556ff5528de5cb33a5b82c2b5301a056b5ec889496c16be5c73f1c4409e0e32",
     Path("evidence/reachability-v0/RUN.md"): "5e17b859e045d5677ea0e947b1cfc48796f06b7ffda8efea9c14c39ce6f092b4",
-    Path("wasm-spike/verified/PROVENANCE.txt"): "178b0b133ce1a2a3f7caef93e12f59232dfecdcca23ea8998db74cd7b5de952f",
+    # Audited-repin bytes from main (05e5f7d); the identity-bearing historical
+    # lines themselves are unchanged from the previously reviewed file.
+    Path("wasm-spike/verified/PROVENANCE.txt"): "82d18aa06240a91f7b5d431919823f04433605ed60104eb38e9eadf1361556a8",
 }
 
 # These exact lines are append-only/superseded pin history, not active pins.

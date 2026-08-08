@@ -40,14 +40,14 @@ long pole is you, not the machine.
 
 ## 1. Get the binary release
 
-The first published binary release is `v0.1.1`. This repository is private
+The first published binary release is `v0.1.2`. This repository is private
 today, so the checkout prerequisite currently implies repo access; and while
 the build needs no credentials — every dependency resolves publicly — the tree
 still contains references to private infrastructure, so "zero private
 references" is not claimed.
 
 ```sh
-gh release download v0.1.1 --repo velvetmonkey/seal-host \
+gh release download v0.1.2 --repo velvetmonkey/seal-host \
   --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
 ```
 
@@ -81,7 +81,7 @@ where the bundle binary landed:
 
 ```sh
 export SEAL_REPO=/path/to/seal-host
-export SEAL_BIN=/path/to/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs
+export SEAL_BIN=/path/to/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs
 ```
 
 Work in a fresh directory. Generate the two keypairs (config-signing and

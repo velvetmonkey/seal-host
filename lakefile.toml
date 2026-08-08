@@ -1,5 +1,5 @@
 name = "seal-host"
-version = "0.1.1"
+version = "0.1.2"
 testDriver = "lean_tests"
 # Lint driver: a thin wrapper (LintDriver.lean) around Batteries' runLinter,
 # which derives its module list from this package's defaultTargets (their root

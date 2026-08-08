@@ -2,7 +2,7 @@
   "mcpServers": {
     "sealSqliteSandbox": {
       "type": "stdio",
-      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",

@@ -42,17 +42,17 @@ exact request.
 
 ## 1. Get the released host
 
-From the repo root, download, verify, and unpack the `v0.1.1` bundle:
+From the repo root, download, verify, and unpack the `v0.1.2` bundle:
 
 ```sh
 mkdir -p .seal/release
 chmod 700 .seal .seal/release
 cd .seal/release
-gh release download v0.1.1 --repo velvetmonkey/seal-host \
+gh release download v0.1.2 --repo velvetmonkey/seal-host \
   --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 tar xzf seal-host-*-linux-x86_64.tar.gz
-export SEAL_BIN="$PWD/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs"
+export SEAL_BIN="$PWD/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs"
 cd ../..
 ```
 
@@ -256,7 +256,7 @@ are paths inside Ubuntu, never `C:\\...` paths:
     "guarded-db-wsl2": {
       "command": "wsl.exe",
       "args": ["--distribution", "Ubuntu", "--exec",
-               "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+               "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs",
                "--insecure-development-mode",
                "--config", "/home/<wsl-user>/seal-host/trusted.json",
                "--pubkey", "<config-hex>",

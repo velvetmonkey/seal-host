@@ -466,11 +466,11 @@ export SEAL_HOST_ROOT="$PWD"
 mkdir -p "$PWD/.seal/release"
 chmod 700 "$PWD/.seal" "$PWD/.seal/release"
 cd "$PWD/.seal/release"
-gh release download v0.1.1 --repo velvetmonkey/seal-host \
+gh release download v0.1.2 --repo velvetmonkey/seal-host \
   --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 tar xzf seal-host-*-linux-x86_64.tar.gz
-export SEAL_BIN="$PWD/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs"
+export SEAL_BIN="$PWD/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs"
 cd "$SEAL_HOST_ROOT"
 umask 077
 mkdir -p "$PWD/.seal/receipts"
@@ -539,7 +539,7 @@ After Seal, the real command moves behind `--`:
   "mcpServers": {
     "sealSqliteSandbox": {
       "type": "stdio",
-      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
@@ -626,7 +626,7 @@ inside the named distribution:
       "command": "wsl.exe",
       "args": [
         "--distribution", "Ubuntu", "--exec",
-        "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+        "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs",
         "--config", "/home/<wsl-user>/seal-host/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
         "--channel", "ed25519",
