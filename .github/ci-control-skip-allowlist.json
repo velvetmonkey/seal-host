@@ -52,50 +52,14 @@
     {
       "workflow": "ci.yml",
       "job": "build",
-      "id": "control_09",
-      "reason": "The axiom executable is built from the Lean graph that imports the private Lake dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "build",
       "id": "control_10",
-      "reason": "This assertion consumes the axiom report produced by the token-dependent preceding Lean control."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "build",
-      "id": "control_11",
-      "reason": "The host unit executable is built from the Lean graph that imports the private Lake dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "build",
-      "id": "control_12",
-      "reason": "The developer-surface executable is built from the Lean graph that imports the private Lake dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "build",
-      "id": "control_13",
-      "reason": "The policy identity executable is built from the Lean graph that imports the private Lake dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "build",
-      "id": "control_14",
-      "reason": "The SHA-256 self-check executable is built from the Lean graph that imports the private Lake dependencies."
+      "reason": "This assertion consumes the axiom report captured from the token-dependent aggregate Lean test control."
     },
     {
       "workflow": "ci.yml",
       "job": "build",
       "id": "control_16",
       "reason": "The A2 divergence module is built from the Lean graph that imports the private Lake dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "build",
-      "id": "control_17",
-      "reason": "The perimeter executable is built from the Lean graph that imports the private Lake dependencies."
     },
     {
       "workflow": "ci.yml",
@@ -108,42 +72,6 @@
       "job": "build",
       "id": "control_33",
       "reason": "On the tokenless path Lake cannot fetch the manifest-pinned private dependencies, so the import closure this gate walks cannot be resolved and no reachability inventory can be produced. Ben ruled 2026-08-06: the token is deliberately not supplied on that path, so the skip is the intended behaviour rather than an unexplained gap."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance-lean",
-      "id": "control_02",
-      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance-lean",
-      "id": "control_03",
-      "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance-lean",
-      "id": "control_06",
-      "reason": "Tokenless CI suppresses the private Lean aggregate as a unit; this Lean toolchain setup action itself does not require the token."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance-lean",
-      "id": "control_09",
-      "reason": "Lake must fetch the manifest-pinned private dependencies, including mcp-seal, on a clean runner."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance-lean",
-      "id": "control_10",
-      "reason": "The crypto build script lives in the private mcp-seal Lake package fetched with the token."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance-lean",
-      "id": "control_31",
-      "reason": "On the tokenless path there is no credential, so Lake cannot fetch the private mcp-seal dependency and this control cannot link or run the aggregate Lean tests."
     },
     {
       "workflow": "ci.yml",
@@ -234,12 +162,6 @@
       "job": "rust-conformance",
       "id": "control_15",
       "reason": "The release binaries link the Lean FFI artifacts produced from private dependencies."
-    },
-    {
-      "workflow": "ci.yml",
-      "job": "rust-conformance",
-      "id": "control_16",
-      "reason": "The default Lean build imports manifest-pinned private Lake dependencies unavailable on a clean tokenless runner."
     },
     {
       "workflow": "ci.yml",

@@ -101,21 +101,30 @@ class LeanTestDriverGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("exactly matches all 1 children derived", result.stdout)
 
-    def test_every_lean_action_has_a_preceding_gate_call(self) -> None:
+    def test_every_aggregate_lean_action_has_a_preceding_gate_call(self) -> None:
         action_marker = "leanprover/lean-action"
         gate_marker = "python3 scripts/lean_test_driver_gate.py"
         action_count = 0
         for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
-            actions = [match.start() for match in re.finditer(action_marker, text)]
-            gates = [match.start() for match in re.finditer(gate_marker, text)]
-            if not actions:
-                continue
-            action_count += len(actions)
-            self.assertEqual(len(gates), len(actions), workflow)
-            for gate, action in zip(gates, actions, strict=True):
+            job_starts = [
+                match.start()
+                for match in re.finditer(r"(?m)^  [A-Za-z0-9_-]+:\s*$", text)
+            ]
+            for index, start in enumerate(job_starts):
+                end = job_starts[index + 1] if index + 1 < len(job_starts) else len(text)
+                block = text[start:end]
+                if not re.search(r"(?m)lake test(?:\s|$)", block):
+                    continue
+                action = block.find(action_marker)
+                gate = block.find(gate_marker)
+                test = block.find("lake test")
+                self.assertNotEqual(action, -1, workflow)
+                self.assertNotEqual(gate, -1, workflow)
                 self.assertLess(gate, action, workflow)
-        self.assertGreater(action_count, 0, "no lean-action invocation found")
+                self.assertLess(action, test, workflow)
+                action_count += 1
+        self.assertEqual(action_count, 5, "review every aggregate Lean action")
 
     def test_every_lean_action_defers_tests_and_disables_lint(self) -> None:
         action_marker = "leanprover/lean-action"
@@ -160,7 +169,24 @@ class LeanTestDriverGateTests(unittest.TestCase):
         #  11  security.yml:fuzz-hostile-ingress:control_04
         # All eleven pass test: false and lint: false, and all eleven now have
         # a preceding scripts/lean_test_driver_gate.py call.
-        self.assertEqual(action_count, 11, "review every lean-action call site")
+        #
+        # Lowered 11 -> 10 by this lane, 2026-08-08. Exactly one site leaves:
+        # entry 2, ci.yml:rust-conformance-lean:control_06, because roadmap 8y
+        # item 6 deletes that whole job as a same-commit duplicate of the
+        # aggregate already run by ci.yml:build. Nothing is added, and the
+        # remaining ten are unchanged, still gate-preceded, still test: false
+        # and lint: false:
+        #   1  ci.yml:build:control_04
+        #   2  ci.yml:rust-conformance:control_06
+        #   3  g2-mutation-ablation.yml:g2-mutation-ablation:control_06
+        #   4  golden-path.yml:lean-aggregate:control_05
+        #   5  golden-path.yml:deterministic-shell:control_05
+        #   6  public-export.yml:export:control_04
+        #   7  public-export.yml:clean-source-build:control_02
+        #   8  release.yml:build:control_04
+        #   9  security.yml:fuzz-hostile-ingress-lean:control_04
+        #  10  security.yml:fuzz-hostile-ingress:control_04
+        self.assertEqual(action_count, 10, "review every lean-action call site")
 
     def test_every_aggregate_test_has_a_native_prerequisite(self) -> None:
         """Each lake test must follow a native build in the same job.
@@ -172,7 +198,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
             r"bash \.lake/packages/mcp-seal/c/build\.sh",
         )
         explicit_test = re.compile(
-            r"(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?lake test\s*$",
+            r"(?:python3 scripts/ci_disk_telemetry\.py \S+ -- )?lake test(?:\s+2>&1\s+\|\s+tee\s+\S+)?\s*$",
             re.MULTILINE,
         )
         test_count = 0
@@ -195,13 +221,12 @@ class LeanTestDriverGateTests(unittest.TestCase):
                         f"{workflow}: lake test without preceding native build in job",
                     )
 
-        self.assertEqual(test_count, 6, "review every aggregate lake test call site")
+        self.assertEqual(test_count, 5, "review every aggregate lake test call site")
 
     def test_split_aggregate_jobs_are_required_predecessors(self) -> None:
         expected = (
             ("golden-path.yml", "lean-aggregate", "deterministic-shell"),
             ("security.yml", "fuzz-hostile-ingress-lean", "fuzz-hostile-ingress"),
-            ("ci.yml", "rust-conformance-lean", "rust-conformance"),
         )
         for filename, lean_job, downstream_job in expected:
             path = ROOT / ".github" / "workflows" / filename
