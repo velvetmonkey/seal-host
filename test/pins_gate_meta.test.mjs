@@ -289,7 +289,19 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // asserts the commands exist in acceptance.yml and that BOTH callers
   // invoke it — so this is a relocation, not a removal. The run-step FLOOR
   // below is untouched.
-  assert.equal(normal.length, 78, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed 2026-08-08 (pyyamlpop lane): 78 -> 79. Exactly ONE run step is
+  // added to ci.yml: contract-freeze `control_11`, a two-command literal block
+  // running `scripts/workflow_pyyaml_gate.py` and its fixture tests. That gate
+  // is the population control for the defect that reddened this job -- twenty
+  // jobs invoke a script that refuses to run without PyYAML and one of them
+  // declared the dependency. The eighteen provisioning steps added by the same
+  // change are `uses: ./.github/actions/pyyaml`, not run steps, so they do not
+  // enter this inventory; the two other new run steps in that change are in
+  // g2-mutation-ablation.yml and public-export.yml, which this test does not
+  // parse. No pre-existing run step was removed or relocated. The run-step
+  // FLOOR below is untouched.
+  assert.equal(normal.length, 79, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
@@ -301,7 +313,9 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
 test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   const steps = parseCiRunSteps();
   const literalRuns = steps.filter((step) => step.run.includes("\n"));
-  assert.equal(literalRuns.length, 15);
+  // 15 -> 16 alongside the run-step inventory above: contract-freeze
+  // `control_11` is itself a literal `run: |` block with two commands.
+  assert.equal(literalRuns.length, 16);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),
     "a literal run block collapsed to its YAML scalar header",
