@@ -32,33 +32,32 @@ exact request.
 
 ## 0. Prerequisites
 
-- The Lean toolchain (`lean-toolchain` pins the version; install via [`elan`](https://github.com/leanprover/elan)) and Rust (stable) for building.
+- Linux `x86_64` or `aarch64`. Windows 11 with Ubuntu WSL2 uses the
+  `linux-x86_64` asset; no step in this guide requires `systemd`.
+- A checkout of this repository and `gh` logged in to GitHub while the
+  repository is private. No Lean or Rust toolchain is required.
 - Python 3 with the `cryptography` package (for the config signer).
 - A child MCP server to guard. Anything stdio works; a filesystem or sqlite MCP server
   makes the destructive-call demo obvious.
 
-## 1. Build the host
+## 1. Get the released host
 
-One-shot, from the repo root:
-
-```sh
-scripts/build_all.sh          # runs all four steps below in order
-```
-
-The first `lake build` is the long pole of this whole guide — the Lean core compiles from
-source. Good use of that time: read the family's proved-vs-deployed map,
-[EVALUATOR-START.md](https://github.com/velvetmonkey/seal/blob/main/EVALUATOR-START.md) —
-by the time the build finishes you will know exactly what this host does and does not claim.
-
-Or run the steps by hand:
+From the repo root, download, verify, and unpack the `v0.1.1` bundle:
 
 ```sh
-lake build                    # Lean core + FFI
-lake exe axiom_check          # confirm pinned footprints in the Test/Axioms import closure
-scripts/build_ffi_so.sh       # build the FFI shared object the Rust host loads
-cd rust && cargo build && cd ..
-# binary: rust/target/debug/seal-host-rs
+mkdir -p .seal/release
+chmod 700 .seal .seal/release
+cd .seal/release
+gh release download v0.1.1 --repo velvetmonkey/seal-host \
+  --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar xzf seal-host-*-linux-x86_64.tar.gz
+export SEAL_BIN="$PWD/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs"
+cd ../..
 ```
+
+The bundle includes the host, `libsealffi.so`, and its Lean runtime closure;
+do not source-build for this walkthrough.
 
 ## 2. Generate separate signing keypairs
 
@@ -68,6 +67,8 @@ approval channel uses a separate trust root. Mint both keypairs once:
 ```sh
 umask 077
 python3 scripts/generate_keys.py --out-dir .seal
+mkdir -m 700 .seal/store .seal/receipts
+: > .seal/approval-tokens.ndjson
 ```
 
 The generator validates both Ed25519 pairs before publishing any file and
@@ -83,24 +84,26 @@ annotated example in [`../config/payload.example.json`](../config/payload.exampl
 Full field semantics (`mode`, `match`, `target`, the approval block) live in the schema
 reference: [`mcp-seal-dev/docs/POLICY.md`](https://github.com/velvetmonkey/mcp-seal-dev/blob/main/docs/POLICY.md).
 
-Minimal shape:
+For the repository's disposable SQLite MCP server, paste this block exactly;
+the shell expands the current checkout path into the signed policy:
 
-```json
+```sh
+cat > payload.json <<EOF
 {
   "epoch": 1,
   "safety": {
     "approval": {
-      "control_file": "/tmp/seal-tokens.ndjson",
+      "control_file": "$PWD/.seal/approval-tokens.ndjson",
       "ttl_seconds": 120,
       "replay_store": {
-        "sqlite_path": "/var/lib/seal-host/replay.sqlite",
+        "sqlite_path": "$PWD/.seal/store/replay.sqlite",
         "schema_version": 2,
         "namespace_encoding_version": 1
       }
     },
     "tools": [
       {
-        "name": "db.execute",
+        "name": "execute_sql",
         "mode": "guarded",
         "match": { "type": "contains_any_ci", "arg": "sql", "needles": ["drop", "delete", "truncate"] },
         "target": [ {"full_arguments": true} ]
@@ -108,6 +111,7 @@ Minimal shape:
     ]
   }
 }
+EOF
 ```
 
 `sqlite_path` must be in a durable, service-owned directory with mode `0700`;
@@ -117,9 +121,12 @@ Before the first ordinary start, deliberately initialize a genuinely absent
 store from the authority-signed config:
 
 ```sh
-rust/target/debug/seal-host-rs \
+"$SEAL_BIN" --insecure-development-mode \
   --config trusted.json \
-  --pubkey <config-pubkey-hex> \
+  --pubkey "$(cat .seal/config.pub)" \
+  --channel ed25519 \
+  --token-file .seal/approval-tokens.ndjson \
+  --approval-pubkey "$(cat .seal/approval.pub)" \
   --initialize-replay-store
 ```
 
@@ -178,14 +185,14 @@ own keypair for deployment; no matching private key is shipped.
 ## 5. Run the host in front of your server
 
 ```sh
-rust/target/debug/seal-host-rs \
+"$SEAL_BIN" \
   --insecure-development-mode \
   --config trusted.json \
-  --pubkey <config-pubkey-hex> \
+  --pubkey "$(cat .seal/config.pub)" \
   --channel ed25519 \
-  --token-file /tmp/seal-tokens.ndjson \
-  --approval-pubkey <approval-pubkey-hex> \
-  -- <your-mcp-server-cmd> <args...>
+  --token-file .seal/approval-tokens.ndjson \
+  --approval-pubkey "$(cat .seal/approval.pub)" \
+  -- python3 demo/sqlite_mcp_server.py --database .seal/sandbox.sqlite
 ```
 
 - `--config` / `--pubkey`: the signed policy and the key that verifies it.
@@ -221,8 +228,9 @@ specific client during setup):
   "mcpServers": {
     "guarded-db": {
       "command": "/abs/path/to/seal-host-rs",
-      "args": ["--config", "/abs/trusted.json", "--pubkey", "<hex>",
-               "--channel", "ed25519", "--token-file", "/tmp/seal-tokens.ndjson",
+      "args": ["--insecure-development-mode",
+               "--config", "/abs/path/to/trusted.json", "--pubkey", "<hex>",
+               "--channel", "ed25519", "--token-file", "/abs/path/to/.seal/approval-tokens.ndjson",
                "--approval-pubkey", "<approval-hex>",
                "--", "<your-mcp-server-cmd>", "<args...>"]
     }
@@ -230,9 +238,46 @@ specific client during setup):
 }
 ```
 
+### Windows 11 + Ubuntu WSL2
+
+If Claude Code itself runs inside Ubuntu WSL2, use the block above unchanged:
+`command` and every path are ordinary absolute Linux paths. This is the
+recommended path for the first dogfood because the host, child server, config,
+keys, replay store, and Claude Code all share one Linux filesystem and process
+environment.
+
+If Windows-side Claude Desktop launches the WSL2 host, make `wsl.exe` the MCP
+command and put the Linux executable after `--exec`. All paths after `--exec`
+are paths inside Ubuntu, never `C:\\...` paths:
+
+```jsonc
+{
+  "mcpServers": {
+    "guarded-db-wsl2": {
+      "command": "wsl.exe",
+      "args": ["--distribution", "Ubuntu", "--exec",
+               "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+               "--insecure-development-mode",
+               "--config", "/home/<wsl-user>/seal-host/trusted.json",
+               "--pubkey", "<config-hex>",
+               "--channel", "ed25519",
+               "--token-file", "/home/<wsl-user>/seal-host/.seal/approval-tokens.ndjson",
+               "--approval-pubkey", "<approval-hex>",
+               "--", "python3", "/home/<wsl-user>/seal-host/demo/sqlite_mcp_server.py",
+               "--database", "/home/<wsl-user>/seal-host/.seal/sandbox.sqlite"]
+    }
+  }
+}
+```
+
+`Ubuntu` must match the distribution name printed by `wsl.exe --list --quiet`.
+This wrapper path has not been exercised by the Linux release workflow; verify
+it from Windows-side Claude Desktop rather than treating the block's presence
+as execution evidence.
+
 ## 7. Watch it block
 
-Have the agent call a guarded tool (e.g. a `db.execute` whose SQL contains `drop`). The
+Have the agent call the guarded `execute_sql` tool with SQL containing `drop`. The
 call is blocked before the child server sees it, and the block message prints the exact
 **target commitment** (a 64-hex SHA-256). Copy that hex.
 
@@ -254,8 +299,8 @@ the token file:
 
 ```sh
 python3 demo/approve_cli.py \
-  --token-file /tmp/seal-tokens.ndjson \
-  --refusal-file /tmp/blocked-response.json \
+  --token-file .seal/approval-tokens.ndjson \
+  --refusal-file .seal/blocked-response.json \
   --key-file .seal/approval.key \
   --approve --yes
 ```

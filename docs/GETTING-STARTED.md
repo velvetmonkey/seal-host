@@ -23,7 +23,10 @@ assumed is listed at the bottom of this page, precisely.
 
 Stated honestly, all of them:
 
-- Linux, `x86_64` or `aarch64` (the only released architectures).
+- Linux, `x86_64` or `aarch64` (the only released architectures). Windows 11
+  with Ubuntu WSL2 uses the `linux-x86_64` asset; this walkthrough needs no
+  `systemd` service and works with WSL2's optional systemd support either off
+  or on.
 - A checkout of this repository — for the key/signing helpers and the receipt
   verifier. **You do not build anything.** No Lean, no Rust, no toolchain.
 - `python3` with the `cryptography` package (config and approval signing).
@@ -37,20 +40,14 @@ long pole is you, not the machine.
 
 ## 1. Get the binary release
 
-> **Known gap, stated rather than hidden:** as of 2026-08-08 **no `v*` release
-> has been published yet**, so the download command below is the one command
-> on this page that has not been run against a real release asset. Everything
-> after it was verified against a bundle produced locally by
-> `scripts/package_release.sh` — the same script the release workflow
-> (`.github/workflows/release.yml`) runs on a tag push. When the first release
-> exists, this callout should be deleted. (Two more honesty notes: this
-> repository is private today, so the checkout prerequisite currently implies
-> repo access; and while the build needs no credentials — every dependency
-> resolves publicly — the tree still contains references to private
-> infrastructure, so "zero private references" is not claimed.)
+The first published binary release is `v0.1.1`. This repository is private
+today, so the checkout prerequisite currently implies repo access; and while
+the build needs no credentials — every dependency resolves publicly — the tree
+still contains references to private infrastructure, so "zero private
+references" is not claimed.
 
 ```sh
-gh release download --repo velvetmonkey/seal-host \
+gh release download v0.1.1 --repo velvetmonkey/seal-host \
   --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
 ```
 
@@ -84,7 +81,7 @@ where the bundle binary landed:
 
 ```sh
 export SEAL_REPO=/path/to/seal-host
-export SEAL_BIN=/path/to/seal-host-v0.0.0-linux-x86_64/bin/seal-host-rs
+export SEAL_BIN=/path/to/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs
 ```
 
 Work in a fresh directory. Generate the two keypairs (config-signing and

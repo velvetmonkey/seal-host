@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "sealSqliteSandbox": {
+      "command": "wsl.exe",
+      "args": [
+        "--distribution", "Ubuntu", "--exec",
+        "/home/WSL_USER/seal-host/.seal/release/seal-host-v0.1.1-linux-x86_64/bin/seal-host-rs",
+        "--config", "/home/WSL_USER/seal-host/.seal/trusted.json",
+        "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
+        "--channel", "ed25519",
+        "--token-file", "/home/WSL_USER/seal-host/.seal/approval-tokens.ndjson",
+        "--approval-pubkey", "APPROVAL_PUBLIC_KEY_HEX",
+        "--receipt-dir", "/home/WSL_USER/seal-host/.seal/receipts",
+        "--production",
+        "--", "python3", "/home/WSL_USER/seal-host/demo/sqlite_mcp_server.py",
+        "--database", "/home/WSL_USER/seal-host/.seal/sandbox.sqlite"
+      ]
+    }
+  }
+}
