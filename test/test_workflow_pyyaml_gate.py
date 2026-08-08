@@ -222,14 +222,24 @@ class WorkflowPyyamlGateTests(unittest.TestCase):
         )
 
     def test_the_live_exemption_table_is_not_stale(self) -> None:
-        """The one recorded exemption must still name a real, needing job."""
+        """Every recorded exemption must still name a real, needing job.
+
+        The table is empty as of 2026-08-08: its only entry excused
+        ci.yml:rust-conformance-lean, which the Lean-execution consolidation
+        deletes, and the entry's own recorded reason instructed that it be
+        removed together with the job. This assertion is not relaxed by that
+        -- an empty expectation is the strictest form it can take, because any
+        exemption added later fails here until it is argued for in the report.
+        The gate's ability to catch a stale entry is proved by
+        test_a_stale_exemption_is_a_hard_failure above, which injects one.
+        """
         sys.path.insert(0, str(ROOT / "scripts"))
         import workflow_pyyaml_gate as gate  # noqa: PLC0415
 
         self.assertEqual(gate.check(ROOT), [])
         self.assertEqual(
             set(gate.EXEMPTIONS),
-            {("ci.yml", "rust-conformance-lean")},
+            set(),
             "a new exemption is a new hole; state it in the report before adding it",
         )
 
