@@ -11,8 +11,9 @@ ApprovalRecord v2, and append it to the token file.
 
 SECURITY (per design council):
 - The button here is ONLY INTENT. The signing key does the authorization.
-- `echo '{"target": "..."}' >> ndjson` (control-file channel) is DEV-ONLY and
-  UNAUTHENTICATED. It bypasses origin checks. Use only for local throwaway tests.
+- `echo '{"target": "..."}' >> ndjson` (control-file channel) NO LONGER APPROVES
+  ANYTHING. The host refuses that record as `approval_record_v1_not_supported`
+  and the call stays blocked. That channel still carries unsigned DECLINES only.
 - TCB (CLI channel): seal-host process + this CLI process + the local key.
   Co-resident attacker (same uid, can read keyfile, ptrace, LD_PRELOAD the
   signer, or tamper the token file before host polls) can forge approvals.

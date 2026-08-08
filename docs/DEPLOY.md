@@ -22,12 +22,13 @@ tool call, then let it through once you approve it, and hand you an authorizatio
                                    | guarded tools/call with no live approval => BLOCKED
                                    | every decision => an authorization decision
                                    v
-                          approval channel (NDJSON file a human writes to)
+                          approval channel (NDJSON file of SIGNED approval records)
 ```
 
 seal-host is a transparent MCP proxy. Ordinary traffic passes through unchanged. A
-`tools/call` that your policy marks **guarded** is stopped unless a human has written a
-matching one-shot approval into the approval channel.
+`tools/call` that your policy marks **guarded** is stopped unless a human has put a matching
+one-shot approval into the approval channel — a signed `ApprovalRecord` v2 bound to that
+exact request.
 
 ## 0. Prerequisites
 
@@ -89,7 +90,7 @@ Minimal shape:
   "epoch": 1,
   "safety": {
     "approval": {
-      "control_file": "/tmp/seal-approvals.ndjson",
+      "control_file": "/tmp/seal-tokens.ndjson",
       "ttl_seconds": 120,
       "replay_store": {
         "sqlite_path": "/var/lib/seal-host/replay.sqlite",
@@ -102,7 +103,7 @@ Minimal shape:
         "name": "db.execute",
         "mode": "guarded",
         "match": { "type": "contains_any_ci", "arg": "sql", "needles": ["drop", "delete", "truncate"] },
-        "target": [ {"literal": "db"}, {"arg": "database"}, {"literal": "write"}, {"arg": "sql"} ]
+        "target": [ {"full_arguments": true} ]
       }
     ]
   }
@@ -140,6 +141,12 @@ into the signed path, handing back nonces the live store had already consumed.
 The guard bounds who can do that to `{host euid, root}`; it does not detect a
 substitution by those two (residual A7 in [`../CLAIMS.md`](../CLAIMS.md)).
 
+A **guarded** rule may carry only `target: [{"full_arguments": true}]`. A narrower
+target — literal parts, `arg` paths, or the empty list — binds the approval to less
+than the full canonical arguments and is a hard config parse error
+(`Seal/Policy.lean:114-138`); the host exits 3 with `guard mode requires target
+[{"full_arguments": true}]`.
+
 Key facts (from the schema reference, not invented here):
 - A tool **not listed** is blocked — the policy is a fail-closed allowlist for `tools/call`.
 - `mode: "guarded"` needs a live approval; `mode: "deny"` is always blocked.
@@ -175,18 +182,24 @@ rust/target/debug/seal-host-rs \
   --insecure-development-mode \
   --config trusted.json \
   --pubkey <config-pubkey-hex> \
-  --channel file \
-  --token-file /tmp/seal-approvals.ndjson \
+  --channel ed25519 \
+  --token-file /tmp/seal-tokens.ndjson \
+  --approval-pubkey <approval-pubkey-hex> \
   -- <your-mcp-server-cmd> <args...>
 ```
 
 - `--config` / `--pubkey`: the signed policy and the key that verifies it.
-- `--channel file`: approvals arrive as NDJSON lines in a file a human writes. **This is the
-  unauthenticated DEV-ONLY channel** used here to keep the walkthrough keyless — anyone who can
-  write the file can approve any call. For anything past a local smoke test, switch to
-  `--channel ed25519` (see "Control-file channel" below for the exact swap and why).
+- `--channel ed25519`: approvals arrive as NDJSON lines carrying a **signed `ApprovalRecord`
+  v2**. This is the only channel that can grant an approval from a file. There is **no keyless
+  file channel any more**: `--channel file` still starts, but every approval written to it is
+  refused (see "Control-file channel" below).
 - `--token-file`: that file (match `control_file` in your policy).
+- `--approval-pubkey`: the approval trust root — `.seal/approval.pub` from step 2. Distinct
+  from `--pubkey`, which verifies the config.
 - everything after `--`: the child MCP server. seal-host spawns it and proxies to it.
+
+`--channel ed25519` requires the `replay_store` block and an initialized store; without them
+the host exits 3 before spawning the child.
 
 The walkthrough above explicitly opts into insecure development mode, which
 prints an uppercase warning on startup. Production preflight is the default; a
@@ -209,7 +222,8 @@ specific client during setup):
     "guarded-db": {
       "command": "/abs/path/to/seal-host-rs",
       "args": ["--config", "/abs/trusted.json", "--pubkey", "<hex>",
-               "--channel", "file", "--token-file", "/tmp/seal-approvals.ndjson",
+               "--channel", "ed25519", "--token-file", "/tmp/seal-tokens.ndjson",
+               "--approval-pubkey", "<approval-hex>",
                "--", "<your-mcp-server-cmd>", "<args...>"]
     }
   }
@@ -227,26 +241,50 @@ wire (your agent client will surface it, `approval required: <64-hex>`), and the
 audit line lands on the **host's stderr**. The hex appears in both — whichever surface is
 in front of you works.
 
+The refusal on the wire also carries `result.framed_subject`, the exact request frame the
+approval must be bound to (`{encoding, length, sha256, base64}`,
+`rust/src/main.rs:269-301`). **Save that whole refusal JSON to a file** — it is the input to
+the approver, and the target hex alone is not enough.
+
 ## 8. Approve, one shot
 
-Append one line to the approval file. `target` is the hex from the block message;
-`issuedAt` is optional epoch **milliseconds**:
+An approval is a **signed `ApprovalRecord` v2** bound to the target *and* to the exact
+request frame. The approver reads the refusal you just saved and appends one signed line to
+the token file:
 
 ```sh
-# DEV-ONLY / UNAUTHENTICATED — use only for the first 10 seconds of local smoke.
-# This line has NO signature: anyone who can write the file can approve any call.
-# Real work uses the signed ed25519-token channel (CLI or Telegram approver below).
-# Full disclosure + the exact swap to --channel ed25519: "Control-file channel" section below.
-echo '{"target": "<64-hex-from-block-message>", "issuedAt": '"$(date +%s000)"'}' \
-  >> /tmp/seal-approvals.ndjson
+python3 demo/approve_cli.py \
+  --token-file /tmp/seal-tokens.ndjson \
+  --refusal-file /tmp/blocked-response.json \
+  --key-file .seal/approval.key \
+  --approve --yes
 ```
+
+Two properties of the block make the timing non-negotiable, so **approve while the blocked
+session is still running**:
+
+- The target challenge is scoped to the **live host session** that issued it. A record
+  signed after that session exits is dropped with `target_or_subject_mismatch`
+  (`filter_approval_context`, `rust/src/providers.rs:494-522`, applied at
+  `rust/src/main.rs:1825-1830`).
+- The record commits to the frame's bytes, so an approval minted for one call does not
+  admit a different one — a changed argument is a different frame and stays blocked.
 
 The approval is **one-shot** (consumed by the first matching call) and expires after the
 policy's ttl. Malformed lines are skipped fail-closed.
 
+> **Changed: the unsigned one-liner is gone.** Earlier versions of this page told you to
+> approve with `echo '{"target": "<hex>", "issuedAt": ...}' >> /tmp/seal-approvals.ndjson`.
+> The host no longer admits that record in any channel. If you follow the old procedure you
+> get `approval_record_v1_not_supported` on stderr, the response stays
+> `approval required: …` with `isError: true`, and **the child process receives nothing** —
+> a silent drop, not an error at the point of use. Approvals now require the v2 record above.
+
 ## 9. Re-run and read the audit record
 
-Re-issue the same call. It now passes to the child server, and the host records the
+Re-issue the same call. It now passes to the child server. What the child receives is your
+request frame with one host-added field, `operation_id`, appended as the correlator; the
+approval is bound to the bytes **you** sent, not to the forwarded form. The host records the
 decision on **its stderr** — two lines per decision: the raw audit line, then a
 tamper-evident chain record as a single JSON line
 (`{"seal_record":"v1","entry":N,"session":"...","prev_head":"...","head":"..."}`).
@@ -259,8 +297,15 @@ That chain record is an append-only audit chain: each `head` is
 `sha256(prevHead || 0x1f || payload)`, so it commits to every prior decision. You can
 check the log two ways, and they prove different things:
 
-- **The log is intact.** Run `scripts/seal_log.mjs verify` — the executable witness of the
-  `tamper_evident` theorem (`Host/Record.lean`). It rebuilds the SHA-256 head chain from the
+- **The log is intact.** Seal the chain records out of the stderr stream, then verify the
+  sealed file — the executable witness of the `tamper_evident` theorem (`Host/Record.lean`):
+  ```sh
+  grep '"seal_record"' /tmp/seal-audit.log > /tmp/audit-lines.ndjson
+  scripts/seal_log.mjs seal /tmp/audit-lines.ndjson /tmp/sealed.json
+  scripts/seal_log.mjs verify /tmp/sealed.json
+  ```
+  `verify` takes the **sealed** file, not the raw audit lines; handed the raw lines it exits
+  1. It rebuilds the SHA-256 head chain from the
   audit lines and exits non-zero if any line was inserted, reordered, or mutated. The head
   is an injective function of the whole log, so tampering is always detected. This is the
   deployed host's own audit trail; nothing external is needed to check its integrity.
@@ -283,13 +328,20 @@ One-command (CLI path, zero external setup):
 python3 demo/see_the_loop.py
 ```
 
-It prints:
+It is meant to print:
 - `approval required: <64-hex target>`
-- CLI approver signs a **target-bound** record (`target ‖ nonce ‖ issuedAt` [ + `decision:"deny"` ])
+- CLI approver signs a **request-bound** `ApprovalRecord` v2 (target + exact frame digest)
 - signed NDJSON appended to the token file
 - provider accepts (sig verified)
 - action flows (observable `SYNTHETIC_LEDGER_ACTION`) **or** explicit `refused` (for deny)
 - audit / authorization-decision lines
+
+> **Known broken on this revision.** `demo/see_the_loop.py` exits 1 with a
+> `BrokenPipeError`: its driver signs the config's `replay_store` block but never runs
+> `--initialize-replay-store`, so the host it spawns exits 3 with `cannot open replay store`
+> before the loop starts. Until that is fixed, use the step 5–9 walkthrough above, which does
+> initialize the store. Tracked as a defect against `test/integration/approval_loop.py`, not
+> against the host.
 
 The CLI and Telegram approvers live in `demo/`. They are **not** the signing key; they are
 intent delivery. The key does the signature.
@@ -298,7 +350,17 @@ intent delivery. The key does the signature.
 
 **ed25519-token (recommended for anything beyond throwaway)**
 
-- Wire: NDJSON `{"payload":"<compact JSON of target+issuedAt+nonce[+decision]>","signature":"<hex>"}`
+- Wire (approvals): NDJSON `{"payload":"<canonical ApprovalRecord v2 JSON>",
+  "signature_algorithm":"Ed25519","signature_encoding":"base64url-nopad",
+  "signer_key_id":"<sha256 of the approval pubkey>","signature":"<base64url-nopad>"}`.
+  The payload names `approval_record_version: 2`, the target, the `subject_sha256`/
+  `subject_length` of the exact request frame, and the renderer that displayed it; the
+  signature covers `"seal.approval-record/v2" ‖ 0x00 ‖ canonical-payload`
+  (`rust/src/providers.rs:760-811`).
+- Wire (declines only): the older `{"payload":"<target+issuedAt+nonce+decision>",
+  "signature":"<hex>"}` shape is still read, but **only** for `decision: "deny"`. The same
+  shape meaning *allow* is refused as `approval_record_v1_not_supported`
+  (`rust/src/providers.rs:1055-1087`).
 - The approver (CLI/TG) only collects intent; the bridge/CLI holds the key and emits the
   signed token.
 - **TCB (CLI):** seal-host process + CLI process + the local key file on the same machine.
@@ -307,38 +369,49 @@ intent delivery. The key does the signature.
 - **TCB (Telegram demo bridge):** seal-host + bridge process + its signing key + your
   allowlisted from.id list + Telegram's delivery for those users. The callback is HMAC-bound
   to `(target, nonce, decision)` so a tampered button press is rejected. The bridge still
-  holds the key (demo-grade).
+  holds the key (demo-grade). **Approvals from this bridge no longer land:**
+  `demo/approve_telegram.py:136` still emits the legacy signed shape, which the host refuses
+  as `approval_record_v1_not_supported`. Its **declines** still work. Use the CLI approver
+  until the bridge is moved to v2.
 - **Production tightening for Telegram:** device-held key via deep-link / mini-app / custom
   client. The user's device signs; the bridge only relays the already-signed token. The
   origin TCB shrinks to the audited device client.
 
-**Control-file channel (`--channel file`): unauthenticated, DEV-ONLY, NEVER a production approval channel**
+**Control-file channel (`--channel file`): REMOVED as an approval channel**
 
-- `echo '{"target":"<hex>"}' >> /tmp/seal-approvals.ndjson` — a plain NDJSON record with **no
-  signature, no origin, positional seen counter only**.
-- **What "unauthenticated" means, plainly:** the host accepts the record on nothing but its
-  presence in the file. No signature, no key, no origin check — so **anyone (or anything) that
-  can write that file can approve any call.** The 64-hex `target` is **not a secret**: it is
-  printed in the block message, on the MCP wire and on stderr, so knowing it grants no
-  authority. The *only* thing between an attacker and an approval is filesystem write access to
-  the token file — and that is a permission, not authentication.
-- **Why it exists:** a keyless path so the first ~30 seconds of a local smoke test need no key
-  material. That is its entire purpose.
-- **Do not mistake it for a guard.** It is a disclosed dev convenience, not a weak security
-  control. There is nothing to harden here and no flag makes it safe — the same goes for the
-  CLI approver's `--plain` mode, which writes exactly one of these unsigned records. Never
-  point either at anything that matters.
-- **Production MUST use the ed25519-token channel instead.** Select it by swapping the channel
-  flags — `--channel file --token-file F` becomes:
+- **This channel no longer accepts unauthenticated records.** It was the keyless path that let
+  the first ~30 seconds of a local smoke test run without key material:
+  `echo '{"target":"<hex>"}' >> /tmp/seal-approvals.ndjson`, a plain NDJSON record with no
+  signature and no origin. That capability is gone.
+- **What happens if you write one now.** `--channel file` still starts and still consumes the
+  file, but its parser reads *only* the legacy record shape and routes every one to a refusal
+  (`ControlFileProvider::poll`, `rust/src/providers.rs:652-667`, via `refuse_v1_approval`,
+  `:452-465`). You get `{"approval_drop":{"source":"control-file","reason":
+  "approval_record_v1_not_supported"}}` on stderr; the call stays blocked and the child
+  process receives nothing. **There is no record you can write to this file that will approve
+  a call** — the provider has no v2 acceptance path at all, so signing the line does not help
+  either. The same refusal governs the CLI approver's `--plain` mode, which now refuses to
+  emit an allow.
+- **What it still does:** unauthenticated **declines**. A `{"target":"<hex>",
+  "decision":"deny"}` line is still read and still refuses the call
+  (`rust/src/providers.rs:623-636`). Failing closed on nothing but a file write is safe in the
+  direction that blocks; it was never safe in the direction that admits.
+- **Approvals now require the ed25519-token channel.** Every approval must carry a valid
+  Ed25519 `ApprovalRecord` v2 signature from the key behind `--approval-pubkey`, over
+  `"seal.approval-record/v2" ‖ 0x00 ‖ canonical-payload`, and the payload must name the exact
+  request frame. An unsigned, tampered, or legacy-shaped line is dropped with a warning on
+  stderr (`approval_record_v1_not_supported`, `bad_signature`) and the call stays blocked:
   ```sh
   seal-host-rs --config trusted.json --pubkey <config-hex> \
     --channel ed25519 --token-file /path/tokens.ndjson --approval-pubkey <approval-pub-hex> \
     -- <your-mcp-server-cmd> <args...>
   ```
-  Now every approval must carry a valid Ed25519 signature over `(target ‖ issuedAt ‖ nonce)`
-  from the key behind `--approval-pubkey`; an unsigned or tampered line is dropped with a
-  `bad_signature` warning on stderr and the call stays blocked. Labeled everywhere in code,
-  docs, and demos; use the control-file only for the absolute first 30 seconds of local smoke.
+- **The one remaining keyless path is `--channel interactive`**, and it is not a file. The host
+  opens its own controlling `/dev/tty` (`rust/src/main.rs:1242-1248`), prompts
+  `approve target <hex>? [y/N]` on stderr, and a `y` typed at that terminal admits the call
+  (`rust/src/providers.rs:1150-1162`). The authority is possession of the host's terminal, not
+  a signature: it is a local-only convenience with the same "not a production channel" caveat
+  the control file used to carry, and it binds to the target, not to the request frame.
 
 ### ORDERING vs ORIGIN (what is Lean-proven)
 
@@ -353,11 +426,12 @@ intent delivery. The key does the signature.
 ### What this demo proves / does NOT prove
 
 **Proves (with the shipped code):**
-- The Rust providers accept and verify target-bound ed25519 signed allows and explicit
-  signed declines (decision:"deny").
+- The Rust providers accept and verify request-bound ed25519 signed `ApprovalRecord` v2 allows
+  and explicit signed declines (decision:"deny").
 - Explicit decline produces "refused" in audit (not a timeout or generic deny).
 - The CLI approver emits exactly the envelope the provider verifies.
-- The one-command path (synthetic) drives block → signed record → (flow | refused) → authorization decision.
+- The step 5–9 walkthrough drives block → signed v2 record → flow → authorization decision.
+  (The one-command `see_the_loop.py` path does not currently run; see the note above.)
 
 **Does NOT prove:**
 - End-to-end correctness of a production deployment.
