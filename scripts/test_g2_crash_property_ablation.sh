@@ -56,7 +56,6 @@ trap cleanup EXIT
 mkdir -p "$LOG_DIR"
 git -C "$ROOT" archive --format=tar --output="$ARCHIVE" HEAD
 
-export PATH="/home/monkey/.cargo/bin:$PATH"
 export SEAL_FFI_LIB_DIR="${SEAL_FFI_LIB_DIR:-$ROOT/.lake/build/lib}"
 export LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

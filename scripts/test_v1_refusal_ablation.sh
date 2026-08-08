@@ -54,8 +54,7 @@ git -C "$MUTANT" apply <<'PATCH'
  }
 PATCH
 
-export PATH="/home/monkey/.cargo/bin:$PATH"
-export SEAL_FFI_LIB_DIR="${SEAL_FFI_LIB_DIR:-/home/monkey/src/seal-host/.lake/build/lib}"
+export SEAL_FFI_LIB_DIR="${SEAL_FFI_LIB_DIR:-$ROOT/.lake/build/lib}"
 export LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$SEAL_FFI_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export CARGO_TARGET_DIR="$SCRATCH/target"

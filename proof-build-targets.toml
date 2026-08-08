@@ -26,8 +26,8 @@
 #   rebased 2026-08-07 and hand-checked row by row against the current workflow
 #   coordinates cited below.
 # NOT OWNER-RULED: this repository has no CODEOWNERS file, so no named owner
-#   has signed these assertions. That gap is real and is recorded in
-#   /home/monkey/orphanfix-report.md under UNVERIFIED.
+#   has signed these assertions. That gap is real and is recorded in the
+#   external `orphanfix-report.md` under UNVERIFIED.
 #
 # EIGHT ROWS REMOVED, leandeduperegistry lane, 2026-08-08. Roadmap 8y item 6
 # consolidates duplicate Lean execution; each removal below is a control the
