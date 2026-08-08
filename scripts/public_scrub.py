@@ -13,7 +13,7 @@ ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else None
 if ROOT is None or not ROOT.is_dir():
     raise SystemExit("usage: public_scrub.py SOURCE_TREE")
 
-EXPECTED_KERNEL = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec"
+EXPECTED_KERNEL = "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657"
 TEXT_SUFFIXES = {".c", ".cjs", ".css", ".html", ".js", ".json", ".lean", ".md", ".mjs", ".py", ".rs", ".sh", ".toml", ".txt", ".yml", ".yaml"}
 TEXT_NAMES = {"Dockerfile", "Dockerfile.release"}
 NON_TEXT_DIRS = (

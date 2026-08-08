@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 const VERIFIED_WASM: &[u8] = include_bytes!("../../receipt-verifier/wasm/seal.wasm");
 pub const VERIFIED_WASM_SHA256: &str =
-    "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec";
+    "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657";
 
 /// Declared verification profile of seal-host's authorization-decision verifier surface
 /// (seal-assurance-kit docs/VERIFY-PROFILES.md): P-ENFORCE — the production

@@ -215,7 +215,7 @@ jobs:
         name: Require the promoted moving v1 Action tag
         run: |
           actual=$(git ls-remote https://github.com/velvetmonkey/seal-verify-action.git refs/tags/v1 | awk '{print $1}')
-          test "$actual" = "81077e5ee2c042c17ff73de2c00670d4857d7cee"
+          test "$actual" = "a10e64827e31fa59c92d240fc46f697d53dde88e"
       - id: control_03
         continue-on-error: true
         uses: actions/download-artifact@v8
