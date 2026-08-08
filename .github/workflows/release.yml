@@ -50,9 +50,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
@@ -141,40 +138,6 @@ jobs:
           cargo cyclonedx --format json --override-filename seal-host-rust.cdx
           cp seal-host-rust.cdx.json "$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}.cdx.json"
         working-directory: rust
-      - id: attest
-        continue-on-error: true
-        name: Attest package and SBOM provenance
-        uses: actions/attest@v4
-        with:
-          subject-path: |
-            ${{ runner.temp }}/release/*.tar.gz
-            ${{ runner.temp }}/release/*.cdx.json
-      - id: control_17
-        continue-on-error: true
-        name: Verify emitted attestations and reject a tampered subject
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          shopt -s nullglob
-          artifacts=("$RUNNER_TEMP"/release/*.tar.gz "$RUNNER_TEMP"/release/*.cdx.json)
-          test "${#artifacts[@]}" -ge 2
-          for artifact in "${artifacts[@]}"; do
-            gh attestation verify "$artifact" \
-              --repo "$GITHUB_REPOSITORY" \
-              --bundle "${{ steps.attest.outputs.bundle-path }}" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-          done
-          tampered="$RUNNER_TEMP/tampered-attestation-subject-${{ matrix.arch }}"
-          cp "${artifacts[0]}" "$tampered"
-          printf '\0tampered' >> "$tampered"
-          if gh attestation verify "$tampered" \
-              --repo "$GITHUB_REPOSITORY" \
-              --bundle "${{ steps.attest.outputs.bundle-path }}" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"; then
-            echo "tampered subject unexpectedly verified" >&2
-            exit 1
-          fi
-          echo "PASS tampered attestation subject rejected"
       - id: control_18
         continue-on-error: true
         uses: actions/upload-artifact@v7
@@ -182,7 +145,6 @@ jobs:
           name: seal-host-${{ github.ref_name }}-linux-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/release/*.tar.gz
-            ${{ runner.temp }}/release/*.sha256
             ${{ runner.temp }}/release/*.cdx.json
 
       - name: Require every isolated CI step to pass
@@ -199,6 +161,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
     steps:
       - id: control_01
         continue-on-error: true
@@ -225,7 +188,55 @@ jobs:
       - id: control_04
         continue-on-error: true
         name: Consolidate SHA-256 checksums
-        run: cd release && sha256sum *.tar.gz *.cdx.json > SHA256SUMS
+        run: |
+          cd release
+          mapfile -t payloads < <(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.cdx.json' \) -printf '%f\n' | LC_ALL=C sort)
+          test "${#payloads[@]}" -ge 2
+          sha256sum "${payloads[@]}" > SHA256SUMS
+
+      - id: control_05
+        continue-on-error: true
+        name: Install the pinned Sigstore verifier and signer
+        uses: sigstore/cosign-installer@v4.1.2
+        with: { cosign-release: v3.0.6 }
+
+      - id: control_06
+        continue-on-error: true
+        name: Bind every release payload in an honest provenance statement
+        run: |
+          python3 scripts/release_provenance.py create \
+            --release-dir release \
+            --output release/SEAL-RELEASE-PROVENANCE.json \
+            --signer-identity "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
+            --oidc-issuer "https://token.actions.githubusercontent.com" \
+            --repository "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF" \
+            --commit "$GITHUB_SHA" \
+            --workflow ".github/workflows/release.yml" \
+            --run-id "$GITHUB_RUN_ID"
+
+      # GitHub artifact attestations are unavailable for this user-owned
+      # private repository. Keep the semantic attestation control, but replace
+      # the unavailable service with Seal's signed, byte-binding statement.
+      # docs/RELEASE-PROVENANCE.md and CLAIMS.md state the weaker exact claim.
+      - id: attest
+        continue-on-error: true
+        name: Sign Seal release provenance with the workflow OIDC identity
+        run: |
+          cosign sign-blob --yes \
+            --bundle release/SEAL-RELEASE-PROVENANCE.sigstore.json \
+            release/SEAL-RELEASE-PROVENANCE.json
+
+      - id: control_07
+        continue-on-error: true
+        name: Refuse publication unless provenance signature and digests verify
+        run: |
+          python3 scripts/release_provenance.py verify \
+            --release-dir release \
+            --statement release/SEAL-RELEASE-PROVENANCE.json \
+            --bundle release/SEAL-RELEASE-PROVENANCE.sigstore.json \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}

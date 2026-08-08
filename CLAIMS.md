@@ -129,3 +129,20 @@ approval-token key.
 
 seal mediates **request-effects**, not responses. Never say "seal prevents
 leaks." It prevents unapproved effects through the mediated request boundary.
+
+## Release provenance
+
+GitHub artifact attestations are not available for this user-owned private
+repository. Releases instead carry a Sigstore-keyless, in-toto statement whose
+SHA-256 subjects are the exact published tarballs, CycloneDX SBOMs, and
+`SHA256SUMS`. The release gate verifies the workflow certificate identity, the
+signature, the exact subject set, and every digest before publication. Absence
+or an unanswerable verification is a refusal.
+
+This claims only that the named GitHub Actions release-workflow identity signed
+those byte bindings. It is not a GitHub artifact attestation, not an
+independently controlled human or organisation signing key, and not proof of
+reproducibility, hermeticity, source-to-binary correspondence, uncompromised
+build or signing infrastructure, or theorem-to-binary applicability. The
+signed statement repeats these non-claims. See
+[`docs/RELEASE-PROVENANCE.md`](docs/RELEASE-PROVENANCE.md).
