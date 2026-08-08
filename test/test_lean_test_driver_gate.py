@@ -134,10 +134,33 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertIn("test: false", action_block, workflow)
                 self.assertIn("lint: false", action_block, workflow)
 
-        # 9 after the capacity splits: ci build + ci rust-conformance-lean +
-        # ci rust-conformance + golden lean-aggregate + golden deterministic-shell
-        # + public-export + release + security lean + security fuzz.
-        self.assertEqual(action_count, 9, "review every lean-action call site")
+        # This count is a tripwire, not a fact to be kept in sync: it goes red
+        # whenever a call site is added or removed, and the only way to clear
+        # it is to review every site and restate the roster below. Bumping the
+        # number without doing that review defeats the whole control.
+        #
+        # Raised 9 -> 11 by the pyyamlpop lane, 2026-08-08, after reviewing all
+        # eleven sites individually. Two were new since the roster was last
+        # restated, and one of the two was itself a defect:
+        #   1  ci.yml:build:control_04
+        #   2  ci.yml:rust-conformance-lean:control_06
+        #   3  ci.yml:rust-conformance:control_06
+        #   4  g2-mutation-ablation.yml:g2-mutation-ablation:control_06  NEW
+        #      -- landed at df50f48 with no preceding gate call; the gate call
+        #      was added, it did not already exist.
+        #   5  golden-path.yml:lean-aggregate:control_05
+        #   6  golden-path.yml:deterministic-shell:control_05
+        #   7  public-export.yml:export:control_04
+        #   8  public-export.yml:clean-source-build:control_02  NEW to this
+        #      roster -- the previous comment counted public-export.yml once
+        #      when it already had two sites, and this one had no preceding
+        #      gate call either. Also fixed, not accommodated.
+        #   9  release.yml:build:control_04
+        #  10  security.yml:fuzz-hostile-ingress-lean:control_04
+        #  11  security.yml:fuzz-hostile-ingress:control_04
+        # All eleven pass test: false and lint: false, and all eleven now have
+        # a preceding scripts/lean_test_driver_gate.py call.
+        self.assertEqual(action_count, 11, "review every lean-action call site")
 
     def test_every_aggregate_test_has_a_native_prerequisite(self) -> None:
         """Each lake test must follow a native build in the same job.

@@ -20,6 +20,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+
       - id: control_02
         continue-on-error: true
         name: Require private dependency access
@@ -128,6 +138,16 @@ jobs:
           ref: dfa49da640e975318163a5047b2baa04ec9c9b73
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
+
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
 
       - id: control_04
         continue-on-error: true

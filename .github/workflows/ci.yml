@@ -20,6 +20,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
         name: Require private dependency source access
@@ -79,6 +88,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_15
         continue-on-error: true
         name: Verify wasm project MODULES close over Lean imports
@@ -149,14 +167,13 @@ jobs:
         name: Gate every explicit theorem/lemma module against CI build closures
         run: |
           # The trigger reader parses the on: block as YAML rather than
-          # matching indentation as literal text. PyYAML is not guaranteed on
-          # the runner image, so provision it explicitly; if every route
-          # fails the step fails, which is the correct direction -- a gate
-          # that cannot read the trigger must not report coverage.
-          python3 -c 'import yaml' 2>/dev/null \
-            || python3 -m pip install --break-system-packages pyyaml==6.0.2 \
-            || python3 -m pip install pyyaml==6.0.2 \
-            || sudo apt-get install -y -qq python3-yaml
+          # matching indentation as literal text. PyYAML is provisioned once
+          # at the top of this job by ./.github/actions/pyyaml, which is the
+          # sole provisioning point for the whole estate; the three-way
+          # install fallback that used to be inlined here lives there now.
+          # scripts/workflow_pyyaml_gate.py fails closed if this job -- or
+          # any other job that runs a PyYAML-dependent script -- stops
+          # referencing it.
           python3 scripts/proof_inventory.py
           python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
@@ -280,6 +297,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
         name: Skip private conformance without dependency token
@@ -531,6 +557,15 @@ jobs:
         uses: actions/setup-python@v6.0.0
         with:
           python-version: "3.12.11"
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_03
         continue-on-error: true
         name: Install key-generation test dependency
@@ -565,6 +600,18 @@ jobs:
         run: |
           python3 test/test_lean_test_driver_gate.py -v
           python3 test/test_ci_control_reporting.py -v
+      # The population control for the defect that reddened this very job:
+      # ci_control_aggregate.py and proof_inventory.py refuse to run without
+      # PyYAML, twenty jobs invoke one of them, and until 2026-08-08 exactly
+      # one of those jobs declared the dependency. The gate derives the
+      # population from the tree rather than from a roster, so a new job
+      # cannot silently inherit the gap; its own tests prove it goes red.
+      - id: control_11
+        continue-on-error: true
+        name: Every job running a PyYAML-dependent script provisions PyYAML
+        run: |
+          python3 scripts/workflow_pyyaml_gate.py
+          python3 test/test_workflow_pyyaml_gate.py -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
@@ -578,6 +625,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -604,6 +660,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -652,6 +717,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
         name: Require every security-relevant job to succeed

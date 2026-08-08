@@ -38,7 +38,7 @@ kind     = "test"
 target   = ""
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:167
+# ci.yml:170
 
 [[invocation]]
 workflow = "ci.yml"
@@ -48,7 +48,7 @@ kind     = "build"
 target   = ""
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:170
+# ci.yml:173
 
 [[invocation]]
 workflow = "ci.yml"
@@ -58,7 +58,7 @@ kind     = "exe"
 target   = "axiom_check"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:174
+# ci.yml:177
 
 [[invocation]]
 workflow = "ci.yml"
@@ -68,7 +68,7 @@ kind     = "exe"
 target   = "host_unit_tests"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:215
+# ci.yml:218
 
 [[invocation]]
 workflow = "ci.yml"
@@ -78,7 +78,7 @@ kind     = "exe"
 target   = "dx_surface_tests"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:219
+# ci.yml:222
 
 [[invocation]]
 workflow = "ci.yml"
@@ -88,7 +88,7 @@ kind     = "exe"
 target   = "policy_server_identity_tests"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:223
+# ci.yml:226
 
 [[invocation]]
 workflow = "ci.yml"
@@ -98,7 +98,7 @@ kind     = "exe"
 target   = "sha256_selfcheck"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:227
+# ci.yml:230
 
 [[invocation]]
 workflow = "ci.yml"
@@ -108,7 +108,7 @@ kind     = "build"
 target   = "Test.A2DivergenceClassification"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:232
+# ci.yml:235
 
 [[invocation]]
 workflow = "ci.yml"
@@ -118,7 +118,7 @@ kind     = "build"
 target   = "perimeter_probe"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:240
+# ci.yml:243
 
 [[invocation]]
 workflow = "ci.yml"
@@ -128,7 +128,7 @@ kind     = "exe"
 target   = "perimeter_probe"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:241
+# ci.yml:244
 
 [[invocation]]
 workflow = "ci.yml"
@@ -138,7 +138,7 @@ kind     = "build"
 target   = "+Ffi:c.o.export"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:403
+# ci.yml:408
 
 [[invocation]]
 workflow = "ci.yml"
@@ -148,7 +148,7 @@ kind     = "build"
 target   = "SealV2.EffectEnvelope"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:437
+# ci.yml:442
 
 [[invocation]]
 workflow = "ci.yml"
@@ -158,7 +158,7 @@ kind     = "build"
 target   = ""
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:458
+# ci.yml:463
 
 [[invocation]]
 workflow = "ci.yml"
@@ -168,7 +168,7 @@ kind     = "build"
 target   = "downstream_parser_oracle"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:462
+# ci.yml:467
 
 [[invocation]]
 workflow = "ci.yml"
@@ -178,7 +178,29 @@ kind     = "exe"
 target   = "honesty_matrix"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:490
+# ci.yml:495
+
+# ------------------------------------------------- g2-mutation-ablation.yml
+#
+# declared_by: pyyamlpop lane, 2026-08-08. This workflow landed at df50f48
+# with an undeclared `lake build +Ffi:c.o.export`, which is what actually
+# reddened ci.yml:build -- control_18 reported
+#   PROOF INVENTORY UNCLASSIFIED: g2-mutation-ablation.yml:g2-mutation-
+#   ablation:control_09@103 (lake build +Ffi:c.o.export): undeclared lake
+#   invocation; add it to proof-build-targets.toml or remove it
+# The remedy the gate names is this row. push_main is false and asserted so:
+# the workflow declares only `schedule` and `workflow_dispatch`, so it does
+# not admit a push to refs/heads/main and confers no push-to-main coverage.
+# It is expected to be listed TRIGGER-EXCEPTED, not REACHED.
+[[invocation]]
+workflow = "g2-mutation-ablation.yml"
+job      = "g2-mutation-ablation"
+step     = "control_09"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = false
+# g2-mutation-ablation.yml:127
 
 # ---------------------------------------------------------------- golden-path.yml
 [[invocation]]
@@ -189,7 +211,7 @@ kind     = "exe"
 target   = "cache"
 guard    = "shell-conditional"
 push_main = true
-# golden-path.yml:77
+# golden-path.yml:80
 
 [[invocation]]
 workflow = "golden-path.yml"
@@ -199,7 +221,7 @@ kind     = "build"
 target   = ""
 guard    = "shell-conditional"
 push_main = true
-# golden-path.yml:78
+# golden-path.yml:81
 
 [[invocation]]
 workflow = "golden-path.yml"
@@ -209,7 +231,7 @@ kind     = "exe"
 target   = "axiom_check"
 guard    = "shell-conditional"
 push_main = true
-# golden-path.yml:79
+# golden-path.yml:82
 
 [[invocation]]
 workflow = "golden-path.yml"
@@ -219,7 +241,7 @@ kind     = "exe"
 target   = "host_unit_tests"
 guard    = "shell-conditional"
 push_main = true
-# golden-path.yml:81
+# golden-path.yml:84
 
 [[invocation]]
 workflow = "golden-path.yml"
@@ -229,7 +251,7 @@ kind     = "exe"
 target   = "dx_surface_tests"
 guard    = "shell-conditional"
 push_main = true
-# golden-path.yml:82
+# golden-path.yml:85
 
 # ---------------------------------------------------------------- public-export.yml
 [[invocation]]
@@ -240,7 +262,7 @@ kind     = "test"
 target   = ""
 guard    = ""
 push_main = false
-# public-export.yml:52
+# public-export.yml:54
 
 # ---------------------------------------------------------------- release.yml
 [[invocation]]
@@ -251,7 +273,7 @@ kind     = "test"
 target   = ""
 guard    = ""
 push_main = false
-# release.yml:121
+# release.yml:123
 
 [[invocation]]
 workflow = "release.yml"
@@ -261,7 +283,7 @@ kind     = "build"
 target   = "+Ffi:c.o.export"
 guard    = ""
 push_main = false
-# release.yml:124
+# release.yml:126
 
 # ---------------------------------------------------------------- security.yml
 [[invocation]]
@@ -272,4 +294,4 @@ kind     = "build"
 target   = "+Ffi:c.o.export"
 guard    = ""
 push_main = true
-# security.yml:140
+# security.yml:148

@@ -37,6 +37,15 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
         name: Report the tokenless path before it fails the ablation
@@ -81,6 +90,16 @@ jobs:
         with:
           toolchain: "1.96.0"
           cache: false
+      # Every lean-action call site in this estate is preceded by the
+      # test-driver wiring gate, and test/test_lean_test_driver_gate.py
+      # enforces that pairing across all workflows. This workflow landed
+      # without it, which is one of the three population gates it skipped.
+      # The gate reads lakefile.toml and Test/LeanTests.lean out of the
+      # checkout, so it needs no token and runs unconditionally.
+      - id: control_12
+        continue-on-error: true
+        name: Guard Lean test-driver wiring
+        run: python3 scripts/lean_test_driver_gate.py
       - id: control_06
         continue-on-error: true
         uses: leanprover/lean-action@v1.5.0
