@@ -28,6 +28,8 @@ Stated honestly, all of them:
   verifier. **You do not build anything.** No Lean, no Rust, no toolchain.
 - `python3` with the `cryptography` package (config and approval signing).
 - `node` (any current LTS; used only by the receipt verifier).
+- `gh` (the GitHub CLI) for the release download, logged in via
+  `gh auth login` — required while this repository is private.
 
 Total measured command time for everything below: **about 10 seconds** on a
 2026 Linux workstation. Budget a few minutes of reading around it; the
@@ -228,7 +230,7 @@ python3 -m json.tool "$(ls seal-receipts/receipt-* | tail -1)"
 
 Fields worth reading on your first one: `verdict` (`ALLOW` here — the last
 decision was the approved flow; the earlier receipts in the same directory
-say `DENY`), `authorization: "approval"`, `approval.approval_identity`
+say `BLOCK`), `authorization: "approval"`, `approval.approval_identity`
 (which channel and which key fingerprint authorized it — identity is only
 authenticated on the `ed25519` channel), `canonical_request_sha256` and
 `framed_subject_sha256` (byte commitments to what was judged), and `reason:
