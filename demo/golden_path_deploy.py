@@ -392,6 +392,11 @@ def hero_flow(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         require_cert(ok_record, "safety", "allow", gp.target_from(deploy_refusal))
         require_cert(ok_record, "consensus", "allow", "quorum ok (2/3): deploy")
         require_cert(ok_record, "linear", "allow", f"capability spent (0 uses left): {CAPABILITY}")
+        # The adapter writes this stderr marker before its stdout response, but
+        # LineProcess drains those pipes on separate threads. Synchronize with
+        # the marker before counting it; otherwise a loaded runner can observe
+        # the response while the stderr reader has not appended the marker yet.
+        session.wait_stderr("SEAL_C3_EXECUTED tool=deploy")
         if session.deploy_count() != 1:
             raise gp.DemoFailure("DEPLOY-OK did not execute exactly once")
 

@@ -123,7 +123,9 @@ jobs:
       - id: control_13
         continue-on-error: true
         name: Package the complete runtime closure
-        run: scripts/package_release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"
+        run: |
+          python3 test/test_runtime_dependency_gate.py -v
+          scripts/package_release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"
       - id: control_14
         continue-on-error: true
         name: Build and smoke-test the non-root container
