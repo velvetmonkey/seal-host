@@ -28,9 +28,9 @@ CLAIM = (
     "binding these exact release payload bytes, at these names, by SHA-256."
 )
 DIGEST_SCOPE = (
-    "Complete file bytes of every published tar.gz archive, every published "
-    "CycloneDX JSON SBOM, and the consolidated SHA256SUMS; extracted binaries "
-    "are not separate subjects."
+    "Complete file bytes of both published architecture archives, both "
+    "CycloneDX JSON SBOMs, the standalone verifier, and the consolidated "
+    "SHA256SUMS; extracted binaries are not separate subjects."
 )
 KEY_CUSTODY = (
     "Sigstore keyless ephemeral key certified for the GitHub Actions OIDC "
@@ -58,7 +58,8 @@ NON_CLAIMS = [
     ),
     (
         "It does not separately attest an extracted binary; verification is "
-        "of the exact published archive, SBOM, and checksum-manifest bytes."
+        "of the exact published archive, SBOM, verifier, and checksum-manifest "
+        "bytes."
     ),
     (
         "It does not make provenance or signature verification optional; "
@@ -66,8 +67,11 @@ NON_CLAIMS = [
         "is refusal, not a pass."
     ),
 ]
-PAYLOAD_GLOBS = ("*.tar.gz", "*.cdx.json")
 CHECKSUMS_NAME = "SHA256SUMS"
+STATEMENT_NAME = "SEAL-RELEASE-PROVENANCE.json"
+BUNDLE_NAME = "SEAL-RELEASE-PROVENANCE.sigstore.json"
+VERIFIER_NAME = "release_provenance.py"
+PROVENANCE_METADATA = {STATEMENT_NAME, BUNDLE_NAME}
 
 
 def refuse(message: str) -> NoReturn:
@@ -86,28 +90,46 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def payload_paths(release_dir: Path) -> list[Path]:
+def expected_payload_names(release_version: str) -> set[str]:
+    if not release_version or Path(release_version).name != release_version:
+        refuse("release version must be a non-empty basename")
+    return {
+        f"seal-host-{release_version}-linux-{arch}{suffix}"
+        for arch in ("x86_64", "aarch64")
+        for suffix in (".tar.gz", ".cdx.json")
+    } | {VERIFIER_NAME}
+
+
+def payload_paths(release_dir: Path, release_version: str) -> list[Path]:
     if not release_dir.is_dir():
         refuse(f"release directory is unavailable: {release_dir}")
 
-    by_name: dict[str, Path] = {}
-    for pattern in PAYLOAD_GLOBS:
-        for path in release_dir.glob(pattern):
-            if not path.is_file():
-                continue
-            if path.name in by_name:
-                refuse(f"duplicate release payload basename: {path.name}")
-            by_name[path.name] = path
+    expected_payloads = expected_payload_names(release_version)
+    allowed_names = expected_payloads | {CHECKSUMS_NAME} | PROVENANCE_METADATA
+    entries = {path.name: path for path in release_dir.iterdir()}
+    unexpected = sorted(set(entries) - allowed_names)
+    if unexpected:
+        refuse(
+            "release directory contains files that are neither signed subjects "
+            f"nor provenance metadata: {', '.join(unexpected)}"
+        )
 
-    tarballs = sorted(name for name in by_name if name.endswith(".tar.gz"))
-    sboms = sorted(name for name in by_name if name.endswith(".cdx.json"))
-    if not tarballs:
-        refuse("release directory contains no .tar.gz payload")
-    if not sboms:
-        refuse("release directory contains no .cdx.json SBOM payload")
+    missing = sorted(expected_payloads - set(entries))
+    if missing:
+        refuse(
+            "release payload set is incomplete; missing expected signed subjects: "
+            + ", ".join(missing)
+        )
+
+    by_name: dict[str, Path] = {}
+    for name in sorted(expected_payloads):
+        path = entries[name]
+        if path.is_symlink() or not path.is_file():
+            refuse(f"release payload is not a regular file: {name}")
+        by_name[name] = path
 
     checksums = release_dir / CHECKSUMS_NAME
-    if not checksums.is_file():
+    if checksums.is_symlink() or not checksums.is_file():
         refuse(f"missing checksum manifest: {checksums}")
     by_name[CHECKSUMS_NAME] = checksums
     return [by_name[name] for name in sorted(by_name)]
@@ -144,10 +166,13 @@ def subjects(paths: list[Path]) -> list[dict[str, object]]:
 def create(args: argparse.Namespace) -> int:
     release_dir = Path(args.release_dir)
     output = Path(args.output)
-    paths = payload_paths(release_dir)
+    if output.parent.resolve() != release_dir.resolve() or output.name != STATEMENT_NAME:
+        refuse(
+            f"provenance statement output must be {STATEMENT_NAME} directly inside "
+            "the release directory"
+        )
+    paths = payload_paths(release_dir, args.release_version)
     require_checksum_manifest(paths)
-    if output.parent.resolve() != release_dir.resolve():
-        refuse("provenance statement output must be directly inside the release directory")
 
     statement = {
         "_type": STATEMENT_TYPE,
@@ -160,13 +185,6 @@ def create(args: argparse.Namespace) -> int:
                 "identity": args.signer_identity,
                 "issuer": args.oidc_issuer,
                 "keyCustody": KEY_CUSTODY,
-            },
-            "buildContext": {
-                "repository": args.repository,
-                "ref": args.ref,
-                "commit": args.commit,
-                "workflow": args.workflow,
-                "runId": args.run_id,
             },
             "nonClaims": NON_CLAIMS,
         },
@@ -182,7 +200,7 @@ def create(args: argparse.Namespace) -> int:
 
 
 def load_statement(path: Path) -> dict[str, object]:
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         refuse(f"missing provenance statement: {path}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -194,7 +212,7 @@ def load_statement(path: Path) -> dict[str, object]:
 
 
 def require_signature(args: argparse.Namespace, statement: Path, bundle: Path) -> None:
-    if not bundle.is_file():
+    if bundle.is_symlink() or not bundle.is_file():
         refuse(f"missing provenance signature bundle: {bundle}")
 
     cosign = args.cosign
@@ -301,9 +319,19 @@ def verify(args: argparse.Namespace) -> int:
     release_dir = Path(args.release_dir)
     statement_path = Path(args.statement)
     bundle_path = Path(args.bundle)
+    if (
+        statement_path.parent.resolve() != release_dir.resolve()
+        or statement_path.name != STATEMENT_NAME
+    ):
+        refuse(f"statement must be {STATEMENT_NAME} inside the release directory")
+    if (
+        bundle_path.parent.resolve() != release_dir.resolve()
+        or bundle_path.name != BUNDLE_NAME
+    ):
+        refuse(f"bundle must be {BUNDLE_NAME} inside the release directory")
     statement = load_statement(statement_path)
     require_signature(args, statement_path, bundle_path)
-    paths = payload_paths(release_dir)
+    paths = payload_paths(release_dir, args.release_version)
     require_checksum_manifest(paths)
     expected_identity = args.expected_signer_identity or args.certificate_identity
     if not expected_identity:
@@ -324,18 +352,15 @@ def parser() -> argparse.ArgumentParser:
 
     create_parser = subparsers.add_parser("create")
     create_parser.add_argument("--release-dir", required=True)
+    create_parser.add_argument("--release-version", required=True)
     create_parser.add_argument("--output", required=True)
     create_parser.add_argument("--signer-identity", required=True)
     create_parser.add_argument("--oidc-issuer", required=True)
-    create_parser.add_argument("--repository", required=True)
-    create_parser.add_argument("--ref", required=True)
-    create_parser.add_argument("--commit", required=True)
-    create_parser.add_argument("--workflow", required=True)
-    create_parser.add_argument("--run-id", required=True)
     create_parser.set_defaults(handler=create)
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--release-dir", required=True)
+    verify_parser.add_argument("--release-version", required=True)
     verify_parser.add_argument("--statement", required=True)
     verify_parser.add_argument("--bundle", required=True)
     verify_parser.add_argument("--cosign", default="cosign")

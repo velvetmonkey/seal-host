@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,18 +28,24 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.release = self.root / "release"
         self.release.mkdir()
-        self.tarball = self.release / "seal-host-v0.1.2-linux-x86_64.tar.gz"
-        self.sbom = self.release / "seal-host-v0.1.2-linux-x86_64.cdx.json"
-        self.tarball.write_bytes(b"exact tarball bytes")
-        self.sbom.write_bytes(b'{"bomFormat":"CycloneDX"}\n')
-        payloads = sorted((self.tarball, self.sbom), key=lambda path: path.name)
-        (self.release / "SHA256SUMS").write_text(
-            "".join(
-                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-                for path in payloads
-            ),
-            encoding="utf-8",
-        )
+        self.tarballs = [
+            self.release / f"seal-host-v0.1.2-linux-{arch}.tar.gz"
+            for arch in ("aarch64", "x86_64")
+        ]
+        self.sboms = [
+            self.release / f"seal-host-v0.1.2-linux-{arch}.cdx.json"
+            for arch in ("aarch64", "x86_64")
+        ]
+        for path in self.tarballs:
+            path.write_bytes(f"exact tarball bytes for {path.name}".encode())
+        for path in self.sboms:
+            path.write_bytes(b'{"bomFormat":"CycloneDX"}\n')
+        self.verifier = self.release / "release_provenance.py"
+        shutil.copyfile(GATE, self.verifier)
+        self.payloads = self.tarballs + self.sboms + [self.verifier]
+        self.write_checksums()
+        self.tarball = self.tarballs[-1]
+        self.sbom = self.sboms[-1]
         self.statement = self.release / "SEAL-RELEASE-PROVENANCE.json"
         self.bundle = self.release / "SEAL-RELEASE-PROVENANCE.sigstore.json"
         self.bundle.write_text("{}\n", encoding="utf-8")
@@ -49,6 +56,16 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.silent_cosign = self.executable("cosign-silent", "exit 0")
         created = self.run_create()
         self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+
+    def write_checksums(self) -> None:
+        payloads = sorted(self.payloads, key=lambda path: path.name)
+        (self.release / "SHA256SUMS").write_text(
+            "".join(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                for path in payloads
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -67,22 +84,14 @@ class ReleaseProvenanceTests(unittest.TestCase):
                 "create",
                 "--release-dir",
                 str(self.release),
+                "--release-version",
+                "v0.1.2",
                 "--output",
                 str(self.statement),
                 "--signer-identity",
                 IDENTITY,
                 "--oidc-issuer",
                 ISSUER,
-                "--repository",
-                "velvetmonkey/seal-host",
-                "--ref",
-                "refs/tags/v0.1.2",
-                "--commit",
-                "a" * 40,
-                "--workflow",
-                ".github/workflows/release.yml",
-                "--run-id",
-                "1234",
             ],
             text=True,
             capture_output=True,
@@ -99,6 +108,8 @@ class ReleaseProvenanceTests(unittest.TestCase):
                 "verify",
                 "--release-dir",
                 str(self.release),
+                "--release-version",
+                "v0.1.2",
                 "--statement",
                 str(statement or self.statement),
                 "--bundle",
@@ -123,23 +134,28 @@ class ReleaseProvenanceTests(unittest.TestCase):
             [subject["name"] for subject in statement["subject"]],
             [
                 "SHA256SUMS",
+                "release_provenance.py",
+                "seal-host-v0.1.2-linux-aarch64.cdx.json",
+                "seal-host-v0.1.2-linux-aarch64.tar.gz",
                 "seal-host-v0.1.2-linux-x86_64.cdx.json",
                 "seal-host-v0.1.2-linux-x86_64.tar.gz",
             ],
         )
         self.assertEqual(len(statement["predicate"]["nonClaims"]), 6)
         self.assertIn("not a GitHub artifact attestation", statement["predicate"]["nonClaims"][0])
+        self.assertNotIn("buildContext", statement["predicate"])
 
     def test_valid_provenance_passes(self) -> None:
         result = self.run_verify()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(
-            "PASS release provenance: valid signature and 3 exact subject digests",
+            "PASS release provenance: valid signature and 6 exact subject digests",
             result.stdout,
         )
 
     def test_absent_provenance_refuses(self) -> None:
-        result = self.run_verify(statement=self.release / "absent.json")
+        self.statement.unlink()
+        result = self.run_verify()
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing provenance statement", result.stderr)
 
@@ -150,14 +166,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
 
     def test_digest_mismatch_refuses(self) -> None:
         self.tarball.write_bytes(b"different published bytes")
-        payloads = sorted((self.tarball, self.sbom), key=lambda path: path.name)
-        (self.release / "SHA256SUMS").write_text(
-            "".join(
-                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-                for path in payloads
-            ),
-            encoding="utf-8",
-        )
+        self.write_checksums()
         result = self.run_verify()
         self.assertEqual(result.returncode, 1)
         self.assertIn("subject digest mismatch for SHA256SUMS", result.stderr)
@@ -179,6 +188,28 @@ class ReleaseProvenanceTests(unittest.TestCase):
         result = self.run_verify()
         self.assertEqual(result.returncode, 1)
         self.assertIn("honest non-claims are missing or changed", result.stderr)
+
+    def test_unattested_install_script_refuses(self) -> None:
+        (self.release / "install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("neither signed subjects nor provenance metadata: install.sh", result.stderr)
+
+    def test_unattested_windows_zip_refuses(self) -> None:
+        (self.release / "seal-host-v0.1.2-windows.zip").write_bytes(b"zip")
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("seal-host-v0.1.2-windows.zip", result.stderr)
+
+    def test_partial_architecture_matrix_refuses(self) -> None:
+        self.tarballs[0].unlink()
+        self.sboms[0].unlink()
+        self.payloads = [path for path in self.payloads if path.exists()]
+        self.write_checksums()
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("release payload set is incomplete", result.stderr)
+        self.assertIn("aarch64", result.stderr)
 
 
 if __name__ == "__main__":

@@ -654,6 +654,11 @@ jobs:
         name: Prove release workflows retain signature and attestation consumers
         run: python3 test/test_release_proof_consumers.py -v
 
+      - id: control_05
+        continue-on-error: true
+        name: Execute fail-closed release provenance tests
+        run: python3 test/test_release_provenance.py -v
+
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
         env:

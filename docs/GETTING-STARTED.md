@@ -48,7 +48,10 @@ references" is not claimed.
 
 ```sh
 gh release download v0.1.2 --repo velvetmonkey/seal-host \
-  --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
+  --pattern 'seal-host-v0.1.2-linux-*' \
+  --pattern release_provenance.py --pattern SHA256SUMS \
+  --pattern SEAL-RELEASE-PROVENANCE.json \
+  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 ```
 
 Do not follow the source-build path expecting speed: the source tree's
@@ -57,14 +60,22 @@ hours. The release bundle exists so that nobody onboarding compiles Lean —
 it ships the host binary, `libsealffi.so`, and the Lean runtime `.so` closure,
 with rpaths pinned so it runs with no environment setup at all.
 
-Verify and unpack (measured: both finish in under 3 seconds):
+Install cosign, then verify the signed provenance before unpacking:
 
 ```sh
-sha256sum -c --ignore-missing SHA256SUMS
+python3 release_provenance.py verify \
+  --release-dir . --release-version v0.1.2 \
+  --statement SEAL-RELEASE-PROVENANCE.json \
+  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.2" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 tar xzf seal-host-*-linux-x86_64.tar.gz
 ```
 
-Expected: the checksum line ends in `OK`. Prove to yourself the bundle is
+Expected: the verifier prints `PASS release provenance`. It checks the
+signature, the complete release set, `SHA256SUMS`, and every signed subject
+digest; checksum self-consistency alone is not sufficient. See
+[Release provenance](RELEASE-PROVENANCE.md). Prove to yourself the bundle is
 self-contained — run it with an empty environment:
 
 ```sh

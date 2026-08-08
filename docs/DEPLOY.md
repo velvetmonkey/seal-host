@@ -49,15 +49,25 @@ mkdir -p .seal/release
 chmod 700 .seal .seal/release
 cd .seal/release
 gh release download v0.1.2 --repo velvetmonkey/seal-host \
-  --pattern "seal-host-*-linux-x86_64.tar.gz" --pattern SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS
+  --pattern 'seal-host-v0.1.2-linux-*' \
+  --pattern release_provenance.py --pattern SHA256SUMS \
+  --pattern SEAL-RELEASE-PROVENANCE.json \
+  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
+python3 release_provenance.py verify \
+  --release-dir . --release-version v0.1.2 \
+  --statement SEAL-RELEASE-PROVENANCE.json \
+  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.2" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 tar xzf seal-host-*-linux-x86_64.tar.gz
 export SEAL_BIN="$PWD/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs"
 cd ../..
 ```
 
-The bundle includes the host, `libsealffi.so`, and its Lean runtime closure;
-do not source-build for this walkthrough.
+The provenance verifier requires cosign and refuses before unpacking unless the
+signature, complete six-subject release set, and exact bytes all verify. The
+bundle includes the host, `libsealffi.so`, and its Lean runtime closure; do not
+source-build for this walkthrough. See [Release provenance](RELEASE-PROVENANCE.md).
 
 ## 2. Generate separate signing keypairs
 
