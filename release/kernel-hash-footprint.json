@@ -1549,41 +1549,6 @@
     },
     {
       "repo": "seal-live-demo",
-      "path": "evidence/provenance.json",
-      "line": 14,
-      "hash": "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-live-demo",
-      "path": "evidence/provenance.json",
-      "line": 18,
-      "hash": "e8c3044fb405e02fea3be98fe578d24d2a1b29858753139eb6597aa2f109b95f",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-live-demo",
-      "path": "evidence/provenance.json",
-      "line": 21,
-      "hash": "d4d7b5613cdb6abf0676daaa837de8aec1efd70940ed3feea4dee786857e1204",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-live-demo",
-      "path": "evidence/provenance.json",
-      "line": 25,
-      "hash": "d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-live-demo",
-      "path": "evidence/provenance.json",
-      "line": 26,
-      "hash": "e5b872c7e5c7fa94e901a3c7d642cc830157e339585aad24c2cceb761e759a02",
-      "classification": "SIGNED"
-    },
-    {
-      "repo": "seal-live-demo",
       "path": "evidence/receipts.jsonl",
       "line": 1,
       "hash": "018055e0085682bebe9e07e491100fb628b09ec1a77d825cad676b4085a60e06",
