@@ -25,34 +25,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/tag_release_gate.py
 
+  # The tag-side invocation of the ONE reusable fleet-acceptance workflow
+  # (roadmap 8y item 8), identical by construction to the push-side
+  # invocation in ci.yml `kernel-hash-footprint`. This also repairs a real
+  # drift: the previous inline copy ran without the private fleet token.
   fleet-gate:
-    runs-on: ubuntu-24.04
-    steps:
-      - id: control_01
-        continue-on-error: true
-        uses: actions/checkout@v6.0.3
-      - id: control_02
-        continue-on-error: true
-        uses: actions/setup-node@v7.0.0
-        with: { node-version: "22" }
-      - id: control_03
-        continue-on-error: true
-        name: Gate the generated kernel-hash footprint
-        run: node scripts/kernel_hash_footprint.mjs --check
-      - id: control_04
-        continue-on-error: true
-        name: Prove every locked repository is scanned
-        run: node --test test/kernel_hash_footprint_meta.test.mjs
-      - id: control_05
-        continue-on-error: true
-        name: Gate the locked verifier fleet
-        run: python3 scripts/fleet_release_gate.py
-
-      - name: Require every isolated CI step to pass
-        if: ${{ always() }}
-        env:
-          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
-        run: python3 scripts/ci_control_aggregate.py
+    uses: ./.github/workflows/acceptance.yml
+    secrets: inherit
 
   build:
     if: ${{ !cancelled() }}

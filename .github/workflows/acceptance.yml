@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Acceptance
+
+# The ONE reusable fleet-acceptance definition (roadmap 8y item 8). It is
+# invoked from both publication-relevant paths:
+#   * push CI:  ci.yml       job `kernel-hash-footprint`
+#   * tag path: release.yml  job `fleet-gate`
+# The commands live only here. Two copies drift; the pre-existing drift was
+# real: the release copy ran without the private fleet token and without the
+# locked-verifier gate's push-side twin, so push CI could stay green while the
+# same commands would have failed at tag time.
+#
+# Steps here are deliberately fail-fast (no continue-on-error, no
+# ci_control_aggregate.py): the aggregate pattern resolves its identity from
+# GITHUB_WORKFLOW_REF + GITHUB_JOB, and inside a called workflow that pair
+# names the CALLER, so the census would reject itself. Without
+# continue-on-error there is no outcome/conclusion mask to aggregate away —
+# the first failing step fails the job, the calling job, and the conjunction
+# that consumes it.
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  fleet-acceptance:
+    runs-on: ubuntu-24.04
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: "22" }
+      # The footprint gate fetches every repository in the fleet lock, and
+      # five of the six are private. Without credentials each fetch dies with
+      # "could not read Username"; the gate reports UNKNOWN REPOSITORY and
+      # refuses to write a manifest.
+      - name: Require private fleet read access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - name: Configure private fleet read access
+        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - name: Gate the generated kernel-hash footprint
+        run: node scripts/kernel_hash_footprint.mjs --check
+      - name: Prove every locked repository is scanned
+        run: node --test test/kernel_hash_footprint_meta.test.mjs
+      - name: Gate the locked verifier fleet
+        run: python3 scripts/fleet_release_gate.py

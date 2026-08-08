@@ -278,7 +278,18 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // The parser now decodes all 15 literal `run: |` bodies instead of counting
   // 15 indistinguishable `|` placeholders; 68 inline runs + 15 literal runs
   // derives the honest 83-step inventory. No pre-existing run step was removed.
-  assert.equal(normal.length, 83, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed 2026-08-08: 83 -> 78. Roadmap 8y item 8 moves the
+  // kernel-hash-footprint job's FIVE inline run steps (token require, token
+  // git config, footprint --check, footprint meta-test, and the job's own
+  // ci_control_aggregate.py) out of ci.yml into the reusable
+  // .github/workflows/acceptance.yml, which ci.yml `kernel-hash-footprint`
+  // and release.yml `fleet-gate` now both invoke via `uses:`. Every command
+  // still runs on every push — test/kernel_hash_footprint_meta.test.mjs
+  // asserts the commands exist in acceptance.yml and that BOTH callers
+  // invoke it — so this is a relocation, not a removal. The run-step FLOOR
+  // below is untouched.
+  assert.equal(normal.length, 78, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,

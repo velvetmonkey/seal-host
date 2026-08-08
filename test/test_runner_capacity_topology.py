@@ -64,6 +64,28 @@ RELEASE_EVIDENCE_NEEDS = frozenset(
 RELEASE_EVIDENCE_EXEMPT: frozenset[str] = frozenset()
 
 
+def workflow_job_ids(path: Path) -> set[str]:
+    """Every job id declared under `jobs:`, including step-less `uses:` jobs.
+
+    job_step_blocks() only sees jobs that carry their own steps, so a job
+    that delegates to a reusable workflow (`uses: ./.github/workflows/...`)
+    is invisible to it. Conjunction-completeness checks must enumerate ALL
+    jobs: a delegating job outside the conjunction would otherwise be exactly
+    the invisible-omission failure mode this file exists to prevent.
+    """
+    ids: set[str] = set()
+    in_jobs = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if re.fullmatch(r"[A-Za-z0-9_-]+:.*", line):
+            in_jobs = line.startswith("jobs:")
+            continue
+        if in_jobs:
+            job = re.fullmatch(r"  ([a-z0-9-]+):", line)
+            if job:
+                ids.add(job.group(1))
+    return ids
+
+
 def job_needs(path: Path) -> dict[str, list[str]]:
     """Return each job's declared `needs:` names, in declaration order."""
     needs: dict[str, list[str]] = {}
@@ -163,7 +185,7 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
 
     def test_every_ci_job_reaches_the_release_evidence_gate(self) -> None:
         ci = ROOT / ".github" / "workflows" / "ci.yml"
-        gated = set(job_step_blocks(ci)) - {"release-evidence"}
+        gated = workflow_job_ids(ci) - {"release-evidence"}
         self.assertEqual(
             gated - RELEASE_EVIDENCE_EXEMPT,
             set(RELEASE_EVIDENCE_NEEDS),
@@ -174,7 +196,7 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
 
     def test_release_publish_conjunction_covers_every_sibling_job(self) -> None:
         release = ROOT / ".github" / "workflows" / "release.yml"
-        jobs = set(job_step_blocks(release))
+        jobs = workflow_job_ids(release)
         self.assertEqual(
             set(job_needs(release)["publish"]),
             jobs - {"publish"},

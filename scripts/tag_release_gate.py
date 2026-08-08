@@ -1,6 +1,26 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Require this tag push's CI release-evidence job to have succeeded."""
+"""Require this tag push's full per-commit acceptance evidence to be green.
+
+The tag being published points at exactly one commit. This gate refuses
+publication unless, for that exact commit (GITHUB_SHA), every required
+push-triggered evidence workflow of this same tag push has completed
+successfully:
+
+  * ci.yml           — additionally requiring its `release-evidence`
+                       conjunction job, which is the only job that consumes
+                       every security-relevant CI job's result
+  * golden-path.yml  — the deterministic-shell / deploy / governor demos
+  * security.yml     — dependency and fuzz scanning
+
+Three distinct refusal states, never conflated:
+
+  FAILED   — a run completed unsuccessfully: refuse, naming the commit and
+             the failing checks.
+  PENDING  — a run exists but has not completed: block, and on timeout
+             refuse with a message that says IN PROGRESS, not failed.
+  ABSENT   — no run exists for the commit: refuse. Silence must fail.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +38,15 @@ from urllib.request import Request, urlopen
 
 EVIDENCE_JOB = "release-evidence"
 CI_WORKFLOW = "ci.yml"
+# Every push-triggered workflow whose result is release acceptance evidence.
+# g2-mutation-ablation.yml is schedule-only and public-export.yml is
+# dispatch-only; neither runs for a push, so neither can gate one.
+REQUIRED_WORKFLOWS = (CI_WORKFLOW, "golden-path.yml", "security.yml")
 MAX_CREATION_SKEW = timedelta(seconds=2)
+# Job conclusions that do not indict a completed run. "skipped" covers jobs
+# whose `if:` did not apply to this event (e.g. pull_request-only jobs on a
+# push run); the RUN conclusion stays the truth for the whole workflow.
+NON_FAILING_JOB_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 
 
 class GateError(RuntimeError):
@@ -74,9 +102,9 @@ class GitHubActions:
     def release_run(self, run_id: str) -> Any:
         return self.get(f"actions/runs/{quote(run_id, safe='')}")
 
-    def ci_runs(self, sha: str) -> Any:
+    def workflow_runs(self, workflow: str, sha: str) -> Any:
         return self.get(
-            f"actions/workflows/{CI_WORKFLOW}/runs",
+            f"actions/workflows/{quote(workflow, safe='')}/runs",
             {"event": "push", "head_sha": sha, "per_page": "100"},
         )
 
@@ -98,8 +126,11 @@ class RecordedActions:
     def release_run(self, run_id: str) -> Any:
         return object_field(self.state, "release_run", "recorded state")
 
-    def ci_runs(self, sha: str) -> Any:
-        return object_field(self.state, "ci_runs", "recorded state")
+    def workflow_runs(self, workflow: str, sha: str) -> Any:
+        runs_by_workflow = object_field(self.state, "runs_by_workflow", "recorded state")
+        if not isinstance(runs_by_workflow, dict):
+            raise GateError("recorded runs_by_workflow must be a JSON object")
+        return object_field(runs_by_workflow, workflow, "recorded runs_by_workflow")
 
     def jobs(self, run_id: int) -> Any:
         jobs_by_run = object_field(self.state, "jobs_by_run", "recorded state")
@@ -120,10 +151,12 @@ def validate_release_run(release_run: Any, sha: str) -> datetime:
     return parse_timestamp(object_field(release_run, "created_at", context), context)
 
 
-def matching_ci_runs(payload: Any, sha: str, release_created: datetime) -> list[dict[str, Any]]:
-    runs = object_field(payload, "workflow_runs", "CI runs response")
+def matching_runs(
+    payload: Any, workflow: str, sha: str, release_created: datetime
+) -> list[dict[str, Any]]:
+    runs = object_field(payload, "workflow_runs", f"{workflow} runs response")
     if not isinstance(runs, list):
-        raise GateError("CI runs response did not contain a workflow_runs list")
+        raise GateError(f"{workflow} runs response did not contain a workflow_runs list")
 
     earliest = release_created - MAX_CREATION_SKEW
     matches: list[dict[str, Any]] = []
@@ -132,13 +165,35 @@ def matching_ci_runs(payload: Any, sha: str, release_created: datetime) -> list[
             continue
         if run.get("event") != "push" or run.get("head_sha") != sha:
             continue
-        created = parse_timestamp(run.get("created_at"), "CI run")
+        created = parse_timestamp(run.get("created_at"), f"{workflow} run")
         if created >= earliest:
             matches.append(run)
     return matches
 
 
-def require_evidence(jobs_payload: Any, run_id: int) -> None:
+def failing_job_names(actions: Any, run_id: int, workflow: str) -> list[str]:
+    """Names of the completed run's unsuccessful jobs, best effort but honest.
+
+    A failure to enumerate jobs must not soften the refusal that is already
+    underway, so this reports what it can and never raises past the caller.
+    """
+    try:
+        payload = actions.jobs(run_id)
+        jobs = object_field(payload, "jobs", f"{workflow} run {run_id} jobs response")
+        if not isinstance(jobs, list):
+            return []
+    except GateError:
+        return []
+    return sorted(
+        str(job.get("name"))
+        for job in jobs
+        if isinstance(job, dict)
+        and job.get("name")
+        and job.get("conclusion") not in NON_FAILING_JOB_CONCLUSIONS
+    )
+
+
+def require_evidence(jobs_payload: Any, run_id: int, sha: str) -> None:
     jobs = object_field(jobs_payload, "jobs", f"CI run {run_id} jobs response")
     if not isinstance(jobs, list):
         raise GateError(f"CI run {run_id} jobs response did not contain a jobs list")
@@ -149,35 +204,94 @@ def require_evidence(jobs_payload: Any, run_id: int) -> None:
     ]
     if not evidence:
         raise GateError(
-            f"CI run {run_id} did not report required job {EVIDENCE_JOB}; "
-            "job data may be missing or expired"
+            f"refusing to publish commit {sha}: CI run {run_id} did not report "
+            f"required job {EVIDENCE_JOB}; job data may be missing or expired"
         )
     if len(evidence) != 1:
-        raise GateError(f"CI run {run_id} reported {len(evidence)} {EVIDENCE_JOB} jobs")
+        raise GateError(
+            f"refusing to publish commit {sha}: CI run {run_id} reported "
+            f"{len(evidence)} {EVIDENCE_JOB} jobs"
+        )
 
     job = evidence[0]
     status = object_field(job, "status", EVIDENCE_JOB)
     conclusion = object_field(job, "conclusion", EVIDENCE_JOB)
     print(f"tag-release-gate: CI run {run_id} {EVIDENCE_JOB}={conclusion}")
     if status != "completed":
-        raise GateError(f"required CI job {EVIDENCE_JOB} was not completed (status: {status})")
-    if conclusion != "success":
-        unsuccessful = sorted(
-            str(candidate.get("name"))
-            for candidate in jobs
-            if isinstance(candidate, dict)
-            and candidate.get("name")
-            and candidate.get("conclusion") != "success"
-        )
-        if unsuccessful:
-            print(
-                "tag-release-gate: CI run unsuccessful jobs: "
-                + ", ".join(unsuccessful)
-            )
         raise GateError(
-            f"required CI job {EVIDENCE_JOB} was not successful "
-            f"(conclusion: {conclusion})"
+            f"refusing to publish commit {sha}: required CI job {EVIDENCE_JOB} "
+            f"was not completed (status: {status})"
         )
+    if conclusion != "success":
+        raise GateError(
+            f"refusing to publish commit {sha}: acceptance FAILED — required CI "
+            f"job {EVIDENCE_JOB} concluded {conclusion}"
+        )
+
+
+def evaluate_workflows(
+    actions: GitHubActions | RecordedActions, sha: str, release_created: datetime
+) -> tuple[list[str], list[str]]:
+    """One sweep over every required workflow for the exact commit.
+
+    Returns (pending_descriptions, absent_workflows) when nothing has failed
+    yet; raises GateError the moment any completed run is unsuccessful.
+    """
+    pending: list[str] = []
+    absent: list[str] = []
+    for workflow in REQUIRED_WORKFLOWS:
+        matches = matching_runs(
+            actions.workflow_runs(workflow, sha), workflow, sha, release_created
+        )
+        if len(matches) > 1:
+            ids = ", ".join(str(run.get("id", "unknown")) for run in matches)
+            raise GateError(
+                f"tag push matched multiple {workflow} runs ({ids}); refusing ambiguity"
+            )
+        if not matches:
+            absent.append(workflow)
+            continue
+        run = matches[0]
+        run_id = object_field(run, "id", f"{workflow} run")
+        if not isinstance(run_id, int):
+            raise GateError(f"{workflow} run reported an invalid id")
+        status = object_field(run, "status", f"{workflow} run {run_id}")
+        conclusion = object_field(run, "conclusion", f"{workflow} run {run_id}")
+        if status != "completed":
+            pending.append(f"{workflow} run {run_id} (status: {status})")
+            continue
+        if conclusion != "success":
+            failing = failing_job_names(actions, run_id, workflow)
+            named = ", ".join(failing) if failing else "unreported by the jobs API"
+            raise GateError(
+                f"refusing to publish commit {sha}: acceptance FAILED — "
+                f"{workflow} run {run_id} concluded {conclusion}; "
+                f"failing checks: {named}"
+            )
+        if workflow == CI_WORKFLOW:
+            require_evidence(actions.jobs(run_id), run_id, sha)
+        print(f"tag-release-gate: {workflow} run {run_id} success for commit {sha}")
+    return pending, absent
+
+
+def refuse_incomplete(sha: str, pending: list[str], absent: list[str]) -> GateError:
+    """Build the timeout refusal, keeping PENDING and ABSENT distinguishable."""
+    reasons: list[str] = []
+    if pending:
+        reasons.append(
+            "acceptance still IN PROGRESS (pending, not failed): "
+            + "; ".join(pending)
+            + " — a pending acceptance run is not success"
+        )
+    if absent:
+        reasons.append(
+            "NO acceptance run exists for: "
+            + ", ".join(absent)
+            + " — missing evidence is not success"
+        )
+    if not reasons:
+        reasons.append("acceptance evidence could not be obtained")
+    return GateError(f"refusing to publish commit {sha}: " + "; ".join(reasons))
 
 
 def run_gate(
@@ -191,38 +305,24 @@ def run_gate(
     deadline = time.monotonic() + timeout_seconds
 
     while True:
-        matches = matching_ci_runs(actions.ci_runs(sha), sha, release_created)
-        if len(matches) > 1:
-            ids = ", ".join(str(run.get("id", "unknown")) for run in matches)
-            raise GateError(f"tag push matched multiple CI runs ({ids}); refusing ambiguity")
-        if matches:
-            run = matches[0]
-            run_id = object_field(run, "id", "CI run")
-            if not isinstance(run_id, int):
-                raise GateError("CI run reported an invalid id")
-            status = object_field(run, "status", f"CI run {run_id}")
-            conclusion = object_field(run, "conclusion", f"CI run {run_id}")
-            if status == "completed":
-                require_evidence(actions.jobs(run_id), run_id)
-                if conclusion != "success":
-                    raise GateError(
-                        f"CI run {run_id} was not successful despite successful "
-                        f"{EVIDENCE_JOB} (conclusion: {conclusion})"
-                    )
-                print(
-                    f"tag-release-gate: PASS (CI run {run_id} consumed "
-                    f"{EVIDENCE_JOB}=success)"
-                )
-                return
-            print(f"tag-release-gate: waiting for CI run {run_id} (status: {status})")
-        else:
-            print("tag-release-gate: waiting for this tag push's CI run to appear")
+        pending, absent = evaluate_workflows(actions, sha, release_created)
+        if not pending and not absent:
+            print(
+                "tag-release-gate: PASS (commit "
+                f"{sha}: {', '.join(REQUIRED_WORKFLOWS)} all completed "
+                f"successfully, including CI {EVIDENCE_JOB})"
+            )
+            return
+        for description in pending:
+            print(f"tag-release-gate: waiting for {description}")
+        for workflow in absent:
+            print(
+                f"tag-release-gate: waiting for this tag push's {workflow} "
+                "run to appear"
+            )
 
         if time.monotonic() >= deadline:
-            raise GateError(
-                f"could not obtain completed CI {EVIDENCE_JOB} within "
-                f"{timeout_seconds} seconds"
-            )
+            raise refuse_incomplete(sha, pending, absent)
         time.sleep(poll_seconds)
 
 

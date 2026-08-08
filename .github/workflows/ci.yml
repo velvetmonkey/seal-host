@@ -62,47 +62,14 @@ jobs:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
         run: python3 scripts/ci_control_aggregate.py
 
+  # The push-side invocation of the ONE reusable fleet-acceptance workflow
+  # (roadmap 8y item 8). The commands live in acceptance.yml only; the tag
+  # path (release.yml `fleet-gate`) invokes the same file, so the two paths
+  # cannot drift. The job id is kept so the release-evidence conjunction and
+  # its pinned needs-set are unchanged.
   kernel-hash-footprint:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
-    steps:
-      - id: control_01
-        continue-on-error: true
-        uses: actions/checkout@v6.0.3
-      - id: control_02
-        continue-on-error: true
-        uses: actions/setup-node@v7.0.0
-        with:
-          node-version: "22"
-      # The footprint gate fetches every repository in the fleet lock, and five
-      # of the six are private. Without credentials each fetch dies with
-      # "could not read Username", the gate reports UNKNOWN REPOSITORY and
-      # refuses to write a manifest. Same two steps as public-export.yml.
-      - id: control_03
-        continue-on-error: true
-        name: Require private build dependency access
-        run: test -n "$SEAL_CI_READ_TOKEN"
-      - id: control_04
-        continue-on-error: true
-        name: Configure private build dependency access
-        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
-      - id: control_05
-        continue-on-error: true
-        name: Gate the generated kernel-hash footprint
-        run: node scripts/kernel_hash_footprint.mjs --check
-      - id: control_06
-        continue-on-error: true
-        name: Prove every locked repository is scanned
-        run: node --test test/kernel_hash_footprint_meta.test.mjs
-
-      - name: Require every isolated CI step to pass
-        if: ${{ always() }}
-        env:
-          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
-        run: python3 scripts/ci_control_aggregate.py
+    uses: ./.github/workflows/acceptance.yml
+    secrets: inherit
 
   build:
     runs-on: ubuntu-latest
