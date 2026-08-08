@@ -15,6 +15,16 @@ private def testBinaries : Array String := #[
   "perimeter_probe"
 ]
 
+/-- The number of test binaries this suite must run. A literal, not
+    `testBinaries.size`: a count derived from the list would shrink along with
+    any truncation of the loop's input and the runtime assertion below could
+    never fire. The `#guard` keeps the literal and the declared list from
+    drifting apart, so adding or removing a test binary fails the build until
+    this number is updated to match. -/
+private def expectedTestCount : Nat := 10
+
+#guard testBinaries.size = expectedTestCount
+
 private def runTest (binDir : System.FilePath) (name : String) : IO UInt32 := do
   IO.println s!"[lean_tests] running {name}"
   let child ← IO.Process.spawn {
@@ -39,8 +49,8 @@ def main : IO UInt32 := do
     if exitCode != 0 then
       return exitCode
     passed := passed.push name
-  if passed.isEmpty then
-    IO.eprintln "[lean_tests] no test binaries ran; refusing to pass vacuously"
+  if passed.size != expectedTestCount then
+    IO.eprintln s!"[lean_tests] COUNT MISMATCH: expected {expectedTestCount} test binaries but only {passed.size} ran; refusing to pass"
     return 1
   IO.println s!"[lean_tests] all {passed.size} test binaries passed: {String.intercalate ", " passed.toList}"
   return 0

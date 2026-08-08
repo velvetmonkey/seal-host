@@ -344,14 +344,41 @@ theorem surrogate_depth_divergences_fail_closed
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_surrogates _ h18)
   · exact refuse_fail_closed (classifyLine_refuse_of_unsafe_depth _ h9)
 
-/-! ## Axiom footprints -/
+/-! ## Axiom footprints
 
+Each footprint is ASSERTED, not merely printed: `#guard_msgs` fails the build
+unless `#print axioms` emits exactly the expected set named in the doc
+comment. The expected sets are explicit literals — the three standard
+classical axioms for the simp-driven theorems, none for the definitional
+ones. If any declaration silently gains `sorryAx` or an unexpected axiom,
+elaboration fails and the error names the declaration and the actual set. -/
+
+/-- info: 'Host.A2Classify.act_refuse_divergences_fail_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms act_refuse_divergences_fail_closed
+
+/-- info: 'Host.A2Classify.agreement_divergences_fail_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms agreement_divergences_fail_closed
+
+/-- info: 'Host.A2Classify.surrogate_depth_divergences_fail_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms surrogate_depth_divergences_fail_closed
+
+/-- info: 'Host.A2Classify.refuse_fail_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms refuse_fail_closed
+
+/-- info: 'Host.A2Classify.failClosed_never_forwards' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms failClosed_never_forwards
+
+/-- info: 'Host.A2Classify.failClosed_never_passes_through' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms failClosed_never_passes_through
+
+/-- info: 'Host.A2Classify.outcome_factors' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms outcome_factors
 
 end Host.A2Classify
