@@ -1,42 +1,43 @@
-# Release provenance
+# Release provenance — not published
 
-GitHub artifact attestations are unavailable for this user-owned private
-repository. The release workflow therefore does not call
-`actions/attest-build-provenance` or `actions/attest`. It replaces that service
-with a fail-closed Seal release-provenance statement signed by Sigstore cosign.
-Publication remains gated: missing or invalid provenance is a hard failure.
+Repository package version: **v0.1.5**. Published `seal-host` releases: **0**.
+The package version is not a published release. Published release archives,
+SBOMs, checksum manifests, provenance statements, and verification bundles:
+**0** in each category. There is consequently no release provenance to
+download or verify.
 
-## What the statement attests
+## Checked-in publication contract
 
-`SEAL-RELEASE-PROVENANCE.json` is an in-toto Statement v1. Its six subjects are
-the exact x86-64 and AArch64 `*.tar.gz` archives, their two `*.cdx.json` SBOMs,
-the standalone `release_provenance.py` verifier, and consolidated `SHA256SUMS`
-file bytes, named by release-asset basename and digested with SHA-256. Its
-companion `SEAL-RELEASE-PROVENANCE.sigstore.json` is the Sigstore verification
-bundle. The statement and bundle are the only published files exempt from
-being subjects; any other file in the release directory is a refusal.
+The release workflow and `scripts/release_provenance.py` define a fail-closed
+publication contract. They are repository implementation, not evidence that a
+publication occurred.
 
-Cosign signs with a keyless ephemeral key certified for:
+The proposed `SEAL-RELEASE-PROVENANCE.json` is an in-toto Statement v1 over
+exactly six subjects: x86-64 and AArch64 archives, their two CycloneDX SBOMs,
+the standalone verifier, and `SHA256SUMS`. The proposed
+`SEAL-RELEASE-PROVENANCE.sigstore.json` is its Sigstore verification bundle.
+The statement and bundle are exempt from the subject set; an additional file
+causes verification to refuse.
+
+The checked-in workflow uses a keyless cosign identity scoped to:
 
 ```text
 https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/<tag>
 ```
 
-The certificate must be issued by
-`https://token.actions.githubusercontent.com`. No long-lived release private
-key is committed to the repository or stored in an Actions secret. The claim is
-narrow: the named GitHub Actions workflow identity signed a statement binding
-the named exact payload bytes by SHA-256.
+and requires the certificate issuer
+`https://token.actions.githubusercontent.com`. This is a Seal-specific
+provenance statement, not a GitHub artifact attestation. GitHub artifact
+attestations are unavailable for this user-owned private repository.
 
-The statement carries its non-claims as signed data. In particular, it is not a
-GitHub artifact attestation; it is not an independently controlled human or
-organisation signing key; and it does not prove uncompromised infrastructure,
-source-to-binary correspondence, reproducibility, hermeticity, compiler
-correctness, or applicability of Lean theorems to compiled bytes. Repository,
-workflow, and tag control and the GitHub Actions and Sigstore services remain in
-the trust boundary.
+The proposed statement's scope is narrow: the named workflow identity signed
+the named payload bytes by SHA-256. It does not establish independently
+controlled human signing, uncompromised infrastructure, source-to-binary
+correspondence, reproducibility, hermeticity, compiler correctness, or the
+applicability of Lean theorems to compiled bytes. Repository, workflow, tag,
+GitHub Actions, and Sigstore control remain in the trust boundary.
 
-## Verify a downloaded release
+## Verification status
 
 **Current availability:** v0.1.5 was published at 2026-08-10T00:38:06Z with
 eight assets: two Linux archives, two SBOMs, `SHA256SUMS`, the provenance
@@ -44,10 +45,10 @@ statement, its Sigstore bundle, and the standalone verifier. A failed future
 release gate still produces no release; these commands name the release that
 actually exists.
 
-Install cosign, then download the release's verifier, both architectures'
-archives and SBOMs, checksum manifest, statement, and bundle. The verifier is a
-release asset, so no private source checkout is needed; it verifies its own
-published bytes as one of the signed subjects.
+Install cosign, authenticate GitHub CLI to GitHub, then download the release's
+verifier, both architectures' archives and SBOMs, checksum manifest, statement,
+and bundle. The verifier is a release asset, so no private source checkout is
+needed; it verifies its own published bytes as one of the signed subjects.
 
 ```bash
 mkdir release && cd release

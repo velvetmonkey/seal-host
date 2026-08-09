@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "sealSqliteSandbox": {
-      "command": "/ABS/PATH/rust/target/debug/seal-host-rs",
+      "command": "SEAL_BIN_PATH",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",

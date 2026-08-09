@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Getting started — your first working gate
+# Getting started — install v0.1.5 or build from source
 
 This is the onboarding path: install the published v0.1.5 host or build from
 source, watch it block a destructive call, approve that exact call, watch it
@@ -19,7 +19,7 @@ matching, live, signed approval exists for that exact request. Every decision
 offline. The decision core is a Lean theorem; what is proved, tested, and
 assumed is listed at the bottom of this page, precisely.
 
-## Prerequisites
+## Prerequisites and install choices
 
 For the source path below:
 
@@ -29,6 +29,7 @@ For the source path below:
   required by Lean and Rust dependencies. Docker is not used by this path.
 - `python3` with the `cryptography` package (config and approval signing).
 - `node` (any current LTS; used only by the receipt verifier).
+- GitHub CLI authenticated to GitHub for the release download.
 - On this shared development host, `leanbuild` must be on `PATH`; it is the
   required one-at-a-time, resource-bounded wrapper for every Lean invocation.
   `scripts/build_all.sh` uses it automatically when present. On an ordinary
@@ -94,7 +95,7 @@ policy that guards destructive SQL:
 mkdir seal-quickstart && cd seal-quickstart
 umask 077
 python3 "$SEAL_REPO/scripts/generate_keys.py" --out-dir keys
-mkdir -m 700 store
+mkdir -m 700 store receipts
 : > approvals.ndjson
 
 cat > payload.json <<EOF
@@ -187,11 +188,11 @@ never reached `/bin/cat`:
 {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"approval required: 2a01d254…c565","type":"text"}],"isError":true,"framed_subject":{…}}}
 ```
 
-That 64-hex value is the **target commitment**: a SHA-256 challenge derived
+That 64-hex value is the **approval challenge**: a SHA-256 value derived
 from the exact request. An approval is bound to it — approve *this* drop on
 *this* database, not "approve db.execute".
 
-## 3. Approve that exact call and watch it flow
+## Recorded evidence: approve that exact call and watch it flow
 
 Approvals are Ed25519-signed records that bind the target *and* the exact
 framed request bytes, and they are scoped to the live host session that
@@ -206,8 +207,12 @@ python3 "$SEAL_REPO/demo/approve_cli.py" --token-file approvals.ndjson \
 cat call.jsonl >&3
 exec 3>&-
 wait "$SEAL_HOST_PID"
+```
 
-cat loop.jsonl
+Observed signer output includes:
+
+```text
+signed allow for target=2a01d25406f0fc82751a66ddaeb8e79d2104efc4b67699400003704e67c0c565
 ```
 
 Measured: about 0.2 seconds after the human approves. Two lines come back:
@@ -225,14 +230,15 @@ without a `replay_store` in the signed policy; a `trusted.json` with mode
 host session exited is dropped (`target_or_subject_mismatch`) because the
 challenge died with the session.
 
-## 4. Verify a receipt — and see verification fail
+## Recorded evidence: verify a receipt and see verification fail
 
-Every decision you just made emitted evidence in two forms: a JSON receipt
-per decision in `./seal-receipts/`, and an audit line carrying per-kernel
-certificates in the stderr log. Look at a receipt:
+The two decisions from the live FIFO session emitted evidence in two forms:
+a JSON receipt per decision in `./receipts/`, because that host command passed
+`--receipt-dir receipts`, and an audit line carrying per-kernel certificates in
+`audit.log`. Look at a receipt from the live session:
 
 ```sh
-python3 -m json.tool "$(ls seal-receipts/receipt-* | tail -1)"
+python3 -m json.tool "$(ls receipts/receipt-* | tail -1)"
 ```
 
 Fields worth reading on your first one: `verdict` (`ALLOW` here — the last
@@ -254,8 +260,8 @@ node "$SEAL_REPO/scripts/seal_log.mjs" verify sealed.json
 ```
 
 ```text
-VERIFY OK: 3 entries, chain intact.
-chain head: a0250c7d2206ef8967c08bbdc373c8108f8ee48289e65d76d1d14f6030aa4bfc
+VERIFY OK: 2 entries, chain intact.
+chain head: 373946b394d9ae567bd1917093a64ae479217c9e2b4568e37afbd04c918d1126
 ```
 
 Exit code 0. A green check you have never seen fail teaches nothing about
@@ -275,8 +281,8 @@ node "$SEAL_REPO/scripts/seal_log.mjs" verify tampered.json
 
 ```text
 VERIFY FAIL: entry 0 — recorded head does not match recomputed chain.
-  recorded:   8f024a31…
-  recomputed: 01117c22…
+  recorded:   8f024a313462fd758925f720e7886679963d9e05bb0e4c5d0d6dbe68bb49a2d0
+  recomputed: 01117c22cd8310c3a9dc1a1022022de580d5daed8b865dea0f35f4bf56762f4c
   → the log was inserted into, reordered, or mutated at or before entry 0.
 ```
 
@@ -311,11 +317,11 @@ UNKNOWN, never a passing result.
   the axiom footprint `[propext, Classical.choice, Quot.sound]` via
   `Test/Axioms.lean`, and that claim is scoped to the pinned symbols, not
   repository-wide.
-- **Tested, not proved:** that the shipped Rust binary corresponds to the
+- **Tested, not proved:** that the Rust body corresponds to the
   Lean model (differential and conformance tests over a corpus, byte-exact —
-  not a proof over every input); everything you ran above is the tested
-  layer exercising the proven core.
-- **Named assumptions (TCB):** SHA-256 collision resistance (`A-CR`);
+  not a proof over every input); the recorded local evidence above exercises
+  the tested layer around the proven core.
+- **Named assumptions:** SHA-256 collision resistance (`A-CR`);
   channel exclusivity (nothing reaches the tool except through the host —
   **an assumption, not an enforced property**); per-server parser
   equivalence (A2); key custody — seal verifies the configured authorization
@@ -329,9 +335,16 @@ UNKNOWN, never a passing result.
 
 ## Where to go next
 
-- [CONFIG.md](../CONFIG.md) — wire the host into Claude Code, Claude
-  Desktop, or Cursor, and run the real destructive-SQLite sandbox.
-- [DEPLOY.md](DEPLOY.md) — the production posture: production preflight,
-  receipt directories, durable replay stores, real child servers.
+- [CONFIG.md](../CONFIG.md) — policy authoring and the current host-integration
+  gap; it does not claim a released binary or Windows route.
+- [DEPLOY.md](DEPLOY.md) — development evidence and the production controls
+  that remain unshipped.
 - [`CLAIMS.md`](../CLAIMS.md) — the full claims map, row by row, with what
   may and may not be said publicly.
+
+## No source-build fallback
+
+A source build installs the pinned Lean and Rust toolchains and can take hours.
+The required clean `scripts/build_all.sh` verification had not completed when
+this guide was regenerated on 2026-08-09. Until an end-to-end result is
+recorded, source build is not a supported substitute for the absent release.
