@@ -45,18 +45,18 @@ published bytes as one of the signed subjects.
 
 ```bash
 mkdir release && cd release
-gh release download v0.1.2 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.2-linux-*' \
+gh release download v0.1.5 --repo velvetmonkey/seal-host \
+  --pattern 'seal-host-v0.1.5-linux-*' \
   --pattern release_provenance.py \
   --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 python3 release_provenance.py verify \
   --release-dir . \
-  --release-version v0.1.2 \
+  --release-version v0.1.5 \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.2" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 

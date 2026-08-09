@@ -42,25 +42,25 @@ exact request.
 
 ## 1. Get the released host
 
-From the repo root, download, verify, and unpack the `v0.1.2` bundle:
+From the repo root, download, verify, and unpack the `v0.1.5` bundle:
 
 ```sh
 mkdir -p .seal/release
 chmod 700 .seal .seal/release
 cd .seal/release
-gh release download v0.1.2 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.2-linux-*' \
+gh release download v0.1.5 --repo velvetmonkey/seal-host \
+  --pattern 'seal-host-v0.1.5-linux-*' \
   --pattern release_provenance.py --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.2 \
+  --release-dir . --release-version v0.1.5 \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.2" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 tar xzf seal-host-*-linux-x86_64.tar.gz
-export SEAL_BIN="$PWD/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs"
+export SEAL_BIN="$PWD/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs"
 cd ../..
 ```
 
@@ -266,7 +266,7 @@ are paths inside Ubuntu, never `C:\\...` paths:
     "guarded-db-wsl2": {
       "command": "wsl.exe",
       "args": ["--distribution", "Ubuntu", "--exec",
-               "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs",
+               "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
                "--insecure-development-mode",
                "--config", "/home/<wsl-user>/seal-host/trusted.json",
                "--pubkey", "<config-hex>",
