@@ -3,9 +3,13 @@
 
 This is the onboarding path: get the binary release, watch it block a
 destructive call, approve that exact call, watch it flow, then verify the
-receipt yourself — including what a tampered receipt looks like. Every command
-on this page was executed on 2026-08-08 against the current tree; measured
-timings and one known gap are stated inline.
+receipt yourself — including what a tampered receipt looks like. The gate and
+verification sequence was executed on 2026-08-08 against the current tree;
+measured timings and one known gap are stated inline. Release discovery was
+rechecked on 2026-08-09 and currently stops because no release is published.
+
+**Start with the published binary path.** Building from source is deliberately
+the final section, outside the TypeScript/Python onboarding funnel.
 
 ## What seal-host is
 
@@ -23,7 +27,8 @@ assumed is listed at the bottom of this page, precisely.
 
 Stated honestly, all of them:
 
-- Linux, `x86_64` or `aarch64` (the only released architectures). Windows 11
+- Linux, `x86_64` or `aarch64` (the architectures targeted by the release
+  workflow). Windows 11
   with Ubuntu WSL2 uses the `linux-x86_64` asset; this walkthrough needs no
   `systemd` service and works with WSL2's optional systemd support either off
   or on.
@@ -31,14 +36,15 @@ Stated honestly, all of them:
   verifier. **You do not build anything.** No Lean, no Rust, no toolchain.
 - `python3` with the `cryptography` package (config and approval signing).
 - `node` (any current LTS; used only by the receipt verifier).
-- `gh` (the GitHub CLI) for the release download, logged in via
-  `gh auth login` — required while this repository is private.
+- `gh` (the GitHub CLI) for discovering and downloading a release. Ordinary
+  GitHub CLI authentication is sufficient; the public repository and its
+  public dependencies require no private-repository credential.
 
 Total measured command time for everything below: **about 10 seconds** on a
 2026 Linux workstation. Budget a few minutes of reading around it; the
 long pole is you, not the machine.
 
-## 1. Get the binary release
+## 1. Get the binary release first
 
 The first published binary release is `v0.1.5`. This repository is private
 today, so the checkout prerequisite currently implies repo access; and while
@@ -328,3 +334,13 @@ agent is safe", not "the whole stack is verified".
   receipt directories, durable replay stores, real child servers.
 - [`CLAIMS.md`](../CLAIMS.md) — the full claims map, row by row, with what
   may and may not be said publicly.
+
+## Build from source (last resort)
+
+Use the binary path above for onboarding. A source build installs the pinned
+Lean and Rust toolchains and can take hours; it belongs here at the bottom, not
+in the TypeScript/Python developer's critical path. The current clean
+`scripts/build_all.sh` verification had not completed when this guide was
+regenerated on 2026-08-09. Until an end-to-end result is recorded, this page
+does not present source build as a working substitute for the absent published
+binary.

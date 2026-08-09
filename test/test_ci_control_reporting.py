@@ -107,15 +107,28 @@ class CiControlReportingTests(unittest.TestCase):
             "public-export.yml": (
                 'run: test -n "$SEAL_CI_READ_TOKEN"',
             ),
-            "release.yml": (
-                'test -n "$SEAL_CI_READ_TOKEN"',
-            ),
+            "release.yml": (),
         }
         for workflow in WORKFLOWS:
             text = workflow.read_text(encoding="utf-8")
             for required in expected[workflow.name]:
                 with self.subTest(workflow=workflow.name, required=required):
                     self.assertIn(required, text)
+
+    def test_release_build_and_fleet_gate_are_credential_free(self) -> None:
+        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        acceptance = (ROOT / ".github/workflows/acceptance.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("secrets: inherit", release)
+        self.assertNotIn("${{ secrets.SEAL_CI_READ_TOKEN }}", release)
+        self.assertNotIn('url."https://x-access-token:', release)
+        self.assertIn('SEAL_CI_READ_TOKEN: ""', release)
+        self.assertIn("persist-credentials: false", release)
+        self.assertNotIn("${{ secrets.SEAL_CI_READ_TOKEN }}", acceptance)
+        self.assertNotIn('url."https://x-access-token:', acceptance)
+        self.assertIn('SEAL_CI_READ_TOKEN: ""', acceptance)
+        self.assertIn("persist-credentials: false", acceptance)
 
     def test_release_build_reports_after_fleet_failure_but_publish_stays_gated(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

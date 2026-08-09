@@ -78,7 +78,6 @@ jobs:
   # its pinned needs-set are unchanged.
   kernel-hash-footprint:
     uses: ./.github/workflows/acceptance.yml
-    secrets: inherit
 
   build:
     runs-on: ubuntu-latest

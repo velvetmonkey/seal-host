@@ -69,8 +69,8 @@ test("CI and release run the footprint gate and its fleet-list meta-test", () =>
       `${workflow} does not invoke the reusable acceptance workflow`,
     );
     assert.ok(
-      caller.includes("secrets: inherit"),
-      `${workflow} does not pass secrets to the reusable acceptance workflow`,
+      !caller.includes("uses: ./.github/workflows/acceptance.yml\n    secrets: inherit"),
+      `${workflow} passes secrets to the credential-free acceptance workflow`,
     );
   }
 });

@@ -28,10 +28,9 @@ jobs:
   # The tag-side invocation of the ONE reusable fleet-acceptance workflow
   # (roadmap 8y item 8), identical by construction to the push-side
   # invocation in ci.yml `kernel-hash-footprint`. This also repairs a real
-  # drift: the previous inline copy ran without the private fleet token.
+  # drift: the previous inline copy omitted the locked-verifier gate.
   fleet-gate:
     uses: ./.github/workflows/acceptance.yml
-    secrets: inherit
 
   build:
     if: ${{ !cancelled() }}
@@ -51,12 +50,14 @@ jobs:
     permissions:
       contents: read
     env:
-      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+      SEAL_CI_READ_TOKEN: ""
+      GH_TOKEN: ""
+      GITHUB_TOKEN: ""
     steps:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v6.0.3
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, persist-credentials: false }
       # Reserved id control_90: this step is provisioning, not a product
       # control, so it sits out of the per-job numbering. It still reports
       # like every other step -- test/test_ci_control_reporting.py requires
@@ -68,16 +69,16 @@ jobs:
         uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
-        name: Require an exact release tag and private build access
+        name: Require an exact release tag and no private-read credential
         run: |
           test "${GITHUB_REF_NAME}" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml | head -1)"
-          test -n "$SEAL_CI_READ_TOKEN"
+          test -z "$SEAL_CI_READ_TOKEN$GH_TOKEN$GITHUB_TOKEN"
       - id: control_03
         continue-on-error: true
-        name: Guard Lean test-driver wiring and configure private dependency auth
+        name: Guard Lean test-driver wiring and credential-free dependency access
         run: |
           python3 scripts/lean_test_driver_gate.py
-          git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+          test -z "$(git config --global --get-regexp '^url\..*\.insteadof$' 2>/dev/null | grep -E 'x-access-token|github.com/velvetmonkey' || true)"
       - id: control_04
         continue-on-error: true
         uses: leanprover/lean-action@v1.5.0

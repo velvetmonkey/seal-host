@@ -34,8 +34,9 @@ exact request.
 
 - Linux `x86_64` or `aarch64`. Windows 11 with Ubuntu WSL2 uses the
   `linux-x86_64` asset; no step in this guide requires `systemd`.
-- A checkout of this repository and `gh` logged in to GitHub while the
-  repository is private. No Lean or Rust toolchain is required.
+- A checkout of this public repository and an authenticated GitHub CLI for
+  release discovery and download. No private-repository credential, Lean, or
+  Rust toolchain is required.
 - Python 3 with the `cryptography` package (for the config signer).
 - A child MCP server to guard. Anything stdio works; a filesystem or sqlite MCP server
   makes the destructive-call demo obvious.

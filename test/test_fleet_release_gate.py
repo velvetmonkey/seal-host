@@ -83,7 +83,7 @@ class FleetReleaseGateTests(unittest.TestCase):
         self.assertIn("python3 scripts/fleet_release_gate.py", acceptance)
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("uses: ./.github/workflows/acceptance.yml", workflow)
-        self.assertIn("secrets: inherit", workflow)
+        self.assertNotIn("secrets: inherit", workflow)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,10 @@ name: Acceptance
 #   * push CI:  ci.yml       job `kernel-hash-footprint`
 #   * tag path: release.yml  job `fleet-gate`
 # The commands live only here. Two copies drift; the pre-existing drift was
-# real: the release copy ran without the private fleet token and without the
-# locked-verifier gate's push-side twin, so push CI could stay green while the
-# same commands would have failed at tag time.
+# real: the release copy omitted the locked-verifier gate's push-side twin, so
+# push CI could stay green while the same commands would have failed at tag
+# time. Every locked fleet repository is public now; this workflow deliberately
+# carries no private-read token.
 #
 # Steps here are deliberately fail-fast (no continue-on-error, no
 # ci_control_aggregate.py): the aggregate pattern resolves its identity from
@@ -27,19 +28,18 @@ jobs:
   fleet-acceptance:
     runs-on: ubuntu-24.04
     env:
-      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+      SEAL_CI_READ_TOKEN: ""
+      GH_TOKEN: ""
+      GITHUB_TOKEN: ""
     steps:
       - uses: actions/checkout@v6.0.3
+        with: { persist-credentials: false }
       - uses: actions/setup-node@v7.0.0
         with: { node-version: "22" }
-      # The footprint gate fetches every repository in the fleet lock, and
-      # five of the six are private. Without credentials each fetch dies with
-      # "could not read Username"; the gate reports UNKNOWN REPOSITORY and
-      # refuses to write a manifest.
-      - name: Require private fleet read access
-        run: test -n "$SEAL_CI_READ_TOKEN"
-      - name: Configure private fleet read access
-        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - name: Require credential-free public fleet access
+        run: |
+          test -z "$SEAL_CI_READ_TOKEN$GH_TOKEN$GITHUB_TOKEN"
+          test -z "$(git config --global --get-regexp '^url\..*\.insteadof$' 2>/dev/null | grep -E 'x-access-token|github.com/velvetmonkey' || true)"
       - name: Gate the generated kernel-hash footprint
         run: node scripts/kernel_hash_footprint.mjs --check
       - name: Prove every locked repository is scanned
