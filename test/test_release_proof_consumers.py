@@ -8,6 +8,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ZERO_INSTALL_PATH_DECLARATIONS = {
+    "docs/DEPLOY.md": "Supported production deployment paths:\n**0**.",
+    "docs/GETTING-STARTED.md": "Supported clean-machine onboarding paths: **0**.",
+    "CONFIG.md": "Supported clean-machine installation\npaths: **0**.",
+}
+ZERO_RELEASE_DECLARATION = "Published `seal-host` releases: **0**."
 
 
 class ReleaseProofConsumerTests(unittest.TestCase):
@@ -59,14 +65,29 @@ class ReleaseProofConsumerTests(unittest.TestCase):
             workflow,
         )
         self.assertIn('VERIFIER_NAME = "release_provenance.py"', gate)
-        self.assertIn("--pattern release_provenance.py", docs)
+        if ZERO_RELEASE_DECLARATION in docs:
+            self.assertIn("There is no reader verification procedure", docs)
+            self.assertNotIn("gh release download", docs)
+        else:
+            self.assertIn("--pattern release_provenance.py", docs)
 
     def test_every_install_path_requires_signed_provenance(self) -> None:
-        for relative in ("docs/DEPLOY.md", "docs/GETTING-STARTED.md", "CONFIG.md"):
+        for relative, zero_path_declaration in ZERO_INSTALL_PATH_DECLARATIONS.items():
             with self.subTest(path=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
+                if zero_path_declaration in text:
+                    continue
                 self.assertIn("release_provenance.py verify", text)
                 self.assertIn("SEAL-RELEASE-PROVENANCE.sigstore.json", text)
+
+    def test_zero_install_path_declaration_has_no_install_command(self) -> None:
+        for relative, zero_path_declaration in ZERO_INSTALL_PATH_DECLARATIONS.items():
+            with self.subTest(path=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                if zero_path_declaration not in text:
+                    continue
+                self.assertNotIn("release_provenance.py verify", text)
+                self.assertNotIn("gh release download", text)
 
     def test_cosign_installer_uses_immutable_commit(self) -> None:
         for relative in (
