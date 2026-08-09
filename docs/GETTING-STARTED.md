@@ -1,11 +1,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Getting started — your first working gate
 
-This is the onboarding path: get the binary release, watch it block a
+This is the onboarding path: build from this checkout, watch the host block a
 destructive call, approve that exact call, watch it flow, then verify the
-receipt yourself — including what a tampered receipt looks like. Every command
-on this page was executed on 2026-08-08 against the current tree; measured
-timings and one known gap are stated inline.
+receipt yourself — including what a tampered receipt looks like. The source
+build is deliberately the primary path: **there is currently no published
+binary release.** It does not make a claim about a tag that can become false
+when a release gate fails.
 
 ## What seal-host is
 
@@ -21,78 +22,52 @@ assumed is listed at the bottom of this page, precisely.
 
 ## Prerequisites
 
-Stated honestly, all of them:
+For the source path below:
 
-- Linux, `x86_64` or `aarch64` (the only released architectures). Windows 11
-  with Ubuntu WSL2 uses the `linux-x86_64` asset; this walkthrough needs no
-  `systemd` service and works with WSL2's optional systemd support either off
-  or on.
-- A checkout of this repository — for the key/signing helpers and the receipt
-  verifier. **You do not build anything.** No Lean, no Rust, no toolchain.
+- A checkout of this repository.
+- Lean `4.28.0` (pinned in `lean-toolchain`) and Rust `1.96.0` (pinned in
+  `rust/rust-toolchain.toml`), plus the usual native C/C++ linker toolchain
+  required by Lean and Rust dependencies. Docker is not used by this path.
 - `python3` with the `cryptography` package (config and approval signing).
 - `node` (any current LTS; used only by the receipt verifier).
-- `gh` (the GitHub CLI) for the release download, logged in via
-  `gh auth login` — required while this repository is private.
+- On this shared development host, `leanbuild` must be on `PATH`; it is the
+  required one-at-a-time, resource-bounded wrapper for every Lean invocation.
+  `scripts/build_all.sh` uses it automatically when present. On an ordinary
+  single-user machine without that wrapper, it uses `lake` directly.
 
-Total measured command time for everything below: **about 10 seconds** on a
-2026 Linux workstation. Budget a few minutes of reading around it; the
-long pole is you, not the machine.
+The published `v0.1.5` release is also available. It avoids the Lean and Rust
+toolchains, but this page keeps the source path as a fully exercised option.
 
-## 1. Get the binary release
+## 1. Build the host from this checkout
 
-The first published binary release is `v0.1.5`. This repository is private
-today, so the checkout prerequisite currently implies repo access; and while
-the build needs no credentials — every dependency resolves publicly — the tree
-still contains references to private infrastructure, so "zero private
-references" is not claimed.
-
-```sh
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
-  --pattern release_provenance.py --pattern SHA256SUMS \
-  --pattern SEAL-RELEASE-PROVENANCE.json \
-  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
-```
-
-Do not follow the source-build path expecting speed: the source tree's
-acceptance build needs pinned Lean 4.28.0 and Rust 1.96.0 and compiles for
-hours. The release bundle exists so that nobody onboarding compiles Lean —
-it ships the host binary, `libsealffi.so`, and the Lean runtime `.so` closure,
-with rpaths pinned so it runs with no environment setup at all.
-
-Install cosign, then verify the signed provenance before unpacking:
+This is not a quick download: a cold Lean build can take about twenty-one
+minutes through the documented tamper check. The first-verdict timing is
+recorded by the command below instead of promised here.
 
 ```sh
-python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.5 \
-  --statement SEAL-RELEASE-PROVENANCE.json \
-  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-tar xzf seal-host-*-linux-x86_64.tar.gz
+time bash scripts/build_all.sh
 ```
 
-Expected: the verifier prints `PASS release provenance`. It checks the
-signature, the complete release set, `SHA256SUMS`, and every signed subject
-digest; checksum self-consistency alone is not sufficient. See
-[Release provenance](RELEASE-PROVENANCE.md). Prove to yourself the bundle is
-self-contained — run it with an empty environment:
+Expected: it finishes with `==> done: rust/target/debug/seal-host-rs`. Do not
+continue if it exits non-zero. This command serializes Lean work through
+`leanbuild` when that wrapper is available; do not wrap it in an additional
+`flock`.
+
+To use the published `v0.1.5` release instead, download and verify it as
+described in [Release provenance](RELEASE-PROVENANCE.md), then set:
 
 ```sh
-env -i PATH=/usr/bin:/bin seal-host-*-linux-x86_64/bin/seal-host-rs
+export SEAL_REPO="$PWD"
+export SEAL_BIN="$PWD/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs"
 ```
-
-It prints its usage line and exits with code 2 (no server command given). No
-`LD_LIBRARY_PATH`, no Lean install, no network.
 
 ## 2. Stand up a gate and watch it block
 
-Set two variables for the rest of this page — where your repo checkout is and
-where the bundle binary landed:
+Set the checkout and freshly built host paths:
 
 ```sh
-export SEAL_REPO=/path/to/seal-host
-export SEAL_BIN=/path/to/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs
+export SEAL_REPO="$PWD"
+export SEAL_BIN="$SEAL_REPO/rust/target/debug/seal-host-rs"
 ```
 
 Work in a fresh directory. Generate the two keypairs (config-signing and
@@ -296,6 +271,14 @@ human-**ASSERTED** cells). Using that vocabulary, not a new one:
 **The one claim** (from `CLAIMS.md`): *policy-covered, unapproved
 request-effects cannot execute through the mediated MCP boundary.* Not "the
 agent is safe", not "the whole stack is verified".
+
+Read the labels literally: **PROVEN** means a stated Lean theorem, not a
+claim about the compiled host; **TESTED** means observed in tests or this
+walkthrough, not proved for every input; **ASSUMED** names a trust-boundary
+condition; **REFUTED** means this repository has a theorem or demonstration
+that the stronger statement is false; and **UNKNOWN** means the page has no
+evidence either way. A missing, skipped, unreadable, or unrun check is
+UNKNOWN, never a passing result.
 
 - **Lean theorem (proved):** the fail-closed registry composition (deny if no
   kernel gates, allow only if every gating kernel allows); forward-implies-

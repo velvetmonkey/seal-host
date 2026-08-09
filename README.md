@@ -16,11 +16,11 @@ the real destructive SQLite sandbox, start with [CONFIG.md](CONFIG.md).
 
 ## Quick start
 
-**Onboarding without building anything:** the binary-release path — block,
-approve, flow, and verify a receipt yourself — is
-[docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).
+**Onboarding from source:** there is currently no published binary release.
+Build the checked-out tree, then block, approve, flow, and verify a receipt
+yourself with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).
 
-One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold `lake build` of the Lean core, which pulls the toolchain and can run tens of minutes on a fresh machine. After that the loop is instant. From a fresh checkout, run:
+One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold Lean build, which pulls the toolchain and can run tens of minutes on a fresh machine. On the shared development host, ensure `/home/monkey/bin` is on `PATH` so the required `leanbuild` guard serializes it. From a fresh checkout, run:
 
 ```bash
 bash scripts/build_all.sh && bash scripts/showcase.sh
