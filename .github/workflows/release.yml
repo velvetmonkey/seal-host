@@ -125,10 +125,15 @@ jobs:
           scripts/package_release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"
       - id: control_14
         continue-on-error: true
-        name: Build and smoke-test the non-root container
+        timeout-minutes: 10
+        name: Build the non-root container image
         run: |
           stage="$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
           docker build -f deploy/container/Dockerfile.release -t "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}" "$stage"
+      - id: control_16
+        continue-on-error: true
+        name: Smoke-test the non-root container user
+        run: |
           test "$(docker image inspect --format '{{.Config.User}}' "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}")" = "65532:65532"
       - id: control_15
         continue-on-error: true
