@@ -127,9 +127,39 @@ jobs:
         continue-on-error: true
         timeout-minutes: 10
         name: Build the non-root container image
+        # `timeout-minutes` is enforced BY THE RUNNER, so it cannot fire when the
+        # runner itself is lost. Observed on v0.1.3, run 31304617294: the
+        # linux-x86_64 job reported `completed failure` while this step stayed
+        # permanently `in_progress` with a null completion time, 41+ minutes into
+        # a 10-minute cap. A step that never finalises is the signature of a
+        # reaped runner, not a hanging build. The cap stays, because it is still
+        # the right bound for a genuine hang, and an in-process `timeout` goes
+        # underneath it, because that one is enforced by this shell rather than by
+        # the agent that may be dying.
+        #
+        # Disk and memory are reported either side because a reap under an image
+        # build is most plausibly resource exhaustion, and the aarch64 runner
+        # completed this same step in 16 seconds. Without the numbers the next
+        # reap is another guess, and we have already spent three on this.
         run: |
           stage="$RUNNER_TEMP/release/seal-host-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
-          docker build -f deploy/container/Dockerfile.release -t "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}" "$stage"
+          echo "::group::resources before the image build"
+          df -h / "$RUNNER_TEMP" || true
+          free -m || true
+          du -sh "$stage" || true
+          echo "::endgroup::"
+          set +e
+          timeout --signal=TERM --kill-after=30s 540s \
+            docker build -f deploy/container/Dockerfile.release -t "seal-host:${GITHUB_REF_NAME}-${{ matrix.arch }}" "$stage"
+          status=$?
+          set -e
+          echo "::group::resources after the image build"
+          df -h / "$RUNNER_TEMP" || true
+          echo "::endgroup::"
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "::error::docker build exceeded the 540s in-process timeout (exit $status): a genuine build hang, not a runner reap"
+          fi
+          exit "$status"
       - id: control_16
         continue-on-error: true
         name: Smoke-test the non-root container user
