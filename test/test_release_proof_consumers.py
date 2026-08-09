@@ -54,7 +54,10 @@ class ReleaseProofConsumerTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         gate = (ROOT / "scripts/release_provenance.py").read_text(encoding="utf-8")
         docs = (ROOT / "docs/RELEASE-PROVENANCE.md").read_text(encoding="utf-8")
-        self.assertIn("install -m 0755 ../scripts/release_provenance.py", workflow)
+        self.assertIn(
+            'install -m 0755 "$GITHUB_WORKSPACE/scripts/release_provenance.py"',
+            workflow,
+        )
         self.assertIn('VERIFIER_NAME = "release_provenance.py"', gate)
         self.assertIn("--pattern release_provenance.py", docs)
 
