@@ -17,18 +17,14 @@ It has not completed an independent security audit. Read `docs/LIMITATIONS.md` a
 ## Channel status
 
 GitHub private vulnerability reporting is the canonical channel for this
-repository. It is currently disabled (checked 2026-08-09). The repository owner
-must enable **Settings → Security → Code security and analysis → Private
-vulnerability reporting** before the form below becomes a working private intake
-channel. Until then, this policy does not advertise a fallback address or claim
-that a private reporting channel is live.
+repository. It is enabled (checked 2026-08-09), so the form below is a live
+private intake channel. This policy does not advertise an email fallback.
 
 ## Reporting a vulnerability
 
 Open a private [GitHub Security
 Advisory](https://github.com/velvetmonkey/seal-host/security/advisories/new) on
-this repository after private vulnerability reporting has been enabled. Do not
-put sensitive report details in a public issue.
+this repository. Do not put sensitive report details in a public issue.
 
 Do not disclose publicly before the coordinated-disclosure window below has run.
 
