@@ -135,18 +135,33 @@ is in [DEPLOY.md](DEPLOY.md).)
 
 Now play the agent. Send one destructive `tools/call` through the gate, with
 `/bin/cat` standing in as the "real" MCP server (anything that echoes stdio
-works — the point is the call must *reach* it):
+works — the point is the call must *reach* it). Keep this shell and host
+process alive through the next section: the approval is bound to the session
+that issued the refusal.
 
 ```sh
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table customers"}}}' > call.jsonl
+
+mkfifo request.pipe
 
 "$SEAL_BIN" --insecure-development-mode \
   --config trusted.json --pubkey "$(cat keys/config.pub)" \
   --channel ed25519 --token-file approvals.ndjson \
   --approval-pubkey "$(cat keys/approval.pub)" \
-  -- /bin/cat < call.jsonl > response.jsonl 2> audit.log
+  -- /bin/cat < request.pipe > loop.jsonl 2> audit.log &
+SEAL_HOST_PID=$!
 
-cat response.jsonl
+# Keep the FIFO writer open: EOF would end the host session before approval.
+exec 3> request.pipe
+cat call.jsonl >&3
+for _ in $(seq 1 100); do
+  test -f loop.jsonl && grep -q 'approval required:' loop.jsonl && break
+  sleep 0.1
+done
+grep -q 'approval required:' loop.jsonl
+head -1 loop.jsonl > refusal.json
+
+cat loop.jsonl
 ```
 
 Measured: 0.6 seconds. The response is a refusal, not an echo — the call
@@ -164,30 +179,23 @@ from the exact request. An approval is bound to it — approve *this* drop on
 
 Approvals are Ed25519-signed records that bind the target *and* the exact
 framed request bytes, and they are scoped to the live host session that
-issued the challenge. So the shape of the loop is: the host blocks, a human
-signs while the host is still running, the identical frame is re-sent and
-flows. In real use those are two terminals (that is exactly what
-`demo/dogfood_cli.py` walks you through, host built from source or bundle
-alike). Scripted into one runnable block:
+issued the challenge. The host above is still running; sign that live refusal,
+then re-send the identical frame to its still-open request pipe. In real use
+those are two terminals (that is exactly what `demo/dogfood_cli.py` walks you
+through, host built from source or bundle alike). Scripted in this shell:
 
 ```sh
-head -1 response.jsonl > refusal.json
-
-{ cat call.jsonl; sleep 1
-  python3 "$SEAL_REPO/demo/approve_cli.py" --token-file approvals.ndjson \
-    --refusal-file refusal.json --key-file keys/approval.key --yes > approve.log 2>&1
-  cat call.jsonl; sleep 1
-} | "$SEAL_BIN" --insecure-development-mode \
-      --config trusted.json --pubkey "$(cat keys/config.pub)" \
-      --channel ed25519 --token-file approvals.ndjson \
-      --approval-pubkey "$(cat keys/approval.pub)" \
-      -- /bin/cat > loop.jsonl 2> audit2.log
+python3 "$SEAL_REPO/demo/approve_cli.py" --token-file approvals.ndjson \
+  --refusal-file refusal.json --key-file keys/approval.key --yes > approve.log 2>&1
+cat call.jsonl >&3
+exec 3>&-
+wait "$SEAL_HOST_PID"
 
 cat loop.jsonl
 ```
 
-Measured: 2.2 seconds (the two `sleep 1`s). Two lines come back: first the
-same `approval required` refusal, then — after the signed approval landed —
+Measured: about 0.2 seconds after the human approves. Two lines come back:
+first the same `approval required` refusal, then — after the signed approval landed —
 **the request itself, echoed by `/bin/cat`**. The child received the bytes.
 That echo is the whole product in one line: without the approval the call
 never arrives; with it, it does.
@@ -224,7 +232,7 @@ chain and verify it (this is the concrete instance of the
 `Host.Record.tamper_evident` theorem, with SHA-256 as the commitment):
 
 ```sh
-grep -h '"certs":\[' audit.log audit2.log > audit.lines
+grep '"certs":\[' audit.log > audit.lines
 node "$SEAL_REPO/scripts/seal_log.mjs" seal audit.lines sealed.json
 node "$SEAL_REPO/scripts/seal_log.mjs" verify sealed.json
 ```
