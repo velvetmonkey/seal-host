@@ -340,7 +340,9 @@ agent is safe", not "the whole stack is verified".
 Use the binary path above for onboarding. A source build installs the pinned
 Lean and Rust toolchains and can take hours; it belongs here at the bottom, not
 in the TypeScript/Python developer's critical path. The current clean
-`scripts/build_all.sh` verification had not completed when this guide was
-regenerated on 2026-08-09. Until an end-to-end result is recorded, this page
-does not present source build as a working substitute for the absent published
-binary.
+public-input build completed on 2026-08-09 with no credential available: all
+10 Lean test binaries, the FFI shared library, optimized Rust binaries, and the
+release-policy gate passed in 14 minutes 1 second on the measured Linux x86_64
+host. That establishes buildability from public inputs; it does not turn a
+source build into a published binary release or make it the preferred onboarding
+path.
