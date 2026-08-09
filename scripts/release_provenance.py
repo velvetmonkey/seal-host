@@ -12,8 +12,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 from typing import NoReturn
@@ -88,6 +88,31 @@ def sha256(path: Path) -> str:
     except OSError as error:
         refuse(f"cannot read payload {path.name}: {error}")
     return digest.hexdigest()
+
+
+def require_cosign_digest(command: Path, expected: str | None) -> None:
+    if expected is None:
+        return
+    normalized = expected.removeprefix("sha256:")
+    if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+        refuse("--cosign-sha256 must be a lowercase SHA-256 hex digest")
+    actual = sha256(command)
+    if actual != normalized:
+        refuse(f"cosign verifier digest mismatch: expected {normalized}, actual {actual}")
+
+
+def refuse_path_shadow(command: Path) -> None:
+    if command.name != "cosign":
+        return
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(directory or ".") / command.name
+        if candidate.is_file() and candidate.stat().st_mode & 0o111:
+            if candidate.resolve() != command.resolve():
+                refuse(
+                    "cosign resolution failed: PATH selects "
+                    f"{candidate} before established verifier {command}"
+                )
+            return
 
 
 def expected_payload_names(release_version: str) -> set[str]:
@@ -216,17 +241,17 @@ def require_signature(args: argparse.Namespace, statement: Path, bundle: Path) -
         refuse(f"missing provenance signature bundle: {bundle}")
 
     cosign = args.cosign
-    if "/" in cosign:
-        resolved = Path(cosign)
-        if not resolved.is_file() or not resolved.stat().st_mode & 0o111:
-            refuse(f"cosign verifier unavailable: {cosign}")
-        command = str(resolved)
-    else:
-        command = shutil.which(cosign) or ""
-        if not command:
-            refuse(f"cosign verifier unavailable on PATH: {cosign}")
+    if "/" not in cosign:
+        refuse("cosign verifier resolution requires an explicit absolute path")
+    command_path = Path(cosign)
+    if not command_path.is_absolute():
+        refuse(f"cosign verifier path is not absolute: {cosign}")
+    if not command_path.is_file() or not command_path.stat().st_mode & 0o111:
+        refuse(f"cosign verifier unavailable: {cosign}")
+    refuse_path_shadow(command_path)
+    require_cosign_digest(command_path, args.cosign_sha256)
 
-    verify = [command, "verify-blob", "--bundle", str(bundle)]
+    verify = [str(command_path), "verify-blob", "--bundle", str(bundle)]
     if args.key:
         verify.extend(["--key", args.key])
     else:
@@ -363,7 +388,8 @@ def parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--release-version", required=True)
     verify_parser.add_argument("--statement", required=True)
     verify_parser.add_argument("--bundle", required=True)
-    verify_parser.add_argument("--cosign", default="cosign")
+    verify_parser.add_argument("--cosign", required=True)
+    verify_parser.add_argument("--cosign-sha256")
     trust = verify_parser.add_mutually_exclusive_group(required=True)
     trust.add_argument("--key")
     trust.add_argument("--certificate-identity")

@@ -16,9 +16,26 @@ test -z "$WORKTREE_STATUS" || { echo "export requires a clean worktree" >&2; exi
 mkdir -p "$OUTPUT"
 OUTPUT_ENTRY="$(find "$OUTPUT" -mindepth 1 -maxdepth 1 -print -quit)"
 test -z "$OUTPUT_ENTRY" || { echo "output directory must be empty" >&2; exit 1; }
-for command in git lake cargo node python3 cosign tar gzip sha256sum; do
+for command in git lake cargo node python3 tar gzip sha256sum; do
   command -v "$command" >/dev/null || { echo "missing exporter prerequisite: $command" >&2; exit 1; }
 done
+COSIGN_BIN=${COSIGN_BIN:?COSIGN_BIN must name the installed cosign binary}
+COSIGN_SHA256=${COSIGN_SHA256:?COSIGN_SHA256 must pin the installed cosign binary}
+case "$COSIGN_BIN" in
+  /*) ;;
+  *) echo "COSIGN_BIN must be an absolute path" >&2; exit 1 ;;
+esac
+test -x "$COSIGN_BIN" || { echo "installed cosign binary is unavailable: $COSIGN_BIN" >&2; exit 1; }
+path_cosign=$(PATH="$PATH" type -P cosign || true)
+test -z "$path_cosign" || test "$path_cosign" = "$COSIGN_BIN" || {
+  echo "cosign resolution failed: PATH selects $path_cosign before established verifier $COSIGN_BIN" >&2
+  exit 1
+}
+actual_cosign_sha256=$(sha256sum "$COSIGN_BIN" | awk '{print $1}')
+test "$actual_cosign_sha256" = "$COSIGN_SHA256" || {
+  echo "cosign verifier digest mismatch: expected $COSIGN_SHA256, actual $actual_cosign_sha256" >&2
+  exit 1
+}
 cargo cyclonedx --version >/dev/null
 
 REVISION=$(git -C "$ROOT" rev-parse HEAD)
@@ -72,7 +89,7 @@ echo "==> sign source, SBOM, and checksum manifest"
 SIGN_ARGS=(--yes)
 if [ -n "${SEAL_EXPORT_SIGNING_KEY:-}" ]; then SIGN_ARGS+=(--key "$SEAL_EXPORT_SIGNING_KEY"); fi
 for artifact in "$SIGNED"/*.tar.gz "$SIGNED"/*.cdx.json "$SIGNED/SHA256SUMS"; do
-  cosign sign-blob "${SIGN_ARGS[@]}" --bundle "$artifact.sigstore.json" "$artifact"
+  "$COSIGN_BIN" sign-blob "${SIGN_ARGS[@]}" --bundle "$artifact.sigstore.json" "$artifact"
 done
 
 cp -a "$SIGNED"/. "$OUTPUT"/
