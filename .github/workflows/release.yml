@@ -219,13 +219,15 @@ jobs:
       - id: control_03
         continue-on-error: true
         uses: actions/download-artifact@v8
-        with: { path: release, merge-multiple: true }
+        with:
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
       - id: control_04
         continue-on-error: true
         name: Consolidate SHA-256 checksums
         run: |
-          cd release
-          install -m 0755 ../scripts/release_provenance.py release_provenance.py
+          cd "$RUNNER_TEMP/release"
+          install -m 0755 "$GITHUB_WORKSPACE/scripts/release_provenance.py" release_provenance.py
           payloads=(
             release_provenance.py
             "seal-host-${GITHUB_REF_NAME}-linux-aarch64.cdx.json"
@@ -247,9 +249,9 @@ jobs:
         name: Bind every release payload in an honest provenance statement
         run: |
           python3 scripts/release_provenance.py create \
-            --release-dir release \
+            --release-dir "$RUNNER_TEMP/release" \
             --release-version "$GITHUB_REF_NAME" \
-            --output release/SEAL-RELEASE-PROVENANCE.json \
+            --output "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.json" \
             --signer-identity "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
             --oidc-issuer "https://token.actions.githubusercontent.com"
 
@@ -262,18 +264,18 @@ jobs:
         name: Sign Seal release provenance with the workflow OIDC identity
         run: |
           cosign sign-blob --yes \
-            --bundle release/SEAL-RELEASE-PROVENANCE.sigstore.json \
-            release/SEAL-RELEASE-PROVENANCE.json
+            --bundle "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.json"
 
       - id: control_07
         continue-on-error: true
         name: Refuse publication unless provenance signature and digests verify
         run: |
           python3 scripts/release_provenance.py verify \
-            --release-dir release \
+            --release-dir "$RUNNER_TEMP/release" \
             --release-version "$GITHUB_REF_NAME" \
-            --statement release/SEAL-RELEASE-PROVENANCE.json \
-            --bundle release/SEAL-RELEASE-PROVENANCE.sigstore.json \
+            --statement "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.json" \
+            --bundle "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
             --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
@@ -288,4 +290,4 @@ jobs:
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"/* --verify-tag --generate-notes
