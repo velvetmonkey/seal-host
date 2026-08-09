@@ -36,7 +36,7 @@ jobs:
     steps:
       - id: control_01
         continue-on-error: true
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
       # Reserved id control_90: this step is provisioning, not a product
       # control, so it sits out of the per-job numbering. It still reports
       # like every other step -- test/test_ci_control_reporting.py requires
