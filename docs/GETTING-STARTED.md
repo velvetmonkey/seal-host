@@ -5,8 +5,8 @@ This is the onboarding path: get the binary release, watch it block a
 destructive call, approve that exact call, watch it flow, then verify the
 receipt yourself — including what a tampered receipt looks like. The gate and
 verification sequence was executed on 2026-08-08 against the current tree;
-measured timings and one known gap are stated inline. Release discovery was
-rechecked on 2026-08-09 and currently stops because no release is published.
+measured timings and one known gap are stated inline. The published release
+used below is `v0.1.5`.
 
 **Start with the published binary path.** Building from source is deliberately
 the final section, outside the TypeScript/Python onboarding funnel.
@@ -46,11 +46,9 @@ long pole is you, not the machine.
 
 ## 1. Get the binary release first
 
-The first published binary release is `v0.1.5`. This repository is private
-today, so the checkout prerequisite currently implies repo access; and while
-the build needs no credentials — every dependency resolves publicly — the tree
-still contains references to private infrastructure, so "zero private
-references" is not claimed.
+The first published binary release is `v0.1.5`. This repository and every
+dependency in the pinned manifest resolve publicly; the release download and
+the credential-free source build require no private-repository token.
 
 ```sh
 gh release download v0.1.5 --repo velvetmonkey/seal-host \
