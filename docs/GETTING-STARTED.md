@@ -35,8 +35,8 @@ For the source path below:
   `scripts/build_all.sh` uses it automatically when present. On an ordinary
   single-user machine without that wrapper, it uses `lake` directly.
 
-The published `v0.1.5` release is also available. It avoids the Lean and Rust
-toolchains, but this page keeps the source path as a fully exercised option.
+There is no published binary release. The source path below is the fully
+exercised option; do not substitute a local tag for a published artifact.
 
 ## 1. Build the host from this checkout
 
@@ -52,14 +52,6 @@ Expected: it finishes with `==> done: rust/target/debug/seal-host-rs`. Do not
 continue if it exits non-zero. This command serializes Lean work through
 `leanbuild` when that wrapper is available; do not wrap it in an additional
 `flock`.
-
-To use the published `v0.1.5` release instead, download and verify it as
-described in [Release provenance](RELEASE-PROVENANCE.md), then set:
-
-```sh
-export SEAL_REPO="$PWD"
-export SEAL_BIN="$PWD/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs"
-```
 
 ## 2. Stand up a gate and watch it block
 
