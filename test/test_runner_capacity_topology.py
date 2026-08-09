@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Structural guards for the three-workflow runner disk-capacity split."""
+"""Structural guards for the runner disk-capacity split.
+
+ci.yml, security.yml and golden-path.yml each SPLIT the Lean aggregate away
+from the heavy Rust/fuzz work so no single runner carries both. release.yml
+`build` cannot be split -- scripts/package_release.sh links libsealffi.so and
+seal-host-rs from one filesystem -- so it must buy headroom instead, and is
+guarded here on those terms rather than left uncovered. It was uncovered
+until 2026-08-09, which is how it kept the exact topology the other three
+workflows forbid and reaped its x86_64 leg at v0.1.1 and v0.1.2.
+"""
 
 from __future__ import annotations
 
@@ -170,6 +179,45 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
         self.assertNotIn("ci-lean-aggregate", rust)
         self.assertNotRegex(rust, r"(?m)^\s*run: lake build\s*$")
 
+    def test_release_build_buys_headroom_for_the_whole_stack(self) -> None:
+        jobs = job_step_blocks(ROOT / ".github" / "workflows" / "release.yml")
+        build = "\n".join("\n".join(step) for step in jobs["build"])
+        # The unsplittable job must free ballast BEFORE the stack it carries,
+        # and the Lean aggregate must be measured so a future exhaustion
+        # reports as telemetry rather than as a silent reap.
+        self.assertIn("release-free-ballast", build)
+        self.assertIn("/usr/share/dotnet", build)
+        self.assertIn("/usr/local/lib/android", build)
+        self.assertIn("/opt/hostedtoolcache/Ruby", build)
+        self.assertIn(
+            "python3 scripts/ci_disk_telemetry.py release-lean-aggregate "
+            "-- lake test",
+            build,
+        )
+        self.assertNotRegex(build, r"(?m)^\s*run: lake test\s*$")
+
+    def test_release_container_build_keeps_reap_protection(self) -> None:
+        jobs = job_step_blocks(ROOT / ".github" / "workflows" / "release.yml")
+        control_14 = next(
+            "\n".join(step)
+            for step in jobs["build"]
+            if "\n".join(step).startswith("      - id: control_14")
+        )
+        self.assertIn("timeout-minutes: 10", control_14)
+        self.assertIn(
+            "timeout --signal=TERM --kill-after=30s 540s",
+            control_14,
+        )
+        self.assertIn("resources before the image build", control_14)
+        self.assertIn('df -h / "$RUNNER_TEMP" || true', control_14)
+        self.assertIn("free -m || true", control_14)
+        self.assertIn('du -sh "$stage" || true', control_14)
+        self.assertIn("resources after the image build", control_14)
+        self.assertIn(
+            "docker build exceeded the 540s in-process timeout",
+            control_14,
+        )
+
     def test_release_evidence_conjunction_is_exactly_the_pinned_set(self) -> None:
         ci = ROOT / ".github" / "workflows" / "ci.yml"
         declared = job_needs(ci).get("release-evidence")
@@ -213,6 +261,11 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
             encoding="utf-8"
         )
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("release-free-ballast", release)
+        self.assertIn("release-lean-aggregate", release)
         self.assertIn("security-lean-aggregate", security)
         self.assertIn("security-fuzz", security)
         self.assertIn("golden-lean-aggregate", golden)
