@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 services:
   seal-host:
-    image: ghcr.io/velvetmonkey/seal-host:v0.1.0
+    image: ${SEAL_HOST_IMAGE:?build an image from the public source tree and set SEAL_HOST_IMAGE}
     user: "65532:65532"
     read_only: true
     network_mode: none
