@@ -1,11 +1,18 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Getting started — your first working gate
+# Getting started — not built yet
 
-This is the onboarding path: get the binary release, watch it block a
-destructive call, approve that exact call, watch it flow, then verify the
-receipt yourself — including what a tampered receipt looks like. Every command
-on this page was executed on 2026-08-08 against the current tree; measured
-timings and one known gap are stated inline.
+## Current availability: zero
+
+- Repository package version: **v0.1.5** (not a published release).
+- Published `seal-host` releases: **0**.
+- Supported clean-machine onboarding paths: **0**.
+- Windows/WSL2 end-to-end runs: **0**.
+
+There is no honest install or first-run command today. A Git tag is not a
+release, and a local source build is not a substitute for a published binary.
+Do not continue into the recorded local evidence below unless you already have
+a working host binary from this exact checkout; this document does not tell a
+new reader how to obtain one.
 
 ## What seal-host is
 
@@ -19,80 +26,19 @@ matching, live, signed approval exists for that exact request. Every decision
 offline. The decision core is a Lean theorem; what is proved, tested, and
 assumed is listed at the bottom of this page, precisely.
 
-## Prerequisites
+## Recorded local evidence — not an onboarding path
 
-Stated honestly, all of them:
+The remaining sequence was observed with a pre-existing local build on
+2026-08-09. It is retained as evidence for the block/approve/flow/verify loop,
+not as a supported setup route.
 
-- Linux, `x86_64` or `aarch64` (the only released architectures). Windows 11
-  with Ubuntu WSL2 uses the `linux-x86_64` asset; this walkthrough needs no
-  `systemd` service and works with WSL2's optional systemd support either off
-  or on.
-- A checkout of this repository — for the key/signing helpers and the receipt
-  verifier. **You do not build anything.** No Lean, no Rust, no toolchain.
-- `python3` with the `cryptography` package (config and approval signing).
-- `node` (any current LTS; used only by the receipt verifier).
-- `gh` (the GitHub CLI) for the release download, logged in via
-  `gh auth login` — required while this repository is private.
-
-Total measured command time for everything below: **about 10 seconds** on a
-2026 Linux workstation. Budget a few minutes of reading around it; the
-long pole is you, not the machine.
-
-## 1. Get the binary release
-
-The first published binary release is `v0.1.5`. This repository is private
-today, so the checkout prerequisite currently implies repo access; and while
-the build needs no credentials — every dependency resolves publicly — the tree
-still contains references to private infrastructure, so "zero private
-references" is not claimed.
-
-```sh
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
-  --pattern release_provenance.py --pattern SHA256SUMS \
-  --pattern SEAL-RELEASE-PROVENANCE.json \
-  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
-```
-
-Do not follow the source-build path expecting speed: the source tree's
-acceptance build needs pinned Lean 4.28.0 and Rust 1.96.0 and compiles for
-hours. The release bundle exists so that nobody onboarding compiles Lean —
-it ships the host binary, `libsealffi.so`, and the Lean runtime `.so` closure,
-with rpaths pinned so it runs with no environment setup at all.
-
-Install cosign, then verify the signed provenance before unpacking:
-
-```sh
-python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.5 \
-  --statement SEAL-RELEASE-PROVENANCE.json \
-  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-tar xzf seal-host-*-linux-x86_64.tar.gz
-```
-
-Expected: the verifier prints `PASS release provenance`. It checks the
-signature, the complete release set, `SHA256SUMS`, and every signed subject
-digest; checksum self-consistency alone is not sufficient. See
-[Release provenance](RELEASE-PROVENANCE.md). Prove to yourself the bundle is
-self-contained — run it with an empty environment:
-
-```sh
-env -i PATH=/usr/bin:/bin seal-host-*-linux-x86_64/bin/seal-host-rs
-```
-
-It prints its usage line and exits with code 2 (no server command given). No
-`LD_LIBRARY_PATH`, no Lean install, no network.
-
-## 2. Stand up a gate and watch it block
-
-Set two variables for the rest of this page — where your repo checkout is and
-where the bundle binary landed:
+Prerequisites are Bash on Linux, a checkout of this repository, an already
+working host binary from that checkout, Python 3 with `cryptography`, Node.js,
+and the host's local Lean/FFI shared-library closure. Set the two local paths:
 
 ```sh
 export SEAL_REPO=/path/to/seal-host
-export SEAL_BIN=/path/to/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs
+export SEAL_BIN=/path/to/already-built/seal-host-rs
 ```
 
 Work in a fresh directory. Generate the two keypairs (config-signing and
@@ -103,7 +49,7 @@ policy that guards destructive SQL:
 mkdir seal-quickstart && cd seal-quickstart
 umask 077
 python3 "$SEAL_REPO/scripts/generate_keys.py" --out-dir keys
-mkdir -m 700 store
+mkdir -m 700 store receipts
 : > approvals.ndjson
 
 cat > payload.json <<EOF
@@ -181,41 +127,55 @@ never reached `/bin/cat`:
 {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"approval required: 2a01d254…c565","type":"text"}],"isError":true,"framed_subject":{…}}}
 ```
 
-That 64-hex value is the **target commitment**: a SHA-256 challenge derived
+That 64-hex value is the **approval challenge**: a SHA-256 value derived
 from the exact request. An approval is bound to it — approve *this* drop on
 *this* database, not "approve db.execute".
 
-## 3. Approve that exact call and watch it flow
+## Recorded evidence: approve that exact call and watch it flow
 
 Approvals are Ed25519-signed records that bind the target *and* the exact
 framed request bytes, and they are scoped to the live host session that
-issued the challenge. So the shape of the loop is: the host blocks, a human
-signs while the host is still running, the identical frame is re-sent and
-flows. In real use those are two terminals (that is exactly what
-`demo/dogfood_cli.py` walks you through, host built from source or bundle
-alike). Scripted into one runnable block:
+issued the challenge. The host must therefore remain running between the
+refusal and retry. The block below uses Bash's `coproc` to keep that one host
+session live, read its first response before signing, and then send the
+identical frame again. It was run successfully on 2026-08-09 against the local
+built host; the published-bundle variant remains blocked by the absent release.
 
 ```sh
-head -1 response.jsonl > refusal.json
+coproc SEAL_GATE { "$SEAL_BIN" --insecure-development-mode \
+  --config trusted.json --pubkey "$(cat keys/config.pub)" \
+  --channel ed25519 --token-file approvals.ndjson \
+  --approval-pubkey "$(cat keys/approval.pub)" \
+  --receipt-dir receipts -- /bin/cat 2> audit2.log; }
+GATE_IN=${SEAL_GATE[1]}
+GATE_OUT=${SEAL_GATE[0]}
 
-{ cat call.jsonl; sleep 1
-  python3 "$SEAL_REPO/demo/approve_cli.py" --token-file approvals.ndjson \
-    --refusal-file refusal.json --key-file keys/approval.key --yes > approve.log 2>&1
-  cat call.jsonl; sleep 1
-} | "$SEAL_BIN" --insecure-development-mode \
-      --config trusted.json --pubkey "$(cat keys/config.pub)" \
-      --channel ed25519 --token-file approvals.ndjson \
-      --approval-pubkey "$(cat keys/approval.pub)" \
-      -- /bin/cat > loop.jsonl 2> audit2.log
+printf '%s\n' "$(cat call.jsonl)" >&"$GATE_IN"
+IFS= read -r REFUSAL <&"$GATE_OUT"
+printf '%s\n' "$REFUSAL" | tee refusal.json
 
-cat loop.jsonl
+python3 "$SEAL_REPO/demo/approve_cli.py" \
+  --token-file approvals.ndjson --refusal-file refusal.json \
+  --key-file keys/approval.key --approve --yes
+
+printf '%s\n' "$(cat call.jsonl)" >&"$GATE_IN"
+IFS= read -r ALLOWED <&"$GATE_OUT"
+printf '%s\n' "$ALLOWED" | tee allowed.json
+exec {GATE_IN}>&-
+wait "$SEAL_GATE_PID"
 ```
 
-Measured: 2.2 seconds (the two `sleep 1`s). Two lines come back: first the
-same `approval required` refusal, then — after the signed approval landed —
-**the request itself, echoed by `/bin/cat`**. The child received the bytes.
-That echo is the whole product in one line: without the approval the call
-never arrives; with it, it does.
+Observed output begins with the full refusal shown above. The signer then prints
+the exact displayed frame and:
+
+```text
+signed allow for target=2a01d25406f0fc82751a66ddaeb8e79d2104efc4b67699400003704e67c0c565
+```
+
+The second response is the original request echoed by `/bin/cat`, with the
+host-added `operation_id`. The child received the bytes. That echo is the whole
+product in one line: without the approval the call never arrives; with it, it
+does.
 
 Things this page deliberately did wrong first, so you know they fail closed
 (each was run; each refuses): an unsigned `{"target":"…"}` approval line is
@@ -226,14 +186,17 @@ without a `replay_store` in the signed policy; a `trusted.json` with mode
 host session exited is dropped (`target_or_subject_mismatch`) because the
 challenge died with the session.
 
-## 4. Verify a receipt — and see verification fail
+## Recorded evidence: verify a receipt and see verification fail
 
-Every decision you just made emitted evidence in two forms: a JSON receipt
-per decision in `./seal-receipts/`, and an audit line carrying per-kernel
-certificates in the stderr log. Look at a receipt:
+The two decisions from the live `coproc` session emitted evidence in two forms:
+a JSON receipt per decision in `./receipts/`, because that host command passed
+`--receipt-dir receipts`, and an audit line carrying per-kernel certificates in
+`audit2.log`. The earlier one-shot block in step 2 used the development default
+`./seal-receipts/`; it is not an input to the verification below. Look at a
+receipt from the canonical live session:
 
 ```sh
-python3 -m json.tool "$(ls seal-receipts/receipt-* | tail -1)"
+python3 -m json.tool "$(ls receipts/receipt-* | tail -1)"
 ```
 
 Fields worth reading on your first one: `verdict` (`ALLOW` here — the last
@@ -249,14 +212,14 @@ chain and verify it (this is the concrete instance of the
 `Host.Record.tamper_evident` theorem, with SHA-256 as the commitment):
 
 ```sh
-grep -h '"certs":\[' audit.log audit2.log > audit.lines
+grep -h '"certs":\[' audit2.log > audit.lines
 node "$SEAL_REPO/scripts/seal_log.mjs" seal audit.lines sealed.json
 node "$SEAL_REPO/scripts/seal_log.mjs" verify sealed.json
 ```
 
 ```text
-VERIFY OK: 3 entries, chain intact.
-chain head: a0250c7d2206ef8967c08bbdc373c8108f8ee48289e65d76d1d14f6030aa4bfc
+VERIFY OK: 2 entries, chain intact.
+chain head: 373946b394d9ae567bd1917093a64ae479217c9e2b4568e37afbd04c918d1126
 ```
 
 Exit code 0. A green check you have never seen fail teaches nothing about
@@ -276,8 +239,8 @@ node "$SEAL_REPO/scripts/seal_log.mjs" verify tampered.json
 
 ```text
 VERIFY FAIL: entry 0 — recorded head does not match recomputed chain.
-  recorded:   8f024a31…
-  recomputed: 01117c22…
+  recorded:   8f024a313462fd758925f720e7886679963d9e05bb0e4c5d0d6dbe68bb49a2d0
+  recomputed: 01117c22cd8310c3a9dc1a1022022de580d5daed8b865dea0f35f4bf56762f4c
   → the log was inserted into, reordered, or mutated at or before entry 0.
 ```
 
@@ -304,11 +267,11 @@ agent is safe", not "the whole stack is verified".
   the axiom footprint `[propext, Classical.choice, Quot.sound]` via
   `Test/Axioms.lean`, and that claim is scoped to the pinned symbols, not
   repository-wide.
-- **Tested, not proved:** that the shipped Rust binary corresponds to the
+- **Tested, not proved:** that the Rust body corresponds to the
   Lean model (differential and conformance tests over a corpus, byte-exact —
-  not a proof over every input); everything you ran above is the tested
-  layer exercising the proven core.
-- **Named assumptions (TCB):** SHA-256 collision resistance (`A-CR`);
+  not a proof over every input); the recorded local evidence above exercises
+  the tested layer around the proven core.
+- **Named assumptions:** SHA-256 collision resistance (`A-CR`);
   channel exclusivity (nothing reaches the tool except through the host —
   **an assumption, not an enforced property**); per-server parser
   equivalence (A2); key custody — seal verifies the configured authorization
@@ -322,9 +285,16 @@ agent is safe", not "the whole stack is verified".
 
 ## Where to go next
 
-- [CONFIG.md](../CONFIG.md) — wire the host into Claude Code, Claude
-  Desktop, or Cursor, and run the real destructive-SQLite sandbox.
-- [DEPLOY.md](DEPLOY.md) — the production posture: production preflight,
-  receipt directories, durable replay stores, real child servers.
+- [CONFIG.md](../CONFIG.md) — policy authoring and the current host-integration
+  gap; it does not claim a released binary or Windows route.
+- [DEPLOY.md](DEPLOY.md) — development evidence and the production controls
+  that remain unshipped.
 - [`CLAIMS.md`](../CLAIMS.md) — the full claims map, row by row, with what
   may and may not be said publicly.
+
+## No source-build fallback
+
+A source build installs the pinned Lean and Rust toolchains and can take hours.
+The required clean `scripts/build_all.sh` verification had not completed when
+this guide was regenerated on 2026-08-09. Until an end-to-end result is
+recorded, source build is not a supported substitute for the absent release.

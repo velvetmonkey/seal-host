@@ -84,7 +84,7 @@ consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
   clamped to at most 300 seconds by the parser.
 - The production Ed25519 channel requires `replay_store`. Its
   `schema_version` and `namespace_encoding_version` are expected lineage from
-  the authority-signed payload; this release supports exactly `2` and `1`
+  the authority-signed payload; the current parser accepts exactly `2` and `1`
   (schema 2 is the G2 two-phase burn: a nonce row is reserved before Lean and
   committed at RECORDED; schema 1's single-phase burn is obsolete and
   refused — re-initialize the store). The SQLite store carries the same pair
@@ -457,38 +457,15 @@ three shipped manifests; the standing `npm test` CI gate is configured but
 has not run remotely for this change; operator verification is not applicable
 to this non-model authoring surface.
 
-## 1. Get the release and prepare the sandbox
+## 1. Host integration — not available to a new reader
 
-From the `seal-host` checkout:
-
-```bash
-export SEAL_HOST_ROOT="$PWD"
-mkdir -p "$PWD/.seal/release"
-chmod 700 "$PWD/.seal" "$PWD/.seal/release"
-cd "$PWD/.seal/release"
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
-  --pattern release_provenance.py --pattern SHA256SUMS \
-  --pattern SEAL-RELEASE-PROVENANCE.json \
-  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
-python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.5 \
-  --statement SEAL-RELEASE-PROVENANCE.json \
-  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-tar xzf seal-host-*-linux-x86_64.tar.gz
-export SEAL_BIN="$PWD/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs"
-cd "$SEAL_HOST_ROOT"
-umask 077
-mkdir -p "$PWD/.seal/receipts"
-touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
-```
-
-The verifier requires cosign and refuses on an absent or invalid signature,
-partial release set, extra asset, or digest mismatch. See
-[Release provenance](docs/RELEASE-PROVENANCE.md); `SHA256SUMS` alone is not an
-authenticity check.
+Repository package version: **v0.1.5**. Published `seal-host` releases: **0**.
+The package version is not a published release. Supported clean-machine
+installation paths: **0**. Windows/WSL2 end-to-end runs: **0**. There is no
+archive to download, no published provenance to verify, and no supported
+source-build substitute. The remaining sections record configuration for a
+developer who already has a working local `seal-host-rs` binary; set
+`SEAL_BIN_PATH` in the client profiles to that binary's absolute path.
 
 Generate separate config-signing and approval-signing keys:
 
@@ -528,8 +505,6 @@ guard these writes.” Do not mistake this for policy-v2 safe-allow composition.
 Claude Code project configuration lives in `.mcp.json`; user configuration is
 stored in `~/.claude.json`. Project scope is easiest to review and roll back.
 Claude’s stdio format is documented at <https://code.claude.com/docs/en/mcp>.
-On Windows 11, run Claude Code inside Ubuntu WSL2 for this block: every command
-and path then stays Linux-native, and no `systemd` service is involved.
 
 Before Seal, an entry directly launches its implementation:
 
@@ -552,7 +527,7 @@ After Seal, the real command moves behind `--`:
   "mcpServers": {
     "sealSqliteSandbox": {
       "type": "stdio",
-      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
+      "command": "SEAL_BIN_PATH",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
@@ -571,7 +546,8 @@ After Seal, the real command moves behind `--`:
 
 The copy-and-edit version is
 [`profiles/hosts/claude-code.json`](profiles/hosts/claude-code.json). Replace
-`/ABS/PATH`, `CONFIG_PUBLIC_KEY_HEX`, and `APPROVAL_PUBLIC_KEY_HEX`, then
+`SEAL_BIN_PATH`, `/ABS/PATH`, `CONFIG_PUBLIC_KEY_HEX`, and
+`APPROVAL_PUBLIC_KEY_HEX`, then
 put it at `.mcp.json`. Run `claude mcp list` and use `/mcp` inside Claude
 Code to check the connection.
 
@@ -615,7 +591,7 @@ cp "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
 
 Merge the `mcpServers` entry from
 [`profiles/hosts/claude-desktop.json`](profiles/hosts/claude-desktop.json),
-replace its placeholders, save, and fully quit/restart Claude Desktop. The MCP
+replace `SEAL_BIN_PATH` and its other placeholders, save, and fully quit/restart Claude Desktop. The MCP
 project's Desktop instructions and log locations are at
 <https://modelcontextprotocol.io/docs/develop/connect-local-servers>.
 
@@ -627,38 +603,6 @@ node ../seal-assurance-kit/bin/seal connect --client claude --desktop \
 # printed rollback:
 node ../seal-assurance-kit/bin/seal disconnect --client claude --desktop
 ```
-
-For Windows-side Claude Desktop with the host inside Ubuntu WSL2, use
-`wsl.exe` as the command. The executable and every later path are Linux paths
-inside the named distribution:
-
-```json
-{
-  "mcpServers": {
-    "sealSqliteSandbox": {
-      "command": "wsl.exe",
-      "args": [
-        "--distribution", "Ubuntu", "--exec",
-        "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
-        "--config", "/home/<wsl-user>/seal-host/.seal/trusted.json",
-        "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
-        "--channel", "ed25519",
-        "--token-file", "/home/<wsl-user>/seal-host/.seal/approval-tokens.ndjson",
-        "--approval-pubkey", "APPROVAL_PUBLIC_KEY_HEX",
-        "--receipt-dir", "/home/<wsl-user>/seal-host/.seal/receipts",
-        "--production",
-        "--", "python3", "/home/<wsl-user>/seal-host/demo/sqlite_mcp_server.py",
-        "--database", "/home/<wsl-user>/seal-host/.seal/sandbox.sqlite"
-      ]
-    }
-  }
-}
-```
-
-Confirm the distribution name with `wsl.exe --list --quiet`; replace `Ubuntu`
-if it differs. This repository's Linux CI cannot execute Windows-side Claude
-Desktop or `wsl.exe`, so this is an explicit unverified integration surface,
-not part of the Linux-native evidence below.
 
 Rollback restores the backup and restarts Desktop:
 
