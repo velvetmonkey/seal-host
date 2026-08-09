@@ -48,6 +48,11 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    # A hung step must report as a timeout with a log, not run to the 360
+    # minute default. This does NOT catch a runner reap: when the agent stops
+    # answering, nothing on the runner is left to enforce a timeout. See the
+    # release-reap note on control_32.
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
@@ -66,6 +71,46 @@ jobs:
         continue-on-error: true
         name: Provision PyYAML for the workflow-inspecting gates
         uses: ./.github/actions/pyyaml
+      # The release build is the ONE job in the fleet that carries the whole
+      # stack at once: the Lean aggregate, the release Rust binaries, a docker
+      # build of the packaged closure, and a from-source cargo install. Every
+      # other workflow was split precisely to avoid that (see
+      # test/test_runner_capacity_topology.py); this job cannot be split,
+      # because scripts/package_release.sh needs libsealffi.so and
+      # seal-host-rs on one filesystem to link the shipped closure.
+      #
+      # Measured on hosted ubuntu-24.04 at 515439d (ci.yml rust-conformance,
+      # run 31291530916): / is 76,887,154,688 B with 15,587,725,312 B free at
+      # job start, and this exact ballast list frees 28,372,578,304 B, leaving
+      # 43,960,303,616 B. Without it the x86_64 leg exhausts / partway through
+      # the stack, the runner agent stops answering, and the Actions service
+      # reaps the job ~45m45s later as a `failure` with NO failing step and no
+      # uploaded log -- which also means the aggregate below never runs.
+      - id: control_32
+        continue-on-error: true
+        name: Free unused runner SDKs before the full release stack (disk headroom)
+        run: |
+          set -uo pipefail
+          python3 scripts/ci_disk_telemetry.py release-free-ballast -- \
+            bash -euo pipefail -c '
+              df -h /
+              # Keep Python, Node, Docker, and anything setup-rust-toolchain
+              # and lean-action need. Remove only large hosted SDKs this job
+              # never uses. Absent paths on the arm image are not an error.
+              sudo rm -rf \
+                /usr/share/dotnet \
+                /usr/local/lib/android \
+                /opt/ghc \
+                /usr/local/share/powershell \
+                /usr/share/swift \
+                /usr/local/.ghcup \
+                /opt/hostedtoolcache/CodeQL \
+                /opt/hostedtoolcache/go \
+                /opt/hostedtoolcache/Ruby \
+                2>/dev/null || true
+              sudo apt-get clean || true
+              df -h /
+            '
       - id: control_02
         continue-on-error: true
         name: Require an exact release tag and private build access
@@ -103,7 +148,7 @@ jobs:
       - id: control_19
         continue-on-error: true
         name: Run aggregate Lean tests after native link dependency build
-        run: lake test
+        run: python3 scripts/ci_disk_telemetry.py release-lean-aggregate -- lake test
       - id: control_09
         continue-on-error: true
         run: lake build +Ffi:c.o.export
