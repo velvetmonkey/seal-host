@@ -40,15 +40,15 @@ long pole is you, not the machine.
 
 ## 1. Get the binary release
 
-The first published binary release is `v0.1.2`. This repository is private
+The first published binary release is `v0.1.5`. This repository is private
 today, so the checkout prerequisite currently implies repo access; and while
 the build needs no credentials — every dependency resolves publicly — the tree
 still contains references to private infrastructure, so "zero private
 references" is not claimed.
 
 ```sh
-gh release download v0.1.2 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.2-linux-*' \
+gh release download v0.1.5 --repo velvetmonkey/seal-host \
+  --pattern 'seal-host-v0.1.5-linux-*' \
   --pattern release_provenance.py --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
@@ -64,10 +64,10 @@ Install cosign, then verify the signed provenance before unpacking:
 
 ```sh
 python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.2 \
+  --release-dir . --release-version v0.1.5 \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.2" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 tar xzf seal-host-*-linux-x86_64.tar.gz
 ```
@@ -92,7 +92,7 @@ where the bundle binary landed:
 
 ```sh
 export SEAL_REPO=/path/to/seal-host
-export SEAL_BIN=/path/to/seal-host-v0.1.2-linux-x86_64/bin/seal-host-rs
+export SEAL_BIN=/path/to/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs
 ```
 
 Work in a fresh directory. Generate the two keypairs (config-signing and
