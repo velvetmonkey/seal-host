@@ -38,6 +38,12 @@ the trust boundary.
 
 ## Verify a downloaded release
 
+**Current availability:** no binary release is published for this repository.
+This is a verification contract for a future published release, not an
+onboarding path. Use [GETTING-STARTED.md](GETTING-STARTED.md) to build from
+source now. In particular, do not substitute a guessed tag in the commands
+below: a failed release gate intentionally produces no release.
+
 Install cosign, then download the release's verifier, both architectures'
 archives and SBOMs, checksum manifest, statement, and bundle. The verifier is a
 release asset, so no private source checkout is needed; it verifies its own
@@ -45,18 +51,19 @@ published bytes as one of the signed subjects.
 
 ```bash
 mkdir release && cd release
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
+tag='<published-tag>' # read this exact tag from an existing published release
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py \
   --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 python3 release_provenance.py verify \
   --release-dir . \
-  --release-version v0.1.5 \
+  --release-version "$tag" \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
