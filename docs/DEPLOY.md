@@ -503,10 +503,12 @@ Rust provider tests) for the honest labels and TCB statements.
 
 ## Release container profile
 
-Tag releases build native x86-64 and ARM64 archives. Each archive contains the Rust host,
-the FFI and Lean shared-library runtime closure, licences, a SHA-256 checksum, a CycloneDX
-SBOM, and GitHub build-provenance attestations. `scripts/runtime_dependency_gate.sh`
-rejects build-workspace paths, missing libraries, and private-repository runtime
+The tag-release workflow is configured to build native x86-64 and ARM64
+archives, per-architecture CycloneDX SBOMs, a verifier, and `SHA256SUMS`. Before
+publication, a Seal in-toto statement binds those exact payload bytes and
+Sigstore cosign signs the statement with the workflow's OIDC identity. This is
+not a GitHub artifact attestation. `scripts/runtime_dependency_gate.sh` rejects
+build-workspace paths, missing libraries, and private-repository runtime
 dependencies before an archive can be uploaded.
 
 `deploy/container/Dockerfile.release` consumes the unpacked archive and runs as UID/GID

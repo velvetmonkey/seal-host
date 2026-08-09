@@ -62,11 +62,16 @@ class ReleaseProofConsumerTests(unittest.TestCase):
         self.assertIn("--pattern release_provenance.py", docs)
 
     def test_every_install_path_requires_signed_provenance(self) -> None:
-        for relative in ("docs/DEPLOY.md", "docs/GETTING-STARTED.md", "CONFIG.md"):
-            with self.subTest(path=relative):
-                text = (ROOT / relative).read_text(encoding="utf-8")
+        release_install_paths = []
+        for path in ROOT.rglob("*.md"):
+            text = path.read_text(encoding="utf-8")
+            if "gh release download" not in text:
+                continue
+            release_install_paths.append(path.relative_to(ROOT))
+            with self.subTest(path=path.relative_to(ROOT)):
                 self.assertIn("release_provenance.py verify", text)
                 self.assertIn("SEAL-RELEASE-PROVENANCE.sigstore.json", text)
+        self.assertTrue(release_install_paths, "no release install path was checked")
 
     def test_cosign_installer_uses_immutable_commit(self) -> None:
         for relative in (
