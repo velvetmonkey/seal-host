@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: Golden Path - deterministic shell + Postgres + deploy + token governor + temporal freeze + filesystem
+name: Host acceptance
 
 on:
   push:
