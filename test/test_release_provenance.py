@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -99,7 +100,12 @@ class ReleaseProvenanceTests(unittest.TestCase):
         )
 
     def run_verify(
-        self, *, cosign: Path | None = None, statement: Path | None = None
+        self,
+        *,
+        cosign: Path | None = None,
+        cosign_sha256: str | None = None,
+        statement: Path | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
@@ -122,10 +128,14 @@ class ReleaseProvenanceTests(unittest.TestCase):
                 ISSUER,
                 "--cosign",
                 str(cosign or self.good_cosign),
+                "--cosign-sha256",
+                cosign_sha256
+                or hashlib.sha256((cosign or self.good_cosign).read_bytes()).hexdigest(),
             ],
             text=True,
             capture_output=True,
             check=False,
+            env=env or {**os.environ, "PATH": str(self.root)},
         )
 
     def test_statement_binds_every_payload_and_carries_non_claims(self) -> None:
@@ -172,9 +182,59 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertIn("subject digest mismatch for SHA256SUMS", result.stderr)
 
     def test_unavailable_verifier_refuses(self) -> None:
-        result = self.run_verify(cosign=self.root / "not-installed")
+        result = self.run_verify(
+            cosign=self.root / "not-installed", cosign_sha256="0" * 64
+        )
         self.assertEqual(result.returncode, 1)
         self.assertIn("cosign verifier unavailable", result.stderr)
+
+    def test_shadow_verifier_refuses(self) -> None:
+        established = self.executable("cosign", "echo 'Verified OK'")
+        shadow = self.root / "shadow"
+        shadow.mkdir()
+        self.executable("shadow/cosign", "echo 'shadow verifier' >&2; exit 1")
+        environment = {**os.environ, "PATH": f"{shadow}{os.pathsep}{os.environ['PATH']}"}
+        result = self.run_verify(cosign=established, env=environment)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PATH selects", result.stderr)
+        self.assertIn("before established verifier", result.stderr)
+
+    def test_cosign_digest_mismatch_refuses(self) -> None:
+        expected = hashlib.sha256(self.good_cosign.read_bytes()).hexdigest()
+        with self.good_cosign.open("ab") as executable:
+            executable.write(b"# altered")
+        result = self.run_verify(cosign_sha256=expected)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cosign verifier digest mismatch", result.stderr)
+
+    def test_missing_cosign_arguments_fail_loudly(self) -> None:
+        command = [
+            sys.executable,
+            str(GATE),
+            "verify",
+            "--release-dir",
+            str(self.release),
+            "--release-version",
+            "v0.1.2",
+            "--statement",
+            str(self.statement),
+            "--bundle",
+            str(self.bundle),
+            "--key",
+            str(self.root / "test.pub"),
+            "--expected-signer-identity",
+            IDENTITY,
+            "--expected-oidc-issuer",
+            ISSUER,
+        ]
+        for missing in ("--cosign", "--cosign-sha256"):
+            with self.subTest(missing=missing):
+                arguments = command.copy()
+                if missing == "--cosign-sha256":
+                    arguments.extend(["--cosign", str(self.good_cosign)])
+                result = subprocess.run(arguments, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(f"the following arguments are required: {missing}", result.stderr)
 
     def test_silent_verifier_success_refuses(self) -> None:
         result = self.run_verify(cosign=self.silent_cosign)
