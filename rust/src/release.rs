@@ -609,6 +609,7 @@ impl ReleaseStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::STANDARD;
     use std::os::unix::fs::PermissionsExt;
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -702,6 +703,36 @@ mod tests {
             input.post_state_hash,
             operation_state_hash(&input.operation_id, &sha256_hex(&input.frame)).unwrap()
         );
+    }
+
+    #[test]
+    fn base64_wire_alphabets_and_padding_are_exact() {
+        let bytes = [0xfb, 0xff];
+        assert_eq!(STANDARD.encode(bytes), "+/8=");
+        assert_eq!(URL_SAFE_NO_PAD.encode(bytes), "-_8");
+        assert_eq!(STANDARD.decode("+/8=").unwrap(), bytes);
+        assert_eq!(URL_SAFE_NO_PAD.decode("-_8").unwrap(), bytes);
+    }
+
+    #[test]
+    fn receipt_input_absent_empty_and_unreadable_fail() {
+        let dir = temp_dir("invalid-input");
+        let store = ReleaseStore::open(&dir).unwrap();
+
+        let absent = dir.join("absent.json");
+        assert!(store.read_verified(&absent).is_err());
+
+        let empty = dir.join("empty.json");
+        std::fs::write(&empty, b"").unwrap();
+        std::fs::set_permissions(&empty, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(store.read_verified(&empty).is_err());
+
+        let unreadable = dir.join("unreadable.json");
+        std::fs::write(&unreadable, b"{}").unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(store.read_verified(&unreadable).is_err());
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
