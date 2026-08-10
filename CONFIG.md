@@ -509,6 +509,15 @@ Generate separate config-signing and approval-signing keys:
 python3 scripts/generate_keys.py --out-dir .seal
 ```
 
+Observed in a fresh checkout while configuring the published v0.1.5 host:
+
+```text
+.seal/approval.key
+.seal/config.key
+.seal/config.pub
+.seal/approval.pub
+```
+
 The generator validates both Ed25519 pairs before publishing any key. It exits
 non-zero without leaving a key file if its imports, generation, validation, or
 write fails, and refuses to overwrite an existing key.
@@ -528,6 +537,13 @@ chmod 600 .seal/trusted.json
   --initialize-replay-store
 ```
 
+Observed output:
+
+```text
+WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled
+replay store initialized: /home/monkey/scratch/releaseistrue-gaps.tPM8xC/worktree/.seal/replay.sqlite (schema_version=2, namespace_encoding_version=1)
+```
+
 The signer validates the policy shape and signs the exact compact payload.
 Use `.seal/config.pub` for `CONFIG_PUBLIC_KEY_HEX` below and
 `.seal/approval.pub` for `APPROVAL_PUBLIC_KEY_HEX`.
@@ -537,6 +553,14 @@ everything else denies. Current policy-v1 cannot express “allow these reads bu
 guard these writes.” Do not mistake this for policy-v2 safe-allow composition.
 
 ## 2. Manual Claude Code wiring
+
+**Execution status: wired and invoked, but not approved end to end.** On the
+Linux evidence host, a fresh project config using the published v0.1.5 binary
+and fresh keys was parsed by Claude Code 2.1.226. The interactive project MCP
+prompt was accepted and Claude invoked `execute_sql`; the host blocked the
+call. The client did not expose the refusal's raw `framed_subject`, so an
+approval could not be minted from that UI response. The approved retry remains
+**unverified in Claude Code**.
 
 Claude Code project configuration lives in `.mcp.json`; user configuration is
 stored in `~/.claude.json`. Project scope is easiest to review and roll back.
@@ -588,6 +612,17 @@ The copy-and-edit version is
 put it at `.mcp.json`. Run `claude mcp list` and use `/mcp` inside Claude
 Code to check the connection.
 
+Observed excerpt for the generated project entry (absolute paths and key
+arguments elided because this is discovery evidence, not a reusable command):
+
+```text
+sealSqliteSandbox: …/seal-host-rs … -- python3 …/demo/sqlite_mcp_server.py … - ⏸ Pending approval (run `claude` to approve)
+```
+
+**Unverified automation:** the two assurance-kit commands below were not run in
+this evidence pass. The scratch checkout was not adjacent to an assurance-kit
+checkout, and the direct `.mcp.json` route above was used instead.
+
 From the `seal-host` checkout, the assurance kit selects that starter profile,
 fills the checkout path and public keys from `.seal`, performs the merge
 atomically, and prints its rollback:
@@ -613,6 +648,11 @@ Rollback:
 
 ## 3. Manual Claude Desktop wiring
 
+**Unverified on this evidence host:** Claude Desktop and its macOS configuration
+path are unavailable on Linux. None of the Desktop backup, connect,
+disconnect, restart, or UI commands below was run. They remain reference
+instructions, not v0.1.5 execution evidence.
+
 On macOS the file is:
 
 ```text
@@ -632,7 +672,7 @@ replace `SEAL_BIN_PATH` and its other placeholders, save, and fully quit/restart
 project's Desktop instructions and log locations are at
 <https://modelcontextprotocol.io/docs/develop/connect-local-servers>.
 
-The automated equivalent is:
+The unverified automated equivalent is:
 
 ```bash
 node ../seal-assurance-kit/bin/seal connect --client claude --desktop \
@@ -650,43 +690,49 @@ cp "$HOME/Library/Application Support/Claude/claude_desktop_config.json.before-s
 
 ## 4. Approval loop in the real Claude UI
 
+**UI approval path partly verified:** an interactive Claude Code 2.1.226
+session approved the project MCP entry and issued the exact call below. Claude
+Desktop was unavailable, and Claude Code displayed only the challenge rather
+than the raw `framed_subject` needed by the signer, so the approved UI retry
+could not be run. The equivalent host and CLI path was executed directly with
+the published v0.1.5 binary and is recorded under
+[Deployment](docs/DEPLOY.md#executed-v015-sqlite-and-approval-evidence).
+
 Ask Claude to call `execute_sql` with exactly:
 
 ```sql
 DROP TABLE receipt_sandbox
 ```
 
-Seal returns `approval required: <64 lowercase hex target>` plus a structured
-`result.framed_subject` object containing the exact request frame as base64,
-its byte length, and SHA-256 digest. Save that one-line JSON refusal, then sign
-the exact framed subject it carries:
+Observed Claude Code output:
 
-```bash
-python3 demo/approve_cli.py \
-  --token-file .seal/approval-tokens.ndjson \
-  --refusal-file /tmp/blocked-response.json \
-  --key-file .seal/approval.key \
-  --approve --yes
+```text
+sealSqliteSandbox - execute_sql (MCP)(sql: "DROP TABLE receipt_sandbox")
+Blocked before execution, same as before — new token this time:
+
+  approval required:
+  d9a6565b5652c8ff0b68546c2d89a283f3e5fa09a04fab9ef033dc5fdc552f41
+
+Nothing ran; receipt_sandbox is untouched.
 ```
 
-Reissue the identical call. It flows once. Repeating it blocks again because
-the approval was consumed.
+Seal returned the 64-lowercase-hex target above. The UI did not expose its
+structured `result.framed_subject`; the direct executed path linked above did
+save that response and run the CLI signer.
 
-For mismatch rejection, approve the original target but ask Claude to run
-`DROP TABLE a_different_table` first. The changed SQL remains blocked; the
+In the direct harness, the identical call flowed once after signing. The
+Claude Code retry was not run because its UI did not provide the framed
+subject. A second post-allow retry, which should block after consumption, was
+also not run in either client UI during this pass.
+
+**Mismatch exercise unverified in the clients:** approving the original target
+and asking Claude to run `DROP TABLE a_different_table` was not attempted in
+this pass. The expected result is that the changed SQL remains blocked and the
 original approval does not widen.
 
-For expiry without waiting, mint a deliberately stale token:
-
-```bash
-python3 demo/approve_cli.py \
-  --token-file .seal/approval-tokens.ndjson \
-  --refusal-file /tmp/blocked-response.json \
-  --key-file .seal/approval.key \
-  --issued-at 1 --approve --yes
-```
-
-The exact call stays blocked and host telemetry records `expired`.
+The expiry example from the earlier page was not rerun through either client
+UI in this evidence pass. It is intentionally omitted rather than presented as
+a v0.1.5 command transcript.
 
 The CLI key is device-local but not hardware-backed. The host, CLI, key file,
 and same-user machine are in this channel’s TCB. A future device-held/passkey
@@ -706,6 +752,11 @@ V2.1 topology change (per-caller transport credentials), not an authorization-de
 field.
 
 ## 5. Authorization-decision lifecycle
+
+**Unverified in this v0.1.5 execution pass:** the local receipt verifiers, CI
+action, and tamper commands below were not run. The pass exercised the released
+host, SQLite child, and direct approval path; it did not have the adjacent
+`seal-check` and assurance-kit layout these commands require.
 
 Every mediated BLOCK or ALLOW writes one v2 authorization decision before an ALLOW can reach
 the server:
@@ -741,6 +792,10 @@ made the decision. Those hashes identify the two bodies; they do not prove
 them equivalent. That is the open Lane C gap.
 
 ## 6. Fail-closed authorization-decision availability
+
+**Unverified in this v0.1.5 execution pass:** the permission-failure exercise
+below was not run. No claim in this section is an observed result from the
+release-binary run recorded above.
 
 Authorization-decision persistence is part of the gate. A full filesystem,
 lost mount, invalid permissions, or unwritable authorization-decision directory blocks forwarding.

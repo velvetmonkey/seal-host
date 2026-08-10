@@ -101,6 +101,15 @@ mkdir -m 700 .seal/store .seal/receipts
 : > .seal/approval-tokens.ndjson
 ```
 
+Observed in a fresh checkout with the published v0.1.5 host:
+
+```text
+.seal/approval.key
+.seal/config.key
+.seal/config.pub
+.seal/approval.pub
+```
+
 The generator validates both Ed25519 pairs before publishing any file and
 refuses to overwrite an existing key. `.seal/config.key` signs your config;
 `.seal/config.pub` is the host's `--pubkey`. The separate approval-channel pair
@@ -180,6 +189,9 @@ SEAL_CONFIG_SIGNING_KEY_HEX="$(tr -d '\r\n' < .seal/config.key)" \
   python3 test/tools/sign_config.py payload.json > trusted.json
 ```
 
+This command exited 0 and produced no terminal output; `trusted.json` was
+created and used by the host commands below.
+
 The signer serializes the parsed payload with Python `json.dumps(...,
 separators=(",", ":"))`, preserving parsed insertion order, and wraps those
 exact compact bytes as `{"payload": "...", "signature": "<ed25519 hex>"}`.
@@ -210,6 +222,13 @@ initialize a genuinely absent store from that authority-signed config:
   --initialize-replay-store
 ```
 
+Observed output:
+
+```text
+WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled
+replay store initialized: /home/monkey/scratch/releaseistrue-deploy.GhCnOU/worktree/.seal/store/replay.sqlite (schema_version=2, namespace_encoding_version=1)
+```
+
 This action creates both the nonce schema and its lineage stamp, then exits.
 It refuses if the path already exists. Ordinary host startup never creates,
 adopts, or stamps a store, so deleting the SQLite file and redeploying does
@@ -227,6 +246,40 @@ not silently create an empty replay history.
   --approval-pubkey "$(cat .seal/approval.pub)" \
   -- python3 demo/sqlite_mcp_server.py --database .seal/sandbox.sqlite
 ```
+
+### Executed v0.1.5 SQLite and approval evidence
+
+The step 6 command was launched inside a Bash coprocess in a fresh checkout so
+the same host session could receive multiple MCP frames. The published x86_64
+binary returned this `initialize` response:
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"seal-sqlite-sandbox","version":"1.0.0"}}}
+```
+
+The real SQLite child then returned its tool catalog:
+
+```json
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"execute_sql","description":"Execute arbitrary SQL against a disposable SQLite sandbox.","inputSchema":{"type":"object","properties":{"sql":{"type":"string"}},"required":["sql"],"additionalProperties":false}},{"name":"search_objects","description":"List SQLite objects whose names contain query.","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]}}
+```
+
+For the exact request `drop table if exists receipt_sandbox`, the first
+response was:
+
+```json
+{"id":3,"jsonrpc":"2.0","result":{"content":[{"text":"approval required: 63e7b1bb1aba1db39fe3fb30836aa6c14a37ac23034198e0bb3d83883f62e740","type":"text"}],"isError":true,"framed_subject":{"encoding":"base64","length":138,"sha256":"2b572e7e4c0976baf1b7d4f596dec6ebd725208c77956e2f58666eebdd39b03f","base64":"eyJqc29ucnBjIjoiMi4wIiwiaWQiOjMsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsibmFtZSI6ImV4ZWN1dGVfc3FsIiwiYXJndW1lbnRzIjp7InNxbCI6ImRyb3AgdGFibGUgaWYgZXhpc3RzIHJlY2VpcHRfc2FuZGJveCJ9fX0K"}}}
+```
+
+After the step 9 signer command and an identical retry in that same host
+session, SQLite returned:
+
+```json
+{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"rows\": [], \"rowcount\": -1}"}],"isError":false}}
+```
+
+This closes the published-bundle SQLite-server and direct CLI approval paths.
+It is not evidence for Claude Code, Claude Desktop, Windows/WSL2, or production
+deployment.
 
 - `--config` / `--pubkey`: the signed policy and the key that verifies it.
 - `--channel ed25519`: approvals arrive as NDJSON lines carrying a **signed `ApprovalRecord`
@@ -252,6 +305,10 @@ missing. Resource limits are always active in both modes.
 
 ## 7. Point your agent at the host
 
+**Client wiring boundary:** Claude Code 2.1.226 accepted the fresh project MCP
+entry and invoked the released host. Claude Desktop was unavailable on the
+Linux evidence host, so its configuration remains unverified.
+
 Wherever your MCP client is configured to launch the server directly, launch **seal-host**
 instead and pass the original server command after `--`. Pattern (confirm against your
 specific client during setup):
@@ -272,6 +329,12 @@ specific client during setup):
 ```
 
 ## 8. Watch it block
+
+**Agent-client boundary:** Claude Code issued the exact destructive call and
+displayed `approval required:
+d9a6565b5652c8ff0b68546c2d89a283f3e5fa09a04fab9ef033dc5fdc552f41`.
+It did not expose the raw refusal JSON required by the signer. The complete
+structured refusal below came from the executed direct MCP harness.
 
 Have the agent call the guarded `execute_sql` tool with SQL containing `drop`. The
 call is blocked before the child server sees it, and the block message prints the exact
@@ -305,6 +368,19 @@ python3 demo/approve_cli.py \
   --approve --yes
 ```
 
+Observed output for the refusal above:
+
+```text
+Seal approval request
+target: 63e7b1bb1aba1db39fe3fb30836aa6c14a37ac23034198e0bb3d83883f62e740
+exact MCP request frame (including delimiter):
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"execute_sql","arguments":{"sql":"drop table if exists receipt_sandbox"}}}
+signed allow for target=63e7b1bb1aba1db39fe3fb30836aa6c14a37ac23034198e0bb3d83883f62e740
+  nonce=b7a5f0229c8b4dab9a2a177e7b574156 authorizedAt=1786327294970
+  appended to .seal/approval-tokens.ndjson
+  using pubkey=51e2063618d0f54ec2222e5aeea9ab3c2fd42be2b1dbad729cfc598a2e13042b
+```
+
 Two properties of the block make the timing non-negotiable, so **approve while the blocked
 session is still running**:
 
@@ -326,6 +402,10 @@ policy's ttl. Malformed lines are skipped fail-closed.
 > a silent drop, not an error at the point of use. Approvals now require the v2 record above.
 
 ## 10. Re-run and read the audit record
+
+The identical retry itself was executed in the direct harness and its SQLite
+response is quoted under step 6. The client UI, log-redirection example, and
+log-sealing commands in this section were **not run** in this execution pass.
 
 Re-issue the same call. It now passes to the child server. What the child receives is your
 request frame with one host-added field, `operation_id`, appended as the correlator; the
