@@ -98,6 +98,40 @@ NATIVE_OR_CLI_ONLY_EXPORTS = {
     "seal_policy_validate",
 }
 
+# These are membership pins, not closure approximations. The closure checks
+# below establish that every module Ffi needs is reached; these pins establish
+# the reverse direction, so an off-path module cannot silently join either
+# build just because the required closure remains covered.
+PINNED_PROJECT_MODULES = frozenset({
+    "Ffi",
+    "Host/Action", "Host/Audit", "Host/Canonical", "Host/Config",
+    "Host/Evidence", "Host/JsonWire", "Host/Kernel", "Host/NestingDepth",
+    "Host/Principal", "Host/Provenance", "Host/Registry", "Host/Sha256",
+    "Host/Step", "Host/SurrogateEscapes", "Host/UnicodeKeys",
+    "Kernels", "Kernels/Budget", "Kernels/BudgetCore", "Kernels/Calibration",
+    "Kernels/Consensus", "Kernels/Convergence", "Kernels/Linear",
+    "Kernels/LinearCore", "Kernels/PrincipalBudget", "Kernels/Safety",
+    "Kernels/Temporal",
+})
+PINNED_MCP_MODULES = frozenset({
+    "SealCore", "SealCore.Automaton", "SealCore.Event", "SealCore.Safety",
+    "SealCore.Sha256", "Seal.Block", "Seal.Channel", "Seal.Classify",
+    "Seal.Hash", "Seal.JsonUtil", "Seal.Policy", "Seal.PolicyBundle",
+    "SealV2.Canonical", "SealV2.Crypto", "SealV2.Decide",
+    "SealV2.EffectEnvelope", "SealV2.Escape", "SealV2.McpVersionGate",
+    "SealV2.Parser", "SealV2.Serialization", "SealV2.Validation",
+})
+PINNED_WASM_MODULES = PINNED_PROJECT_MODULES
+PINNED_SEAL_MODULES = frozenset({
+    "SealCore", "SealCore/Automaton", "SealCore/Event", "SealCore/Safety",
+    "SealCore/Sha256", "Seal/Block", "Seal/Channel", "Seal/Classify",
+    "Seal/EffectCommitment", "Seal/EncodingInjective", "Seal/Hash",
+    "Seal/JsonUtil", "Seal/Policy", "Seal/PolicyBundle", "Seal/PolicyWire",
+    "SealV2/Canonical", "SealV2/Crypto", "SealV2/Decide",
+    "SealV2/EffectEnvelope", "SealV2/Escape", "SealV2/McpVersionGate",
+    "SealV2/Parser", "SealV2/Serialization", "SealV2/Validation",
+})
+
 
 @dataclass
 class Findings:
@@ -155,6 +189,27 @@ def parse_bash_array(path: Path, name: str) -> list[str]:
     duplicates = sorted({e for e in entries if entries.count(e) > 1})
     if duplicates:
         raise GateError(f"duplicate {name} entries in {path}: {', '.join(duplicates)}")
+    return entries
+
+
+def require_exact_roster(
+    findings: Findings,
+    section: str,
+    path: Path,
+    name: str,
+    expected: frozenset[str],
+) -> list[str]:
+    """Read one roster and require exact declared membership both ways."""
+    entries = parse_bash_array(path, name)
+    actual = set(entries)
+    missing = sorted(expected - actual)
+    undeclared = sorted(actual - expected)
+    if missing or undeclared:
+        findings.add(
+            section,
+            f"{name} membership differs from its review pin; "
+            f"missing={missing!r}; undeclared={undeclared!r}",
+        )
     return entries
 
 
@@ -333,28 +388,43 @@ def main() -> int:
     }
 
     # --- list 1: scripts/build_ffi_so.sh ----------------------------------
+    project_modules = require_exact_roster(
+        findings, "build_ffi_so.sh", BUILD_FFI_SO, "PROJECT_MODULES",
+        PINNED_PROJECT_MODULES,
+    )
+    mcp_modules = require_exact_roster(
+        findings, "build_ffi_so.sh", BUILD_FFI_SO, "MCP_MODULES",
+        PINNED_MCP_MODULES,
+    )
     roster_closure_check(
         findings, "build_ffi_so.sh",
-        parse_bash_array(BUILD_FFI_SO, "PROJECT_MODULES"),
+        project_modules,
         project_part, proj, "PROJECT_MODULES",
     )
     if mcp_root is not None:
         roster_closure_check(
             findings, "build_ffi_so.sh",
-            parse_bash_array(BUILD_FFI_SO, "MCP_MODULES"),
+            mcp_modules,
             mcp_closure, mcp_srcs, "MCP_MODULES",
         )
 
     # --- list 2: wasm-spike/build_core.sh ---------------------------------
+    wasm_modules = require_exact_roster(
+        findings, "build_core.sh", BUILD_CORE, "MODULES", PINNED_WASM_MODULES,
+    )
+    seal_modules = require_exact_roster(
+        findings, "build_core.sh", BUILD_CORE, "SEAL_MODULES",
+        PINNED_SEAL_MODULES,
+    )
     roster_closure_check(
         findings, "build_core.sh",
-        parse_bash_array(BUILD_CORE, "MODULES"),
+        wasm_modules,
         project_part, proj, "MODULES",
     )
     if mcp_root is not None:
         roster_closure_check(
             findings, "build_core.sh",
-            parse_bash_array(BUILD_CORE, "SEAL_MODULES"),
+            seal_modules,
             mcp_closure, mcp_srcs, "SEAL_MODULES",
         )
 

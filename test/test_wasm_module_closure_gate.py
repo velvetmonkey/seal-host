@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,15 @@ assert SPEC is not None and SPEC.loader is not None
 gate = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
+
+EXPORT_SCRIPT = ROOT / "scripts" / "export_surface_gate.py"
+EXPORT_SPEC = importlib.util.spec_from_file_location(
+    "export_surface_gate", EXPORT_SCRIPT
+)
+assert EXPORT_SPEC is not None and EXPORT_SPEC.loader is not None
+export_gate = importlib.util.module_from_spec(EXPORT_SPEC)
+sys.modules[EXPORT_SPEC.name] = export_gate
+EXPORT_SPEC.loader.exec_module(export_gate)
 
 
 class WasmModuleClosureGateTests(unittest.TestCase):
@@ -106,6 +116,198 @@ class WasmModuleClosureGateTests(unittest.TestCase):
             self.assertFalse(report.passed)
             self.assertEqual(report.missing, ("Host.Helper",))
             self.assertIn("Host/Helper", "\n".join(report.errors))
+
+
+class ExportSurfaceRosterTests(unittest.TestCase):
+    """Pin native and wasm roster membership in both directions."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def assert_pinned(
+        self, path: Path, name: str, expected: frozenset[str]
+    ) -> None:
+        findings = export_gate.Findings()
+        export_gate.require_exact_roster(
+            findings, path.name, path, name, expected
+        )
+        self.assertEqual(findings.total, 0, findings.sections)
+
+    def roster_copy(self, source: Path, old: str, new: str) -> Path:
+        target = Path(self.temporary.name) / source.name
+        text = source.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        target.write_text(text.replace(old, new, 1), encoding="utf-8")
+        return target
+
+    def test_checked_in_rosters_match_all_four_membership_pins(self) -> None:
+        self.assert_pinned(
+            export_gate.BUILD_FFI_SO,
+            "PROJECT_MODULES",
+            export_gate.PINNED_PROJECT_MODULES,
+        )
+        self.assert_pinned(
+            export_gate.BUILD_FFI_SO,
+            "MCP_MODULES",
+            export_gate.PINNED_MCP_MODULES,
+        )
+        self.assert_pinned(
+            export_gate.BUILD_CORE,
+            "MODULES",
+            export_gate.PINNED_WASM_MODULES,
+        )
+        self.assert_pinned(
+            export_gate.BUILD_CORE,
+            "SEAL_MODULES",
+            export_gate.PINNED_SEAL_MODULES,
+        )
+
+    def test_added_undeclared_project_entry_fails_both_rosters(self) -> None:
+        cases = (
+            (
+                export_gate.BUILD_FFI_SO,
+                "PROJECT_MODULES",
+                export_gate.PINNED_PROJECT_MODULES,
+                "PROJECT_MODULES=(\n",
+                "PROJECT_MODULES=(\n  Host/Record\n",
+            ),
+            (
+                export_gate.BUILD_CORE,
+                "MODULES",
+                export_gate.PINNED_WASM_MODULES,
+                "MODULES=(\n",
+                "MODULES=(\n  Host/Record\n",
+            ),
+        )
+        for source, name, expected, old, new in cases:
+            with self.subTest(name=name):
+                tampered = self.roster_copy(source, old, new)
+                findings = export_gate.Findings()
+                export_gate.require_exact_roster(
+                    findings, source.name, tampered, name, expected
+                )
+                self.assertEqual(findings.total, 1)
+                self.assertIn(
+                    "undeclared=['Host/Record']", str(findings.sections)
+                )
+
+    def test_removed_declared_project_entry_fails_both_rosters(self) -> None:
+        cases = (
+            (
+                export_gate.BUILD_FFI_SO,
+                "PROJECT_MODULES",
+                export_gate.PINNED_PROJECT_MODULES,
+            ),
+            (
+                export_gate.BUILD_CORE,
+                "MODULES",
+                export_gate.PINNED_WASM_MODULES,
+            ),
+        )
+        for source, name, expected in cases:
+            with self.subTest(name=name):
+                tampered = self.roster_copy(source, "  Ffi\n", "")
+                findings = export_gate.Findings()
+                export_gate.require_exact_roster(
+                    findings, source.name, tampered, name, expected
+                )
+                self.assertEqual(findings.total, 1)
+                self.assertIn("missing=['Ffi']", str(findings.sections))
+
+    def test_added_and_removed_entries_fail_both_mcp_roster_pins(self) -> None:
+        cases = (
+            (
+                export_gate.BUILD_FFI_SO,
+                "MCP_MODULES",
+                export_gate.PINNED_MCP_MODULES,
+            ),
+            (
+                export_gate.BUILD_CORE,
+                "SEAL_MODULES",
+                export_gate.PINNED_SEAL_MODULES,
+            ),
+        )
+        for source, name, expected in cases:
+            with self.subTest(name=name, direction="addition"):
+                tampered = self.roster_copy(
+                    source, "  SealCore ", "  SealCore Seal/Undeclared "
+                )
+                findings = export_gate.Findings()
+                export_gate.require_exact_roster(
+                    findings, source.name, tampered, name, expected
+                )
+                self.assertIn("Seal/Undeclared", str(findings.sections))
+            with self.subTest(name=name, direction="removal"):
+                tampered = self.roster_copy(source, "  SealCore ", "  ")
+                findings = export_gate.Findings()
+                export_gate.require_exact_roster(
+                    findings, source.name, tampered, name, expected
+                )
+                self.assertIn("SealCore", str(findings.sections))
+
+    def test_absent_input_fails(self) -> None:
+        path = Path(self.temporary.name) / "absent.sh"
+        with self.assertRaisesRegex(export_gate.GateError, "cannot read"):
+            export_gate.require_exact_roster(
+                export_gate.Findings(),
+                "absent",
+                path,
+                "MODULES",
+                frozenset({"Ffi"}),
+            )
+
+    def test_empty_file_and_empty_array_fail(self) -> None:
+        path = Path(self.temporary.name) / "empty.sh"
+        path.write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(export_gate.GateError, "found 0"):
+            export_gate.require_exact_roster(
+                export_gate.Findings(),
+                "empty",
+                path,
+                "MODULES",
+                frozenset({"Ffi"}),
+            )
+        path.write_text("MODULES=()\n", encoding="utf-8")
+        with self.assertRaisesRegex(export_gate.GateError, "is empty"):
+            export_gate.require_exact_roster(
+                export_gate.Findings(),
+                "empty",
+                path,
+                "MODULES",
+                frozenset({"Ffi"}),
+            )
+
+    def test_malformed_input_fails(self) -> None:
+        path = Path(self.temporary.name) / "malformed.sh"
+        path.write_text("MODULES=(Ffi\n", encoding="utf-8")
+        with self.assertRaisesRegex(export_gate.GateError, "unterminated"):
+            export_gate.require_exact_roster(
+                export_gate.Findings(),
+                "malformed",
+                path,
+                "MODULES",
+                frozenset({"Ffi"}),
+            )
+
+    def test_unreadable_input_fails(self) -> None:
+        path = Path(self.temporary.name) / "unreadable.sh"
+        path.write_text("MODULES=(Ffi)\n", encoding="utf-8")
+        with mock.patch.object(
+            Path, "read_text", side_effect=PermissionError("permission denied")
+        ):
+            with self.assertRaisesRegex(
+                export_gate.GateError, "cannot read.*permission denied"
+            ):
+                export_gate.require_exact_roster(
+                    export_gate.Findings(),
+                    "unreadable",
+                    path,
+                    "MODULES",
+                    frozenset({"Ffi"}),
+                )
 
 
 if __name__ == "__main__":
