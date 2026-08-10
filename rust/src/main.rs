@@ -117,9 +117,10 @@ struct Args {
     cmd: Vec<String>,
 }
 
-fn parse_args() -> Result<Args, String> {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    parse_args_from(argv)
+const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn is_version_request(argv: &[String]) -> bool {
+    matches!(argv, [flag] if flag == "--version")
 }
 
 fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
@@ -1086,7 +1087,12 @@ fn run_validate(files: &[String]) -> i32 {
 }
 
 fn run() -> i32 {
-    let args = match parse_args() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if is_version_request(&argv) {
+        println!("{BUILD_VERSION}");
+        return 0;
+    }
+    let args = match parse_args_from(argv) {
         Ok(a) => a,
         Err(e) => {
             eprintln!(
@@ -2422,6 +2428,13 @@ mod tests {
             vec!["--".to_string(), "/bin/cat".to_string()],
         ]
         .concat()
+    }
+
+    #[test]
+    fn version_request_is_standalone_and_crate_derived() {
+        assert!(is_version_request(&["--version".into()]));
+        assert!(!is_version_request(&["--version".into(), "extra".into()]));
+        assert_eq!(BUILD_VERSION, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
