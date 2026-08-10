@@ -457,7 +457,7 @@ three shipped manifests; the standing `npm test` CI gate is configured but
 has not run remotely for this change; operator verification is not applicable
 to this non-model authoring surface.
 
-## 1. Get the release and prepare the sandbox
+## 1. Build the host and prepare the sandbox
 
 From the `seal-host` checkout:
 
@@ -466,29 +466,36 @@ export SEAL_HOST_ROOT="$PWD"
 mkdir -p "$PWD/.seal/release"
 chmod 700 "$PWD/.seal" "$PWD/.seal/release"
 cd "$PWD/.seal/release"
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.5 \
+  --release-dir . --release-version "$tag" \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-tar xzf seal-host-*-linux-x86_64.tar.gz
-export SEAL_BIN="$PWD/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs"
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
 cd "$SEAL_HOST_ROOT"
 umask 077
 mkdir -p "$PWD/.seal/receipts"
 touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
 ```
 
-The verifier requires cosign and refuses on an absent or invalid signature,
-partial release set, extra asset, or digest mismatch. See
-[Release provenance](docs/RELEASE-PROVENANCE.md); `SHA256SUMS` alone is not an
-authenticity check.
+The verifier must print `PASS release provenance: valid signature and 6 exact
+subject digests`; `SHA256SUMS` alone is not an authenticity check.
+
+For a source build instead of the release install, run the following in place
+of the release block:
+
+```bash
+time bash scripts/build_all.sh
+export SEAL_BIN="$SEAL_HOST_ROOT/rust/target/debug/seal-host-rs"
+```
 
 Generate separate config-signing and approval-signing keys:
 
@@ -552,7 +559,7 @@ After Seal, the real command moves behind `--`:
   "mcpServers": {
     "sealSqliteSandbox": {
       "type": "stdio",
-      "command": "/ABS/PATH/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
+      "command": "/ABS/PATH/rust/target/debug/seal-host-rs",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
@@ -639,7 +646,7 @@ inside the named distribution:
       "command": "wsl.exe",
       "args": [
         "--distribution", "Ubuntu", "--exec",
-        "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
+        "/home/<wsl-user>/seal-host/rust/target/debug/seal-host-rs",
         "--config", "/home/<wsl-user>/seal-host/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
         "--channel", "ed25519",

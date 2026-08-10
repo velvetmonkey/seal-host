@@ -32,42 +32,43 @@ exact request.
 
 ## 0. Prerequisites
 
-- Linux `x86_64` or `aarch64`. Windows 11 with Ubuntu WSL2 uses the
-  `linux-x86_64` asset; no step in this guide requires `systemd`.
-- A checkout of this repository and `gh` logged in to GitHub while the
-  repository is private. No Lean or Rust toolchain is required.
+- A checkout of this repository, Lean `4.28.0`, Rust `1.96.0`, and a native
+  C/C++ linker toolchain. No step in this guide requires `systemd`.
 - Python 3 with the `cryptography` package (for the config signer).
 - A child MCP server to guard. Anything stdio works; a filesystem or sqlite MCP server
   makes the destructive-call demo obvious.
 
-## 1. Get the released host
+## 1. Install and verify the released host
 
-From the repo root, download, verify, and unpack the `v0.1.5` bundle:
+`v0.1.5` is published. Download every signed subject and verify provenance
+before unpacking or running the host:
 
 ```sh
 mkdir -p .seal/release
 chmod 700 .seal .seal/release
 cd .seal/release
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
-  --pattern release_provenance.py --pattern SHA256SUMS \
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
+  --pattern release_provenance.py \
+  --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.5 \
+  --release-dir . --release-version "$tag" \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-tar xzf seal-host-*-linux-x86_64.tar.gz
-export SEAL_BIN="$PWD/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs"
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
 cd ../..
 ```
 
-The provenance verifier requires cosign and refuses before unpacking unless the
-signature, complete six-subject release set, and exact bytes all verify. The
-bundle includes the host, `libsealffi.so`, and its Lean runtime closure; do not
-source-build for this walkthrough. See [Release provenance](RELEASE-PROVENANCE.md).
+Expected verification output: `PASS release provenance: valid signature and 6
+exact subject digests`. Do not unpack or run an artifact if verification fails.
+To build from source instead, use `time bash scripts/build_all.sh` with the
+documented Lean/Rust prerequisites, then set `SEAL_BIN="$PWD/rust/target/debug/seal-host-rs"`.
 
 ## 2. Generate separate signing keypairs
 
@@ -266,7 +267,7 @@ are paths inside Ubuntu, never `C:\\...` paths:
     "guarded-db-wsl2": {
       "command": "wsl.exe",
       "args": ["--distribution", "Ubuntu", "--exec",
-               "/home/<wsl-user>/seal-host/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
+               "/home/<wsl-user>/seal-host/rust/target/debug/seal-host-rs",
                "--insecure-development-mode",
                "--config", "/home/<wsl-user>/seal-host/trusted.json",
                "--pubkey", "<config-hex>",

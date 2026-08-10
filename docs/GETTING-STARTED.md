@@ -1,11 +1,11 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Getting started — your first working gate
 
-This is the onboarding path: get the binary release, watch it block a
-destructive call, approve that exact call, watch it flow, then verify the
-receipt yourself — including what a tampered receipt looks like. Every command
-on this page was executed on 2026-08-08 against the current tree; measured
-timings and one known gap are stated inline.
+This is the onboarding path: install the published v0.1.5 host or build from
+source, watch it block a destructive call, approve that exact call, watch it
+flow, then verify the receipt yourself — including what a tampered receipt
+looks like. The released install and source build are separate alternatives;
+neither is evidence for the other.
 
 ## What seal-host is
 
@@ -21,78 +21,69 @@ assumed is listed at the bottom of this page, precisely.
 
 ## Prerequisites
 
-Stated honestly, all of them:
+For the source path below:
 
-- Linux, `x86_64` or `aarch64` (the only released architectures). Windows 11
-  with Ubuntu WSL2 uses the `linux-x86_64` asset; this walkthrough needs no
-  `systemd` service and works with WSL2's optional systemd support either off
-  or on.
-- A checkout of this repository — for the key/signing helpers and the receipt
-  verifier. **You do not build anything.** No Lean, no Rust, no toolchain.
+- A checkout of this repository.
+- Lean `4.28.0` (pinned in `lean-toolchain`) and Rust `1.96.0` (pinned in
+  `rust/rust-toolchain.toml`), plus the usual native C/C++ linker toolchain
+  required by Lean and Rust dependencies. Docker is not used by this path.
 - `python3` with the `cryptography` package (config and approval signing).
 - `node` (any current LTS; used only by the receipt verifier).
-- `gh` (the GitHub CLI) for the release download, logged in via
-  `gh auth login` — required while this repository is private.
+- On this shared development host, `leanbuild` must be on `PATH`; it is the
+  required one-at-a-time, resource-bounded wrapper for every Lean invocation.
+  `scripts/build_all.sh` uses it automatically when present. On an ordinary
+  single-user machine without that wrapper, it uses `lake` directly.
 
-Total measured command time for everything below: **about 10 seconds** on a
-2026 Linux workstation. Budget a few minutes of reading around it; the
-long pole is you, not the machine.
-
-## 1. Get the binary release
-
-The first published binary release is `v0.1.5`. This repository is private
-today, so the checkout prerequisite currently implies repo access; and while
-the build needs no credentials — every dependency resolves publicly — the tree
-still contains references to private infrastructure, so "zero private
-references" is not claimed.
+`v0.1.5` is published. For the released install path, download all signed
+subjects and verify them before unpacking:
 
 ```sh
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
+mkdir -p .seal/release && cd .seal/release
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
-```
-
-Do not follow the source-build path expecting speed: the source tree's
-acceptance build needs pinned Lean 4.28.0 and Rust 1.96.0 and compiles for
-hours. The release bundle exists so that nobody onboarding compiles Lean —
-it ships the host binary, `libsealffi.so`, and the Lean runtime `.so` closure,
-with rpaths pinned so it runs with no environment setup at all.
-
-Install cosign, then verify the signed provenance before unpacking:
-
-```sh
 python3 release_provenance.py verify \
-  --release-dir . --release-version v0.1.5 \
+  --release-dir . --release-version "$tag" \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-tar xzf seal-host-*-linux-x86_64.tar.gz
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
+cd ../..
 ```
 
-Expected: the verifier prints `PASS release provenance`. It checks the
-signature, the complete release set, `SHA256SUMS`, and every signed subject
-digest; checksum self-consistency alone is not sufficient. See
-[Release provenance](RELEASE-PROVENANCE.md). Prove to yourself the bundle is
-self-contained — run it with an empty environment:
+The source path below remains fully exercised. Run it only when choosing the
+source alternative; it is not a substitute for provenance verification of a
+release artifact.
+
+## 1. Build the host from this checkout (source alternative)
+
+This is not a quick download: a cold Lean build can take about twenty-one
+minutes through the documented tamper check. The first-verdict timing is
+recorded by the command below instead of promised here.
 
 ```sh
-env -i PATH=/usr/bin:/bin seal-host-*-linux-x86_64/bin/seal-host-rs
+time bash scripts/build_all.sh
 ```
 
-It prints its usage line and exits with code 2 (no server command given). No
-`LD_LIBRARY_PATH`, no Lean install, no network.
+Expected: it finishes with `==> done: rust/target/debug/seal-host-rs`. Do not
+continue if it exits non-zero. This command serializes Lean work through
+`leanbuild` when that wrapper is available; do not wrap it in an additional
+`flock`.
 
 ## 2. Stand up a gate and watch it block
 
-Set two variables for the rest of this page — where your repo checkout is and
-where the bundle binary landed:
+Set the checkout. If you installed the release above, it already set
+`SEAL_BIN`; if you chose the source alternative, set the source binary path:
 
 ```sh
-export SEAL_REPO=/path/to/seal-host
-export SEAL_BIN=/path/to/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs
+export SEAL_REPO="$PWD"
+# Source alternative only:
+export SEAL_BIN="$SEAL_REPO/rust/target/debug/seal-host-rs"
 ```
 
 Work in a fresh directory. Generate the two keypairs (config-signing and
@@ -160,18 +151,33 @@ is in [DEPLOY.md](DEPLOY.md).)
 
 Now play the agent. Send one destructive `tools/call` through the gate, with
 `/bin/cat` standing in as the "real" MCP server (anything that echoes stdio
-works — the point is the call must *reach* it):
+works — the point is the call must *reach* it). Keep this shell and host
+process alive through the next section: the approval is bound to the session
+that issued the refusal.
 
 ```sh
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"db.execute","arguments":{"database":"prod","sql":"drop table customers"}}}' > call.jsonl
+
+mkfifo request.pipe
 
 "$SEAL_BIN" --insecure-development-mode \
   --config trusted.json --pubkey "$(cat keys/config.pub)" \
   --channel ed25519 --token-file approvals.ndjson \
   --approval-pubkey "$(cat keys/approval.pub)" \
-  -- /bin/cat < call.jsonl > response.jsonl 2> audit.log
+  -- /bin/cat < request.pipe > loop.jsonl 2> audit.log &
+SEAL_HOST_PID=$!
 
-cat response.jsonl
+# Keep the FIFO writer open: EOF would end the host session before approval.
+exec 3> request.pipe
+cat call.jsonl >&3
+for _ in $(seq 1 100); do
+  test -f loop.jsonl && grep -q 'approval required:' loop.jsonl && break
+  sleep 0.1
+done
+grep -q 'approval required:' loop.jsonl
+head -1 loop.jsonl > refusal.json
+
+cat loop.jsonl
 ```
 
 Measured: 0.6 seconds. The response is a refusal, not an echo — the call
@@ -189,30 +195,23 @@ from the exact request. An approval is bound to it — approve *this* drop on
 
 Approvals are Ed25519-signed records that bind the target *and* the exact
 framed request bytes, and they are scoped to the live host session that
-issued the challenge. So the shape of the loop is: the host blocks, a human
-signs while the host is still running, the identical frame is re-sent and
-flows. In real use those are two terminals (that is exactly what
-`demo/dogfood_cli.py` walks you through, host built from source or bundle
-alike). Scripted into one runnable block:
+issued the challenge. The host above is still running; sign that live refusal,
+then re-send the identical frame to its still-open request pipe. In real use
+those are two terminals (that is exactly what `demo/dogfood_cli.py` walks you
+through, host built from source or bundle alike). Scripted in this shell:
 
 ```sh
-head -1 response.jsonl > refusal.json
-
-{ cat call.jsonl; sleep 1
-  python3 "$SEAL_REPO/demo/approve_cli.py" --token-file approvals.ndjson \
-    --refusal-file refusal.json --key-file keys/approval.key --yes > approve.log 2>&1
-  cat call.jsonl; sleep 1
-} | "$SEAL_BIN" --insecure-development-mode \
-      --config trusted.json --pubkey "$(cat keys/config.pub)" \
-      --channel ed25519 --token-file approvals.ndjson \
-      --approval-pubkey "$(cat keys/approval.pub)" \
-      -- /bin/cat > loop.jsonl 2> audit2.log
+python3 "$SEAL_REPO/demo/approve_cli.py" --token-file approvals.ndjson \
+  --refusal-file refusal.json --key-file keys/approval.key --yes > approve.log 2>&1
+cat call.jsonl >&3
+exec 3>&-
+wait "$SEAL_HOST_PID"
 
 cat loop.jsonl
 ```
 
-Measured: 2.2 seconds (the two `sleep 1`s). Two lines come back: first the
-same `approval required` refusal, then — after the signed approval landed —
+Measured: about 0.2 seconds after the human approves. Two lines come back:
+first the same `approval required` refusal, then — after the signed approval landed —
 **the request itself, echoed by `/bin/cat`**. The child received the bytes.
 That echo is the whole product in one line: without the approval the call
 never arrives; with it, it does.
@@ -249,7 +248,7 @@ chain and verify it (this is the concrete instance of the
 `Host.Record.tamper_evident` theorem, with SHA-256 as the commitment):
 
 ```sh
-grep -h '"certs":\[' audit.log audit2.log > audit.lines
+grep '"certs":\[' audit.log > audit.lines
 node "$SEAL_REPO/scripts/seal_log.mjs" seal audit.lines sealed.json
 node "$SEAL_REPO/scripts/seal_log.mjs" verify sealed.json
 ```
@@ -296,6 +295,14 @@ human-**ASSERTED** cells). Using that vocabulary, not a new one:
 **The one claim** (from `CLAIMS.md`): *policy-covered, unapproved
 request-effects cannot execute through the mediated MCP boundary.* Not "the
 agent is safe", not "the whole stack is verified".
+
+Read the labels literally: **PROVEN** means a stated Lean theorem, not a
+claim about the compiled host; **TESTED** means observed in tests or this
+walkthrough, not proved for every input; **ASSUMED** names a trust-boundary
+condition; **REFUTED** means this repository has a theorem or demonstration
+that the stronger statement is false; and **UNKNOWN** means the page has no
+evidence either way. A missing, skipped, unreadable, or unrun check is
+UNKNOWN, never a passing result.
 
 - **Lean theorem (proved):** the fail-closed registry composition (deny if no
   kernel gates, allow only if every gating kernel allows); forward-implies-

@@ -23,6 +23,8 @@ class BuildAllTests(unittest.TestCase):
             scripts.mkdir()
             fake_bin.mkdir()
             (fixture / "rust").mkdir()
+            crypto_build = fixture / ".lake/packages/mcp-seal/c/build.sh"
+            crypto_build.parent.mkdir(parents=True)
             shutil.copy2(ROOT / "scripts/build_all.sh", scripts / "build_all.sh")
 
             self._write_executable(
@@ -36,6 +38,14 @@ class BuildAllTests(unittest.TestCase):
                   exit 42
                 fi
                 exit 0
+                """,
+            )
+            self._write_executable(
+                crypto_build,
+                """
+                #!/usr/bin/env bash
+                mkdir -p c/build
+                : > c/build/libsealcrypto.o
                 """,
             )
             self._write_executable(
@@ -70,6 +80,7 @@ class BuildAllTests(unittest.TestCase):
                     environment = os.environ.copy()
                     environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
                     environment["FAIL_STAGE"] = stage
+                    environment["LEANBUILD"] = "lake"
                     result = subprocess.run(
                         ["bash", str(scripts / "build_all.sh")],
                         cwd=fixture,
@@ -89,6 +100,7 @@ class BuildAllTests(unittest.TestCase):
 
             environment = os.environ.copy()
             environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            environment["LEANBUILD"] = "lake"
             result = subprocess.run(
                 ["bash", "build_all.sh"],
                 cwd=scripts,

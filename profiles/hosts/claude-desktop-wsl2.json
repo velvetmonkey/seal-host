@@ -4,7 +4,7 @@
       "command": "wsl.exe",
       "args": [
         "--distribution", "Ubuntu", "--exec",
-        "/home/WSL_USER/seal-host/.seal/release/seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs",
+        "/home/WSL_USER/seal-host/rust/target/debug/seal-host-rs",
         "--config", "/home/WSL_USER/seal-host/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
         "--channel", "ed25519",

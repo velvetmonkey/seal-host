@@ -38,6 +38,12 @@ the trust boundary.
 
 ## Verify a downloaded release
 
+**Current availability:** v0.1.5 was published at 2026-08-10T00:38:06Z with
+eight assets: two Linux archives, two SBOMs, `SHA256SUMS`, the provenance
+statement, its Sigstore bundle, and the standalone verifier. A failed future
+release gate still produces no release; these commands name the release that
+actually exists.
+
 Install cosign, then download the release's verifier, both architectures'
 archives and SBOMs, checksum manifest, statement, and bundle. The verifier is a
 release asset, so no private source checkout is needed; it verifies its own
@@ -45,18 +51,19 @@ published bytes as one of the signed subjects.
 
 ```bash
 mkdir release && cd release
-gh release download v0.1.5 --repo velvetmonkey/seal-host \
-  --pattern 'seal-host-v0.1.5-linux-*' \
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py \
   --pattern SHA256SUMS \
   --pattern SEAL-RELEASE-PROVENANCE.json \
   --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
 python3 release_provenance.py verify \
   --release-dir . \
-  --release-version v0.1.5 \
+  --release-version "$tag" \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5" \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
@@ -66,3 +73,7 @@ canonical `SHA256SUMS` contents, signer description, and honest non-claims.
 Missing files, an invalid signature, different bytes, an unavailable verifier,
 an extra release file, a partial architecture matrix, or a verifier that returns
 silent success all exit non-zero.
+
+The published v0.1.5 binary does not self-report its version: `--version`
+exits 2 with `error: unknown arg: --version`. Establish this release's identity
+from the verified archive name and signed provenance, not from binary output.
