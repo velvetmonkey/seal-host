@@ -29,6 +29,15 @@ SECRETS = {
 }
 HOME = re.compile(rb"/home/[A-Za-z0-9._-]+/")
 
+
+def length_safe_home_replacement(match: re.Match[bytes]) -> bytes:
+    """Return an anonymous absolute path exactly as long as the HOME match."""
+    source_length = len(match.group())
+    workspace = b"/workspace/"
+    if source_length > len(workspace):
+        return workspace + b"x" * (source_length - len(workspace) - 1) + b"/"
+    return b"/" + b"x" * (source_length - 2) + b"/"
+
 failures: list[str] = []
 if not (ROOT / "LICENSE").is_file() or not (ROOT / "NOTICE").is_file():
     failures.append("root LICENSE and NOTICE are required")
@@ -72,7 +81,11 @@ for path in sorted(ROOT.rglob("*")):
                 f"at byte offset {match.start()}"
             )
     elif home_matches:
-        path.write_bytes(HOME.sub(b"/workspace/operator/", data))
+        rewritten = HOME.sub(length_safe_home_replacement, data)
+        if len(rewritten) != len(data):
+            failures.append(f"HOME rewrite changed byte length: {relative}")
+        else:
+            path.write_bytes(rewritten)
 
 kernel = ROOT / "receipt-verifier/wasm/seal.wasm"
 if not kernel.is_file():
