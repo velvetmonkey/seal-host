@@ -364,8 +364,9 @@ UNKNOWN, never a passing result.
 ## Source build is a separate path
 
 The source-build path is not the release install above. Its recorded cold cost
-is **20m55s**, and its repair lives on a separate branch. This page does not
-silently substitute that path for v0.1.5 or claim a fresh source-build run.
+is **20m55s**, and current main carries the source-onboarding repair. This page
+does not silently substitute that path for v0.1.5 or claim a fresh source-build
+run during this documentation rebase.
 
 ## Not built into the published v0.1.5 binary
 

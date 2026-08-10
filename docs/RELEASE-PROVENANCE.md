@@ -19,7 +19,8 @@ The release page is
 
 ## Download and verify
 
-Prerequisites are Linux, GitHub CLI `gh`, `sha256sum`, Python 3, tar, and
+Prerequisites are Linux, GitHub CLI `gh` authenticated to GitHub, `sha256sum`,
+Python 3, tar, and
 [cosign](https://docs.sigstore.dev/cosign/system_config/installation/). A
 selective download must include `--pattern release_provenance.py` so the signed
 standalone verifier is present. The following all-assets sequence was run from
