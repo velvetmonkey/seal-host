@@ -523,6 +523,10 @@ jobs:
         run: |
           python3 scripts/workflow_pyyaml_gate.py
           python3 test/test_workflow_pyyaml_gate.py -v
+      - id: control_12
+        continue-on-error: true
+        name: Mirrored credibility claims are byte-for-byte in sync
+        run: node scripts/claims-drift.mjs
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
