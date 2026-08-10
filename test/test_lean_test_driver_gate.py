@@ -92,6 +92,29 @@ class LeanTestDriverGateTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("missing=['second_test']", result.stderr)
 
+    def test_missing_driver_source_fails_closed(self) -> None:
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").unlink()
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot read", result.stderr)
+
+    def test_empty_driver_source_fails_closed(self) -> None:
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").write_text("", encoding="utf-8")
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot find the testBinaries array", result.stderr)
+
+    def test_unreadable_driver_source_fails_closed(self) -> None:
+        self.write_fixture()
+        source = self.root / "Test" / "LeanTests.lean"
+        source.unlink()
+        source.mkdir()
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot read", result.stderr)
+
     def test_partial_runtime_loop_fails_closed(self) -> None:
         source = (ROOT / "Test" / "LeanTests.lean").read_text(encoding="utf-8")
         self.write_fixture()
