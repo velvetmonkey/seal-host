@@ -305,9 +305,12 @@ missing. Resource limits are always active in both modes.
 
 ## 7. Point your agent at the host
 
-**Client wiring boundary:** Claude Code 2.1.226 accepted the fresh project MCP
-entry and invoked the released host. Claude Desktop was unavailable on the
-Linux evidence host, so its configuration remains unverified.
+**Client wiring unverified:** the clean Claude Code project path did not expose
+the tool. The CONFIG starter does not create the approval-token file named by
+the profile, so the published host exits 3 at client startup. The earlier
+Claude Code block observation came from a scratch directory where that file
+already existed and is not treated as a reader-path pass. Claude Desktop was
+unavailable on the Linux evidence host.
 
 Wherever your MCP client is configured to launch the server directly, launch **seal-host**
 instead and pass the original server command after `--`. Pattern (confirm against your
@@ -330,11 +333,12 @@ specific client during setup):
 
 ## 8. Watch it block
 
-**Agent-client boundary:** Claude Code issued the exact destructive call and
-displayed `approval required:
-d9a6565b5652c8ff0b68546c2d89a283f3e5fa09a04fab9ef033dc5fdc552f41`.
-It did not expose the raw refusal JSON required by the signer. The complete
-structured refusal below came from the executed direct MCP harness.
+**Agent-client path unverified:** the clean Claude Code setup exposed no tool.
+An earlier non-clean scratch run displayed `approval required:
+d9a6565b5652c8ff0b68546c2d89a283f3e5fa09a04fab9ef033dc5fdc552f41`,
+but its approval-token file was an undocumented precondition. The complete
+structured refusal below came from the executed direct MCP harness, not from a
+reproducible agent-client run.
 
 Have the agent call the guarded `execute_sql` tool with SQL containing `drop`. The
 call is blocked before the child server sees it, and the block message prints the exact

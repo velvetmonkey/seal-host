@@ -554,13 +554,14 @@ guard these writes.” Do not mistake this for policy-v2 safe-allow composition.
 
 ## 2. Manual Claude Code wiring
 
-**Execution status: wired and invoked, but not approved end to end.** On the
-Linux evidence host, a fresh project config using the published v0.1.5 binary
-and fresh keys was parsed by Claude Code 2.1.226. The interactive project MCP
-prompt was accepted and Claude invoked `execute_sql`; the host blocked the
-call. The client did not expose the refusal's raw `framed_subject`, so an
-approval could not be minted from that UI response. The approved retry remains
-**unverified in Claude Code**.
+**Execution status: unverified in a clean reader run.** A clean checkout using
+the published v0.1.5 binary can render this project entry, but the setup in
+section 1 does not create `.seal/approval-tokens.ndjson`. When Claude tries to
+launch the configured host, production startup exits 3 before exposing the
+tool. An earlier scratch run reached a blocked `execute_sql` call only because
+that token file already existed from an extra, undocumented setup step. That
+environment-specific observation is retained below, but it is not closure of
+the reader-facing path.
 
 Claude Code project configuration lives in `.mcp.json`; user configuration is
 stored in `~/.claude.json`. Project scope is easiest to review and roll back.
@@ -617,6 +618,13 @@ arguments elided because this is discovery evidence, not a reusable command):
 
 ```text
 sealSqliteSandbox: …/seal-host-rs … -- python3 …/demo/sqlite_mcp_server.py … - ⏸ Pending approval (run `claude` to approve)
+```
+
+Clean launch result against the published v0.1.5 host:
+
+```text
+production startup refused: cannot inspect approval token file /home/monkey/scratch/releaseistrue3.cpSXhd/.seal/approval-tokens.ndjson: No such file or directory (os error 2)
+configured_host_command_exit=3
 ```
 
 **Unverified automation:** the two assurance-kit commands below were not run in
@@ -690,12 +698,11 @@ cp "$HOME/Library/Application Support/Claude/claude_desktop_config.json.before-s
 
 ## 4. Approval loop in the real Claude UI
 
-**UI approval path partly verified:** an interactive Claude Code 2.1.226
-session approved the project MCP entry and issued the exact call below. Claude
-Desktop was unavailable, and Claude Code displayed only the challenge rather
-than the raw `framed_subject` needed by the signer, so the approved UI retry
-could not be run. The equivalent host and CLI path was executed directly with
-the published v0.1.5 binary and is recorded under
+**UI approval path unverified in a clean reader run:** Claude Code cannot
+expose the tool from the printed setup because the configured host refuses the
+missing approval-token file. Claude Desktop was unavailable. The equivalent
+host and CLI path was executed directly with the published v0.1.5 binary and
+is recorded under
 [Deployment](docs/DEPLOY.md#executed-v015-sqlite-and-approval-evidence).
 
 Ask Claude to call `execute_sql` with exactly:
@@ -704,7 +711,8 @@ Ask Claude to call `execute_sql` with exactly:
 DROP TABLE receipt_sandbox
 ```
 
-Observed Claude Code output:
+Earlier environment-specific Claude Code output, retained as a failed evidence
+boundary rather than a closed path:
 
 ```text
 sealSqliteSandbox - execute_sql (MCP)(sql: "DROP TABLE receipt_sandbox")
@@ -716,9 +724,11 @@ Blocked before execution, same as before — new token this time:
 Nothing ran; receipt_sandbox is untouched.
 ```
 
-Seal returned the 64-lowercase-hex target above. The UI did not expose its
-structured `result.framed_subject`; the direct executed path linked above did
-save that response and run the CLI signer.
+That prior scratch directory had a pre-created
+`.seal/approval-tokens.ndjson`; the clean reader sequence does not. Therefore
+the challenge above is not reproducible evidence for the printed setup. The UI
+also did not expose its structured `result.framed_subject`; the direct executed
+path linked above did save that response and run the CLI signer.
 
 In the direct harness, the identical call flowed once after signing. The
 Claude Code retry was not run because its UI did not provide the framed
