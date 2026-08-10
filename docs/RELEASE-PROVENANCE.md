@@ -1,21 +1,22 @@
-# Release provenance — v0.1.5 published
+<!-- current-release: v0.1.6 -->
+# Release provenance — v0.1.6 published
 
-`seal-host` has **1** published release. GitHub published `v0.1.5` at
-`2026-08-10T00:38:06Z` with these **8** assets:
+`seal-host` has **2** published releases. GitHub published current release
+`v0.1.6` at `2026-08-10T15:21:07Z` with these **8** assets:
 
 | Asset | Bytes |
 |---|---:|
-| `seal-host-v0.1.5-linux-x86_64.tar.gz` | 125271935 |
-| `seal-host-v0.1.5-linux-aarch64.tar.gz` | 125902117 |
-| `seal-host-v0.1.5-linux-x86_64.cdx.json` | 215433 |
-| `seal-host-v0.1.5-linux-aarch64.cdx.json` | 214173 |
+| `seal-host-v0.1.6-linux-x86_64.tar.gz` | 125272344 |
+| `seal-host-v0.1.6-linux-aarch64.tar.gz` | 125898582 |
+| `seal-host-v0.1.6-linux-x86_64.cdx.json` | 215433 |
+| `seal-host-v0.1.6-linux-aarch64.cdx.json` | 214173 |
 | `SEAL-RELEASE-PROVENANCE.json` | 2958 |
-| `SEAL-RELEASE-PROVENANCE.sigstore.json` | 10403 |
+| `SEAL-RELEASE-PROVENANCE.sigstore.json` | 10399 |
 | `SHA256SUMS` | 506 |
 | `release_provenance.py` | 15297 |
 
 The release page is
-<https://github.com/velvetmonkey/seal-host/releases/tag/v0.1.5>.
+<https://github.com/velvetmonkey/seal-host/releases/tag/v0.1.6>.
 
 ## Download and verify
 
@@ -27,39 +28,38 @@ standalone verifier is present. The following all-assets sequence was run from
 a fresh directory on Linux x86_64:
 
 ```bash
-mkdir seal-host-v0.1.5-download && cd seal-host-v0.1.5-download
-gh release download v0.1.5 --repo velvetmonkey/seal-host
+mkdir seal-host-v0.1.6-download && cd seal-host-v0.1.6-download
+gh release download v0.1.6 --repo velvetmonkey/seal-host
 sha256sum -c SHA256SUMS
 python3 release_provenance.py verify \
   --release-dir . \
-  --release-version v0.1.5 \
+  --release-version v0.1.6 \
   --statement SEAL-RELEASE-PROVENANCE.json \
   --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
-  --certificate-identity 'https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5' \
+  --certificate-identity 'https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.6' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ARCH=$(uname -m)
-tar xzf "seal-host-v0.1.5-linux-${ARCH}.tar.gz"
-SEAL_BIN="$PWD/seal-host-v0.1.5-linux-${ARCH}/bin/seal-host-rs"
+tar xzf "seal-host-v0.1.6-linux-${ARCH}.tar.gz"
+SEAL_BIN="$PWD/seal-host-v0.1.6-linux-${ARCH}/bin/seal-host-rs"
 test -x "$SEAL_BIN"
-printf 'installed executable: %s\n' "seal-host-v0.1.5-linux-${ARCH}/bin/seal-host-rs"
+printf 'installed executable: %s\n' "seal-host-v0.1.6-linux-${ARCH}/bin/seal-host-rs"
 ```
 
 Observed output:
 
 ```text
 release_provenance.py: OK
-seal-host-v0.1.5-linux-aarch64.cdx.json: OK
-seal-host-v0.1.5-linux-aarch64.tar.gz: OK
-seal-host-v0.1.5-linux-x86_64.cdx.json: OK
-seal-host-v0.1.5-linux-x86_64.tar.gz: OK
+seal-host-v0.1.6-linux-aarch64.cdx.json: OK
+seal-host-v0.1.6-linux-aarch64.tar.gz: OK
+seal-host-v0.1.6-linux-x86_64.cdx.json: OK
+seal-host-v0.1.6-linux-x86_64.tar.gz: OK
 PASS release provenance: valid signature and 6 exact subject digests
-installed executable: seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs
+installed executable: seal-host-v0.1.6-linux-x86_64/bin/seal-host-rs
 ```
 
-Both architecture archives were also opened with `tar tzf`. Each contains its
-named `bin/seal-host-rs`, `lib/libsealffi.so`, Lean runtime shared libraries,
-and licence files. The x86_64 archive was extracted and its host file was
-executable. The aarch64 binary was not executed on the x86_64 evidence host.
+The x86_64 archive was extracted and its host was run outside every checkout.
+The aarch64 archive was checksum- and provenance-verified and passed its hosted
+build/container lane, but was not executed on a physical aarch64 host.
 
 ## What the statement attests
 
@@ -73,7 +73,7 @@ causes verification to refuse.
 The keyless cosign certificate is scoped to:
 
 ```text
-https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.5
+https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/v0.1.6
 ```
 
 and the verifier requires issuer
@@ -89,7 +89,7 @@ GitHub Actions, and Sigstore control remain in the trust boundary.
 
 ## Verification status
 
-**Current availability:** v0.1.5 was published at 2026-08-10T00:38:06Z with
+**Current availability:** v0.1.6 was published at 2026-08-10T15:21:07Z with
 eight assets: two Linux archives, two SBOMs, `SHA256SUMS`, the provenance
 statement, its Sigstore bundle, and the standalone verifier. A failed future
 release gate still produces no release; these commands name the release that
@@ -102,7 +102,7 @@ needed; it verifies its own published bytes as one of the signed subjects.
 
 ```bash
 mkdir release && cd release
-tag=v0.1.5
+tag=v0.1.6
 gh release download "$tag" --repo velvetmonkey/seal-host \
   --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py \
@@ -125,6 +125,7 @@ Missing files, an invalid signature, different bytes, an unavailable verifier,
 an extra release file, a partial architecture matrix, or a verifier that returns
 silent success all exit non-zero.
 
-The published v0.1.5 binary does not self-report its version: `--version`
-exits 2 with `error: unknown arg: --version`. Establish this release's identity
-from the verified archive name and signed provenance, not from binary output.
+The first published binary, v0.1.5, does not self-report its version:
+`--version` exits 2 with `error: unknown arg: --version`. That history remains
+true. The current v0.1.6 x86_64 binary was physically run outside every checkout;
+`--version` exited 0 and printed `0.1.6`, matching its tag.
