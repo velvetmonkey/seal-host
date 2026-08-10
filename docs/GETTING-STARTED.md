@@ -1,22 +1,25 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Getting started — install v0.1.5 or build from source
+<!-- current-release: v0.1.6 -->
+# Getting started — install v0.1.6 or build from source
 
-This is the onboarding path: install the published v0.1.5 host or build from
-source, watch it block a destructive call, approve that exact call, watch it
-flow, then verify the receipt yourself — including what a tampered receipt
-looks like. The released install and source build are separate alternatives;
-neither is evidence for the other.
+This is the onboarding path: install the published v0.1.6 host or build from
+source. The page keeps the v0.1.6 stranger-run evidence separate from the
+recorded local block, approve, flow, and receipt walkthrough; neither is
+evidence for the other.
 
 ## Current availability
 
-- Published `seal-host` releases: **1** — `v0.1.5`, published
+- Published `seal-host` releases: **2** — current `v0.1.6`, published
+  `2026-08-10T15:21:07Z`, and first release `v0.1.5`, published
   `2026-08-10T00:38:06Z`.
 - Downloadable assets: **8** — two Linux archives, two CycloneDX SBOMs,
   `SHA256SUMS`, the provenance statement, its Sigstore bundle, and the
   standalone verifier.
-- Verified Linux release-install paths: **1**. The x86_64 path below was run
-  through download, checksum, provenance verification, extraction, and an
-  executable-file check. Both architecture archives were opened.
+- Verified Linux release-install paths: **1**. The v0.1.6 x86_64 path below
+  was run through download, checksum, provenance verification, extraction,
+  `--help`, and `--version`. The aarch64 asset was checksum- and
+  provenance-verified and passed its hosted build lane, but was not executed
+  on a physical aarch64 host.
 - Windows/WSL2 end-to-end runs: **0**.
 
 The release install is real. The later block/approve/flow demonstration remains
@@ -54,12 +57,12 @@ For the source path below:
   `scripts/build_all.sh` uses it automatically when present. On an ordinary
   single-user machine without that wrapper, it uses `lake` directly.
 
-`v0.1.5` is published. For the released install path, download all signed
+`v0.1.6` is published. For the released install path, download all signed
 subjects and verify them before unpacking:
 
 ```sh
 mkdir -p .seal/release && cd .seal/release
-tag=v0.1.5
+tag=v0.1.6
 gh release download "$tag" --repo velvetmonkey/seal-host \
   --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py --pattern SHA256SUMS \
@@ -354,7 +357,7 @@ UNKNOWN, never a passing result.
 
 ## Where to go next
 
-- [CONFIG.md](../CONFIG.md) — policy authoring after the v0.1.5 release install;
+- [CONFIG.md](../CONFIG.md) — policy authoring after the v0.1.6 release install;
   it still does not claim a Windows route.
 - [DEPLOY.md](DEPLOY.md) — development evidence and the production controls
   that remain unshipped.

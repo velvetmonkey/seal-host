@@ -1,7 +1,8 @@
-# Deployment — v0.1.5 host published
+<!-- current-release: v0.1.6 -->
+# Deployment — v0.1.6 host published
 
-Published `seal-host` releases: **1** — `v0.1.5`, with **8** downloadable
-assets. Supported production deployment paths remain **0**: publishing and
+Published `seal-host` releases: **2** — latest `v0.1.6`, with **8** downloadable
+assets in that release. Supported production deployment paths remain **0**: publishing and
 verifying a host archive does not establish an end-to-end production rollout.
 Windows/WSL2 end-to-end runs remain **0**. This page records local development
 evidence and the controls a production route still needs.
@@ -39,7 +40,7 @@ exact request.
 - A checkout of this repository, Lean `4.28.0`, Rust `1.96.0`, and a native
   C/C++ linker toolchain. No step in this guide requires `systemd`.
 - GitHub CLI authenticated to GitHub for the release download.
-- The verified v0.1.5 Linux archive install from
+- The verified v0.1.6 Linux archive install from
   [Getting started](GETTING-STARTED.md#install-and-verify-the-published-host),
   whose executed sequence runs `release_provenance.py verify` against the
   `SEAL-RELEASE-PROVENANCE.sigstore.json` bundle before extraction, with its
@@ -54,14 +55,14 @@ exact request.
 
 ## 1. Install and verify the released host
 
-`v0.1.5` is published. Download every signed subject and verify provenance
+`v0.1.6` is published. Download every signed subject and verify provenance
 before unpacking or running the host:
 
 ```sh
 mkdir -p .seal/release
 chmod 700 .seal .seal/release
 cd .seal/release
-tag=v0.1.5
+tag=v0.1.6
 gh release download "$tag" --repo velvetmonkey/seal-host \
   --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py \
@@ -84,12 +85,13 @@ exact subject digests`. Do not unpack or run an artifact if verification fails.
 To build from source instead, use `time bash scripts/build_all.sh` with the
 documented Lean/Rust prerequisites, then set `SEAL_BIN="$PWD/rust/target/debug/seal-host-rs"`.
 
-Release v0.1.5 published x86_64 and aarch64 Linux archives, both SBOMs,
+Release v0.1.6 published x86_64 and aarch64 Linux archives, both SBOMs,
 `SHA256SUMS`, `release_provenance.py`, and the provenance statement and bundle.
 The release evidence pass downloaded all eight assets, checked the manifest,
-verified the Sigstore-backed six-subject statement, opened both archives, and
-extracted the x86_64 host. It did not run this page's entire deployment
-walkthrough from the release archive.
+verified the Sigstore-backed six-subject statement, extracted and ran the
+x86_64 host, and confirmed its `--version` output. The aarch64 asset was not
+executed on a physical aarch64 host. The pass did not run this page's entire
+deployment walkthrough from the release archive.
 
 ## 2. Generate separate signing keypairs
 
