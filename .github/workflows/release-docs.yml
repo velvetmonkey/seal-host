@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release docs truth
+
+on:
+  pull_request:
+    paths:
+      - CONFIG.md
+      - README.md
+      - docs/DEPLOY.md
+      - docs/FRONT-PAGE-REFERENCE.md
+      - docs/GETTING-STARTED.md
+      - docs/RELEASE-PROVENANCE.md
+      - scripts/check_reader_release_paths.py
+      - test/test_release_provenance_reader_paths.py
+      - .github/workflows/release-docs.yml
+  push:
+    branches: [main]
+    paths:
+      - CONFIG.md
+      - README.md
+      - docs/DEPLOY.md
+      - docs/FRONT-PAGE-REFERENCE.md
+      - docs/GETTING-STARTED.md
+      - docs/RELEASE-PROVENANCE.md
+      - scripts/check_reader_release_paths.py
+      - test/test_release_provenance_reader_paths.py
+      - .github/workflows/release-docs.yml
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: Refuse stale release documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_reader_release_paths.py
+      - name: Prove the release documentation checker fails closed
+        run: python3 test/test_release_provenance_reader_paths.py -v
