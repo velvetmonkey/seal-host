@@ -119,8 +119,36 @@ struct Args {
 
 const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+const USAGE: &str = "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
+[--channel file|ed25519|interactive] [--token-file <path>] \
+[--approval-pubkey <hex>] [--receipt-dir <path>] \
+[--production|--insecure-development-mode] [--envelope-v23] \
+[--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
+(--initialize-replay-store | -- <server-cmd> <args...>)";
+
+const HELP: &str = "seal-host mediates an MCP server and fails guarded calls closed.
+
+Run modes:
+  --initialize-replay-store  Initialize the durable approval replay store, then exit
+  -- <server-cmd> <args...>  Start the named MCP server behind seal-host
+
+Required inputs:
+  --config <path>             Signed trusted configuration envelope
+  --pubkey <hex>              Ed25519 public key that verifies the configuration
+
+Discovery:
+  -h, --help                  Print this help and exit
+  --version                   Print the manifest-derived version and exit
+
+Full install and configuration walkthrough:
+  https://github.com/velvetmonkey/seal-host/blob/main/docs/GETTING-STARTED.md";
+
 fn is_version_request(argv: &[String]) -> bool {
     matches!(argv, [flag] if flag == "--version")
+}
+
+fn is_help_request(argv: &[String]) -> bool {
+    matches!(argv, [flag] if flag == "--help" || flag == "-h")
 }
 
 fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
@@ -1092,17 +1120,14 @@ fn run() -> i32 {
         println!("{BUILD_VERSION}");
         return 0;
     }
+    if is_help_request(&argv) {
+        println!("{USAGE}\n\n{HELP}");
+        return 0;
+    }
     let args = match parse_args_from(argv) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!(
-                "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
-                [--channel file|ed25519|interactive] [--token-file <path>] \
-                [--approval-pubkey <hex>] [--receipt-dir <path>] \
-                [--production|--insecure-development-mode] [--envelope-v23] \
-                [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
-                (--initialize-replay-store | -- <server-cmd> <args...>)\nerror: {e}"
-            );
+            eprintln!("{USAGE}\nerror: {e}");
             return 2;
         }
     };
@@ -2435,6 +2460,15 @@ mod tests {
         assert!(is_version_request(&["--version".into()]));
         assert!(!is_version_request(&["--version".into(), "extra".into()]));
         assert_eq!(BUILD_VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn help_request_is_standalone() {
+        assert!(is_help_request(&["--help".into()]));
+        assert!(is_help_request(&["-h".into()]));
+        assert!(!is_help_request(&["--help".into(), "extra".into()]));
+        assert!(!is_help_request(&["--config".into(), "--help".into()]));
+        assert!(HELP.contains("Full install and configuration walkthrough:"));
     }
 
     #[test]
