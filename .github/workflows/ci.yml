@@ -465,7 +465,7 @@ jobs:
         uses: actions/checkout@v7.0.1
       - id: control_02
         continue-on-error: true
-        uses: actions/setup-python@v6.0.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12.11"
       # Reserved id control_90: this step is provisioning, not a product
