@@ -205,5 +205,5 @@ the new `Host/Step`) is `wasm-spike/build_core.sh`.
 **Public deployment note.** For the conformance claim to cover the *deployed
 public* checker, `seal-check` must repin its `wasm/seal.wasm` to this verified
 build (sha256 `c9f32b00…`). That repin is a separate, audited step gated to the
-public flip — it is **not** performed here; this repo stays the private source of
-truth and the public mirror is untouched.
+public flip — it is **not** performed here; this repo remains the public source of
+truth and the separate public mirror is untouched.
