@@ -224,11 +224,11 @@ initialize a genuinely absent store from that authority-signed config:
   --initialize-replay-store
 ```
 
-Observed output:
+Observed output (the workstation prefix is redacted as `[workstation path]`):
 
 ```text
 WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled
-replay store initialized: /home/monkey/scratch/releaseistrue-deploy.GhCnOU/worktree/.seal/store/replay.sqlite (schema_version=2, namespace_encoding_version=1)
+replay store initialized: [workstation path]/.seal/store/replay.sqlite (schema_version=2, namespace_encoding_version=1)
 ```
 
 This action creates both the nonce schema and its lineage stamp, then exits.

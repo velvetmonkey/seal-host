@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "seal-host-rs"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64",
  "ed25519-dalek",
