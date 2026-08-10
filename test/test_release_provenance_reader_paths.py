@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Physical negative cases for the reader release-path checker."""
+"""Physical negative cases for the provenance-before-use reader checker."""
 
 from __future__ import annotations
 

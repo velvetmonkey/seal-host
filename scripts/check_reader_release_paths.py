@@ -19,7 +19,7 @@ RELEASE_TAG = re.compile(r"seal-host-(v[0-9]+\.[0-9]+\.[0-9]+)[-/]")
 RELEASE_DOWNLOAD = re.compile(
     r"^\s*(?:\$\s*)?(?:(?:sudo|env)\s+)*(?:"
     r"gh\s+release\s+download\b|"
-    r"(?:curl|wget)\b[^\n]*github\.com/velvetmonkey/seal-host/releases/download/)" ,
+    r"(?:curl|wget)\b[^\n]*github\.com/velvetmonkey/seal-host/releases/download/)",
     re.IGNORECASE,
 )
 PROVENANCE_VERIFY = re.compile(

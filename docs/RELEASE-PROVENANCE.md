@@ -73,3 +73,7 @@ canonical `SHA256SUMS` contents, signer description, and honest non-claims.
 Missing files, an invalid signature, different bytes, an unavailable verifier,
 an extra release file, a partial architecture matrix, or a verifier that returns
 silent success all exit non-zero.
+
+The published v0.1.5 binary does not self-report its version: `--version`
+exits 2 with `error: unknown arg: --version`. Establish this release's identity
+from the verified archive name and signed provenance, not from binary output.
