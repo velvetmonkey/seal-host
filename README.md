@@ -16,9 +16,11 @@ the real destructive SQLite sandbox, start with [CONFIG.md](CONFIG.md).
 
 ## Quick start
 
-**Onboarding from source:** there is currently no published binary release.
-Build the checked-out tree, then block, approve, flow, and verify a receipt
-yourself with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).
+**Published onboarding:** `seal-host` v0.1.5 exists with signed provenance,
+checksums, two Linux archives, two SBOMs, and the standalone verifier. Verify
+the release before unpacking it, then block, approve, flow, and verify a receipt
+yourself with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md). The source
+build remains a separate alternative.
 
 One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold Lean build, which pulls the toolchain and can run tens of minutes on a fresh machine. On the shared development host, ensure `/home/monkey/bin` is on `PATH` so the required `leanbuild` guard serializes it. From a fresh checkout, run:
 

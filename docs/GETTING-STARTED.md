@@ -1,12 +1,11 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Getting started — your first working gate
 
-This is the onboarding path: build from this checkout, watch the host block a
-destructive call, approve that exact call, watch it flow, then verify the
-receipt yourself — including what a tampered receipt looks like. The source
-build is deliberately the primary path: **there is currently no published
-binary release.** It does not make a claim about a tag that can become false
-when a release gate fails.
+This is the onboarding path: install the published v0.1.5 host or build from
+source, watch it block a destructive call, approve that exact call, watch it
+flow, then verify the receipt yourself — including what a tampered receipt
+looks like. The released install and source build are separate alternatives;
+neither is evidence for the other.
 
 ## What seal-host is
 

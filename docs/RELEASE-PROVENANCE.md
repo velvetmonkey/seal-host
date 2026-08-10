@@ -38,11 +38,11 @@ the trust boundary.
 
 ## Verify a downloaded release
 
-**Current availability:** no binary release is published for this repository.
-This is a verification contract for a future published release, not an
-onboarding path. Use [GETTING-STARTED.md](GETTING-STARTED.md) to build from
-source now. In particular, do not substitute a guessed tag in the commands
-below: a failed release gate intentionally produces no release.
+**Current availability:** v0.1.5 was published at 2026-08-10T00:38:06Z with
+eight assets: two Linux archives, two SBOMs, `SHA256SUMS`, the provenance
+statement, its Sigstore bundle, and the standalone verifier. A failed future
+release gate still produces no release; these commands name the release that
+actually exists.
 
 Install cosign, then download the release's verifier, both architectures'
 archives and SBOMs, checksum manifest, statement, and bundle. The verifier is a
@@ -51,7 +51,7 @@ published bytes as one of the signed subjects.
 
 ```bash
 mkdir release && cd release
-tag='<published-tag>' # read this exact tag from an existing published release
+tag=v0.1.5
 gh release download "$tag" --repo velvetmonkey/seal-host \
   --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py \
