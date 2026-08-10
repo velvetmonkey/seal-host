@@ -49,10 +49,12 @@ The approved second response was the original JSON-RPC request with only the
 host-added `operation_id`; that echo is the positive observation that the
 child received it.
 
-**Current blocker:** no GitHub binary release is published. The guide checks
-that first and stops with a plain explanation. It does not substitute an
-unpublished tag, and its source-build fallback remains unverified. A new
-developer therefore cannot yet complete this journey from a clean machine.
+**Available now:** `seal-host` v0.1.5 is the project's first published release.
+Its eight assets include x86_64 and aarch64 Linux archives, their SBOMs,
+checksums, and signed provenance. The [getting-started guide](docs/GETTING-STARTED.md)
+records a real download, checksum, provenance-verification, and extraction run.
+The Windows/WSL2 route remains untested, and the 20m55s source-build path is a
+separate branch rather than a fallback hidden inside release onboarding.
 
 ## Know the boundary
 

@@ -84,7 +84,7 @@ it is not a first-run path.
 The repository carries the TTL-scoped application of the coordination-free
 no-double-spend lower bound to the gate's consume seam. It proves which modelled
 fleet deployment shapes preserve single-use authorization. Published releases:
-**0**. No gate is shipped as a release; coordinated mesh deployment is a separate architecture. See
+**1**. Release v0.1.5 ships the Linux host gate; coordinated mesh deployment is a separate architecture. See
 [Proof reference](PROOF-REFERENCE.md) and the family
 [authorization mesh](https://github.com/velvetmonkey/seal/blob/main/docs/AUTHORIZATION-MESH.md).
 

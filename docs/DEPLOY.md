@@ -1,10 +1,10 @@
-# Deployment — not shipped
+# Deployment — v0.1.5 host published
 
-Repository package version: **v0.1.5**. Published `seal-host` releases: **0**.
-The package version is not a published release. Supported production deployment
-paths: **0**. Windows/WSL2 end-to-end runs: **0**. This page records local
-development evidence and the controls a production route would need; it is not
-a deployment or onboarding promise.
+Published `seal-host` releases: **1** — `v0.1.5`, with **8** downloadable
+assets. Supported production deployment paths remain **0**: publishing and
+verifying a host archive does not establish an end-to-end production rollout.
+Windows/WSL2 end-to-end runs remain **0**. This page records local development
+evidence and the controls a production route still needs.
 
 > **Runtime profile: `compatible`.** This guide stands up the `compatible`-profile host.
 > That is the right profile for integration and deployment evaluation. It is **not** the
@@ -39,6 +39,9 @@ exact request.
 - A checkout of this repository, Lean `4.28.0`, Rust `1.96.0`, and a native
   C/C++ linker toolchain. No step in this guide requires `systemd`.
 - GitHub CLI authenticated to GitHub for the release download.
+- The verified v0.1.5 Linux archive install from
+  [Getting started](GETTING-STARTED.md#install-and-verify-the-published-host),
+  with its `SEAL_BIN` value still set.
 - Python 3 with the `cryptography` package (for the config signer). If it is
   absent, follow the [official installation guide](https://cryptography.io/en/latest/installation/)
   before continuing.
@@ -78,6 +81,13 @@ Expected verification output: `PASS release provenance: valid signature and 6
 exact subject digests`. Do not unpack or run an artifact if verification fails.
 To build from source instead, use `time bash scripts/build_all.sh` with the
 documented Lean/Rust prerequisites, then set `SEAL_BIN="$PWD/rust/target/debug/seal-host-rs"`.
+
+Release v0.1.5 published x86_64 and aarch64 Linux archives, both SBOMs,
+`SHA256SUMS`, `release_provenance.py`, and the provenance statement and bundle.
+The release evidence pass downloaded all eight assets, checked the manifest,
+verified the Sigstore-backed six-subject statement, opened both archives, and
+extracted the x86_64 host. It did not run this page's entire deployment
+walkthrough from the release archive.
 
 ## 2. Generate separate signing keypairs
 
@@ -484,14 +494,16 @@ No unqualified "verified", "proven", or "trustless" is used for the channel orig
 See also `demo/approve_cli.py`, `demo/approve_telegram.py`, `demo/see_the_loop.py` (and the
 Rust provider tests) for the honest labels and trust-boundary statements.
 
-## Release container profile — not published
+## Release container profile
 
-Published native archives: **0**. Published SBOMs: **0**. Published provenance
-statements: **0**. The checked-in release workflow is configured to assemble x86-64 and
-ARM64 archives, their runtime closure, licences, checksums, CycloneDX SBOMs, and a
-Seal-specific Sigstore provenance statement. It does not use GitHub build-provenance
-attestations. `scripts/runtime_dependency_gate.sh` checks build-workspace paths, missing
-libraries, and private-repository runtime dependencies as part of that unpublished path.
+Published native archives: **2**. Published SBOMs: **2**. Published provenance
+statements: **1**, with **1** Sigstore bundle, **1** checksum manifest, and **1**
+standalone verifier. The two archives contain the host, runtime closure, licences,
+and `libsealffi.so`; both archives were opened, while only x86_64 was extracted on
+the evidence host. The release uses a Seal-specific Sigstore provenance statement,
+not GitHub build-provenance attestations. `scripts/runtime_dependency_gate.sh`
+checks build-workspace paths, missing libraries, and private-repository runtime
+dependencies in the publication path.
 
 `deploy/container/Dockerfile.release` expects a local unpacked archive and runs as UID/GID
 65532 with no root fallback. `deploy/container/compose.yaml` is the hardened example:

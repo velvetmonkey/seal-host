@@ -457,7 +457,12 @@ three shipped manifests; the standing `npm test` CI gate is configured but
 has not run remotely for this change; operator verification is not applicable
 to this non-model authoring surface.
 
-## 1. Build the host and prepare the sandbox
+## 1. Install v0.1.5 or build the host, then prepare the sandbox
+
+Published `seal-host` releases: **1**. Release `v0.1.5` provides two Linux
+archives, their two SBOMs, `SHA256SUMS`, a six-subject provenance statement,
+its Sigstore bundle, and the standalone verifier: **8 assets** total.
+Windows/WSL2 end-to-end runs remain **0**.
 
 From the `seal-host` checkout, with GitHub CLI authenticated to GitHub for the
 release download:
@@ -577,7 +582,8 @@ After Seal, the real command moves behind `--`:
 
 The copy-and-edit version is
 [`profiles/hosts/claude-code.json`](profiles/hosts/claude-code.json). Replace
-`SEAL_BIN_PATH`, `/ABS/PATH`, `CONFIG_PUBLIC_KEY_HEX`, and
+`SEAL_BIN_PATH` with the installed `SEAL_BIN` absolute path, then replace
+`/ABS/PATH`, `CONFIG_PUBLIC_KEY_HEX`, and
 `APPROVAL_PUBLIC_KEY_HEX`, then
 put it at `.mcp.json`. Run `claude mcp list` and use `/mcp` inside Claude
 Code to check the connection.

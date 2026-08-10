@@ -7,6 +7,22 @@ flow, then verify the receipt yourself — including what a tampered receipt
 looks like. The released install and source build are separate alternatives;
 neither is evidence for the other.
 
+## Current availability
+
+- Published `seal-host` releases: **1** — `v0.1.5`, published
+  `2026-08-10T00:38:06Z`.
+- Downloadable assets: **8** — two Linux archives, two CycloneDX SBOMs,
+  `SHA256SUMS`, the provenance statement, its Sigstore bundle, and the
+  standalone verifier.
+- Verified Linux release-install paths: **1**. The x86_64 path below was run
+  through download, checksum, provenance verification, extraction, and an
+  executable-file check. Both architecture archives were opened.
+- Windows/WSL2 end-to-end runs: **0**.
+
+The release install is real. The later block/approve/flow demonstration remains
+recorded local evidence: it was not rerun end to end with the published archive,
+so this page does not relabel that older observation as a release-bundle run.
+
 ## What seal-host is
 
 Your agent talks to real tools over MCP. Nothing in that pipeline stops it
@@ -19,7 +35,11 @@ matching, live, signed approval exists for that exact request. Every decision
 offline. The decision core is a Lean theorem; what is proved, tested, and
 assumed is listed at the bottom of this page, precisely.
 
-## Prerequisites and install choices
+## Install and verify the published host
+
+The release path requires Linux x86_64, GitHub CLI authenticated to GitHub,
+Python 3, tar, and cosign. A checkout is needed for the configuration helpers
+used after installation.
 
 For the source path below:
 
@@ -29,7 +49,6 @@ For the source path below:
   required by Lean and Rust dependencies. Docker is not used by this path.
 - `python3` with the `cryptography` package (config and approval signing).
 - `node` (any current LTS; used only by the receipt verifier).
-- GitHub CLI authenticated to GitHub for the release download.
 - On this shared development host, `leanbuild` must be on `PATH`; it is the
   required one-at-a-time, resource-bounded wrapper for every Lean invocation.
   `scripts/build_all.sh` uses it automatically when present. On an ordinary
@@ -335,16 +354,15 @@ UNKNOWN, never a passing result.
 
 ## Where to go next
 
-- [CONFIG.md](../CONFIG.md) — policy authoring and the current host-integration
-  gap; it does not claim a released binary or Windows route.
+- [CONFIG.md](../CONFIG.md) — policy authoring after the v0.1.5 release install;
+  it still does not claim a Windows route.
 - [DEPLOY.md](DEPLOY.md) — development evidence and the production controls
   that remain unshipped.
 - [`CLAIMS.md`](../CLAIMS.md) — the full claims map, row by row, with what
   may and may not be said publicly.
 
-## No source-build fallback
+## Source build is a separate path
 
-A source build installs the pinned Lean and Rust toolchains and can take hours.
-The required clean `scripts/build_all.sh` verification had not completed when
-this guide was regenerated on 2026-08-09. Until an end-to-end result is
-recorded, source build is not a supported substitute for the absent release.
+The source-build path is not the release install above. Its recorded cold cost
+is **20m55s**, and its repair lives on a separate branch. This page does not
+silently substitute that path for v0.1.5 or claim a fresh source-build run.
