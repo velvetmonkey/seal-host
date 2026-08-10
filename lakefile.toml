@@ -149,7 +149,7 @@ root = "Test.PerimeterProbe"
 # Lake accepts one test driver, while the suite's assertions are spread across
 # ten executables. Building this driver builds every child (including the four
 # whose assertions run at elaboration time), then Test.LeanTests runs each child
-# and propagates the first nonzero exit status.
+# and reports every nonzero exit after the full roster has run.
 [[lean_exe]]
 name = "lean_tests"
 root = "Test.LeanTests"
