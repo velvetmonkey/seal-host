@@ -371,5 +371,5 @@ run during this documentation rebase.
 ## Not built into the published v0.1.5 binary
 
 The published v0.1.5 binary does not report its own version. The source-tree
-version support landed after the release was built; a future release will
-include it.
+version support landed after the release was built and is present on current
+main.
