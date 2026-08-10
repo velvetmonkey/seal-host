@@ -1,4 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- current-release: v0.1.6 -->
 
 # Put Seal in front of a stdio MCP server
 
@@ -457,9 +458,9 @@ three shipped manifests; the standing `npm test` CI gate is configured but
 has not run remotely for this change; operator verification is not applicable
 to this non-model authoring surface.
 
-## 1. Install v0.1.5 or build the host, then prepare the sandbox
+## 1. Install v0.1.6 or build the host, then prepare the sandbox
 
-Published `seal-host` releases: **1**. Release `v0.1.5` provides two Linux
+Published `seal-host` releases: **2**. Latest release `v0.1.6` provides two Linux
 archives, their two SBOMs, `SHA256SUMS`, a six-subject provenance statement,
 its Sigstore bundle, and the standalone verifier: **8 assets** total.
 Windows/WSL2 end-to-end runs remain **0**.
@@ -472,7 +473,7 @@ export SEAL_HOST_ROOT="$PWD"
 mkdir -p "$PWD/.seal/release"
 chmod 700 "$PWD/.seal" "$PWD/.seal/release"
 cd "$PWD/.seal/release"
-tag=v0.1.5
+tag=v0.1.6
 gh release download "$tag" --repo velvetmonkey/seal-host \
   --pattern "seal-host-${tag}-linux-*" \
   --pattern release_provenance.py --pattern SHA256SUMS \

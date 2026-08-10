@@ -1,5 +1,7 @@
 # seal-host
 
+<!-- current-release: v0.1.6 -->
+
 [![CI](https://github.com/velvetmonkey/seal-host/actions/workflows/ci.yml/badge.svg)](https://github.com/velvetmonkey/seal-host/actions/workflows/ci.yml)
 [![Golden Path](https://github.com/velvetmonkey/seal-host/actions/workflows/golden-path.yml/badge.svg)](https://github.com/velvetmonkey/seal-host/actions/workflows/golden-path.yml)
 
@@ -21,7 +23,7 @@ deployed decisions against pinned kernel bytes.
 blocked → approved once → executed → independently verified → tamper rejected
 ```
 
-**Published onboarding:** `seal-host` v0.1.5 exists with signed provenance,
+**Published onboarding:** `seal-host` v0.1.6 exists with signed provenance,
 checksums, two Linux archives, two SBOMs, and the standalone verifier. Verify
 the release before unpacking it, then block, approve, flow, and verify a receipt
 yourself with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md). The source
@@ -49,9 +51,10 @@ The approved second response was the original JSON-RPC request with only the
 host-added `operation_id`; that echo is the positive observation that the
 child received it.
 
-**Available now:** `seal-host` v0.1.5 is the project's first published release.
-Its eight assets include x86_64 and aarch64 Linux archives, their SBOMs,
-checksums, and signed provenance. The [getting-started guide](docs/GETTING-STARTED.md)
+**Available now:** `seal-host` v0.1.5 was the project's first published release;
+v0.1.6 is the current release. Its eight assets include x86_64 and aarch64 Linux
+archives, their SBOMs, checksums, and signed provenance. The
+[getting-started guide](docs/GETTING-STARTED.md)
 records a real download, checksum, provenance-verification, and extraction run.
 The Windows/WSL2 route remains untested, and the 20m55s source-build path is a
 separate branch rather than a fallback hidden inside release onboarding.

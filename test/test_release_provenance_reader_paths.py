@@ -31,6 +31,8 @@ def run_checker(root: Path) -> subprocess.CompletedProcess[str]:
             str(root),
             "--published-tag",
             "v0.1.5",
+            "--published-tag",
+            "v0.1.6",
         ],
         text=True,
         capture_output=True,
@@ -42,7 +44,7 @@ class ReaderReleasePathTests(unittest.TestCase):
     def test_current_reader_paths_pass(self) -> None:
         result = run_checker(ROOT)
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("provenance-before-use verified", result.stdout)
+        self.assertIn("Latest=v0.1.6, published=2", result.stdout)
 
     def test_fresh_unverified_install_document_is_refused(self) -> None:
         with tempfile.TemporaryDirectory(prefix="reader-release-unverified-") as temp_dir:
@@ -88,6 +90,56 @@ install -m 0755 seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs /usr/local/bin/se
         self.assertNotEqual(0, result.returncode)
         self.assertIn("docs/DEPLOY.md", result.stderr)
         self.assertIn("release artifact use occurs before release_provenance.py verify", result.stderr)
+
+    def test_stale_current_release_marker_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="reader-release-stale-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text(
+                "<!-- current-release: v0.1.5 -->\nCurrent release: v0.1.5.\n",
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("current-release marker must be exactly v0.1.6", result.stderr)
+
+    def test_stale_release_count_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="reader-release-count-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text(
+                "<!-- current-release: v0.1.6 -->\n"
+                "Published `seal-host` releases: **1**.\n",
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("stated published release count is 1, live count is 2", result.stderr)
+
+    def test_unpublished_download_tag_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="reader-release-tag-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text(
+                "<!-- current-release: v0.1.6 -->\n```sh\ntag=v9.9.9\n```\n",
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("release reference names unpublished v9.9.9", result.stderr)
+
+    def test_absent_documented_asset_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="reader-release-asset-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text(
+                "<!-- current-release: v0.1.6 -->\n"
+                "`seal-host-v0.1.6-linux-s390x.tar.gz`\n",
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("documented asset is absent from v0.1.6", result.stderr)
 
 
 if __name__ == "__main__":
