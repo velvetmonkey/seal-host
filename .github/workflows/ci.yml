@@ -524,6 +524,12 @@ jobs:
           python3 scripts/workflow_pyyaml_gate.py
           python3 test/test_workflow_pyyaml_gate.py -v
           node scripts/claims-drift.mjs
+      - id: control_12
+        continue-on-error: true
+        name: Public fleet prose must not retain private-era access claims
+        run: |
+          python3 scripts/public_fleet_claim_gate.py
+          python3 test/test_public_fleet_claim_gate.py -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
