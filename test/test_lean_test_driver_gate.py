@@ -74,11 +74,46 @@ class LeanTestDriverGateTests(unittest.TestCase):
             check=False,
         )
 
+    def write_runtime_fixture(self, *, tamper: str | None = None) -> None:
+        source = (ROOT / "Test" / "LeanTests.lean").read_text(encoding="utf-8")
+        children = tuple(
+            re.findall(r'^\s*"([A-Za-z0-9_-]+)",?\s*$', source, re.MULTILINE)
+        )
+        self.write_fixture(source_children=children, needed_children=children)
+        if tamper is not None:
+            source = source.replace("for name in testBinaries do", tamper)
+        (self.root / "Test" / "LeanTests.lean").write_text(
+            source, encoding="utf-8"
+        )
+
     def test_matching_source_derived_roster_passes(self) -> None:
         self.write_fixture()
         result = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("exactly matches all 2 children derived", result.stdout)
+
+    def test_missing_driver_source_fails_closed(self) -> None:
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").unlink()
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot read", result.stderr)
+
+    def test_empty_driver_source_fails_closed(self) -> None:
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").write_text("", encoding="utf-8")
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot find the testBinaries array", result.stderr)
+
+    def test_unreadable_driver_source_fails_closed(self) -> None:
+        self.write_fixture()
+        source = self.root / "Test" / "LeanTests.lean"
+        source.unlink()
+        source.mkdir()
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot read", result.stderr)
 
     def test_unknown_needs_spelling_fails(self) -> None:
         self.write_fixture(needs_field="needs_TYPO")
@@ -91,6 +126,27 @@ class LeanTestDriverGateTests(unittest.TestCase):
         result = self.run_gate()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("missing=['second_test']", result.stderr)
+
+    def test_partial_runtime_loop_fails_closed(self) -> None:
+        self.write_runtime_fixture(tamper="for name in testBinaries.take 3 do")
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("partial iteration", result.stderr)
+
+    def test_runtime_count_guard_is_required(self) -> None:
+        self.write_runtime_fixture()
+        source_path = self.root / "Test" / "LeanTests.lean"
+        source = source_path.read_text(encoding="utf-8")
+        source = source.replace(
+            "  if passed.size != expectedTestCount then\n"
+            "    IO.eprintln s!\"[lean_tests] COUNT MISMATCH: expected {expectedTestCount} test binaries but only {passed.size} ran; refusing to pass\"\n"
+            "    return 1\n",
+            "",
+        )
+        source_path.write_text(source, encoding="utf-8")
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("passed.size differs", result.stderr)
 
     def test_source_change_is_the_single_roster_authority(self) -> None:
         self.write_fixture(
