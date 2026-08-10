@@ -4,7 +4,8 @@
      claim, non-claim. The README mirrors these three lines verbatim between the
      same markers. The "Map" line is per-repo and is NOT part of this block. Byte-identical
      to the other seal repos' docs/TRUTH-BOX.md (family-uniform). Edit here first;
-     scripts/claims-surface-drift.mjs enforces equality within this repository. -->
+     scripts/claims-surface-drift.mjs enforces equality within this repository;
+     scripts/claims-drift.mjs adds the seven-repo family hash equality check. -->
 
 <!-- truthbox:begin -->
 > **Runtime profile: `compatible`.** Strict `canonical-l0` is proved and modelled, not the deployed route yet.
