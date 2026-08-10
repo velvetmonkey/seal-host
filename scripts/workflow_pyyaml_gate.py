@@ -53,14 +53,18 @@ YAML_IMPORT = re.compile(r"^\s*(?:import\s+yaml\b|from\s+yaml\b)", re.MULTILINE)
 # Every entry is a hole in the guarantee above and is stated as one. An entry
 # whose job no longer exists, or whose job no longer needs PyYAML, is a hard
 # failure -- the exemption cannot outlive its reason in silence.
-EXEMPTIONS: dict[tuple[str, str], str] = {
-    ("ci.yml", "rust-conformance-lean"): (
-        "The lane on branch fix/dedupe-lean-execution deletes this job "
-        "outright; adding a step to it would resurrect the job in a merge. "
-        "Remove this exemption together with the job, or add the action if "
-        "that lane is abandoned."
-    ),
-}
+#
+# Empty since 2026-08-08. The single entry was ci.yml:rust-conformance-lean,
+# and it was written to expire: "the lane on branch fix/dedupe-lean-execution
+# deletes this job outright ... remove this exemption together with the job."
+# That lane is this commit, the job is gone, and the exemption went to the
+# hard failure it was designed to produce -- `exemption for
+# ci.yml:rust-conformance-lean names a job that no longer exists` -- so it is
+# removed here rather than reworded. There is now no job anywhere in the
+# estate that runs a PyYAML-dependent script without the shared provisioning
+# action: the guarantee has no holes left, and the next entry added here is a
+# new hole that must be argued for on its own.
+EXEMPTIONS: dict[tuple[str, str], str] = {}
 
 
 class WorkflowError(Exception):

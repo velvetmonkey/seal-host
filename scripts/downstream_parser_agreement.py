@@ -96,6 +96,13 @@ def node_server(name: str, entry: Path, env: dict[str, str] | None = None) -> Se
     )
 
 
+def required_path(variable: str) -> Path:
+    value = os.environ.get(variable)
+    if not value:
+        raise RuntimeError(f"{variable} must name the installed downstream server entry point")
+    return Path(value).expanduser()
+
+
 def servers(vault: Path, database: Path) -> list[Server]:
     python_env = {
         "PYTHONPATH": str(PYTHON_OBSERVER)
@@ -104,18 +111,15 @@ def servers(vault: Path, database: Path) -> list[Server]:
     return [
         node_server(
             "github-mcp-server@2025.4.8",
-            Path(
-                "/home/monkey/.npm/_npx/3dfbf5a9eea4a1b3/"
-                "node_modules/@modelcontextprotocol/server-github/dist/index.js"
-            ),
+            required_path("SEAL_V31_GITHUB_MCP_ENTRY"),
         ),
         node_server(
             "patchright-lite-mcp-server@1.0.0",
-            Path("/home/monkey/patchright-mcp-lite/dist/index.js"),
+            required_path("SEAL_V31_PATCHRIGHT_MCP_ENTRY"),
         ),
         node_server(
             "flywheel-memory@2.12.20",
-            Path("/home/monkey/src/flywheel-memory/packages/mcp-server/dist/index.js"),
+            required_path("SEAL_V31_FLYWHEEL_MCP_ENTRY"),
             {
                 "PROJECT_PATH": str(vault),
                 "FLYWHEEL_TRANSPORT": "stdio",
@@ -127,7 +131,7 @@ def servers(vault: Path, database: Path) -> list[Server]:
         Server(
             "roundtable-ai@0.5.1 (Python MCP 1.27.2)",
             (
-                "/home/monkey/.local/bin/roundtable-mcp-server",
+                str(required_path("SEAL_V31_ROUNDTABLE_MCP_COMMAND")),
                 "--agents",
                 "codex",
                 "--working-dir",

@@ -84,7 +84,7 @@ consumed by the Rust host layer (`rust/src/main.rs`), not by the kernel.
   clamped to at most 300 seconds by the parser.
 - The production Ed25519 channel requires `replay_store`. Its
   `schema_version` and `namespace_encoding_version` are expected lineage from
-  the authority-signed payload; this release supports exactly `2` and `1`
+  the authority-signed payload; the current parser accepts exactly `2` and `1`
   (schema 2 is the G2 two-phase burn: a nonce row is reserved before Lean and
   committed at RECORDED; schema 1's single-phase burn is obsolete and
   refused — re-initialize the store). The SQLite store carries the same pair
@@ -457,22 +457,68 @@ three shipped manifests; the standing `npm test` CI gate is configured but
 has not run remotely for this change; operator verification is not applicable
 to this non-model authoring surface.
 
-## 1. Build and prepare the sandbox
+## 1. Install v0.1.5 or build the host, then prepare the sandbox
 
-From the `seal-host` checkout:
+Published `seal-host` releases: **1**. Release `v0.1.5` provides two Linux
+archives, their two SBOMs, `SHA256SUMS`, a six-subject provenance statement,
+its Sigstore bundle, and the standalone verifier: **8 assets** total.
+Windows/WSL2 end-to-end runs remain **0**.
+
+From the `seal-host` checkout, with GitHub CLI authenticated to GitHub for the
+release download:
 
 ```bash
-bash scripts/build_all.sh
 export SEAL_HOST_ROOT="$PWD"
+mkdir -p "$PWD/.seal/release"
+chmod 700 "$PWD/.seal" "$PWD/.seal/release"
+cd "$PWD/.seal/release"
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
+  --pattern release_provenance.py --pattern SHA256SUMS \
+  --pattern SEAL-RELEASE-PROVENANCE.json \
+  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
+python3 release_provenance.py verify \
+  --release-dir . --release-version "$tag" \
+  --statement SEAL-RELEASE-PROVENANCE.json \
+  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
+cd "$SEAL_HOST_ROOT"
 umask 077
 mkdir -p "$PWD/.seal/receipts"
 touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
 ```
 
+The verifier must print `PASS release provenance: valid signature and 6 exact
+subject digests`; `SHA256SUMS` alone is not an authenticity check.
+
+For a source build instead of the release install, run the following in place
+of the release block:
+
+```bash
+time bash scripts/build_all.sh
+export SEAL_BIN="$SEAL_HOST_ROOT/rust/target/debug/seal-host-rs"
+```
+
+The equivalent executed install sequence is also recorded in
+[Getting started](docs/GETTING-STARTED.md#install-and-verify-the-published-host).
+
 Generate separate config-signing and approval-signing keys:
 
 ```bash
 python3 scripts/generate_keys.py --out-dir .seal
+```
+
+Observed in a fresh checkout while configuring the published v0.1.5 host:
+
+```text
+.seal/approval.key
+.seal/config.key
+.seal/config.pub
+.seal/approval.pub
 ```
 
 The generator validates both Ed25519 pairs before publishing any key. It exits
@@ -484,23 +530,41 @@ Render and sign the starter policy:
 ```bash
 sed "s#/ABS/PATH#$PWD#g" \
   profiles/policies-v1/sqlite-sandbox.payload.json > .seal/payload.json
-node ../seal-assurance-kit/bin/seal policy sign .seal/payload.json \
-  --key .seal/config.key --out .seal/trusted.json
+SEAL_CONFIG_SIGNING_KEY_HEX="$(tr -d '\r\n' < .seal/config.key)" \
+  python3 test/tools/sign_config.py .seal/payload.json > .seal/trusted.json
+chmod 600 .seal/trusted.json
+"$SEAL_BIN" --insecure-development-mode \
+  --config .seal/trusted.json --pubkey "$(cat .seal/config.pub)" \
+  --channel ed25519 --token-file .seal/approval-tokens.ndjson \
+  --approval-pubkey "$(cat .seal/approval.pub)" \
+  --initialize-replay-store
 ```
 
-The signer displays the effective kernel participation and asks you to
-acknowledge it with `y` before signing. Review that summary. For non-interactive
-CI only, add `--yes` after the same review to record the acknowledgement.
+Observed output (the workstation prefix is redacted as `[workstation path]`):
 
-The signer validates the policy shape, signs the exact compact payload, and
-prints the policy hash and public key. Compare the printed public key with
-`.seal/config.pub`; use that value for `CONFIG_PUBLIC_KEY_HEX` below.
+```text
+WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled
+replay store initialized: [workstation path]/.seal/replay.sqlite (schema_version=2, namespace_encoding_version=1)
+```
+
+The signer validates the policy shape and signs the exact compact payload.
+Use `.seal/config.pub` for `CONFIG_PUBLIC_KEY_HEX` below and
+`.seal/approval.pub` for `APPROVAL_PUBLIC_KEY_HEX`.
 
 The starter is intentionally conservative: every declared tool is guarded and
 everything else denies. Current policy-v1 cannot express “allow these reads but
 guard these writes.” Do not mistake this for policy-v2 safe-allow composition.
 
 ## 2. Manual Claude Code wiring
+
+**Execution status: unverified in a clean reader run.** A clean checkout using
+the published v0.1.5 binary can render this project entry, but the setup in
+section 1 does not create `.seal/approval-tokens.ndjson`. When Claude tries to
+launch the configured host, production startup exits 3 before exposing the
+tool. An earlier scratch run reached a blocked `execute_sql` call only because
+that token file already existed from an extra, undocumented setup step. That
+environment-specific observation is retained below, but it is not closure of
+the reader-facing path.
 
 Claude Code project configuration lives in `.mcp.json`; user configuration is
 stored in `~/.claude.json`. Project scope is easiest to review and roll back.
@@ -527,7 +591,7 @@ After Seal, the real command moves behind `--`:
   "mcpServers": {
     "sealSqliteSandbox": {
       "type": "stdio",
-      "command": "/ABS/PATH/rust/target/debug/seal-host-rs",
+      "command": "SEAL_BIN_PATH",
       "args": [
         "--config", "/ABS/PATH/.seal/trusted.json",
         "--pubkey", "CONFIG_PUBLIC_KEY_HEX",
@@ -546,9 +610,30 @@ After Seal, the real command moves behind `--`:
 
 The copy-and-edit version is
 [`profiles/hosts/claude-code.json`](profiles/hosts/claude-code.json). Replace
-`/ABS/PATH`, `CONFIG_PUBLIC_KEY_HEX`, and `APPROVAL_PUBLIC_KEY_HEX`, then
+`SEAL_BIN_PATH` with the installed `SEAL_BIN` absolute path, then replace
+`/ABS/PATH`, `CONFIG_PUBLIC_KEY_HEX`, and
+`APPROVAL_PUBLIC_KEY_HEX`, then
 put it at `.mcp.json`. Run `claude mcp list` and use `/mcp` inside Claude
 Code to check the connection.
+
+Observed excerpt for the generated project entry (absolute paths and key
+arguments elided because this is discovery evidence, not a reusable command):
+
+```text
+sealSqliteSandbox: …/seal-host-rs … -- python3 …/demo/sqlite_mcp_server.py … - ⏸ Pending approval (run `claude` to approve)
+```
+
+Clean launch result against the published v0.1.5 host (the workstation prefix
+is redacted as `[workstation path]`):
+
+```text
+production startup refused: cannot inspect approval token file [workstation path]/.seal/approval-tokens.ndjson: No such file or directory (os error 2)
+configured_host_command_exit=3
+```
+
+**Unverified automation:** the two assurance-kit commands below were not run in
+this evidence pass. The scratch checkout was not adjacent to an assurance-kit
+checkout, and the direct `.mcp.json` route above was used instead.
 
 From the `seal-host` checkout, the assurance kit selects that starter profile,
 fills the checkout path and public keys from `.seal`, performs the merge
@@ -575,6 +660,11 @@ Rollback:
 
 ## 3. Manual Claude Desktop wiring
 
+**Unverified on this evidence host:** Claude Desktop and its macOS configuration
+path are unavailable on Linux. None of the Desktop backup, connect,
+disconnect, restart, or UI commands below was run. They remain reference
+instructions, not v0.1.5 execution evidence.
+
 On macOS the file is:
 
 ```text
@@ -590,11 +680,11 @@ cp "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
 
 Merge the `mcpServers` entry from
 [`profiles/hosts/claude-desktop.json`](profiles/hosts/claude-desktop.json),
-replace its placeholders, save, and fully quit/restart Claude Desktop. The MCP
+replace `SEAL_BIN_PATH` and its other placeholders, save, and fully quit/restart Claude Desktop. The MCP
 project's Desktop instructions and log locations are at
 <https://modelcontextprotocol.io/docs/develop/connect-local-servers>.
 
-The automated equivalent is:
+The unverified automated equivalent is:
 
 ```bash
 node ../seal-assurance-kit/bin/seal connect --client claude --desktop \
@@ -612,43 +702,51 @@ cp "$HOME/Library/Application Support/Claude/claude_desktop_config.json.before-s
 
 ## 4. Approval loop in the real Claude UI
 
+**UI approval path unverified in a clean reader run:** Claude Code cannot
+expose the tool from the printed setup because the configured host refuses the
+missing approval-token file. Claude Desktop was unavailable. The equivalent
+host and CLI path was executed directly with the published v0.1.5 binary and
+is recorded under
+[Deployment](docs/DEPLOY.md#executed-v015-sqlite-and-approval-evidence).
+
 Ask Claude to call `execute_sql` with exactly:
 
 ```sql
 DROP TABLE receipt_sandbox
 ```
 
-Seal returns `approval required: <64 lowercase hex target>` plus a structured
-`result.framed_subject` object containing the exact request frame as base64,
-its byte length, and SHA-256 digest. Save that one-line JSON refusal, then sign
-the exact framed subject it carries:
+Earlier environment-specific Claude Code output, retained as a failed evidence
+boundary rather than a closed path:
 
-```bash
-python3 demo/approve_cli.py \
-  --token-file .seal/approval-tokens.ndjson \
-  --refusal-file /tmp/blocked-response.json \
-  --key-file .seal/approval.key \
-  --approve --yes
+```text
+sealSqliteSandbox - execute_sql (MCP)(sql: "DROP TABLE receipt_sandbox")
+Blocked before execution, same as before — new token this time:
+
+  approval required:
+  d9a6565b5652c8ff0b68546c2d89a283f3e5fa09a04fab9ef033dc5fdc552f41
+
+Nothing ran; receipt_sandbox is untouched.
 ```
 
-Reissue the identical call. It flows once. Repeating it blocks again because
-the approval was consumed.
+That prior scratch directory had a pre-created
+`.seal/approval-tokens.ndjson`; the clean reader sequence does not. Therefore
+the challenge above is not reproducible evidence for the printed setup. The UI
+also did not expose its structured `result.framed_subject`; the direct executed
+path linked above did save that response and run the CLI signer.
 
-For mismatch rejection, approve the original target but ask Claude to run
-`DROP TABLE a_different_table` first. The changed SQL remains blocked; the
+In the direct harness, the identical call flowed once after signing. The
+Claude Code retry was not run because its UI did not provide the framed
+subject. A second post-allow retry, which should block after consumption, was
+also not run in either client UI during this pass.
+
+**Mismatch exercise unverified in the clients:** approving the original target
+and asking Claude to run `DROP TABLE a_different_table` was not attempted in
+this pass. The expected result is that the changed SQL remains blocked and the
 original approval does not widen.
 
-For expiry without waiting, mint a deliberately stale token:
-
-```bash
-python3 demo/approve_cli.py \
-  --token-file .seal/approval-tokens.ndjson \
-  --refusal-file /tmp/blocked-response.json \
-  --key-file .seal/approval.key \
-  --issued-at 1 --approve --yes
-```
-
-The exact call stays blocked and host telemetry records `expired`.
+The expiry example from the earlier page was not rerun through either client
+UI in this evidence pass. It is intentionally omitted rather than presented as
+a v0.1.5 command transcript.
 
 The CLI key is device-local but not hardware-backed. The host, CLI, key file,
 and same-user machine are in this channel’s TCB. A future device-held/passkey
@@ -668,6 +766,11 @@ V2.1 topology change (per-caller transport credentials), not an authorization-de
 field.
 
 ## 5. Authorization-decision lifecycle
+
+**Unverified in this v0.1.5 execution pass:** the local receipt verifiers, CI
+action, and tamper commands below were not run. The pass exercised the released
+host, SQLite child, and direct approval path; it did not have the adjacent
+`seal-check` and assurance-kit layout these commands require.
 
 Every mediated BLOCK or ALLOW writes one v2 authorization decision before an ALLOW can reach
 the server:
@@ -703,6 +806,10 @@ made the decision. Those hashes identify the two bodies; they do not prove
 them equivalent. That is the open Lane C gap.
 
 ## 6. Fail-closed authorization-decision availability
+
+**Unverified in this v0.1.5 execution pass:** the permission-failure exercise
+below was not run. No claim in this section is an observed result from the
+release-binary run recorded above.
 
 Authorization-decision persistence is part of the gate. A full filesystem,
 lost mount, invalid permissions, or unwritable authorization-decision directory blocks forwarding.

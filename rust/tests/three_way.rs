@@ -78,9 +78,9 @@ use std::sync::OnceLock;
 /// (Phase-M kernel `316d741`, host source base `a6f4d5c`, and the public M.7
 /// gate-before-step wrapper; Lean v4.28.0, emscripten 6.0.0). This harness
 /// NEVER rebuilds the wasm; a hash mismatch is a preflight failure.
-const PINNED_WASM_SHA256: &str = "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec";
+const PINNED_WASM_SHA256: &str = "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657";
 const PINNED_WASM_JS_SHA256: &str =
-    "aa6996d130057815cf493a5097a515c58b89df2ae832f2277110bc66d30cdf17";
+    "801417decfbc49b926a16c9968aa3e77e792abf05eb782ec8ed530325fb8c6c5";
 
 const DEFAULT_SEED: u64 = 0x5EA1_C0DE_2026_0716;
 /// Fresh session every SEGMENT cases — bounds failure repro to one segment.

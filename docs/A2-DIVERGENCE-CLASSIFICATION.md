@@ -218,5 +218,5 @@ frame — nine false receipts among nine forwarded vectors.
 # the 18 divergences (native FFI classifier)
 cargo test --test external_json_corpus -- --nocapture
 # the classification module (theorems + 24 #guard pins)
-/home/monkey/bin/leanbuild build Test.A2DivergenceClassification
+lake build Test.A2DivergenceClassification
 ```

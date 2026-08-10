@@ -18,14 +18,34 @@ fi
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
+# A shared developer host may provide `leanbuild` to serialize and bound Lean
+# builds.  Honour an explicit LEANBUILD command first, then that wrapper when
+# available; CI and fresh machines without it retain the ordinary Lake path.
+if [ -z "${LEANBUILD:-}" ]; then
+  if command -v leanbuild >/dev/null 2>&1; then
+    LEANBUILD=leanbuild
+  else
+    LEANBUILD=lake
+  fi
+fi
+
+# `axiom_check` is a default Lake target and links this unmanaged native
+# object through `moreLinkArgs`.  On a fresh checkout `lake build +Ffi` may
+# therefore reach that link before the later FFI stage has had a chance to
+# create it.  Fetch packages first, then build the native prerequisite.
+if [ ! -f .lake/packages/mcp-seal/c/build/libsealcrypto.o ]; then
+  "$LEANBUILD" update
+  bash .lake/packages/mcp-seal/c/build.sh
+fi
+
 echo "==> lake build +Ffi (runtime import closure)"
-lake build +Ffi
+"$LEANBUILD" build +Ffi
 
 echo "==> lake exe axiom_check"
-lake exe axiom_check
+"$LEANBUILD" exe axiom_check
 
 echo "==> scripts/build_ffi_so.sh"
-scripts/build_ffi_so.sh
+LEANBUILD="$LEANBUILD" scripts/build_ffi_so.sh
 
 echo "==> cargo build (rust host)"
 (

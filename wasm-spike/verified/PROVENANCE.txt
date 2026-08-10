@@ -8,7 +8,7 @@ Build date       : 2026-08-02
 Kernel source    : mcp-seal-dev
                    316d74126b4cb164d501fea21738d6880469bcb4
 Host source base : seal-host
-                   a6f4d5c889b350da336d25a051762d0d766bccae
+                   f1a45ca2064cbbed36a28046bf747a56945a5f27
 Host build delta : wasm-spike/build_core.sh adds the four runtime modules
                    Seal.EffectCommitment, Seal.EncodingInjective,
                    SealV2.EffectEnvelope, and SealV2.McpVersionGate to the
@@ -33,12 +33,17 @@ Host build delta : wasm-spike/build_core.sh adds the four runtime modules
                    build_wasm.sh pins LC_ALL=C so the link's glob-derived
                    object order (which assigns wasm function indices) is
                    locale-independent.
+Artifact delta   : removes only the unused `Repr Kernels.TemporalPolicy`
+                   slice. The public three-function ABI, decision semantics,
+                   source-kernel revision, signed schemas, 27-record
+                   conformance surface, and exact axiom ceiling are unchanged.
+                   The link set is audit-clean under the current gate.
 
 Outputs:
 
-  seal.wasm  0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
-             5,847,522 bytes
-  seal.js    aa6996d130057815cf493a5097a515c58b89df2ae832f2277110bc66d30cdf17
+  seal.wasm  28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
+             5,845,911 bytes
+  seal.js    801417decfbc49b926a16c9968aa3e77e792abf05eb782ec8ed530325fb8c6c5
              63,087 bytes
 
 The checked-in wasm and JS are a matched pair copied byte-for-byte from
@@ -115,14 +120,14 @@ Build inputs
 
   lean-toolchain                         db7bb24b756d745bbde83fe92718b51bd3625dae3701ba0f598d0eedcd3f3028
   lake-manifest.json                     ad4d98ca35cde0598794e4c08509bc8b21e79cbab39151c9a65d9e1cb3821dc0
-  Ffi.lean                               ad69e49bd85ec40ebd5738724ad1ae83c175496fd0ccf378b0acbdd967a3f684
+  Ffi.lean                               092b67ff2a17380c3b3f9ed560395443bc0b749a3ae3a42b3d9af1a8256fe0f3
   lean4-v4.28.0-interrupt.patch          e79761006e0e7d9e7cd4024b038a7182cf1c56a31dd8dc4672892a7ec24b4d8a
   provision_toolchain.sh                 0367d4469643cb3fd763ae69318b0c8f01e6ba969795b605df0497870185c494
   build_runtime_wasm.sh                  c553172ea115531c8c6115622449909ecc788ad7e9ca2b8e779e9c44e770f687
-  build_core.sh                          8d81b9573ad2403c406202f0b6d6e6856bdbd4880e3bb7ef2e411d166ec73a3d
+  build_core.sh                          0a2f7c7986e46fb92f142529cdd4b536839defc05331915f0bca163067733760
   build_base.sh                          75970692256e23e6d347e0f8aa481f12f5d59ef301296ee694e135a3948c8a7f
-  build_closure.sh                       441ddde26969c10716ea536dd69b0b94e48a894583b7d6bda8b0eaf2e6e8eaed
-  build_wasm.sh                          f64fee486490db23459c1bf4ab759b27ebb3b229db86a6e8c39a53d84db438bb
+  build_closure.sh                       9ba6168c9bf789444da2cd598dc39b13e10bb4b78a329cef4e4a2dfe38ffd50c
+  build_wasm.sh                          d3ed4e50693625adfc38273d16bdd95c257f523f3e97fe462a03add6c77ee391
   seal_wrapper.c                         4c73ce6fc8cd34d03cbe42689d63039ac8f2a048b5da031f40988cb9dd1e6eb1
   scripts/ffi_shim.c                     a18dd1853a5e1c9ce675e8dc19f85be29f7b8c32e9261a45947d76b2ac53aa07
 
@@ -218,6 +223,7 @@ Fleet pin history
 The machine-readable history in `pin-history.json` is mirrored here without
 collapsing intermediate pin transitions:
 
+  8946ec2a81e0e3e25b8920a9f7506ff4b37219f9 -> 28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
   193c6be1bf83f9d93f14840f2b928fcb46937cc0 -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
   39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
   d5e14d173bd8b2170e244a91ad2ddc42ae168cff -> d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be

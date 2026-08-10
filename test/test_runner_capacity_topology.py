@@ -51,7 +51,6 @@ RELEASE_EVIDENCE_NEEDS = frozenset(
         "export-surface",
         "kernel-hash-footprint",
         "build",
-        "rust-conformance-lean",
         "rust-conformance",
         "contract-freeze",
         "cargo-audit",
@@ -150,9 +149,10 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
 
     def test_ci_rust_conformance_still_runs_real_conformance(self) -> None:
         jobs = job_step_blocks(ROOT / ".github" / "workflows" / "ci.yml")
-        lean = "\n".join("\n".join(step) for step in jobs["rust-conformance-lean"])
+        lean = "\n".join("\n".join(step) for step in jobs["build"])
         rust = "\n".join("\n".join(step) for step in jobs["rust-conformance"])
-        self.assertIn("ci-lean-aggregate -- lake test", lean)
+        self.assertNotIn("rust-conformance-lean", jobs)
+        self.assertIn("lake test 2>&1 | tee /tmp/axioms.txt", lean)
         self.assertNotIn("cargo build --release --bins", lean)
         self.assertNotIn("cargo test --no-fail-fast", lean)
         self.assertIn(
@@ -168,6 +168,7 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
         self.assertIn("scripts/build_ffi_so.sh", rust)
         self.assertNotIn(" lake test", rust)
         self.assertNotIn("ci-lean-aggregate", rust)
+        self.assertNotRegex(rust, r"(?m)^\s*run: lake build\s*$")
 
     def test_release_evidence_conjunction_is_exactly_the_pinned_set(self) -> None:
         ci = ROOT / ".github" / "workflows" / "ci.yml"
@@ -204,7 +205,7 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
             "workflow; publication is the irreversible effect",
         )
 
-    def test_telemetry_phases_cover_all_three_workflows(self) -> None:
+    def test_telemetry_phases_cover_capacity_sensitive_workflows(self) -> None:
         security = (ROOT / ".github" / "workflows" / "security.yml").read_text(
             encoding="utf-8"
         )
@@ -216,7 +217,7 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
         self.assertIn("security-fuzz", security)
         self.assertIn("golden-lean-aggregate", golden)
         self.assertIn("golden-rust-acceptance", golden)
-        self.assertIn("ci-lean-aggregate", ci)
+        self.assertNotIn("ci-lean-aggregate", ci)
         self.assertIn("ci-free-ballast", ci)
         self.assertIn("ci-rust-release", ci)
 

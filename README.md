@@ -3,105 +3,79 @@
 [![CI](https://github.com/velvetmonkey/seal-host/actions/workflows/ci.yml/badge.svg)](https://github.com/velvetmonkey/seal-host/actions/workflows/ci.yml)
 [![Golden Path](https://github.com/velvetmonkey/seal-host/actions/workflows/golden-path.yml/badge.svg)](https://github.com/velvetmonkey/seal-host/actions/workflows/golden-path.yml)
 
-**Stops the unapproved prod action before it ever reaches your real MCP server.**
+**Put one gate between an agent and the effect it wants to cause.**
 
-An agent calls a guarded tool (drop table, send money, rm -rf). Without a matching live approval record for that exact target, seal-host blocks it. The call never reaches the child. With the ticket, it flows. Every decision — allow or refuse — is written as a tamper-evident authorization decision.
+`seal-host` is Seal's deployed effect-boundary adapter for MCP `tools/call`.
+A guarded request without a matching live approval is stopped before the real
+MCP server receives it. Approve that exact request once and the identical call
+can flow once. Every decision leaves replayable evidence.
 
-One command shows the full loop over a fake ledger in seconds (block with 64-hex target, signed approval via CLI, action or explicit refused, side-effect or audit).
+Seal enforces authorization at the effect boundary; it does not claim to read
+agent intent. The family decision rule is machine-checked, effect-commitment
+sufficiency is tested, and sibling verifier surfaces independently re-derive
+deployed decisions against pinned kernel bytes.
 
-The proof story (Lean kernel, TCB, non-interference) comes after you have watched it work.
+## Your first gate
+
+```text
+blocked → approved once → executed → independently verified → tamper rejected
+```
+
+**Published onboarding:** `seal-host` v0.1.5 exists with signed provenance,
+checksums, two Linux archives, two SBOMs, and the standalone verifier. Verify
+the release before unpacking it, then block, approve, flow, and verify a receipt
+yourself with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md). The source
+build remains a separate alternative.
 
 To wire the host into Claude Code, Claude Desktop, Cursor, or VS Code and run
 the real destructive SQLite sandbox, start with [CONFIG.md](CONFIG.md).
 
-## Quick start
+Follow one route: [Getting started](docs/GETTING-STARTED.md). It puts the host
+in front of `/bin/cat`, sends a destructive MCP frame, captures the real
+`approval required: <64-hex>` response, signs an ApprovalRecord v2 while the
+host session remains live, retries the identical bytes, verifies the resulting
+chain, and demonstrates rejection after changing a recorded verdict.
 
-One-time build first (`bash scripts/build_all.sh`: Lean core → FFI `.so` → Rust host). Budget it honestly: the Rust host compiles in **~45s warm** (measured: `cargo build --release`, 44.2s on this box); the dominant cost is the first cold `lake build` of the Lean core, which pulls the toolchain and can run tens of minutes on a fresh machine. After that the loop is instant. From a fresh checkout, run:
+Observed locally on 2026-08-09, the key responses were:
 
-```bash
-bash scripts/build_all.sh && bash scripts/showcase.sh
+```text
+approval required: 2a01d25406f0fc82751a66ddaeb8e79d2104efc4b67699400003704e67c0c565
+signed allow for target=2a01d25406f0fc82751a66ddaeb8e79d2104efc4b67699400003704e67c0c565
+VERIFY OK: 2 entries, chain intact.
+VERIFY FAIL: entry 0 — recorded head does not match recomputed chain.
 ```
 
-## What the showcase proves
+The approved second response was the original JSON-RPC request with only the
+host-added `operation_id`; that echo is the positive observation that the
+child received it.
 
-**30-second showcase (one command, zero external setup)**
+**Available now:** `seal-host` v0.1.5 is the project's first published release.
+Its eight assets include x86_64 and aarch64 Linux archives, their SBOMs,
+checksums, and signed provenance. The [getting-started guide](docs/GETTING-STARTED.md)
+records a real download, checksum, provenance-verification, and extraction run.
+The Windows/WSL2 route remains untested, and the 20m55s source-build path is a
+separate branch rather than a fallback hidden inside release onboarding.
 
-What you see:
-- `BLOCK: ... "approval required: <64-hex>"`
-- CLI signs target-bound record
-- On allow: `SYNTHETIC_LEDGER_ACTION ... (committed via approval)`
-- On deny: host emits `approval refused (signed decline...)` (not a timeout)
-- `=== PASS ===`
+## Know the boundary
 
-Distinct targets, real Ed25519 signed channel, explicit refused path, full audit lines. The synthetic ledger is the fake guarded tool — pure demo, no setup.
+The deployed runtime profile is `compatible`; strict `canonical-l0` is proved
+and modelled but is not the deployed route. The host itself is not proved end
+to end. Rust, wasm, and JavaScript are connected to the Lean kernel by finite
+byte-exact conformance tests. Seal verifies configured authorization evidence;
+whether its key holder is the intended person or service is a custody
+assumption.
 
-(Delegates to shipped demo/see_the_loop.py with LD paths. Setup in DEPLOY.md.)
-
-The rest of this page (and DEPLOY.md) tells you how to stand it in front of a real MCP server.
-
-![Lean](https://img.shields.io/badge/Lean-4.28.0-blue)
-![Rust](https://img.shields.io/badge/Rust-host-orange)
-![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+Start with the family [claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md)
+for proven/tested/assumed/not-claimed status, then read
+[Limitations](docs/LIMITATIONS.md). Effect-commitment sufficiency is **tested,
+not proven**; the private/proprietary `witness-check` analyzer is not part of
+this repository.
 
 <!-- truthbox:begin -->
 > **Runtime profile: `compatible`.** Strict `canonical-l0` is proved and modelled, not the deployed route yet.
 > **Claim:** policy-covered request-effects recognised by the compatible MCP boundary reach the downstream child MCP server only after every applicable Lean kernel returns Allow. Effects configured as guarded additionally require a matching live approval record. Seam failures block; every mediated decision emits replayable evidence.
 > **Non-claim:** the deployed host is not proved end to end, and canonical parser rejection is not currently the runtime gate. Host `ApprovalRecord` tokens are a separate signed channel from the v2 kernel-defined approval tuple. “Canonical” in Seal names the pinned kernel byte rule, not RFC 8785/JCS. Seal verifies the configured authorization evidence. Whether that evidence represents the intended human, device or service is an identity and key-custody assumption, not a proved property.
 <!-- truthbox:end -->
-> Map: [EVALUATOR-START.md](https://github.com/velvetmonkey/seal/blob/main/EVALUATOR-START.md) · profile detail: [PROFILE.md](PROFILE.md).
-
-**Dogfood it (real approval channel, you are the human)**
-
-The showcase scripts one signer. These three demos put *you* in the loop on the real Ed25519 token channel — no mocks, raw host output, exit code follows the actual decision:
-
-```bash
-python3 demo/dogfood_cli.py          # host BLOCKS; you sign in another terminal → the identical call FLOWS
-python3 demo/dogfood_failclosed.py   # signed DENY + a tampered token → both stay blocked, fully automated
-TELEGRAM_BOT_TOKEN=… SEAL_TG_ALLOWED=<id> python3 demo/dogfood_telegram.py   # tap Approve on your phone
-```
-
-Each prints the raw `approval required: <64-hex>` block and the raw second response (`SYNTHETIC_LEDGER_ACTION … committed via approval`, or an explicit refusal). `dogfood_failclosed.py` is one-command and needs no human; `dogfood_telegram.py` exits 2 with 3-step BotFather setup if no bot token is set — nothing is mocked.
-
-**Prove the authorization decision (5-minute cold-reviewer walkthrough)**
-
-The showcase shows the *decision*; this shows the *evidence is tamper-evident*. One command, no external setup:
-
-```bash
-bash scripts/receipt_demo.sh
-```
-
-A destructive `db.execute` is BLOCKED by the real Lean-verified gate, the decisions are sealed into a SHA-256 hash-chain, the intact chain VERIFIES, and then the script mutates and reorders entries to show both are REJECTED. This is the concrete instance of the machine-checked `Host.Record.tamper_evident` theorem. Real output (this machine):
-
-```
-VERIFY OK: 3 entries, chain intact.
-VERIFY FAIL: entry 1 — recorded head does not match recomputed chain.  ✓ mutation REJECTED.
-VERIFY FAIL: entry 0 — recorded head does not match recomputed chain.  ✓ reorder REJECTED
-RECEIPT DEMO PASSED
-```
-
-## What happens when an agent tries to use a production tool
-
-<!-- TODO(asset, shot #5, PROMO-GRADE): real terminal GIF (asciinema) of the full loop —
-     guarded db.execute BLOCKED with the 64-hex target commitment visible, human appends the
-     approval line, the identical call passes, authorization-decision JSON line printed. Capture from the
-     docs/DEPLOY.md walkthrough. Do NOT fake or mock this capture. -->
-<!-- TODO(asset, shot #6, AI-generatable): clean diagram — agent → seal-host (guard) →
-     real MCP server, approval channel as side input, authorization decision as output. Cleaner render of
-     the ASCII art in docs/DEPLOY.md. -->
-
-The Rust host receives MCP traffic and forwards ordinary traffic unchanged. When a guarded `tools/call` arrives, it gathers approval records, filters them for freshness and replay, and calls the Lean kernel through the FFI surface. A matching approval routes the original call forward. No match returns a JSON-RPC error before the downstream tool sees anything.
-
-The host also writes records. The production record chain uses SHA-256. Per-kernel `certHash` values remain the legacy UInt64 audit seals; they are not the target commitment and they are not the record-chain commitment.
-
-## For evaluators and auditors
-
-Seal's proof story is intentionally narrow. The Lean theorems cover the mediation kernel and selected model properties. The binaries and browser artifacts are connected to that proof by reproducible conformance tests, not by a theorem about every compiled instruction.
-
-Start with the family [claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md) (one table: proven / tested / assumed / not claimed), then [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md) for theorem names and file locations, [docs/CONFORMANCE.md](docs/CONFORMANCE.md) for the byte-identity claim, and [docs/TCB.md](docs/TCB.md) for what remains trusted.
-
-This repo also carries the distributed transfer: the coordination-free no-double-spend impossibility (proven abstractly in [crdt-lean](https://github.com/velvetmonkey/crdt-lean)) applied to the gate model's real consume seam as a TTL-scoped instance — within the approval's TTL window, per concurrent replica, never "single-use forever" (`Host.AuthorityFrontierBridge`; see [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md) and the family [authorization mesh](https://github.com/velvetmonkey/seal/blob/main/docs/AUTHORIZATION-MESH.md)).
-
-Mandatory non-claims (canonical copy: [docs/LIMITATIONS.md](docs/LIMITATIONS.md)):
 
 <!-- claims:begin -->
 - Seal proves properties of the mediation KERNEL, not of the whole deployed system.
@@ -114,54 +88,14 @@ Mandatory non-claims (canonical copy: [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
 - The `{propext, Classical.choice, Quot.sound}` axiom-footprint claim is scoped to theorem names imported and pinned by `Test/Axioms.lean`; it is not repository-wide (see “Proof build-wire residual” in the canonical limitations document).
 <!-- claims:end -->
 
-## Beyond mediation: the authorization decision is not a covert channel
+## Next
 
-Machine-checked non-interference: any two approval states that agree on the single authorized bit for a request produce byte-identical decisions **and** byte-identical audit records — for one request (`observe_noninterference`) and across a whole session trace with the durable replay store varying (`stateful_noninterference_trace`). The record chain is tamper-evident under an injective hash step (`Host.Record.tamper_evident` — notably an **axiom-free** theorem: collision resistance and genesis freshness enter as explicit hypotheses, not axioms).
-
-Boundary, stated not hidden: these are **model-level** results over `SealV2.decide` and `Host.auditLine`; the cross-session guarantee necessarily declassifies the replay-routing namespace fields (`publicKey`, `session`, `policyVersion`, and the prune clock — `policyVersion_declassification_necessary` proves that widening is forced, not sloppy), and timing/size side-channels are out of scope. Theorem-by-theorem detail, including exactly what stays hidden: [docs/PROOF-REFERENCE.md](docs/PROOF-REFERENCE.md).
-
-## Verify in five minutes
-
-```sh
-lake build
-lake exe axiom_check
-lake exe sha256_selfcheck
-scripts/build_ffi_so.sh
-cd rust && cargo test
-cd .. && node scripts/conformance_bridge.mjs --wasm
-```
-
-To run the host, build the Lean core and start `rust/target/debug/seal-host-rs` with a signed config and a child MCP server. See `docs/ARCHITECTURE.md` and `docs/CONFORMANCE.md` before deploying.
-
-## The Seal family
-
-_All Seal-family repositories are currently private; these links resolve only for authorised evaluators._
-
-- [seal](https://github.com/velvetmonkey/seal): the private umbrella story, product map, and evaluator path.
-- [mcp-seal-dev](https://github.com/velvetmonkey/mcp-seal-dev): The rulebook, proven.
-- [seal-host](https://github.com/velvetmonkey/seal-host): The guard at the door.
-- [seal-check](https://github.com/velvetmonkey/seal-check): Don't trust. Verify.
-- [seal-live-demo](https://github.com/velvetmonkey/seal-live-demo): Watch it work.
-- [seal-assurance-kit](https://github.com/velvetmonkey/seal-assurance-kit): Check your own boundary.
-- [witness-check](https://github.com/velvetmonkey/witness-check): The sufficiency analyzer. (private/proprietary)
-- [seal-verify-action](https://github.com/velvetmonkey/seal-verify-action): Gate authorization decisions in CI.
-
-## Documentation
-
-- **[Deploy: stand the gate up in front of your own agent](docs/DEPLOY.md)** — clone → build → first blocked call → approve → authorization decision
-- **[Operate the V1 core](docs/OPERATIONS.md)** — authenticated health/readiness, retention, rotation, secrets, and replay recovery
-- [What Seal is NOT](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/WHAT-SEAL-IS-NOT.md) — read this first (private kit repo)
-- [Family claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md) · [family architecture map](https://github.com/velvetmonkey/seal/blob/main/docs/ARCHITECTURE.md) (private umbrella)
-- [Authorization-decision evidence deployment (assurance kit): install to first PASS/FAIL](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/DEPLOYMENT.md) (private kit repo)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Threat model](docs/THREAT-MODEL.md)
-- [Assumptions](docs/ASSUMPTIONS.md)
-- [Proof reference](docs/PROOF-REFERENCE.md)
-- [Conformance](docs/CONFORMANCE.md)
-- [Trusted computing base](docs/TCB.md)
-- [Glossary](docs/GLOSSARY.md)
-- [Limitations](docs/LIMITATIONS.md)
-- [Security policy](SECURITY.md)
+- [Getting started](docs/GETTING-STARTED.md) — the single developer journey.
+- [Configuration](CONFIG.md) — Claude Code, Claude Desktop, Cursor, and VS Code.
+- [Deployment](docs/DEPLOY.md) — production preflight, replay storage, approval
+  channels, and real child servers.
+- [Front-page reference](docs/FRONT-PAGE-REFERENCE.md) — moved proof, fleet,
+  alternative-demo, evaluator, family, and non-claim detail.
 
 ## License
 

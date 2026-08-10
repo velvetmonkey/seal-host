@@ -12,6 +12,67 @@ permissions:
 # failure back into a failing job; never remove that aggregate while
 # continue-on-error is present.
 jobs:
+  q0-keyless-release-provenance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Install cosign for the hosted keyless probe
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with: { cosign-release: v3.0.6 }
+      - id: control_03
+        continue-on-error: true
+        name: Prove Fulcio issuance and certificate-identity verification
+        run: |
+          q0_release="$RUNNER_TEMP/q0-release-provenance"
+          mkdir -p "$q0_release"
+          for arch in aarch64 x86_64; do
+            printf 'q0 keyless release probe %s\n' "$arch" > "$q0_release/seal-host-q0-linux-${arch}.tar.gz"
+            printf '{"bomFormat":"CycloneDX","specVersion":"1.6"}\n' > "$q0_release/seal-host-q0-linux-${arch}.cdx.json"
+          done
+          install -m 0755 scripts/release_provenance.py "$q0_release/release_provenance.py"
+          (
+            cd "$q0_release"
+            sha256sum \
+              release_provenance.py \
+              seal-host-q0-linux-aarch64.cdx.json \
+              seal-host-q0-linux-aarch64.tar.gz \
+              seal-host-q0-linux-x86_64.cdx.json \
+              seal-host-q0-linux-x86_64.tar.gz > SHA256SUMS
+          )
+          identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
+          python3 scripts/release_provenance.py create \
+            --release-dir "$q0_release" \
+            --release-version q0 \
+            --output "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
+            --signer-identity "$identity" \
+            --oidc-issuer "https://token.actions.githubusercontent.com"
+          cosign sign-blob --yes \
+            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            "$q0_release/SEAL-RELEASE-PROVENANCE.json"
+          python3 scripts/release_provenance.py verify \
+            --release-dir "$q0_release" \
+            --release-version q0 \
+            --statement "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
+            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   export:
     runs-on: ubuntu-24.04
     env:
@@ -69,7 +130,7 @@ jobs:
         with: { node-version: "22" }
       - id: control_07
         continue-on-error: true
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with: { cosign-release: v3.0.6 }
       - id: control_08
         continue-on-error: true

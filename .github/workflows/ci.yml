@@ -147,16 +147,14 @@ jobs:
       # real lake test exit status.
       - id: control_20
         continue-on-error: true
-        name: Run aggregate Lean tests
+        name: Run aggregate Lean tests and retain the axiom report
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: lake test
+        run: |
+          set -o pipefail
+          lake test 2>&1 | tee /tmp/axioms.txt
       - id: control_08
         continue-on-error: true
         run: lake build
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_09
-        continue-on-error: true
-        run: set -o pipefail; lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_10
         continue-on-error: true
@@ -194,93 +192,11 @@ jobs:
         continue-on-error: true
         name: Proof-reference citation gate
         run: python3 scripts/check_proof_references.py
-      - id: control_11
-        continue-on-error: true
-        run: lake exe host_unit_tests
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_12
-        continue-on-error: true
-        run: lake exe dx_surface_tests
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_13
-        continue-on-error: true
-        run: lake exe policy_server_identity_tests
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_14
-        continue-on-error: true
-        run: lake exe sha256_selfcheck
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_16
         continue-on-error: true
         name: Build exact A2 parser-divergence classification guards
         run: lake build Test.A2DivergenceClassification
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_17
-        continue-on-error: true
-        name: Run compiled passthrough-perimeter control
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: |
-          set -euo pipefail
-          lake build perimeter_probe
-          lake exe perimeter_probe
-
-      - name: Require every isolated CI step to pass
-        if: ${{ always() }}
-        env:
-          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
-        run: python3 scripts/ci_control_aggregate.py
-
-  # Aggregate Lean tests burn ~2.5 GiB on a cold runner (measured on
-  # golden-path / security lean-aggregate jobs). Co-locating that growth with
-  # cargo test + cargo build --release on one runner is the ENOSPC that killed
-  # rust-conformance on main. Split the aggregate onto a fresh required
-  # predecessor; the Rust job reinstalls only the Lean toolchain pieces it
-  # needs for FFI and targeted lake builds.
-  rust-conformance-lean:
-    runs-on: ubuntu-latest
-    env:
-      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
-    steps:
-      - id: control_01
-        continue-on-error: true
-        uses: actions/checkout@v6.0.3
-      - id: control_02
-        continue-on-error: true
-        name: Skip private Lean aggregate without dependency token
-        if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
-        run: |
-          echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean aggregate."
-      - id: control_03
-        continue-on-error: true
-        name: Guard Lean test-driver wiring and configure private dependency auth
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: |
-          python3 scripts/lean_test_driver_gate.py
-          git config --global \
-            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
-            "https://github.com/velvetmonkey/"
-      - id: control_06
-        continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
-      - id: control_09
-        continue-on-error: true
-        run: test -d .lake/packages/mcp-seal || lake update
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_10
-        continue-on-error: true
-        run: bash .lake/packages/mcp-seal/c/build.sh
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - id: control_31
-        continue-on-error: true
-        name: Run aggregate Lean tests with disk telemetry
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: python3 scripts/ci_disk_telemetry.py ci-lean-aggregate -- lake test
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
@@ -289,7 +205,6 @@ jobs:
         run: python3 scripts/ci_control_aggregate.py
 
   rust-conformance:
-    needs: rust-conformance-lean
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
@@ -313,8 +228,8 @@ jobs:
         run: |
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean/Rust conformance."
       # Hosted ubuntu-latest starts with only ~5 GB free after Lean setup, but a
-      # full rust/target (debug suite + release bins) is ~9 GB locally. Job
-      # split removes the ~2.5 GB lake-test co-location tax; free unused runner
+      # full rust/target (debug suite + release bins) is ~9 GB locally. The Lean
+      # aggregate runs once in `build`, never on this runner; free unused runner
       # SDKs so cargo test + cargo build --release still have headroom.
       - id: control_32
         continue-on-error: true
@@ -446,10 +361,6 @@ jobs:
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: python3 ../scripts/ci_disk_telemetry.py ci-rust-release -- cargo build --release --bins
         working-directory: rust
-      - id: control_16
-        continue-on-error: true
-        run: lake build
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       - id: control_17
         continue-on-error: true
         run: lake build downstream_parser_oracle
@@ -705,7 +616,6 @@ jobs:
       - export-surface
       - kernel-hash-footprint
       - build
-      - rust-conformance-lean
       - rust-conformance
       - contract-freeze
       - cargo-audit
@@ -741,8 +651,8 @@ jobs:
 
       - id: control_04
         continue-on-error: true
-        name: Prove release workflows retain signature and attestation consumers
-        run: python3 test/test_release_proof_consumers.py -v
+        name: Prove release proof consumers and execute fail-closed provenance tests
+        run: python3 -m unittest discover -s test -p 'test_release_pro*.py' -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}

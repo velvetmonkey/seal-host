@@ -301,7 +301,18 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // g2-mutation-ablation.yml and public-export.yml, which this test does not
   // parse. No pre-existing run step was removed or relocated. The run-step
   // FLOOR below is untouched.
-  assert.equal(normal.length, 79, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed 2026-08-08 (this lane, rebased onto the pyyamlpop line): 79 -> 66.
+  // Roadmap 8y item 6 removes exactly thirteen duplicate CI run steps: six
+  // aggregate-child reruns in `build`, all six run steps from the same-commit
+  // `rust-conformance-lean` duplicate job, and the later default `lake build`
+  // rerun in `rust-conformance`. The surviving `build` aggregate now tees its
+  // axiom output for the unchanged sorry-axiom grep. The separately guarded A2
+  // build and every targeted conformance build remain. The thirteen removals
+  // are disjoint from the one step the pyyamlpop lane added -- that step is in
+  // `contract-freeze`, which this change does not touch -- so the two reviews
+  // compose as 78 + 1 - 13. The run-step floor below is unchanged.
+  assert.equal(normal.length, 66, "review the expected run-step inventory explicitly");
   assert.equal(
     shifted.length,
     normal.length,
@@ -315,7 +326,12 @@ test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   const literalRuns = steps.filter((step) => step.run.includes("\n"));
   // 15 -> 16 alongside the run-step inventory above: contract-freeze
   // `control_11` is itself a literal `run: |` block with two commands.
-  assert.equal(literalRuns.length, 16);
+  //
+  // 16 -> 14 for the Lean-execution consolidation: three literal blocks go
+  // (`build:control_17`, and `rust-conformance-lean`'s `control_02` and
+  // `control_03`), and one arrives (`build:control_20`, now a literal block so
+  // it can tee the axiom report the sorry-axiom grep reads).
+  assert.equal(literalRuns.length, 14);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),
     "a literal run block collapsed to its YAML scalar header",

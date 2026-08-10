@@ -14,24 +14,17 @@ It has not completed an independent security audit. Read `docs/LIMITATIONS.md` a
 | `main` | Best effort; not a release channel |
 | Earlier | Unsupported |
 
-## ⚠️ Channel status
+## Channel status
 
-**This policy is not yet in force.** As of 2026-07-22 the repository is private, so the
-GitHub advisory form and this document are not publicly reachable, private vulnerability
-reporting and GitHub-issued CVEs are unavailable (both require a public repository), and
-`velvetmonkey.com` publishes a null MX (`MX 0 .`) so the address below does not currently
-receive mail. `.well-known/security.txt` is checked into this repository but is **not**
-served at an HTTPS origin, so it has no RFC 9116 discovery effect.
-
-Do not rely on the channels below until this section is removed. It is recorded here rather
-than quietly omitted, because a disclosure policy pointing at a dead mailbox is worse than
-no policy at all.
+GitHub private vulnerability reporting is the canonical channel for this
+repository. It is enabled: the GitHub API returned HTTP 200 with `enabled: true`
+when checked on 2026-08-10. The form below is the working private intake channel.
 
 ## Reporting a vulnerability
 
-**Email `security@velvetmonkey.com`.** If email is unavailable, open a private
-[GitHub Security Advisory](https://github.com/velvetmonkey/seal-host/security/advisories/new)
-on this repository.
+Open a private [GitHub Security
+Advisory](https://github.com/velvetmonkey/seal-host/security/advisories/new) on
+this repository. Do not put sensitive report details in a public issue.
 
 Do not disclose publicly before the coordinated-disclosure window below has run.
 

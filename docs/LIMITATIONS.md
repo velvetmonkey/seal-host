@@ -13,6 +13,20 @@ These limits are part of the Seal claim. They are not footnotes.
 - The `{propext, Classical.choice, Quot.sound}` axiom-footprint claim is scoped to theorem names imported and pinned by `Test/Axioms.lean`; it is not repository-wide (see “Proof build-wire residual” in the canonical limitations document).
 <!-- claims:end -->
 
+## Release provenance non-claims
+
+GitHub artifact attestations are unavailable for this user-owned private
+repository. The replacement release provenance uses a Sigstore keyless
+ephemeral key certified for the GitHub Actions release-workflow OIDC identity.
+It proves only that this workflow identity signed the listed SHA-256 byte
+bindings. It does not establish an independently controlled human or
+organisation key, and it does not prove uncompromised repository/tag control,
+GitHub Actions, Sigstore services, runners, compilers, dependencies, or source.
+It also does not prove reproducibility, hermeticity, source-to-binary
+correspondence, or that a Lean theorem applies to compiled bytes. The full
+signed non-claim set and verification command are in
+[`RELEASE-PROVENANCE.md`](RELEASE-PROVENANCE.md).
+
 ## Canonical JSON non-claim
 
 Seal does not claim RFC 8785/JCS conformance. “Canonical” in theorem, type,
