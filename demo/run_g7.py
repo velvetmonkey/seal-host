@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """G7 — end-to-end verified-mediation demo.
 
-Part A drives the full Rust host (all seven kernels, live audit certs) over
+The demo drives the full Rust host (all seven kernels, live audit certs) over
 real MCP stdio against a real tool server, demonstrating the six blocks:
 
   S  poisoned-source destructive call blocked (no approval)
@@ -12,12 +12,8 @@ real MCP stdio against a real tool server, demonstrating the six blocks:
   B  over-budget call denied (cap on executed db calls)
   HU human approval (Ed25519-signed token back-channel) unlocks a legit retry
 
-Part B puts the whole host in front of a REAL LangGraph agent: canary's
-offline P3 compliance pipeline, with SEAL_BIN pointed at the seal-host shim,
-so every vault write the agent makes is mediated by the verified host.
-
-Reproducible and offline: mock MCP server for Part A, canary's frozen
-fixtures for Part B, no API keys. Output: /tmp/seal-host-g7/G7-REPORT.md.
+Reproducible and offline: mock MCP server, no API keys.
+Output: /tmp/seal-host-g7/G7-REPORT.md.
 """
 
 import json
@@ -48,7 +44,6 @@ else:
     CONFIG_SK, PUBKEY = generate_keypair()
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 MOCK = ROOT / "test" / "integration" / "mock_mcp_server.py"
-CANARY = Path(os.environ.get("CANARY_ROOT", Path(__file__).resolve().parents[2] / "canary"))
 
 REPORT: list[str] = []
 AUDIT: list[str] = []
@@ -76,7 +71,11 @@ def config_payload(tmp: Path) -> dict:
             "approval": {
                 "control_file": str(tmp / "approvals.ndjson"),
                 "ttl_seconds": 120,
-                "replay_store": {"sqlite_path": str(tmp / "replay.sqlite")},
+                "replay_store": {
+                    "sqlite_path": str(tmp / "replay.sqlite"),
+                    "schema_version": 2,
+                    "namespace_encoding_version": 1,
+                },
             },
             "tools": [
                 {"name": "db.execute", "mode": "guarded",
@@ -108,13 +107,26 @@ def config_payload(tmp: Path) -> dict:
 
 class Host:
     def __init__(self, tmp: Path):
+        tmp.chmod(0o700)
         config = tmp / "trusted.json"
         config.write_text(sign_payload(config_payload(tmp), CONFIG_SK), encoding="utf-8")
+        config.chmod(0o600)
         (tmp / "approvals.ndjson").touch()
         self.tokens = tmp / "tokens.ndjson"
         self.tokens.touch()
         self.approval_sk, approval_pub = generate_approval_keypair()
         self.approval_session = f"g7/{tmp.name}/{uuid.uuid4().hex}"
+        initialized = subprocess.run(
+            [
+                str(BIN), "--config", str(config), "--pubkey", PUBKEY,
+                "--initialize-replay-store",
+            ],
+            text=True, capture_output=True,
+        )
+        if initialized.returncode != 0:
+            raise RuntimeError(
+                f"replay-store initialization failed:\n{initialized.stderr}"
+            )
         self.proc = subprocess.Popen(
             [
                 str(BIN), "--insecure-development-mode", "--config", str(config),
@@ -194,10 +206,13 @@ def blocked(r: dict) -> bool:
     return r["result"]["isError"] is True
 
 
-def part_a() -> None:
-    say("DEMO", "── Part A: six blocks under one fail-closed host ──")
-    tmp = WORK / "part-a"
+def run_demo() -> None:
+    say("DEMO", "── Six blocks under one fail-closed host ──")
+    tmp = WORK / "blocks"
     tmp.mkdir(parents=True)
+    # The signed-token replay store lives here; the host requires a 0700
+    # host-owned parent for it (bounds who can substitute the store).
+    os.chmod(tmp, 0o700)
     votes = tmp / "votes.ndjson"
     host = Host(tmp)
     destructive = {"database": "prod", "sql": "drop table users"}
@@ -273,8 +288,9 @@ def part_a() -> None:
     AUDIT.extend(l for l in stderr.splitlines() if l.startswith("{"))
 
     # New session for the T replay (budget cap already consumed above).
-    tmp2 = WORK / "part-a-replay"
+    tmp2 = WORK / "replay"
     tmp2.mkdir(parents=True)
+    os.chmod(tmp2, 0o700)
     host2 = Host(tmp2)
     r = host2.call("session.revoke", {})
     assert blocked(r) and "approval required" in r["result"]["content"][0]["text"]
@@ -293,8 +309,9 @@ def part_a() -> None:
 
     # HU — Ed25519 signed-token back-channel: a human-signed approval unlocks
     # a legit retry through a swappable channel (and A3 rejects its replay).
-    tmp3 = WORK / "part-a-ed25519"
+    tmp3 = WORK / "ed25519"
     tmp3.mkdir(parents=True)
+    os.chmod(tmp3, 0o700)
     host3 = Host(tmp3)
     r = host3.call("db.execute", destructive)
     assert blocked(r)
@@ -318,35 +335,14 @@ def part_a() -> None:
     AUDIT.extend(l for l in stderr.splitlines() if l.startswith("{"))
 
 
-def part_b() -> None:
-    say("DEMO", "── Part B: whole host in front of a real LangGraph agent ──")
-    if not (CANARY / "demo" / "run_p3.py").exists():
-        say("AGENT", f"SKIPPED (canary not found at {CANARY}; set CANARY_ROOT)")
-        return
-    env = os.environ.copy()
-    env["SEAL_BIN"] = str(ROOT / "demo" / "seal_host_shim.py")
-    proc = subprocess.run(
-        ["uv", "run", "python", "demo/run_p3.py"],
-        cwd=CANARY, env=env, capture_output=True, text=True, timeout=600,
-    )
-    tail = "\n".join(proc.stdout.splitlines()[-12:])
-    REPORT.append(tail)
-    print(tail)
-    assert proc.returncode == 0, (
-        f"canary-through-seal-host failed (rc={proc.returncode}):\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
-    say("AGENT", "canary LangGraph pipeline ran through the verified host: "
-                 "report written via approved note/create; destructive "
-                 "note/delete blocked at the gate (see P3-REPORT.md)")
-
-
 def main() -> int:
     assert BIN.exists(), f"build first: cargo build (missing {BIN})"
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True)
+    os.chmod(WORK, 0o700)
 
-    part_a()
-    part_b()
+    run_demo()
 
     report = WORK / "G7-REPORT.md"
     lines = ["# G7 — end-to-end verified-mediation demo", ""]

@@ -1,25 +1,13 @@
-# Release Signing Scaffold
+# Release Signing Scaffold (superseded)
 
-`.github/workflows/release-signing-scaffold.yml` is a manual-dispatch scaffold
-for the future signed-release path. It does not sign artifacts today and does
-not request an OIDC token. Its only output is an unsigned manifest, source-input
-hashes, and the future cosign keyless command shape.
+The former unsigned release-signing scaffold is superseded. The active
+`.github/workflows/release.yml` now creates, keyless-signs, and fail-closed
+verifies a concrete in-toto release-provenance statement before publication.
+See [`RELEASE-PROVENANCE.md`](RELEASE-PROVENANCE.md) for its exact claim,
+non-claims, key custody, and consumer command.
 
-Run condition:
-
-```text
-workflow_dispatch only; acknowledge_unsigned_scaffold must be UNSIGNED-SCAFFOLD
-```
-
-Current guarantees:
-
-- no private keys, signing keys, or secret material are committed;
-- no artifact is represented as signed by this workflow;
-- the uploaded `release-signing-scaffold` artifact is unsigned metadata only.
-
-Future keyless signing must be reviewed before enabling:
-
-- add `permissions: id-token: write` only to the real signing workflow;
-- bind the expected GitHub Actions workflow identity in verification policy;
-- sign a concrete artifact list produced by the release build;
-- verify bundles before any release is promoted.
+The old GitHub artifact-attestation call is not silently tolerated: that service
+is unavailable for this user-owned private repository and has been explicitly
+replaced by the signed statement. The release job has `id-token: write`, binds
+the exact workflow identity, signs the complete payload digest list, and refuses
+publication unless cosign and the independent digest gate both answer PASS.

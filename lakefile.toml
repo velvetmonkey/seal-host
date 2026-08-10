@@ -1,12 +1,21 @@
 name = "seal-host"
-version = "0.1.0"
+version = "0.1.6"
+testDriver = "lean_tests"
+# Lint driver: a thin wrapper (LintDriver.lean) around Batteries' runLinter,
+# which derives its module list from this package's defaultTargets (their root
+# modules: Host.Main -> Host, Test.* -> Test). The wrapper exists because the
+# mcp-seal dependency also ships Test.* modules and Lake's driver LEAN_PATH
+# lists dependencies first, so a bare runLinter resolves Test.* into the wrong
+# package. This keeps `lake lint` available as an explicit on-disk diagnostic;
+# CI disables the hours-long lint phase at every lean-action call site.
+lintDriver = "lint_driver"
 # `repin_step2_guards` added 2026-07-25. Test/RepinStep2Guards.lean carried five
 # compile-time `example ... := by native_decide` assertions covering the
 # duplicate-key mediation bypass and the Unicode canonical-equivalence key case,
 # plus three positive controls. The Test lib globs `Test.+`, so Lake knew the
 # module existed; it simply was never a default target, so it had NEVER been
 # built (no olean on disk, verified). Written, correct, and inert.
-defaultTargets = ["seal-host", "axiom_check", "host_unit_tests", "dx_surface_tests", "classify_encoding_tests", "repin_step2_guards"]
+defaultTargets = ["seal-host", "axiom_check", "host_unit_tests", "dx_surface_tests", "classify_encoding_tests", "repin_step2_guards", "guard_unify_tests"]
 moreLinkArgs = [".lake/packages/mcp-seal/c/build/libsealcrypto.o"]
 
 # Mathlib-carrying libraries first so mathlib's transitive pins win resolution order.
@@ -33,7 +42,7 @@ rev = "804c9a6c49400de779a39a5aca00407bd96c46f4"
 [[require]]
 name = "mcp-seal"
 git = "https://github.com/velvetmonkey/mcp-seal-dev.git"
-rev = "bd03bf7b5ef1d7d29792d08b14f90d0654954207"
+rev = "316d74126b4cb164d501fea21738d6880469bcb4"
 
 # Unicode 17 canonical decomposition data for the raw-wire object-key
 # identity guard. This is pinned to the last release built with Lean 4.28.0.
@@ -53,6 +62,14 @@ globs = ["Host", "Host.+", "Kernels", "Kernels.+", "Ffi", "FfiSpec"]
 [[lean_lib]]
 name = "Test"
 globs = ["Test.+"]
+
+# The `lake lint` entry point — see the lintDriver comment above. `needs`
+# makes Lake build the real linter BEFORE running this driver: the driver
+# itself must never spawn a nested `lake build` while `lake lint` runs.
+[[lean_exe]]
+name = "lint_driver"
+root = "LintDriver"
+needs = ["batteries/runLinter"]
 
 [[lean_exe]]
 name = "seal-host"
@@ -110,8 +127,30 @@ root = "Test.L0LivenessMeasure"
 name = "repin_step2_guards"
 root = "Test.RepinStep2Guards"
 
+[[lean_exe]]
+name = "guard_unify_tests"
+root = "Test.GuardUnify"
+
 # V3.1 downstream parser-agreement oracle. Given one terminator-stripped
 # JSON-RPC frame, print the production classifier's CanonicalAction as JSON.
 [[lean_exe]]
 name = "downstream_parser_oracle"
 root = "Test.DownstreamParserOracle"
+
+# Passthrough-perimeter control: runs the compiled router + widened `wrun`
+# over the witness corpus and exits non-zero (RED) if any message inside the
+# mediation perimeter S is ever forwarded to the child undecided, or if a
+# witnessed escape stops escaping. The kernel cannot evaluate `Json.parse`
+# (partial), so this exit-status control complements the module's #guards.
+[[lean_exe]]
+name = "perimeter_probe"
+root = "Test.PerimeterProbe"
+
+# Lake accepts one test driver, while the suite's assertions are spread across
+# ten executables. Building this driver builds every child (including the four
+# whose assertions run at elaboration time), then Test.LeanTests runs each child
+# and propagates the first nonzero exit status.
+[[lean_exe]]
+name = "lean_tests"
+root = "Test.LeanTests"
+needs = ["axiom_check", "host_unit_tests", "dx_surface_tests", "classify_encoding_tests", "policy_server_identity_tests", "honesty_matrix", "sha256_selfcheck", "repin_step2_guards", "guard_unify_tests", "perimeter_probe"]

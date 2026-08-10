@@ -19,11 +19,21 @@ import Host.RecordReflection
 import Host.ReplayIsolation
 import Host.StatefulNI
 import Host.AuthorityFrontierBridge
-import Host.DeployedAdapter
+import Host.GatedSinkAdapter
+import Host.PassthroughPerimeter
+import Host.AuditSeam
+import Host.SpawnSeam
 import Host.CapabilityAdequacy
 import Host.DispatchSpelled
 import Host.Principal
 import Host.PrincipalCommit
+import Host.ObjectB
+import Host.ObjectA
+import Host.DurabilityA6
+import Host.EgressPerimeter
+import Host.EgressStrength
+import Host.PolicyOverlap
+import Host.StrictPerimeter
 import Kernels.PrincipalBudget
 import FfiSpec
 import Kernels
@@ -73,6 +83,11 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 
 /-- info: 'Host.classifyLine' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.classifyLine
+
+/--
+info: 'Host.classifyLine_act_ast' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_act_ast
 
 /-- info: 'Host.combineVerdicts' depends on axioms: [propext] -/
 #guard_msgs in #print axioms Host.combineVerdicts
@@ -128,6 +143,11 @@ info: 'SealCore.consumed_approval_not_live' depends on axioms: [propext, Classic
 info: 'Host.composed_no_conflicting_agreement' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.composed_no_conflicting_agreement
+
+/--
+info: 'Host.classify_act_witness' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classify_act_witness
 
 /--
 info: 'Host.and_combinator_preserves_invariants' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -603,32 +623,74 @@ info: 'Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one'' depends on axi
 /-- info: 'Host.AuthorityFrontierBridge.sealv2_token_mesh_safe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Host.AuthorityFrontierBridge.sealv2_token_mesh_safe
 
--- Deployed-adapter conformance by name: O1∧O2 + non-vacuity at the alias
--- (Host/DeployedAdapter.lean; model = W2-T6.1 sealAdapter, no duplication)
+-- Gated-sink adapter conformance by name: O1∧O2 + non-vacuity at the alias
+-- (Host/GatedSinkAdapter.lean; model = W2-T6.1 sealAdapter, no duplication).
+-- Renamed from `deployed_*` (K3): the alias covers the gated child-input
+-- sink (P2/P3) only, not P1 passthrough (see Host/PassthroughPerimeter.lean).
 
-/-- info: 'Host.Channel.deployed_O1' depends on axioms: [propext] -/
-#guard_msgs in #print axioms Host.Channel.deployed_O1
+/-- info: 'Host.Channel.gatedSink_O1' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.gatedSink_O1
 
-/-- info: 'Host.Channel.deployed_O2' depends on axioms: [propext] -/
-#guard_msgs in #print axioms Host.Channel.deployed_O2
-
-/--
-info: 'Host.Channel.deployed_preserves_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms Host.Channel.deployed_preserves_non_bypass
-
-/-- info: 'Host.Channel.deployed_nonvacuous' does not depend on any axioms -/
-#guard_msgs in #print axioms Host.Channel.deployed_nonvacuous
+/-- info: 'Host.Channel.gatedSink_O2' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Host.Channel.gatedSink_O2
 
 /--
-info: 'Host.Channel.deployed_live_emit_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.Channel.gatedSink_preserves_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms Host.Channel.deployed_live_emit_of_allow
+#guard_msgs in #print axioms Host.Channel.gatedSink_preserves_non_bypass
+
+/-- info: 'Host.Channel.gatedSink_nonvacuous' does not depend on any axioms -/
+#guard_msgs in #print axioms Host.Channel.gatedSink_nonvacuous
 
 /--
-info: 'Host.Channel.deployed_live_license_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Host.Channel.gatedSink_live_emit_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms Host.Channel.deployed_live_license_of_allow
+#guard_msgs in #print axioms Host.Channel.gatedSink_live_emit_of_allow
+
+/--
+info: 'Host.Channel.gatedSink_live_license_of_allow' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Channel.gatedSink_live_license_of_allow
+
+-- Passthrough perimeter (K4): the widened alphabet includes P1, the byte
+-- classes characterise the router, and non-bypass FAILS over the widening
+-- while the gated sink survives (Host/PassthroughPerimeter.lean; every
+-- theorem there is also pinned inline). Central-audit copies of the
+-- capstones:
+
+/--
+info: 'Host.Perimeter.mediation_perimeter' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.mediation_perimeter
+
+/--
+info: 'Host.Perimeter.widened_non_bypass_fails' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.widened_non_bypass_fails
+
+/--
+info: 'Host.Perimeter.widened_non_bypass_fails_live' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.widened_non_bypass_fails_live
+
+/--
+info: 'Host.Perimeter.wchannel_gated_sink_non_bypass' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.wchannel_gated_sink_non_bypass
+
+/--
+info: 'Host.Perimeter.toolsCallShape_eq_toolsCall?' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.Perimeter.toolsCallShape_eq_toolsCall?
+
+/-- info: 'Host.Perimeter.wireSafe' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Perimeter.wireSafe
+
+/-- info: 'Host.Perimeter.refusedClass' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Perimeter.refusedClass
+
+/-- info: 'Host.Perimeter.inPerimeter' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.Perimeter.inPerimeter
 
 -- Capability adequacy, UNCONDITIONAL (Host/Encoding.lean +
 -- Host/CapabilityAdequacy.lean, ARIA S6): injective netstring encoding +
@@ -955,6 +1017,9 @@ info: 'Host.ReceiptIdentity.caller_authenticator_satisfiable' depends on axioms:
 -/
 #guard_msgs in #print axioms Host.ReceiptIdentity.caller_authenticator_satisfiable
 
+/-- The axiom gate's runtime entry point is a no-op banner: every check in
+    this module is a compile-time `#guard_msgs` pin, so building the exe IS
+    the gate. -/
 def main : IO Unit :=
   IO.println "axiom gate passed: all checks pinned by #guard_msgs at compile time"
 
@@ -966,6 +1031,34 @@ def main : IO Unit :=
 info: 'Host.classifyLine_refuse_of_unsafe' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_agreement' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_agreement
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_surrogates' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_surrogates
+
+/--
+info: 'Host.classifyLine_refuse_of_unsafe_depth' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.classifyLine_refuse_of_unsafe_depth
+
+/--
+info: 'Host.SurrogateEscapes.unsafe_implies_surrogateEscape' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.SurrogateEscapes.unsafe_implies_surrogateEscape
+
+/--
+info: 'Host.SurrogateEscapes.safe_of_no_surrogateEscape' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms Host.SurrogateEscapes.safe_of_no_surrogateEscape
+
+/-- info: 'Host.NestingDepth.wireDepthSafe_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.NestingDepth.wireDepthSafe_iff
 
 /--
 info: 'Host.stepRoute_refuse_ne_forward' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -1161,3 +1254,90 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
 
 /-- info: 'Ffi.receipt_principal_authenticated' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Ffi.receipt_principal_authenticated
+
+-- Object B: DECIDED + RECORDED only.
+
+/-- info: 'Host.ObjectB.kernel_effect_boundary_matches_payload' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.kernel_effect_boundary_matches_payload
+
+/-- info: 'Host.ObjectB.verdict_decoder_matches_payload' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.verdict_decoder_matches_payload
+
+/-- info: 'Host.ObjectB.check_refuses_kernel_effect_mismatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.check_refuses_kernel_effect_mismatch
+
+/-- info: 'Host.ObjectB.check_refuses_verdict_mismatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.check_refuses_verdict_mismatch
+
+/-- info: 'Host.ObjectB.context_delegation_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_delegation_predicate_accepted
+
+/-- info: 'Host.ObjectB.context_kernel_production_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_kernel_production_predicate_accepted
+
+/-- info: 'Host.ObjectB.context_recording_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.context_recording_predicate_accepted
+
+/-- info: 'Host.ObjectB.core_claim_does_not_constrain_release_or_execution' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.core_claim_does_not_constrain_release_or_execution
+
+/-- info: 'Host.ObjectB.asserted_provenance_cannot_affect_verdict' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectB.asserted_provenance_cannot_affect_verdict
+
+-- Object A and Approval Statement: guarded presented bytes, independently gated.
+
+/-- info: 'Host.ObjectA.presented_statement_bytes_match_fields' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.presented_statement_bytes_match_fields
+
+/-- info: 'Host.ObjectA.judged_request_digest_matches_bytes' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.judged_request_digest_matches_bytes
+
+/-- info: 'Host.ObjectA.kernel_effect_boundary_accepts_judged_request' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.kernel_effect_boundary_accepts_judged_request
+
+/-- info: 'Host.ObjectA.context_time_is_inside_validity_window' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.context_time_is_inside_validity_window
+
+/-- info: 'Host.ObjectA.context_request_signer_delegation_predicate_accepted' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.context_request_signer_delegation_predicate_accepted
+
+/-- info: 'Host.ObjectA.context_adapter_profile_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.context_adapter_profile_predicate_accepted
+
+/-- info: 'Host.ObjectA.context_signature_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.context_signature_predicate_accepted
+
+/-- info: 'Host.ObjectA.check_refuses_statement_field_mismatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ObjectA.check_refuses_statement_field_mismatch
+
+/-- info: 'Host.ApprovalStatement.presented_statement_bytes_match_fields' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.presented_statement_bytes_match_fields
+
+/-- info: 'Host.ApprovalStatement.context_time_is_inside_validity_window' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.context_time_is_inside_validity_window
+
+/-- info: 'Host.ApprovalStatement.context_approver_delegation_predicate_accepted' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.context_approver_delegation_predicate_accepted
+
+/-- info: 'Host.ApprovalStatement.context_adapter_profile_predicate_accepted' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.context_adapter_profile_predicate_accepted
+
+/-- info: 'Host.ApprovalStatement.context_signature_predicate_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.context_signature_predicate_accepted
+
+/-- info: 'Host.ApprovalStatement.check_refuses_statement_field_mismatch' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound] -/
+#guard_msgs in #print axioms Host.ApprovalStatement.check_refuses_statement_field_mismatch

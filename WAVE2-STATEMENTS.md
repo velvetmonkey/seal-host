@@ -6,25 +6,37 @@ never conclusions. Each entry: frozen statement bound to live symbols,
 subsumption verdict against the landed L0/L1 stack, trust boundary, and the
 non-vacuity plan.
 
+**Canonical-byte terminology.** Every `CanonicalBytes`, “canonical bytes”,
+and “canonical serialization” below names the pinned Seal kernel's byte rule,
+not RFC 8785/JCS. Known string, number, and property-order divergences and the
+host-side agreement containment are stated in
+[`docs/CANONICAL-BYTE-CONTRACT.md`](docs/CANONICAL-BYTE-CONTRACT.md).
+
 **Labeling.** Targets are `W2-T1 … W2-T6`. The repo's TCB ledger
 (`docs/SEAL-SYSTEM-TCB.md`) already uses bare T-numbers for *trusted
 assumptions* (its T6 = wall clock + `a3.rs`); wave labels always carry the
 `W2-` prefix to avoid collision.
 
-**Build bar (all targets).** Green `lake build`; axioms exactly
+**Build bar (landed Wave-2 targets, not every theorem-bearing module).** Green `lake build`; axioms exactly
 `[propext, Classical.choice, Quot.sound]`; zero `sorry`; zero `native_decide`
 (pulls `Lean.ofReduceBool`); per-theorem pinned `#guard_msgs in #print axioms`
 transcript (Test/Axioms.lean convention — drift fails the build via the
 `axiom_check` exe); witnessed non-vacuity per the conventions of
 `Host/CanonicalL0.lean:116-150`.
 
-**Build wiring.** Bare `lake build` builds only the `Host.Main` and
-`Test.Axioms` import closures (`defaultTargets = ["seal-host", "axiom_check"]`)
-— `Host/CanonicalL0*.lean` today builds only under `lake build Ffi`. Every new
-Wave-2 module is therefore imported from `Test/Axioms.lean` (where its pins
-live anyway): `axiom_check` is both the axiom gate and the build wire. New
-modules are NOT added to the `Host.lean`/`Kernels.lean` roots (that would drag
-them — and for W2-T4, Mathlib elaboration — into the FFI exe closures).
+**Build wiring.** Bare `lake build` builds the closures of every live entry in
+`defaultTargets`, which now includes test executables beyond `seal-host` and
+`axiom_check`. For proof coverage, the relevant wire remains the
+`Test.Axioms` closure: landed seal-host Wave-2 modules are imported there and
+their guarded pins run through `axiom_check`. In particular,
+`Host.CanonicalL0` is live through `Host.CompositionBytes`; its companion
+`Host.CanonicalL0Liveness` remains outside that closure (release-claim ruling).
+This paragraph is not a repository-wide coverage claim: measured 2026-08-05,
+two theorem-bearing modules sit outside `Test.Axioms` —
+`Host.CanonicalL0Liveness` and `Test.A2DivergenceClassification` — named in
+`docs/LIMITATIONS.md#proof-build-wire-residual`. New proof modules are not made
+live merely by the `Ffi` library glob; they need an actual default-target
+import path.
 
 **Verdict summary.**
 

@@ -6,144 +6,321 @@ on:
   push:
   pull_request:
 
+# Every step in each job reports independently. The final aggregate converts
+# any recorded failure back into a failing job; never remove that aggregate
+# while continue-on-error is present.
 jobs:
-  kernel-hash-footprint:
+  export-surface:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: "22"
-      - name: Gate the generated kernel-hash footprint
-        run: node scripts/kernel_hash_footprint.mjs --check
-      - name: Prove every locked repository is scanned
-        run: node --test test/kernel_hash_footprint_meta.test.mjs
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Require private dependency source access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - id: control_03
+        continue-on-error: true
+        name: Configure private dependency access
+        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - id: control_04
+        continue-on-error: true
+        name: Check out the manifest-pinned mcp-seal source
+        run: |
+          mapfile -t dependency < <(python3 - <<'PY'
+          import json
+
+          with open("lake-manifest.json", encoding="utf-8") as manifest_file:
+              manifest = json.load(manifest_file)
+          package = next(
+              package
+              for package in manifest["packages"]
+              if "mcp-seal" in package.get("name", "")
+          )
+          print(package["url"])
+          print(package["rev"])
+          PY
+          )
+          test "${#dependency[@]}" -eq 2
+          mkdir -p .lake/packages
+          git clone --filter=blob:none --no-checkout "${dependency[0]}" .lake/packages/mcp-seal
+          git -C .lake/packages/mcp-seal checkout --detach "${dependency[1]}"
+          test "$(git -C .lake/packages/mcp-seal rev-parse HEAD)" = "${dependency[1]}"
+      - id: control_05
+        continue-on-error: true
+        name: Gate native and wasm export surfaces
+        run: python3 scripts/export_surface_gate.py
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
+  # The push-side invocation of the ONE reusable fleet-acceptance workflow
+  # (roadmap 8y item 8). The commands live in acceptance.yml only; the tag
+  # path (release.yml `fleet-gate`) invokes the same file, so the two paths
+  # cannot drift. The job id is kept so the release-evidence conjunction and
+  # its pinned needs-set are unchanged.
+  kernel-hash-footprint:
+    uses: ./.github/workflows/acceptance.yml
+    secrets: inherit
 
   build:
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Skip private Lean build without dependency token
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_15
+        continue-on-error: true
+        name: Verify wasm project MODULES close over Lean imports
+        run: |
+          python3 scripts/wasm_module_closure_gate.py
+          python3 -m unittest discover -s test -p 'test_wasm_module_closure_gate.py' -v
+      - id: control_02
+        continue-on-error: true
+        name: Skip private Lean build without dependency token
         if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
         run: |
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean build."
-      - name: Configure private Lake dependency auth
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
+          python3 scripts/lean_test_driver_gate.py
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           use-github-cache: false
           build: false
-      - run: test -d .lake/packages/mcp-seal || lake update
+          test: false
+          lint: false
+      - id: control_05
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - name: PINS ledger anti-drift gate
+      - id: control_06
+        continue-on-error: true
+        name: PINS ledger anti-drift gate
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: node scripts/pins_gate.mjs --check
-      - run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_07
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake build
+      # lean-action installs the toolchain and restores the Mathlib cache, but
+      # cannot build this package's unmanaged native link input before its own
+      # test sub-step. Run the aggregate driver explicitly after control_07 so
+      # the native prerequisite is present and the control aggregator sees the
+      # real lake test exit status.
+      - id: control_20
+        continue-on-error: true
+        name: Run aggregate Lean tests and retain the axiom report
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe axiom_check 2>&1 | tee /tmp/axioms.txt
+        run: |
+          set -o pipefail
+          lake test 2>&1 | tee /tmp/axioms.txt
+      - id: control_08
+        continue-on-error: true
+        run: lake build
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
+      - id: control_10
+        continue-on-error: true
+        run: "! grep -E 'sorryAx|Lean\\.ofReduceBool' /tmp/axioms.txt"
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe host_unit_tests
+      - id: control_18
+        continue-on-error: true
+        name: Gate every explicit theorem/lemma module against CI build closures
+        run: |
+          # The trigger reader parses the on: block as YAML rather than
+          # matching indentation as literal text. PyYAML is provisioned once
+          # at the top of this job by ./.github/actions/pyyaml, which is the
+          # sole provisioning point for the whole estate; the three-way
+          # install fallback that used to be inlined here lives there now.
+          # scripts/workflow_pyyaml_gate.py fails closed if this job -- or
+          # any other job that runs a PyYAML-dependent script -- stops
+          # referencing it.
+          python3 scripts/proof_inventory.py
+          python3 -m unittest discover -s test -p 'test_proof_inventory.py' -v
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe dx_surface_tests
+      # G1 repo-wide reachability gate. Fails closed on unresolved imports
+      # (including typo of a local root and absent upstream modules), on any
+      # ORPHANED theorem-bearing module outside PERMANENT_EXCLUSIONS, and on
+      # UNCLASSIFIED rows. Exit 2 means the inventory could not be produced at
+      # all. Requires .lake/packages (control_04/05) so upstream names resolve.
+      # An instrument that always exits 0 is not a gate — do not soften this.
+      - id: control_33
+        continue-on-error: true
+        name: Gate repo-wide proof-module reachability (G1)
+        run: |
+          python3 scripts/proof_reach.py
+          python3 -m unittest discover -s test -p 'test_proof_reach.py' -v
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_19
+        continue-on-error: true
+        name: Proof-reference citation gate
+        run: python3 scripts/check_proof_references.py
+      - id: control_16
+        continue-on-error: true
+        name: Build exact A2 parser-divergence classification guards
+        run: lake build Test.A2DivergenceClassification
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   rust-conformance:
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Skip private conformance without dependency token
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Skip private conformance without dependency token
         if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
         run: |
           echo "::notice::SEAL_CI_READ_TOKEN is not configured; skipping private Lean/Rust conformance."
-      - name: Configure private Lake dependency auth
+      # Hosted ubuntu-latest starts with only ~5 GB free after Lean setup, but a
+      # full rust/target (debug suite + release bins) is ~9 GB locally. The Lean
+      # aggregate runs once in `build`, never on this runner; free unused runner
+      # SDKs so cargo test + cargo build --release still have headroom.
+      - id: control_32
+        continue-on-error: true
+        name: Free unused runner SDKs before private conformance (disk headroom)
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: |
+          set -uo pipefail
+          python3 scripts/ci_disk_telemetry.py ci-free-ballast -- \
+            bash -euo pipefail -c '
+              df -h /
+              # Keep Python, Node, Docker, and anything setup-rust-toolchain
+              # needs. Remove only large hosted SDKs this job never uses.
+              sudo rm -rf \
+                /usr/share/dotnet \
+                /usr/local/lib/android \
+                /opt/ghc \
+                /usr/local/share/powershell \
+                /usr/share/swift \
+                /usr/local/.ghcup \
+                /opt/hostedtoolcache/CodeQL \
+                /opt/hostedtoolcache/go \
+                /opt/hostedtoolcache/Ruby \
+                2>/dev/null || true
+              sudo apt-get clean || true
+              df -h /
+            '
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          python3 scripts/lean_test_driver_gate.py
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_04
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           toolchain: "1.96.0"
           components: rustfmt, clippy
           cache: false
-      - run: cargo fmt --check
+      - id: control_05
+        continue-on-error: true
+        run: cargo fmt --check
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_06
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           use-github-cache: false
           build: false
-      - uses: actions/setup-node@v7.0.0
+          test: false
+          lint: false
+      - id: control_07
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         with:
           node-version: "22"
-      - name: Verify tracked wasm conformance artifact is present
+      - id: control_08
+        continue-on-error: true
+        name: Verify tracked wasm conformance artifact is present
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         run: test -s wasm-spike/verified/seal.js && test -s wasm-spike/verified/seal.wasm
-      - run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_09
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_10
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake build +Ffi:c.o.export
+      - id: control_11
+        continue-on-error: true
+        run: lake build +Ffi:c.o.export
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: scripts/build_ffi_so.sh
+      - id: control_12
+        continue-on-error: true
+        run: scripts/build_ffi_so.sh
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: cargo clippy --all-targets -- -D warnings
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        working-directory: rust
-      # --no-fail-fast: a test binary that dies on a signal instead of
-      # reporting otherwise takes every binary queued behind it down with it,
-      # and cargo exits non-zero having silently run a fraction of the suite
-      # (observed: 44 of 60 reported). The libunwind/libgcc DT_NEEDED tie that
-      # caused it is fixed in build.rs; this is the belt to its braces, so a
-      # partial run can never again be mistaken for a whole one.
-      - run: cargo test --no-fail-fast
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        working-directory: rust
-      - run: cargo build --release --bins
+      - id: control_13
+        continue-on-error: true
+        run: cargo clippy --all-targets -- -D warnings
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
-      - run: lake build
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: lake exe honesty_matrix > /tmp/honesty.json
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: node scripts/conformance_bridge.mjs --wasm
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - name: Exercise deployed production startup and record emission
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        run: node scripts/production_startup_conformance.mjs
-      # Three-way differential at CI volume: native .so ≡ pinned seal.wasm ≡
-      # interpreted Lean model, byte-for-byte per step input (the default-256
-      # smoke already ran inside `cargo test` above). 25000 fuzz cases + the
-      # curated families ≈ 30 s wall measured locally. This is differential
-      # EVIDENCE over the cases tried — never a universal binary≡model claim
-      # (Lane C stays a trusted compile). Soak knobs: rust/tests/three_way.rs.
-      - run: SEAL_THREE_WAY_CASES=25000 cargo test --test three_way three_way_agreement -- --nocapture
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        working-directory: rust
-      - run: bash scripts/receipt_demo.sh
-        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       # V2.3 byte-twin guard, named so nobody has to trust that the generic
-      # `cargo test` above covered it: the Rust encoder must reproduce the
+      # `cargo test` below covered it: the Rust encoder must reproduce the
       # Lean-spec-generated expectation over the shared corpus
       # (rust/tests/vectors/envelope_v23_twin_corpus.json), and the corpus
       # golden line must equal the #guard_msgs literal frozen in
@@ -153,19 +330,120 @@ jobs:
       # (un-ignored on the pin `6c74b61`, which contains mcp-seal-dev
       # `4f39f20`). It shells out to `lake env lean --run
       # scripts/envelope_v23_twin_lane.lean`, so it needs the olean for
-      # SealV2.EffectEnvelope to exist. Neither `lake build +Ffi:c.o.export`
-      # nor the default-target `lake build` above produces it: lake builds only
-      # what the default targets import, and locally that left 9 of the 22
-      # SealV2 modules built, EffectEnvelope among the missing 13. Without this
-      # explicit step the test fails with
+      # SealV2.EffectEnvelope to exist. The earlier
+      # `lake build +Ffi:c.o.export` does not produce it, and neither does the
+      # default-target `lake build` later in this job: lake builds only what
+      # the requested targets import. Locally that left 9 of the 22 SealV2
+      # modules built, EffectEnvelope among the missing 13. Without this
+      # explicit prerequisite before the generic Cargo suite the test fails
+      # with
       #   error: object file '.../SealV2/EffectEnvelope.olean' ... does not exist
       # which reads like a byte divergence and is not one. Observed on main at
       # 23c3c03 (RUN twin-red-2026-07-26).
-      - run: lake build SealV2.EffectEnvelope
+      - id: control_27
+        continue-on-error: true
+        run: lake build SealV2.EffectEnvelope
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-      - run: cargo test --test envelope_v23_twin
+      # --no-fail-fast: a test binary that dies on a signal instead of
+      # reporting otherwise takes every binary queued behind it down with it,
+      # and cargo exits non-zero having silently run a fraction of the suite
+      # (observed: 44 of 60 reported). The libunwind/libgcc DT_NEEDED tie that
+      # caused it is fixed in build.rs; this is the belt to its braces, so a
+      # partial run can never again be mistaken for a whole one.
+      - id: control_14
+        continue-on-error: true
+        run: cargo test --no-fail-fast
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
+      - id: control_15
+        continue-on-error: true
+        name: Build release bins with disk telemetry
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 ../scripts/ci_disk_telemetry.py ci-rust-release -- cargo build --release --bins
+        working-directory: rust
+      - id: control_17
+        continue-on-error: true
+        run: lake build downstream_parser_oracle
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_18
+        continue-on-error: true
+        name: Build debug Rust host for Python integration entrypoint
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: cargo build --bins
+        working-directory: rust
+      - id: control_19
+        continue-on-error: true
+        name: Prove server/discover request and response byte preservation
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 test/integration/test_discover_preservation.py
+      - id: control_20
+        continue-on-error: true
+        name: Run Python host integration entrypoints
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          python3 test/integration/test_host.py
+          python3 test/integration/test_host_rs.py
+      - id: control_30
+        continue-on-error: true
+        name: Prove the secure-default golden path accepts signed config and denies tamper
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: python3 test/test_golden_path_secure_default.py -v
+      - id: control_21
+        continue-on-error: true
+        run: lake exe honesty_matrix > /tmp/honesty.json
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # Downstream of control_21 and of nothing else: with a dead producer this
+      # gate has NO finding of its own, and must not be able to report one.
+      - id: control_22
+        continue-on-error: true
+        run: node scripts/honesty-matrix.mjs --check /tmp/honesty.json
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' && steps.control_21.outcome == 'success' }}
+      - id: control_23
+        continue-on-error: true
+        run: node scripts/conformance_bridge.mjs --wasm
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_24
+        continue-on-error: true
+        name: Exercise deployed production startup and record emission
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: node scripts/production_startup_conformance.mjs
+      # Three-way differential at CI volume: native .so ≡ pinned seal.wasm ≡
+      # interpreted Lean model, byte-for-byte per step input (the default-256
+      # smoke already ran inside `cargo test` above). 25000 fuzz cases + the
+      # curated families ≈ 30 s wall measured locally. This is differential
+      # EVIDENCE over the cases tried — never a universal binary≡model claim
+      # (Lane C stays a trusted compile). Soak knobs: rust/tests/three_way.rs.
+      - id: control_25
+        continue-on-error: true
+        run: SEAL_THREE_WAY_CASES=25000 cargo test --test three_way three_way_agreement -- --nocapture
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        working-directory: rust
+      - id: control_26
+        continue-on-error: true
+        run: bash scripts/receipt_demo.sh
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_28
+        continue-on-error: true
+        run: cargo test --test envelope_v23_twin
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        working-directory: rust
+      # M.4a mutation control. Deliberately has no `if:`: skipped controls fail
+      # the aggregate unless their exact workflow/job/id is explicitly
+      # allowlisted, and control_29 is intentionally not allowlisted. Keeping
+      # it unconditional prevents this ablation from becoming an allowed
+      # invisible orphan. It needs the FFI .so and cargo toolchain produced
+      # above; if those are missing the script fails loudly.
+      - id: control_29
+        continue-on-error: true
+        name: M.4a namespace encoding-version (format stamp) ablation
+        run: bash scripts/test_replay_store_format_stamp_ablation.sh
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   # Runs on EVERY push and pull request, with no dependency token and no
   # Lean/cargo toolchain: the `cargo test --test envelope_v23_twin` step above
@@ -182,49 +460,161 @@ jobs:
       # Explicit belt-and-braces signal: --refreeze is never legitimate here.
       CONTRACT_FREEZE_CI: "1"
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: PINS gated-row registry matches the ledger, checker, and CI
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_02
+        continue-on-error: true
+        uses: actions/setup-python@v6.0.0
+        with:
+          python-version: "3.12.11"
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_03
+        continue-on-error: true
+        name: Install key-generation test dependency
+        run: python3 -m pip install cryptography==45.0.5
+      - id: control_04
+        continue-on-error: true
+        name: PINS gated-row registry matches the ledger, checker, and CI
         run: node --test test/pins_gate_meta.test.mjs
-      - name: V2.3 contract must match its review baseline and freeze manifest
+      - id: control_05
+        continue-on-error: true
+        name: Rebased pin baseline matches live consumers
+        run: python3 test/test_rebased_pin_baseline.py -v
+      - id: control_06
+        continue-on-error: true
+        name: Documented key generation fails closed on import failure
+        run: python3 -m unittest discover -s test -p 'test_key_generation.py' -v
+      - id: control_07
+        continue-on-error: true
+        name: V2.3 contract must match its review baseline and freeze manifest
         run: python3 scripts/contract_freeze_gate.py
-      - name: Freeze gate fail-closed self-tests
+      - id: control_08
+        continue-on-error: true
+        name: Freeze gate fail-closed self-tests
         run: python3 -m unittest discover -s test -p 'test_contract_freeze_gate.py' -v
+      - id: control_09
+        continue-on-error: true
+        name: CI control aggregator fails closed on failed, skipped, or missing results
+        run: python3 test/test_ci_control_aggregate.py -v
+      - id: control_10
+        continue-on-error: true
+        name: Lean driver and CI reporting controls fail closed
+        run: |
+          python3 test/test_lean_test_driver_gate.py -v
+          python3 test/test_ci_control_reporting.py -v
+      # The population control for the defect that reddened this very job:
+      # ci_control_aggregate.py and proof_inventory.py refuse to run without
+      # PyYAML, twenty jobs invoke one of them, and until 2026-08-08 exactly
+      # one of those jobs declared the dependency. The gate derives the
+      # population from the tree rather than from a roster, so a new job
+      # cannot silently inherit the gap; its own tests prove it goes red.
+      - id: control_11
+        continue-on-error: true
+        name: Every job running a PyYAML-dependent script provisions PyYAML
+        run: |
+          python3 scripts/workflow_pyyaml_gate.py
+          python3 test/test_workflow_pyyaml_gate.py -v
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   cargo-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings
+      - id: control_03
+        continue-on-error: true
+        run: cargo install cargo-audit --locked
+      - id: control_04
+        continue-on-error: true
+        run: cargo audit --deny warnings
         working-directory: rust
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   rust-sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false
-      - run: cargo install cargo-cyclonedx --locked
-      - name: Generate CycloneDX SBOM
+      - id: control_03
+        continue-on-error: true
+        run: cargo install cargo-cyclonedx --locked
+      - id: control_04
+        continue-on-error: true
+        name: Generate CycloneDX SBOM
         run: |
           cargo cyclonedx --format json --override-filename seal-host-rust.cdx
           mkdir -p target/sbom
           mv seal-host-rust.cdx.json target/sbom/seal-host-rust.cdx.json
         working-directory: rust
-      - uses: actions/upload-artifact@v7
+      - id: control_05
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: seal-host-rust-sbom
           path: rust/target/sbom/seal-host-rust.cdx.json
 
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   release-evidence:
     if: ${{ always() }}
     needs:
+      - export-surface
+      - kernel-hash-footprint
       - build
       - rust-conformance
       - contract-freeze
@@ -234,9 +624,38 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Require every security-relevant job to succeed
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Require every security-relevant job to succeed
         env:
           RELEASE_EVIDENCE_NEEDS: ${{ toJSON(needs) }}
           RELEASE_EVIDENCE_PRIVATE_TOKEN_CONFIGURED: ${{ secrets.SEAL_CI_READ_TOKEN != '' }}
         run: python3 scripts/release_evidence_gate.py
+
+      - id: control_03
+        continue-on-error: true
+        name: Prove release evidence rejects unsuccessful reported jobs
+        run: python3 test/test_release_evidence_gate.py -v
+
+      - id: control_04
+        continue-on-error: true
+        name: Prove release proof consumers and execute fail-closed provenance tests
+        run: python3 -m unittest discover -s test -p 'test_release_pro*.py' -v
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

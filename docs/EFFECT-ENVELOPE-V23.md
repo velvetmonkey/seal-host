@@ -1,12 +1,13 @@
-# V2.3 effect envelope — staged host contract
+# V2.3 effect envelope — active host contract
 
 Status: **gated behind `--envelope-v23`**. The manifest-pinned Lean source
 package defines and proves the `seal.effect/v2` message shape, and Rust
 independently reconstructs and verifies the same bytes. The shipped runtime
-artifact has not yet been repinned and integrated to return the V2.3
-authenticated principal, so the independent kernel-principal cross-check
-still refuses V2.3 mediated calls. The flag is for client integration and
-frisking, not a pre-repin authorization path.
+has not been integrated to return the V2.3 authenticated principal from the
+kernel: Rust verifies the V2.3 tuple, but the independent kernel-principal
+cross-check still refuses V2.3 mediated calls (Lean still authenticates only
+the V2.2 principal-envelope domain). The flag is for client integration and
+frisking, not an authorization path.
 
 There is no V2.2 compatibility window inside V2.3 mode. A line containing
 `seal_env` must satisfy the strict V2.3 wrapper and envelope shapes or it is
@@ -78,8 +79,9 @@ member order is not significant; the order above is the encoder's byte
 order.
 
 When `effect` is present under the MCP adapter, Rust derives
-`(params.name, params.action, canonical params.arguments)` from the exact
-judged line and requires equality. The all-empty object is therefore an
+`(params.name, params.action, kernel-rule params.arguments)` from the exact
+judged line, obtains the pinned Lean derivation, and requires byte equality
+before reconstructing the signature preimage. The all-empty object is therefore an
 ordinary present claim, not an absence sentinel, and normally fails that
 equality check.
 
@@ -111,6 +113,54 @@ the submitted wrapper rather than relying on them being ignored.
 
 The tag changes from `seal.effect/v1\0` to `seal.effect/v2\0`, separating old
 signatures from the stripped and reconciled layout.
+
+### Phase-M metadata and MRTR staging
+
+The coordinated Phase-M repin extends a present effect claim after `args`
+with the complete metadata and multi-round-trip identities:
+
+```text
+optMeta(metadata) || optMrtr(requestState, inputResponses)
+
+optMeta(absent)              = 0x00
+optMeta(present kernelBytes) = 0x01 || frame(kernelBytes)
+
+optMrtr(absent, absent)      = empty
+optMrtr(present s, absent)   = 0x01 || frame(s)
+optMrtr(absent, present i)   = 0x02 || frame(i)
+optMrtr(present s, present i)= 0x03 || frame(s) || frame(i)
+```
+
+Each present payload is the complete JSON value rendered by the pinned
+kernel's `Lean.Json.compress` byte rule: Unicode-scalar-sorted object members,
+array order retained, Lean `JsonNumber.toString` numbers, and Lean JSON string
+escaping. This is a kernel-defined format, **not RFC 8785/JCS**. In
+particular, U+0008/U+0009/U+000C use `\u0008`/`\u0009`/`\u000c`, numbers do
+not use ECMAScript's binary64 rendering, and property ordering is not RFC
+8785's UTF-16 order. [`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md)
+states the complete contract and the separate `arguments` rule.
+
+The Rust encoder uses an independent serializer. A present effect reaches
+signature-preimage reconstruction or verification only after the host's
+full-domain agreement gate has compared the actual Lean and Rust bytes for
+resource, action, arguments, metadata, request state, and input responses.
+Mismatch or unclassifiable input is rejected; the host never rewrites the
+client value. This makes admitted sides agree, not conform to JCS.
+`requestState` is opaque: the host performs no member lookup, token decode,
+or subfield projection. `inputResponses` is retained whole. Structural
+absence is not represented by a JSON sentinel, so absence, `{}`, and `null`
+remain three distinct signed identities.
+
+`rust/src/envelope_v23.rs::effect_message` is the sole active Rust encoder for
+this shape. `rust/tests/canonical_boundary.rs` exhausts the C0 alphabet at
+every reachable seat and exercises the production full-domain equality gate;
+`rust/tests/mrtr_signed_shape.rs` retains the four presence-mode comparison.
+That **encoder-shape cutover** (Phase-M metadata and MRTR seats under the
+unchanged `seal.effect/v2` tag) moved the trusted kernel twin,
+signatures/vectors, artifacts, and active Rust encoder as one contract. No
+pre-Phase-M encoder remains live. This is not the principal-return
+integration required before V2.3 mediated calls can pass the host cross-check
+(see Status above).
 
 ## Exact signed bytes
 

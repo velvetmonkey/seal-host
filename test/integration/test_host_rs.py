@@ -5,26 +5,43 @@ approval through swappable channels (control-file and Ed25519 token),
 A3 replay/TTL enforced.
 
 Requires: cargo build done (rust/target/debug/seal-host-rs), lake build
-Ffi:shared done. Ed25519 keys are generated here with the cryptography
-package if available; the ed25519 scenarios are skipped (loudly) without it.
+Ffi:shared done. Ed25519 keys and ApprovalRecord v2 fixtures are minted
+through test/tools/sign_approval.py.
 """
 
+import hashlib
 import json
 import re
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "rust" / "target" / "debug" / "seal-host-rs"
 
 sys.path.insert(0, str(ROOT / "test" / "tools"))
+from process_witness import raise_with_child_stderr  # noqa: E402
+from sign_approval import (  # noqa: E402
+    generate_approval_keypair,
+    sign_approval_token,
+    sign_approval_v2_token,
+)
 from sign_config import generate_keypair, sign_payload  # noqa: E402
-from test_host import safety_section, temporal_section, stable_hash  # noqa: E402
+from test_host import extract_approval_target, safety_section, temporal_section  # noqa: E402
 
 CONFIG_SK, PUBKEY = generate_keypair()
+APPROVAL_RENDERER_NAME = "seal-host-integration-raw-mcp-frame"
+APPROVAL_RENDERER_VERSION = "1.0.0"
+APPROVAL_RENDERER_MANIFEST = (
+    b'{"name":"seal-host-integration-raw-mcp-frame","version":"1.0.0",'
+    b'"format":"heading, target line, then exact UTF-8 MCP request frame including delimiter"}'
+)
+APPROVAL_RENDERER_MANIFEST_SHA256 = hashlib.sha256(
+    APPROVAL_RENDERER_MANIFEST
+).hexdigest()
 
 
 def config_payload(tmp: Path, approval_file: Path) -> dict:
@@ -50,6 +67,25 @@ def write_config(tmp: Path, approval_file: Path) -> Path:
     payload = config_payload(tmp, approval_file)
     path = tmp / "trusted.json"
     path.write_text(sign_payload(payload, CONFIG_SK), encoding="utf-8")
+    path.chmod(0o600)
+    initialized = subprocess.run(
+        [
+            str(BIN),
+            "--config",
+            str(path),
+            "--pubkey",
+            PUBKEY,
+            "--initialize-replay-store",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert initialized.returncode == 0, (
+        f"replay-store initialization exited {initialized.returncode}\n"
+        f"stdout:\n{initialized.stdout}\nstderr:\n{initialized.stderr}"
+    )
     return path
 
 
@@ -85,60 +121,135 @@ def call(proc, mid, name, arguments):
     return json.loads(proc.stdout.readline())
 
 
-DB_TARGET = stable_hash(["db.execute", "db", "prod", "write", "drop table users"])
+def framed_call(mid, name, arguments) -> bytes:
+    return (json.dumps(rpc(mid, name, arguments), separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+
+
+def send_frame(proc, frame: bytes):
+    proc.stdin.write(frame.decode("utf-8"))
+    proc.stdin.flush()
+    return json.loads(proc.stdout.readline())
+
+
+def mint_v2_approval(
+    token_file: Path,
+    private_key: str,
+    blocked_response: dict,
+    frame: bytes,
+    nonce: str,
+    *,
+    authorized_at: int | None = None,
+) -> str:
+    """Sign the kernel target for the exact blocked request frame."""
+    target = extract_approval_target(blocked_response)
+    shown = (
+        "Seal host integration approval\n"
+        f"target: {target}\n"
+        "exact MCP request frame (including delimiter):\n"
+    ).encode("utf-8") + frame
+    issued = int(time.time() * 1000) if authorized_at is None else authorized_at
+    line = sign_approval_v2_token(
+        private_key,
+        target=target,
+        authorized_at=issued,
+        expiry=issued + 120_000,
+        nonce=nonce,
+        session=f"test-host-rs/{uuid.uuid4().hex}",
+        framed_bytes=frame,
+        shown_bytes=shown,
+        renderer_name=APPROVAL_RENDERER_NAME,
+        renderer_version=APPROVAL_RENDERER_VERSION,
+        renderer_manifest_sha256=APPROVAL_RENDERER_MANIFEST_SHA256,
+        approver="seal-host integration test",
+    )
+    with token_file.open("a", encoding="utf-8") as stream:
+        stream.write(line + "\n")
+    return target
+
+
 DESTRUCTIVE = {"database": "prod", "sql": "drop table users"}
 
 
-def test_file_channel_all_kernels():
-    """Control-file channel; exercises S, T-noop, B and convergence V."""
+def test_signed_channel_all_kernels():
+    """Signed v2 channel; exercises S, T-noop, B and convergence V."""
+    approval_sk, approval_pub = generate_approval_keypair()
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
         approvals.write_text("", encoding="utf-8")
+        tokens = tmp / "tokens.ndjson"
+        tokens.write_text("", encoding="utf-8")
         config = write_config(tmp, approvals)
-        proc = spawn(config)
+        proc = spawn(
+            config,
+            (
+                "--channel",
+                "ed25519",
+                "--token-file",
+                str(tokens),
+                "--approval-pubkey",
+                approval_pub,
+            ),
+        )
 
         # Passthrough of non-tools/call.
-        proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
-        proc.stdin.flush()
-        assert json.loads(proc.stdout.readline())["method"] == "initialize"
+        try:
+            proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
+            proc.stdin.flush()
+            assert json.loads(proc.stdout.readline())["method"] == "initialize"
+        except Exception as error:
+            raise_with_child_stderr(proc, error)
 
         # S: guarded without approval -> blocked.
-        r = call(proc, 1, "db.execute", DESTRUCTIVE)
+        db_first = framed_call(1, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, db_first)
         assert r["result"]["isError"] is True
 
         # S: approve -> allowed once -> consumed.
-        approvals.write_text(json.dumps({"target": DB_TARGET}) + "\n", encoding="utf-8")
-        r = call(proc, 2, "db.execute", DESTRUCTIVE)
+        mint_v2_approval(tokens, approval_sk, r, db_first, "all-kernels-db-first")
+        r = send_frame(proc, db_first)
         assert r["result"]["isError"] is False
-        r = call(proc, 3, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, db_first)
         assert r["result"]["isError"] is True
 
         # B: second executed call fits cap 2; third (fresh approval) over budget.
-        with approvals.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"target": DB_TARGET}) + "\n")
-        r = call(proc, 4, "db.execute", DESTRUCTIVE)
+        db_second = framed_call(2, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, db_second)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(tokens, approval_sk, r, db_second, "all-kernels-db-second")
+        r = send_frame(proc, db_second)
         assert r["result"]["isError"] is False
-        with approvals.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"target": DB_TARGET}) + "\n")
-        r = call(proc, 5, "db.execute", DESTRUCTIVE)
+
+        db_third = framed_call(3, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, db_third)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(tokens, approval_sk, r, db_third, "all-kernels-db-third")
+        r = send_frame(proc, db_third)
         assert r["result"]["isError"] is True
         assert "over budget" in r["result"]["content"][0]["text"]
 
         # V: convergent op admitted, LWW refused (store.update approved).
-        store_target = stable_hash(["store.update", "store"])
-        with approvals.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"target": store_target}) + "\n")
-        r = call(proc, 6, "store.update", {"op": "orset.add"})
+        convergent_update = {"op": "orset.add"}
+        divergent_update = {"op": "assign"}
+        store_add = framed_call(4, "store.update", convergent_update)
+        r = send_frame(proc, store_add)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(tokens, approval_sk, r, store_add, "all-kernels-store-add")
+        r = send_frame(proc, store_add)
         assert r["result"]["isError"] is False
-        with approvals.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"target": store_target}) + "\n")
-        r = call(proc, 7, "store.update", {"op": "assign"})
+
+        store_assign = framed_call(5, "store.update", divergent_update)
+        r = send_frame(proc, store_assign)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(tokens, approval_sk, r, store_assign, "all-kernels-store-assign")
+        r = send_frame(proc, store_assign)
         assert r["result"]["isError"] is True
 
         # Non-canonical tools/call (escape) is mediated, not refused: here it
         # denies as unmatched policy (no destructive needle), not a parser veto.
-        proc.stdin.write('{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"db.execute","arguments":{"sql":"a\\tb"}}}\n')
+        proc.stdin.write('{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"db.execute","arguments":{"sql":"a\\tb"}}}\n')
         proc.stdin.flush()
         r = json.loads(proc.stdout.readline())
         assert r["result"]["isError"] is True
@@ -147,34 +258,8 @@ def test_file_channel_all_kernels():
         proc.wait(timeout=10)
 
 
-def make_ed25519():
-    try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives import serialization
-    except ImportError:
-        return None
-    sk = Ed25519PrivateKey.generate()
-    pk_hex = sk.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
-    return sk, pk_hex
-
-
-def sign_token(sk, target, issued_at, nonce, allow=True):
-    """Compat signer used by ed25519 tests; supports explicit deny via allow=False."""
-    payload_obj = {"target": target, "issuedAt": issued_at, "nonce": nonce}
-    if not allow:
-        payload_obj["decision"] = "deny"
-    payload = json.dumps(payload_obj, separators=(",", ":"))
-    sig = sk.sign(payload.encode()).hex()
-    return json.dumps({"payload": payload, "signature": sig}, separators=(",", ":"))
-
-
 def test_ed25519_channel_and_a3():
-    keys = make_ed25519()
-    if keys is None:
-        print("SKIP: python cryptography not available; ed25519 e2e not run", file=sys.stderr)
-        return
-    sk, pk_hex = keys
+    sk_hex, pk_hex = generate_approval_keypair()
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"
@@ -186,28 +271,42 @@ def test_ed25519_channel_and_a3():
                               "--approval-pubkey", pk_hex))
 
         now = int(time.time() * 1000)
+        first = framed_call(1, "db.execute", DESTRUCTIVE)
+        blocked = send_frame(proc, first)
+        assert blocked["result"]["isError"] is True
+
         # Valid signed token approves exactly one call.
-        tokens.write_text(sign_token(sk, DB_TARGET, now, "nonce-1") + "\n", encoding="utf-8")
-        r = call(proc, 1, "db.execute", DESTRUCTIVE)
+        mint_v2_approval(
+            tokens, sk_hex, blocked, first, "nonce-1", authorized_at=now
+        )
+        r = send_frame(proc, first)
         assert r["result"]["isError"] is False
 
         # A3 replay: same nonce re-minted -> rejected, call blocked.
-        with tokens.open("a", encoding="utf-8") as f:
-            f.write(sign_token(sk, DB_TARGET, int(time.time() * 1000), "nonce-1") + "\n")
-        r = call(proc, 2, "db.execute", DESTRUCTIVE)
+        replay = framed_call(2, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, replay)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(tokens, sk_hex, r, replay, "nonce-1")
+        r = send_frame(proc, replay)
         assert r["result"]["isError"] is True
 
         # A3 TTL: token issued far in the past -> rejected.
-        with tokens.open("a", encoding="utf-8") as f:
-            f.write(sign_token(sk, DB_TARGET, now - 10_000_000, "nonce-2") + "\n")
-        r = call(proc, 3, "db.execute", DESTRUCTIVE)
+        expired = framed_call(3, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, expired)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(
+            tokens, sk_hex, r, expired, "nonce-2", authorized_at=now - 10_000_000
+        )
+        r = send_frame(proc, expired)
         assert r["result"]["isError"] is True
 
         # Fresh nonce works again (proves the channel, not the cap: budget
         # cap 2 would deny a THIRD execution; this is only the second).
-        with tokens.open("a", encoding="utf-8") as f:
-            f.write(sign_token(sk, DB_TARGET, int(time.time() * 1000), "nonce-3") + "\n")
-        r = call(proc, 4, "db.execute", DESTRUCTIVE)
+        fresh = framed_call(4, "db.execute", DESTRUCTIVE)
+        r = send_frame(proc, fresh)
+        assert r["result"]["isError"] is True
+        mint_v2_approval(tokens, sk_hex, r, fresh, "nonce-3")
+        r = send_frame(proc, fresh)
         assert r["result"]["isError"] is False
 
         _, err = proc.communicate(timeout=10)
@@ -245,11 +344,7 @@ def test_ed25519_signed_decline_produces_refused():
     After a block, a signed decline for the target must produce 'refused' response
     and 'approval refused' / 'refused' in audit (not a plain timeout or generic deny).
     """
-    keys = make_ed25519()
-    if keys is None:
-        print("SKIP decline e2e (no crypto)", file=sys.stderr)
-        return
-    sk, pk_hex = keys
+    sk_hex, pk_hex = generate_approval_keypair()
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         approvals = tmp / "approvals.ndjson"; approvals.write_text("", encoding="utf-8")
@@ -258,12 +353,13 @@ def test_ed25519_signed_decline_produces_refused():
         proc = spawn(config, ("--channel", "ed25519", "--token-file", str(tokens), "--approval-pubkey", pk_hex))
         r = call(proc, 99, "db.execute", DESTRUCTIVE)
         assert r["result"]["isError"] is True
-        t = DB_TARGET
+        t = None
         for c in r.get("result", {}).get("content", []):
             mm = re.search(r"approval required: ([0-9a-f]{64})", c.get("text", ""))
             if mm: t = mm.group(1)
+        assert t is not None, f"kernel block response did not contain an approval target: {r}"
         now = int(time.time() * 1000)
-        dl = sign_token(sk, t, now, "decline-e2e-1", allow=False)
+        dl = sign_approval_token(sk_hex, t, now, "decline-e2e-1", allow=False)
         with tokens.open("a", encoding="utf-8") as f:
             f.write(dl + "\n")
         r2 = call(proc, 100, "db.execute", DESTRUCTIVE)
@@ -296,8 +392,7 @@ def test_control_file_plain_decline_produces_refused():
             if mm:
                 t = mm.group(1)
                 break
-        if not t:
-            t = DB_TARGET
+        assert t is not None, f"kernel block response did not contain an approval target: {r}"
         # plain decline line supported by ControlFileProvider
         dl = json.dumps({"target": t, "issuedAt": int(time.time() * 1000), "nonce": "plain-decline-cf-1", "decision": "deny"}, separators=(",", ":"))
         with approvals.open("a", encoding="utf-8") as f:
@@ -313,7 +408,7 @@ def test_control_file_plain_decline_produces_refused():
 
 def main() -> int:
     assert BIN.exists(), f"build first: cargo build (missing {BIN})"
-    test_file_channel_all_kernels()
+    test_signed_channel_all_kernels()
     test_ed25519_channel_and_a3()
     test_ed25519_requires_signed_config_and_key_separation()
     test_ed25519_signed_decline_produces_refused()

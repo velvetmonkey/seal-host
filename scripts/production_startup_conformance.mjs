@@ -30,6 +30,7 @@ if (configPubkey === approvalPubkey) throw new Error("test keys unexpectedly ide
 const approvals = join(WORK, "approvals.ndjson");
 const tokens = join(WORK, "tokens.ndjson");
 const replay = join(WORK, "approval-replay.sqlite");
+const narrowReplay = join(WORK, "narrow-approval-replay.sqlite");
 const receipts = join(WORK, "receipts");
 const trusted = join(WORK, "trusted.json");
 writeFileSync(approvals, "");
@@ -45,7 +46,11 @@ const payload = JSON.stringify({
     approval: {
       control_file: approvals,
       ttl_seconds: 120,
-      replay_store: { sqlite_path: replay },
+      replay_store: {
+        sqlite_path: replay,
+        schema_version: 2,
+        namespace_encoding_version: 1,
+      },
     },
     tools: [{
       name: "db.execute",
@@ -60,6 +65,19 @@ writeFileSync(trusted, JSON.stringify({
   signature: sign(null, Buffer.from(payload), configKeys.privateKey).toString("hex"),
 }));
 chmodSync(trusted, 0o600);
+
+const initRun = spawnSync(HOST, [
+  "--config", trusted,
+  "--pubkey", configPubkey,
+  "--initialize-replay-store",
+], { encoding: "utf8" });
+if (initRun.error) throw initRun.error;
+if (initRun.status !== 0) {
+  throw new Error(
+    `replay-store initialization exited ${initRun.status}` +
+    `\nstdout:\n${initRun.stdout}\nstderr:\n${initRun.stderr}`,
+  );
+}
 
 const initialize = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" });
 const guarded = JSON.stringify({
@@ -106,22 +124,48 @@ if (!receiptFiles.includes(records[0].head)) {
   throw new Error("durable audit head does not contain the emitted record head");
 }
 
-const narrowPayload = JSON.stringify({
+const narrowPolicy = {
   epoch: 1,
   safety: {
     approval: {
       control_file: approvals,
       ttl_seconds: 120,
-      replay_store: { sqlite_path: replay },
+      replay_store: {
+        sqlite_path: narrowReplay,
+        schema_version: 2,
+        namespace_encoding_version: 1,
+      },
     },
     tools: [{
       name: "db.execute",
       mode: "guarded",
       match: { type: "contains_any_ci", arg: "sql", needles: ["drop"] },
-      target: [{ arg: "sql" }],
+      target: [{ full_arguments: true }],
     }],
   },
-});
+};
+const narrowLineagePayload = JSON.stringify(narrowPolicy);
+const narrowLineageTrusted = join(WORK, "narrow-lineage-trusted.json");
+writeFileSync(narrowLineageTrusted, JSON.stringify({
+  payload: narrowLineagePayload,
+  signature: sign(null, Buffer.from(narrowLineagePayload), configKeys.privateKey).toString("hex"),
+}));
+chmodSync(narrowLineageTrusted, 0o600);
+const narrowInitRun = spawnSync(HOST, [
+  "--config", narrowLineageTrusted,
+  "--pubkey", configPubkey,
+  "--initialize-replay-store",
+], { encoding: "utf8" });
+if (narrowInitRun.error) throw narrowInitRun.error;
+if (narrowInitRun.status !== 0) {
+  throw new Error(
+    `narrow replay-store initialization exited ${narrowInitRun.status}` +
+    `\nstdout:\n${narrowInitRun.stdout}\nstderr:\n${narrowInitRun.stderr}`,
+  );
+}
+
+narrowPolicy.safety.tools[0].target = [{ arg: "sql" }];
+const narrowPayload = JSON.stringify(narrowPolicy);
 const narrowTrusted = join(WORK, "narrow-trusted.json");
 writeFileSync(narrowTrusted, JSON.stringify({
   payload: narrowPayload,
@@ -148,4 +192,5 @@ if (narrowRun.status === 0 || !narrowRun.stderr.includes(guardTargetError)) {
 
 console.log("PASS deployed binary completed a production-mode child round trip");
 console.log("PASS production-mode guarded decision emitted a durable audit record");
+console.log("PASS narrow policy replay-store config initialized at schema version 2");
 console.log(`PASS production host rejected narrow guarded target: ${guardTargetError}`);

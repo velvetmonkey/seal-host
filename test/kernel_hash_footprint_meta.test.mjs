@@ -9,6 +9,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+// The acceptance workflow invokes this file explicitly, so keep the scanner's
+// subject-identity refusal tests in the same fail-closed test entrypoint.
+import "./kernel_hash_footprint_subject_identity.test.mjs";
+
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -35,24 +39,38 @@ test("the generated footprint covers exactly the fleet-lock repositories", () =>
 });
 
 test("CI and release run the footprint gate and its fleet-list meta-test", () => {
+  // The footprint commands live exactly once, in the reusable acceptance
+  // workflow (roadmap 8y item 8). Both the push path (ci.yml) and the tag
+  // path (release.yml) must invoke that workflow, with secrets, so the same
+  // gate runs on both paths and the two copies cannot drift.
+  const acceptance = fs.readFileSync(
+    path.join(ROOT, ".github", "workflows", "acceptance.yml"),
+    "utf8",
+  );
+  const commands = [...acceptance.matchAll(/^\s*run:\s*(.+?)\s*$/gm)].map(
+    (match) => match[1],
+  );
+  assert.ok(
+    commands.includes("node scripts/kernel_hash_footprint.mjs --check"),
+    "acceptance.yml does not run the generated footprint gate",
+  );
+  assert.ok(
+    commands.includes("node --test test/kernel_hash_footprint_meta.test.mjs"),
+    "acceptance.yml does not run the footprint fleet-list meta-test",
+  );
+
   for (const workflow of ["ci.yml", "release.yml"]) {
-    const ci = fs.readFileSync(
+    const caller = fs.readFileSync(
       path.join(ROOT, ".github", "workflows", workflow),
       "utf8",
     );
-    const commands = [...ci.matchAll(/^\s*run:\s*(.+?)\s*$/gm)].map(
-      (match) => match[1],
-    );
-
     assert.ok(
-      commands.includes("node scripts/kernel_hash_footprint.mjs --check"),
-      `${workflow} does not run the generated footprint gate`,
+      caller.includes("uses: ./.github/workflows/acceptance.yml"),
+      `${workflow} does not invoke the reusable acceptance workflow`,
     );
     assert.ok(
-      commands.includes(
-        "node --test test/kernel_hash_footprint_meta.test.mjs",
-      ),
-      `${workflow} does not run the footprint fleet-list meta-test`,
+      caller.includes("secrets: inherit"),
+      `${workflow} does not pass secrets to the reusable acceptance workflow`,
     );
   }
 });

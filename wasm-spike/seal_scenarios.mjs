@@ -22,15 +22,29 @@ export function stableHash(parts) {
   return createHash("sha256").update(encodeParts(parts), "utf8").digest("hex");
 }
 
-// Canonical target hashes (tool name prepended to resolved target parts).
-export const targets = {
-  db:     stableHash(["db.execute", "db", "prod", "write", "drop table users"]),
-  revoke: stableHash(["session.revoke", "revoke"]),
-  pay:    stableHash(["payments.send", "pay"]),
-  store:  stableHash(["store.update", "store"]),
-  act:    stableHash(["model.act", "act"]),
-  key:    stableHash(["key.use", "key"]),
+// Canonical Stage-A target hashes: the guarded-target domain, tool name,
+// complete canonical arguments, then explicit absence frames for metadata,
+// request state and input responses. The conformance payload has no server
+// identity, so the target prefix contains only the tool name.
+const canonicalJson = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 };
+
+export function guardTarget(tool, args, server = "") {
+  return stableHash([
+    "seal.guard-target/v2-proposed-meta-all",
+    ...(server === "" ? [tool] : [server, tool]),
+    canonicalJson(args),
+    "meta.absent", "",
+    "requestState.absent", "",
+    "inputResponses.absent", "",
+  ]);
+}
 
 // Trusted-config payload — identical content to test_host.py write_config().
 // File paths are inert on the step path (evidence is injected inline) but must
@@ -43,12 +57,12 @@ export const configPayload = {
       { name: "docs.read", mode: "allow", match: { type: "always" } },
       { name: "db.execute", mode: "guarded",
         match: { type: "contains_any_ci", arg: "sql", needles: ["drop", "delete", "truncate"] },
-        target: [{ literal: "db" }, { arg: "database" }, { literal: "write" }, { arg: "sql" }] },
-      { name: "session.revoke", mode: "guarded", match: { type: "always" }, target: [{ literal: "revoke" }] },
-      { name: "payments.send", mode: "guarded", match: { type: "always" }, target: [{ literal: "pay" }] },
-      { name: "store.update", mode: "guarded", match: { type: "always" }, target: [{ literal: "store" }] },
-      { name: "model.act", mode: "guarded", match: { type: "always" }, target: [{ literal: "act" }] },
-      { name: "key.use", mode: "guarded", match: { type: "always" }, target: [{ literal: "key" }] },
+        target: [{ full_arguments: true }] },
+      { name: "session.revoke", mode: "guarded", match: { type: "always" }, target: [{ full_arguments: true }] },
+      { name: "payments.send", mode: "guarded", match: { type: "always" }, target: [{ full_arguments: true }] },
+      { name: "store.update", mode: "guarded", match: { type: "always" }, target: [{ full_arguments: true }] },
+      { name: "model.act", mode: "guarded", match: { type: "always" }, target: [{ full_arguments: true }] },
+      { name: "key.use", mode: "guarded", match: { type: "always" }, target: [{ full_arguments: true }] },
       { name: "approve", mode: "deny", match: { type: "always" }, target: [] },
     ],
   },
@@ -78,6 +92,7 @@ const step = (line, extra = {}) =>
 
 const approve = (t) => ({ approvals: [{ target: t }] });
 const destructive = { database: "prod", sql: "drop table users" };
+const target = (tool, args) => guardTarget(tool, args);
 
 // Each scenario starts a fresh session (seal_init) then runs ordered steps.
 // expect = route the combined verdict must yield.
@@ -88,38 +103,38 @@ export const scenarios = [
       { input: step(rpc(1, "db.execute", destructive)), expect: "block" } ] },
   // Approval is a one-time event; supplied once, the replay has no fresh approval.
   { name: "S/safety: approval allows once, replay blocked", kernel: "safety", steps: [
-      { input: step(rpc(1, "db.execute", destructive), approve(targets.db)), expect: "forward" },
+      { input: step(rpc(1, "db.execute", destructive), approve(target("db.execute", destructive))), expect: "forward" },
       { input: step(rpc(2, "db.execute", destructive)), expect: "block" } ] },
   { name: "T/temporal: destructive after revoke -> block", kernel: "temporal", steps: [
-      { input: step(rpc(1, "db.execute", destructive), approve(targets.db)), expect: "forward" },
-      { input: step(rpc(2, "session.revoke", {}), approve(targets.revoke)), expect: "forward" },
-      { input: step(rpc(3, "db.execute", destructive), approve(targets.db)), expect: "block" } ] },
+      { input: step(rpc(1, "db.execute", destructive), approve(target("db.execute", destructive))), expect: "forward" },
+      { input: step(rpc(2, "session.revoke", {}), approve(target("session.revoke", {}))), expect: "forward" },
+      { input: step(rpc(3, "db.execute", destructive), approve(target("db.execute", destructive))), expect: "block" } ] },
   { name: "C/consensus: high-stakes needs quorum", kernel: "consensus", steps: [
-      { input: step(rpc(1, "payments.send", { amount: 10 }), approve(targets.pay)), expect: "block" },
+      { input: step(rpc(1, "payments.send", { amount: 10 }), approve(target("payments.send", { amount: 10 }))), expect: "block" },
       { input: step(rpc(2, "payments.send", { amount: 10 }),
-          { ...approve(targets.pay),
+          { ...approve(target("payments.send", { amount: 10 })),
             votes: JSON.stringify({ acceptor: 1, value: "payments.send" }) + "\n"
                  + JSON.stringify({ acceptor: 2, value: "payments.send" }) + "\n" }), expect: "forward" } ] },
   { name: "V/convergence: convergent op vs LWW", kernel: "convergence", steps: [
-      { input: step(rpc(1, "store.update", { op: "orset.add", key: "k1" }), approve(targets.store)), expect: "forward" },
-      { input: step(rpc(2, "store.update", { op: "assign", key: "k1" }), approve(targets.store)), expect: "block" } ] },
+      { input: step(rpc(1, "store.update", { op: "orset.add", key: "k1" }), approve(target("store.update", { op: "orset.add", key: "k1" }))), expect: "forward" },
+      { input: step(rpc(2, "store.update", { op: "assign", key: "k1" }), approve(target("store.update", { op: "assign", key: "k1" }))), expect: "block" } ] },
   { name: "K/calibration: calibrated vs overconfident", kernel: "calibration", steps: [
       { input: step(rpc(1, "model.act", { action: "send" }),
-          { ...approve(targets.act),
+          { ...approve(target("model.act", { action: "send" })),
             forecasts: Array.from({ length: 20 }, (_, i) =>
               JSON.stringify({ confidence: 0.5, outcome: i % 2 === 0 ? 1 : 0 })).join("\n") + "\n" }), expect: "forward" },
       { input: step(rpc(2, "model.act", { action: "send" }),
-          { ...approve(targets.act),
+          { ...approve(target("model.act", { action: "send" })),
             forecasts: Array.from({ length: 20 }, () =>
               JSON.stringify({ confidence: 0.9, outcome: 0 })).join("\n") + "\n" }), expect: "block" } ] },
   { name: "B/budget: db.execute capped at 2", kernel: "budget", steps: [
-      { input: step(rpc(1, "db.execute", destructive), approve(targets.db)), expect: "forward" },
-      { input: step(rpc(2, "db.execute", destructive), approve(targets.db)), expect: "forward" },
-      { input: step(rpc(3, "db.execute", destructive), approve(targets.db)), expect: "block" } ] },
+      { input: step(rpc(1, "db.execute", destructive), approve(target("db.execute", destructive))), expect: "forward" },
+      { input: step(rpc(2, "db.execute", destructive), approve(target("db.execute", destructive))), expect: "forward" },
+      { input: step(rpc(3, "db.execute", destructive), approve(target("db.execute", destructive))), expect: "block" } ] },
   // A grant is a one-time issuance event (additive); inject it once, then the
   // second use is a double-spend (0 uses left) and is denied.
   { name: "L/linear: capability spent once", kernel: "linear", steps: [
       { input: step(rpc(1, "key.use", { key: "deploy-key-7" }),
-          { ...approve(targets.key), grants: JSON.stringify({ cap: "deploy-key-7", uses: 1 }) + "\n" }), expect: "forward" },
-      { input: step(rpc(2, "key.use", { key: "deploy-key-7" }), approve(targets.key)), expect: "block" } ] },
+          { ...approve(target("key.use", { key: "deploy-key-7" })), grants: JSON.stringify({ cap: "deploy-key-7", uses: 1 }) + "\n" }), expect: "forward" },
+      { input: step(rpc(2, "key.use", { key: "deploy-key-7" }), approve(target("key.use", { key: "deploy-key-7" }))), expect: "block" } ] },
 ];

@@ -41,6 +41,7 @@ def main() -> int:
         if o1.get("block_text"):
             print("BLOCK:", o1["block_text"].strip())
         print(f"--- approve target={o1['target']} flowed={o1['flowed']} refused={o1['refused']}")
+        assert o1["flowed"], "approve expectation failed: action did not flow"
         if o1.get("cli_out"):
             print("CLI:", o1["cli_out"].strip()[:300])
         if "SYNTHETIC_LEDGER_ACTION" in (o1.get("stdout", "") + o1.get("stderr", "")):
@@ -58,6 +59,7 @@ def main() -> int:
         if o2.get("block_text"):
             print("BLOCK:", o2["block_text"].strip())
         print(f"--- deny   target={o2['target']} flowed={o2['flowed']} refused={o2['refused']}")
+        assert o2["refused"], "deny expectation failed: action was not refused"
         if o2.get("cli_out"):
             print("CLI:", o2["cli_out"].strip()[:300])
         combined2 = o2.get("stdout", "") + "\n" + o2.get("stderr", "")

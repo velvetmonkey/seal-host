@@ -1,34 +1,59 @@
 # Proof Reference
 
-The file and line numbers below were verified by grep in this repository.
+The theorem symbols below are stable citations; source and line locations are
+deliberately not hand-pinned. `python3 scripts/check_proof_references.py`
+discovers each declaration and guarded axiom pin, and fails unless that pin is
+inside the live `Test.Axioms` import closure.
 
-| Claim | Theorem | Location | Axiom footprint |
-|---|---|---|---|
-| Multi-gate non-bypass over the deployed step core | `Host.step_forward_non_bypass` | `Host/Composition.lean:241`; axiom print entry `Test/AxiomCheckComposition.lean:23` | Checked by axiom gate; subset of `{propext, Classical.choice, Quot.sound}` |
-| Append-only record head changes on append | `Host.Record.head_after_append` | `Host/Record.lean:56`; pinned at `Test/Axioms.lean:370` | No axioms |
-| Tamper-evident record chain under injective hash step | `Host.Record.tamper_evident` | `Host/Record.lean:66`; pinned at `Test/Axioms.lean:373` | No axioms |
-| Netstring target encoding is injective | `Host.Encoding.encodeParts_injective` | `Host/Encoding.lean:217`; pinned at `Test/Axioms.lean:497` | `{propext, Classical.choice, Quot.sound}` |
-| Authorization implies exact target or a commitment clash | `Host.CapabilityAdequacy.capability_sound_or_commitment_clash` | `Host/CapabilityAdequacy.lean:123`; pinned at `Test/Axioms.lean:502` | `{propext, Classical.choice, Quot.sound}` |
-| A live approval authorizes only its minted target under A-CR | `Host.CapabilityAdequacy.approval_authorizes_only_its_target'` | `Host/CapabilityAdequacy.lean:148`; pinned at `Test/Axioms.lean:509` | `{propext, Classical.choice, Quot.sound}` |
-| Minted approvals preserve that target-binding result | `Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target'` | `Host/CapabilityAdequacy.lean:166`; pinned at `Test/Axioms.lean:516` | `{propext, Classical.choice, Quot.sound}` |
-| Single-request non-interference for the observable decision plus record | `Host.NonInterference.observe_noninterference` | `Host/NonInterference.lean:164`; pinned at `Test/Axioms.lean:433` | `{propext, Classical.choice, Quot.sound}` |
-| Replay isolation across session namespace | `Host.ReplayIsolation.replay_isolation_trace` | `Host/ReplayIsolation.lean:210`; pinned at `Test/Axioms.lean:451` | `{propext, Classical.choice, Quot.sound}` |
-| Cross-session (stateful) non-interference over the composed replay seam | `Host.StatefulNI.stateful_noninterference_trace` | `Host/StatefulNI.lean:354`; pinned at `Test/Axioms.lean:488` | `{propext, Classical.choice, Quot.sound}` |
-| No coordination-free double-spend of an approval, transferred to the SealV2 gate model (within TTL, per concurrent replica) | `Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one` | `Host/AuthorityFrontierBridge.lean:203`; pinned at `Test/Axioms.lean:518` | `{propext, Classical.choice, Quot.sound}` |
-| Two disconnected replicas never both consume the same approval (bridge corollary) | `Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability` | `Host/AuthorityFrontierBridge.lean:190`; pinned at `Test/Axioms.lean:513` | `{propext, Classical.choice, Quot.sound}` |
-| Composed allow ⇒ the calibration kernel's executable check passed (trusted Float mirror) | `Host.composed_calibration_bound` | `Host/Composition.lean:202`; pinned inline `Host/Composition.lean:606` | `{propext, Classical.choice, Quot.sound}` |
-| Composed allow ⇒ the linear spend was backed and consumed exactly one use | `Host.composed_linear_conservation` | `Host/Composition.lean:282`; pinned inline `Host/Composition.lean:606` | `{propext, Classical.choice, Quot.sound}` |
-| Composed allow ⇒ every covering budget resolved the cost and admitted it within its cap | `Host.composed_budget_cap` | `Host/Composition.lean:410`; pinned inline `Host/Composition.lean:606` | `{propext, Classical.choice, Quot.sound}` |
-| **Closed algebra: one composed allow carries all seven kernels' invariants, membership-guarded, for any subset** | `Host.registry_closed_algebra` | `Host/Composition.lean:527`; pinned inline `Host/Composition.lean:606` | `{propext, Classical.choice, Quot.sound}` |
-| Pure registry model: any gating registered instance's verdict rides the composed allow | `Host.pureVerdicts_mem` + `Host.pure_dispatch_allow_member` | `Host/Registry.lean:86` + `Host/Composition.lean:597`; pinned inline `Host/Composition.lean:606` | `{propext, Classical.choice, Quot.sound}` |
-| **7-kernel deny composition: any kernel's deny commits only the spec-allowed ingests — no budget spend, no capability consumed, no trace event — at the deployed registry selection** | `Host.registry_deny_ingest_only` (+ `registry_deny_no_budget_spend`, `registry_deny_no_capability_consumed`, `registry_deny_temporal_frozen`, `commitInstsFor_kernels`) | `Host/CommitRegistry.lean`; pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
-| Dispatch loop plan: the loop's combined verdict, unconditional writes, and allow-only held replay equal `pureCommit`'s components | `Host.dispatch_plan` (+ `dispatch_verdicts_plan`, `dispatch_ingest_plan`, `dispatch_held_plan`) | `Host/Commit.lean`; pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
-| Wiring fidelity: the commit-model mirror equals the deployed `registryFor` instance-by-instance under the common projection (kernel, config, evidence source, pre-call state slot) — and hence every gating decision | `Host.commitInstsFor_wiring` (+ `commitInstsFor_gates`) | `Host/CommitRegistry.lean`; pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
-| **Dispatch spelled: the deployed `do`-block IS the explicit recursion** — desugaring, `mut` accumulators, queued-held-write content and order, allow-only replay; gather execution at the deployed registry is the monad law | `Host.dispatch_spelled` (+ `dispatchGo_cons_pure_gather`, `registryFor_gather_pure`, `registryFor_reader_invariance`) | `Host/DispatchSpelled.lean`; pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
-| Step spelled: one mediation step IS the pure plan around its two IO leaves — field-to-parser marshalling, single judged `line`, fail-closed branches, registry at exactly the marshalled values | `Ffi.stepImpl_spelled` (+ `stepPlanFor`, `stepInputsOf`, `stepRender`) | `Ffi.lean` (file-local; `stepImpl` is private); pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
-| No kernel registered twice: the deployed selection is duplicate-free for every config — no double ingest, no double verdict, at most one instance per stateful ref | `Ffi.registryFor_kernels_nodup` (+ `activeKernels_nodup`, `activeKernels_names_nodup`) | `FfiSpec.lean`; pinned inline there and in `Test/Axioms.lean` | `{propext, Classical.choice, Quot.sound}` |
+| Claim | Theorem symbols | Axiom footprint |
+|---|---|---|
+| Multi-gate non-bypass over the deployed step core | `Host.step_forward_non_bypass` | Checked by axiom gate; subset of `{propext, Classical.choice, Quot.sound}` |
+| Append-only record head changes on append | `Host.Record.head_after_append` | No axioms |
+| Tamper-evident record chain under injective hash step | `Host.Record.tamper_evident` | No axioms |
+| Netstring target encoding is injective | `Host.Encoding.encodeParts_injective` | `{propext, Classical.choice, Quot.sound}` |
+| Authorization implies exact target or a commitment clash | `Host.CapabilityAdequacy.capability_sound_or_commitment_clash` | `{propext, Classical.choice, Quot.sound}` |
+| A live approval authorizes only its minted target under A-CR | `Host.CapabilityAdequacy.approval_authorizes_only_its_target'` | `{propext, Classical.choice, Quot.sound}` |
+| Minted approvals preserve that target-binding result | `Host.CapabilityAdequacy.minted_approval_authorizes_only_its_target'` | `{propext, Classical.choice, Quot.sound}` |
+| Single-request non-interference for the observable decision plus record | `Host.NonInterference.observe_noninterference` | `{propext, Classical.choice, Quot.sound}` |
+| Replay isolation across session namespace | `Host.ReplayIsolation.replay_isolation_trace` | `{propext, Classical.choice, Quot.sound}` |
+| Cross-session (stateful) non-interference over the composed replay seam | `Host.StatefulNI.stateful_noninterference_trace` | `{propext, Classical.choice, Quot.sound}` |
+| No coordination-free double-spend of an approval, transferred to the SealV2 gate model (within TTL, per concurrent replica) | `Host.AuthorityFrontierBridge.sealv2_frontier_card_le_one` | `{propext, Classical.choice, Quot.sound}` |
+| Two disconnected replicas never both consume the same approval (bridge corollary) | `Host.AuthorityFrontierBridge.sealv2_no_disconnected_double_availability` | `{propext, Classical.choice, Quot.sound}` |
+| Composed allow ⇒ the calibration kernel's executable check passed (trusted Float mirror) | `Host.composed_calibration_bound` | `{propext, Classical.choice, Quot.sound}` |
+| Composed allow ⇒ the linear spend was backed and consumed exactly one use | `Host.composed_linear_conservation` | `{propext, Classical.choice, Quot.sound}` |
+| Composed allow ⇒ every covering budget resolved the cost and admitted it within its cap | `Host.composed_budget_cap` | `{propext, Classical.choice, Quot.sound}` |
+| **Closed algebra: one composed allow carries all seven kernels' invariants, membership-guarded, for any subset** | `Host.registry_closed_algebra` | `{propext, Classical.choice, Quot.sound}` |
+| Pure registry model: any gating registered instance's verdict rides the composed allow | `Host.pureVerdicts_mem` + `Host.pure_dispatch_allow_member` | `{propext, Classical.choice, Quot.sound}` |
+| **7-kernel deny composition: any kernel's deny commits only the spec-allowed ingests — no budget spend, no capability consumed, no trace event — at the deployed registry selection** | `Host.registry_deny_ingest_only` + `Host.registry_deny_no_budget_spend` + `Host.registry_deny_no_capability_consumed` + `Host.registry_deny_temporal_frozen` + `Host.commitInstsFor_kernels` | `{propext, Classical.choice, Quot.sound}` |
+| Dispatch loop plan: the loop's combined verdict, unconditional writes, and allow-only held replay equal `pureCommit`'s components | `Host.dispatch_plan` + `Host.dispatch_verdicts_plan` + `Host.dispatch_ingest_plan` + `Host.dispatch_held_plan` | `{propext, Classical.choice, Quot.sound}` |
+| Wiring fidelity: the commit-model mirror equals the deployed `registryFor` instance-by-instance under the common projection (kernel, config, evidence source, pre-call state slot) — and hence every gating decision | `Host.commitInstsFor_wiring` + `Host.commitInstsFor_gates` | `{propext, Classical.choice, Quot.sound}` |
+| **Dispatch spelled: the deployed `do`-block IS the explicit recursion** — desugaring, `mut` accumulators, queued-held-write content and order, allow-only replay; gather execution at the deployed registry is the monad law | `Host.dispatch_spelled` + `Host.dispatchGo_cons_pure_gather` + `Host.registryFor_gather_pure` + `Host.registryFor_reader_invariance` | `{propext, Classical.choice, Quot.sound}` |
+| Step spelled: one mediation step IS the pure plan around its two IO leaves — field-to-parser marshalling, single judged `line`, fail-closed branches, registry at exactly the marshalled values | `Ffi.stepImpl_spelled` + `Ffi.stepPlanFor` + `Ffi.stepInputsOf` + `Ffi.stepRender` | `{propext, Classical.choice, Quot.sound}` |
+| No kernel registered twice: the deployed selection is duplicate-free for every config — no double ingest, no double verdict, at most one instance per stateful ref | `Ffi.registryFor_kernels_nodup` + `Ffi.activeKernels_nodup` + `Ffi.activeKernels_names_nodup` | `{propext, Classical.choice, Quot.sound}` |
 
-The axiom gate is `lake exe axiom_check`; it is pinned with `#guard_msgs`, so drift in these footprints breaks the build. The composition-algebra rows are pinned **inline** at the bottom of `Host/Composition.lean` (same `#guard_msgs` mechanism), so their footprints are enforced whenever the module itself builds.
+The axiom gate is `lake exe axiom_check`. For theorem names imported and pinned
+by `Test/Axioms.lean`, `#guard_msgs` makes footprint drift break that target's
+build. The composition-algebra rows are pinned **inline** at the bottom of
+`Host/Composition.lean` (the same `#guard_msgs` mechanism), so their footprints
+are enforced whenever that module builds.
+
+**Build-wire residual (2026-08-05).** This is not repository-wide coverage.
+Of 53 theorem-bearing modules in the tracked tree, 51 are inside the
+`Test.Axioms` import closure. Two remain outside it and are therefore not
+built or axiom-pinned by `lake exe axiom_check`:
+
+- `Host.CanonicalL0Liveness` — DROPPED FROM THE RELEASE CLAIM (Ben, 2026-08-01);
+  reserved in `scripts/proof_inventory.py`.
+- `Test.A2DivergenceClassification` — theorem-bearing since 2026-07-30, imported
+  by nothing on a default target, reachable only via the non-default `Test.+`
+  library glob.
+
+Five modules that an earlier residual (2026-08-01) listed as excluded are now
+**inside** that closure as direct imports of `Test/Axioms.lean` (wired
+`4eb6bb4`, 2026-08-01): `Host.DurabilityA6`, `Host.EgressPerimeter`,
+`Host.EgressStrength`, `Host.PolicyOverlap`, and `Host.StrictPerimeter`. Their
+inline `#guard_msgs` pins therefore run whenever `axiom_check` builds. See
+[LIMITATIONS.md](LIMITATIONS.md#proof-build-wire-residual).
 
 Two rows deserve a closer look. The record-chain rows (`head_after_append`, `tamper_evident`) carry an **empty** axiom footprint — stronger than the family's usual minimal classical fragment: collision resistance (A-CR) and genesis freshness (A-GEN) enter `tamper_evident` as explicit hypotheses in the statement, not as axioms, so the theorem itself is axiom-free. The two bridge rows are instances of the abstract coordination-free impossibility proven in [crdt-lean](https://github.com/velvetmonkey/crdt-lean) (`Crdt/AuthorityFrontier.lean`), applied to this repo's real consume seam (`validateAndConsumeWithStore`) as a TTL-scoped instance mapping.
 

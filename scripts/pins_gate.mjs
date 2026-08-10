@@ -21,6 +21,40 @@ export const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+export const CI_RUN_STEP_MINIMUM = 50;
+
+const SMALL_NUMBER_WORDS = Object.freeze({
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+});
+const TENS_NUMBER_WORDS = Object.freeze({
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+});
 
 const PINS = path.join(ROOT, "PINS.md");
 const KERNEL = path.join(ROOT, ".lake", "packages", "mcp-seal");
@@ -373,6 +407,26 @@ function leanDeclarationLine(lines, name) {
   );
 }
 
+function leanDefinitionCode(file, name) {
+  const lines = sourceCodeLines(file);
+  const start = lines.findIndex((line) =>
+    new RegExp(`^def\\s+${escaped(name)}(?:\\s|\\()`).test(line),
+  );
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (
+      /^(?:def|abbrev|opaque|structure|inductive|theorem|lemma|end)\b/.test(
+        lines[index],
+      )
+    ) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 function leanStructure(lines, name) {
   const start = lineNumber(
     lines,
@@ -420,33 +474,153 @@ function parseLakefile() {
   return { text, defaultTargets, executableForRoot };
 }
 
+function indentation(line) {
+  const prefix = line.match(/^[ \t]*/)[0];
+  if (prefix.includes("\t")) {
+    throw new Error("ci.yml uses a tab for YAML indentation");
+  }
+  return prefix.length;
+}
+
+function parseInlineRunScalar(value, lineNumber) {
+  const withoutComment = value.replace(/\s+#.*$/, "").trim();
+  if (withoutComment.startsWith('"')) {
+    try {
+      return JSON.parse(withoutComment);
+    } catch (error) {
+      throw new Error(
+        `ci.yml:${lineNumber} has an invalid double-quoted run scalar: ${error.message}`,
+      );
+    }
+  }
+  if (withoutComment.startsWith("'")) {
+    if (!withoutComment.endsWith("'") || withoutComment.length === 1) {
+      throw new Error(`ci.yml:${lineNumber} has an invalid single-quoted run scalar`);
+    }
+    return withoutComment.slice(1, -1).replaceAll("''", "'");
+  }
+  return withoutComment;
+}
+
+function parseCiRunValue(lines, lineIndex, fieldIndent, sourceValue) {
+  const value = sourceValue.trim();
+  const header = value.match(/^\|([1-9]?)([+-]?)(?:\s+#.*)?$/);
+  if (!header) {
+    if (/^[|>]/.test(value)) {
+      throw new Error(
+        `ci.yml:${lineIndex + 1} uses an unsupported run block scalar; ` +
+          "only YAML literal scalars (`|`, with optional indentation/chomping indicators) are accepted",
+      );
+    }
+    return {
+      value: parseInlineRunScalar(value, lineIndex + 1),
+      lastLine: lineIndex,
+    };
+  }
+
+  const explicitIndent = header[1] === "" ? null : Number(header[1]);
+  const chomp = header[2];
+  let contentIndent =
+    explicitIndent === null ? null : fieldIndent + explicitIndent;
+  const content = [];
+  let cursor = lineIndex + 1;
+  for (; cursor < lines.length; cursor += 1) {
+    const line = lines[cursor];
+    if (/^\s*$/.test(line)) {
+      content.push("");
+      continue;
+    }
+    const indent = indentation(line);
+    if (indent <= fieldIndent) break;
+    if (contentIndent === null) contentIndent = indent;
+    if (indent < contentIndent) {
+      throw new Error(
+        `ci.yml:${cursor + 1} is under-indented inside the run block opened at line ${lineIndex + 1}`,
+      );
+    }
+    content.push(line.slice(contentIndent));
+  }
+
+  let body = content.length === 0 ? "" : `${content.join("\n")}\n`;
+  if (chomp === "-") {
+    body = body.replace(/\n+$/, "");
+  } else if (chomp !== "+" && body !== "") {
+    body = `${body.replace(/\n+$/, "")}\n`;
+  }
+  return { value: body, lastLine: cursor - 1 };
+}
+
 export function parseCiRunSteps(
   text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8"),
 ) {
+  const lines = text.split(/\r?\n/);
   const steps = [];
-  let current = null;
-  for (const line of text.split(/\r?\n/)) {
-    const start = line.match(/^(\s*)-\s+run:\s*(.*)$/);
-    if (start) {
-      if (current) steps.push(current);
-      current = {
-        indent: start[1].length,
-        run: start[2].trim(),
-        workingDirectory: null,
-      };
-      continue;
-    }
-    if (!current) continue;
-    const anotherItem = line.match(/^(\s*)-\s+/);
-    if (anotherItem && anotherItem[1].length === current.indent) {
-      steps.push(current);
+  for (let index = 0; index < lines.length; index += 1) {
+    const stepsKey = lines[index].match(/^(\s*)steps:\s*(?:#.*)?$/);
+    if (!stepsKey) continue;
+
+    const stepsIndent = stepsKey[1].length;
+    let stepIndent = null;
+    let current = null;
+    const finishCurrent = () => {
+      if (current && current.run !== null) {
+        steps.push({
+          run: current.run,
+          workingDirectory: current.workingDirectory,
+        });
+      }
       current = null;
-      continue;
+    };
+
+    let cursor = index + 1;
+    for (; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor];
+      if (/^\s*(?:#.*)?$/.test(line)) continue;
+      const indent = line.match(/^\s*/)[0].length;
+      if (indent <= stepsIndent) break;
+
+      const sequenceItem = line.match(/^(\s*)-\s+(.*)$/);
+      if (sequenceItem && stepIndent === null) {
+        stepIndent = sequenceItem[1].length;
+      }
+      if (sequenceItem && sequenceItem[1].length === stepIndent) {
+        finishCurrent();
+        current = {
+          indent: stepIndent,
+          mappingIndent: null,
+          run: null,
+          workingDirectory: null,
+        };
+        const inlineRun = sequenceItem[2].match(/^run:\s*(.*)$/);
+        if (inlineRun) {
+          const parsed = parseCiRunValue(
+            lines,
+            cursor,
+            stepIndent + 2,
+            inlineRun[1],
+          );
+          current.run = parsed.value;
+          cursor = parsed.lastLine;
+        }
+        continue;
+      }
+      if (!current || indent <= stepIndent) continue;
+      if (current.mappingIndent === null) current.mappingIndent = indent;
+      if (indent !== current.mappingIndent) continue;
+
+      const field = line.trim();
+      const run = field.match(/^run:\s*(.*)$/);
+      if (run) {
+        const parsed = parseCiRunValue(lines, cursor, indent, run[1]);
+        current.run = parsed.value;
+        cursor = parsed.lastLine;
+      }
+      const working = field.match(/^working-directory:\s*(\S+)\s*$/);
+      if (working) current.workingDirectory = working[1];
     }
-    const working = line.match(/^\s+working-directory:\s*(\S+)\s*$/);
-    if (working) current.workingDirectory = working[1];
+    finishCurrent();
+    index = cursor - 1;
   }
-  if (current) steps.push(current);
   return steps;
 }
 
@@ -454,6 +628,67 @@ function cargoCiStep(command) {
   return parseCiRunSteps().find(
     (step) => step.run === command && step.workingDirectory === "rust",
   );
+}
+
+export function ciRunStepFloorFailure(count) {
+  if (count >= CI_RUN_STEP_MINIMUM) return null;
+  return (
+    "ci.yml [run-step inventory]\n" +
+    `  claimed: at least ${CI_RUN_STEP_MINIMUM} parsed run steps\n` +
+    `  actual:  parsed ${count}; refusing vacuous CI reachability checks`
+  );
+}
+
+function numberWordValue(token) {
+  if (Object.hasOwn(SMALL_NUMBER_WORDS, token)) {
+    return SMALL_NUMBER_WORDS[token];
+  }
+  if (Object.hasOwn(TENS_NUMBER_WORDS, token)) {
+    return TENS_NUMBER_WORDS[token];
+  }
+  const parts = token.split("-");
+  if (
+    parts.length === 2 &&
+    Object.hasOwn(TENS_NUMBER_WORDS, parts[0]) &&
+    Object.hasOwn(SMALL_NUMBER_WORDS, parts[1]) &&
+    SMALL_NUMBER_WORDS[parts[1]] > 0 &&
+    SMALL_NUMBER_WORDS[parts[1]] < 10
+  ) {
+    return TENS_NUMBER_WORDS[parts[0]] + SMALL_NUMBER_WORDS[parts[1]];
+  }
+  return null;
+}
+
+export function parseBuildGatedGuardCount(evidence) {
+  const claims = [
+    ...evidence.matchAll(/\b([A-Za-z]+(?:-[A-Za-z]+)?|[0-9]+)\s+build-gated\b/gi),
+  ];
+  if (claims.length !== 1) {
+    return {
+      count: null,
+      error:
+        claims.length === 0
+          ? "unparseable claim: expected exactly one count immediately before `build-gated`"
+          : `unparseable claim: found ${claims.length} counts before \`build-gated\``,
+    };
+  }
+  const token = claims[0][1].toLowerCase();
+  if (/^[0-9]+$/.test(token)) {
+    const count = Number(token);
+    if (Number.isSafeInteger(count)) return { count, error: null };
+    return {
+      count: null,
+      error: `unparseable claim: numeral ${token} is outside the safe integer range`,
+    };
+  }
+  const count = numberWordValue(token);
+  if (count !== null) return { count, error: null };
+  return {
+    count: null,
+    error:
+      `unparseable claim: unknown number word \`${token}\`; ` +
+      "use an ASCII numeral or a number word from zero to ninety-nine",
+  };
 }
 
 function markdownRowLabel(row) {
@@ -501,15 +736,25 @@ function checkIssuedTimeUnit(ctx, row) {
   }
   const main = fs.readFileSync(mainFile, "utf8");
   const envelope = fs.readFileSync(envelopeFile, "utf8");
+  const envelopeCode = stripSourceComments(envelope, ".lean");
+  const flattenedEnvelopeCode = envelopeCode.replaceAll("\n", " ");
   const actual = [];
   if (main.includes("toMillisecondsSinceUnixEpoch")) {
     actual.push("Unix-epoch milliseconds");
   }
-  if (
+  const directTimePair =
     /u64be e\.issuedAt\s*\+\+\s*u64be e\.expiresAt/.test(
-      envelope.replaceAll("\n", " "),
-    )
-  ) {
+      flattenedEnvelopeCode,
+    );
+  const unixSecondsWrapper =
+    /def\s+unixSecondsBE\s*\(\s*t\s*:\s*UnixSeconds\s*\)\s*:\s*ByteArray\s*:=\s*u64be\s+t\b/.test(
+      flattenedEnvelopeCode,
+    );
+  const wrappedTimePair =
+    /unixSecondsBE e\.issuedAt\s*\+\+\s*unixSecondsBE e\.expiresAt/.test(
+      flattenedEnvelopeCode,
+    );
+  if (directTimePair || (unixSecondsWrapper && wrappedTimePair)) {
     actual.push("u64be(issuedAt), u64be(expiresAt)");
   }
   if (actual.length !== 2) {
@@ -587,8 +832,6 @@ function checkEffectMessage(ctx, row) {
 function checkKernelRawGuard(ctx, row, name) {
   const kernelCitation = "Seal/JsonUtil.lean";
   const kernelFile = path.join(KERNEL, kernelCitation);
-  const hostCitation = "Host/Canonical.lean";
-  const hostFile = path.join(ROOT, hostCitation);
   if (!fs.existsSync(kernelFile)) {
     reportMismatch(
       ctx,
@@ -607,14 +850,40 @@ function checkKernelRawGuard(ctx, row, name) {
       `${kernelCitation} has no such declaration`,
     );
   }
-  const host = fs.readFileSync(hostFile, "utf8");
+  checkJsonWireGuardReachability(ctx, row, `Seal.JsonUtil.${name}`);
+}
+
+function checkJsonWireGuardReachability(ctx, row, guard) {
+  const hostCitation = "Host/Canonical.lean";
+  const hostFile = path.join(ROOT, hostCitation);
+  const boundaryCitation = "Host/JsonWire.lean";
+  const boundaryFile = path.join(ROOT, boundaryCitation);
+  const host = stripSourceComments(fs.readFileSync(hostFile, "utf8"), ".lean");
+  const classifyLine = leanDefinitionCode(hostFile, "classifyLine");
+  const safe = leanDefinitionCode(boundaryFile, "safe");
   requireText(
     ctx,
     row,
     host,
-    new RegExp(`if\\s+!Seal\\.JsonUtil\\.${escaped(name)}\\s+trimmed\\s+then`),
-    `${name} is reached by Host.classifyLine`,
-    `${hostCitation} does not call it in the classify guard chain`,
+    /^import\s+Host\.JsonWire\s*$/m,
+    `${guard} is reached by Host.classifyLine`,
+    `${hostCitation} does not import ${boundaryCitation}`,
+  );
+  requireText(
+    ctx,
+    row,
+    classifyLine ?? "",
+    /Host\.JsonWire\.safe\s+trimmed/,
+    `${guard} is reached by Host.classifyLine`,
+    `${hostCitation} classifyLine does not call Host.JsonWire.safe`,
+  );
+  requireText(
+    ctx,
+    row,
+    safe ?? "",
+    new RegExp(`${escaped(guard)}\\s+text`),
+    `${guard} is reached by Host.classifyLine`,
+    `${boundaryCitation} safe does not call ${guard}`,
   );
 }
 
@@ -623,16 +892,19 @@ function checkLeanClassifyEncoding(ctx, row) {
   const file = path.join(ROOT, citation);
   const text = fs.readFileSync(file, "utf8");
   const guardCount = [...text.matchAll(/^#guard\b/gm)].length;
-  const countClaim = row.evidence.match(/\b(three|[0-9]+) build-gated/);
-  const claimedCount =
-    countClaim?.[1] === "three" ? 3 : Number(countClaim?.[1] ?? Number.NaN);
-  if (claimedCount !== guardCount) {
+  const countClaim = parseBuildGatedGuardCount(row.evidence);
+  if (countClaim.error) {
     reportMismatch(
       ctx,
       row,
-      Number.isNaN(claimedCount)
-        ? "no build-gated guard count"
-        : `${claimedCount} build-gated real-input guards`,
+      countClaim.error,
+      `${guardCount} #guard declarations in ${citation}`,
+    );
+  } else if (countClaim.count !== guardCount) {
+    reportMismatch(
+      ctx,
+      row,
+      `${countClaim.count} build-gated real-input guards`,
       `${guardCount} #guard declarations in ${citation}`,
     );
   }
@@ -792,18 +1064,7 @@ function checkUnicodeDuplicateKeys(ctx, row) {
       );
     }
   }
-  const canonical = fs.readFileSync(
-    path.join(ROOT, "Host", "Canonical.lean"),
-    "utf8",
-  );
-  requireText(
-    ctx,
-    row,
-    canonical,
-    /if\s+!Host\.UnicodeKeys\.wireKeysSafe\s+trimmed\s+then/,
-    "the Unicode key guard is reached by Host.classifyLine",
-    "Host/Canonical.lean does not call it in the classify guard chain",
-  );
+  checkJsonWireGuardReachability(ctx, row, "Host.UnicodeKeys.wireKeysSafe");
 
   const lakeRev = lakeRequirementRevision("UnicodeBasic");
   const manifestRev = manifestRevision("UnicodeBasic");
@@ -888,33 +1149,23 @@ function checkNonceConsumeOrdering(ctx, row) {
   const a3Citation = "rust/src/a3.rs";
   const a3 = fs.readFileSync(path.join(ROOT, a3Citation), "utf8");
   const withStore = a3.indexOf("pub fn with_store(");
+  const reclaim = a3.indexOf(".reclaim_uncommitted()?", withStore);
   const load = a3.indexOf(".load_unexpired(now_ms)?", withStore);
   const construct = a3.indexOf("Ok(Self {", withStore);
-  const persist = a3.indexOf("fn persist_nonce(");
-  const durableInsert = a3.indexOf(".insert_returning_is_new(", persist);
-  const survivor = a3.indexOf("ok.push(r);", persist);
-  const startupRebuilds = withStore >= 0 && load > withStore && construct > load;
-  const burnBeforeSurvivor =
-    persist >= 0 && durableInsert > persist && survivor > durableInsert;
-  if (!startupRebuilds || !burnBeforeSurvivor) {
+  const reserve = a3.indexOf("fn reserve_nonce(");
+  const durableReserve = a3.indexOf(".reserve_returning_is_new(", reserve);
+  const filter = a3.indexOf("pub fn filter(", reserve);
+  const survivor = a3.indexOf("ok.push(r);", filter);
+  const startupReclaimsBeforeRebuild =
+    withStore >= 0 && reclaim > withStore && load > reclaim && construct > load;
+  const reservationBeforeSurvivor =
+    reserve >= 0 && durableReserve > reserve && filter > durableReserve && survivor > filter;
+  if (!startupReclaimsBeforeRebuild || !reservationBeforeSurvivor) {
     reportMismatch(
       ctx,
       row,
-      "startup cache rebuild plus durable nonce insert before record survival",
-      `${a3Citation}: startupRebuilds=${startupRebuilds}, durableInsertBeforeSurvivor=${burnBeforeSurvivor}`,
-    );
-  }
-
-  const mainCitation = "rust/src/main.rs";
-  const main = fs.readFileSync(path.join(ROOT, mainCitation), "utf8");
-  const filter = main.indexOf("let (records, a3_warnings) = a3.filter(");
-  const decision = main.indexOf("let step_output = match host.step(", filter);
-  if (filter < 0 || decision < 0 || filter > decision) {
-    reportMismatch(
-      ctx,
-      row,
-      "A3 durable consume runs before the Lean decision",
-      `${mainCitation} does not order a3.filter before host.step`,
+      "startup reclamation before cache rebuild plus durable reservation before record survival",
+      `${a3Citation}: startupReclaimsBeforeRebuild=${startupReclaimsBeforeRebuild}, reservationBeforeSurvivor=${reservationBeforeSurvivor}`,
     );
   }
 
@@ -924,10 +1175,265 @@ function checkNonceConsumeOrdering(ctx, row) {
     ctx,
     row,
     replay,
+    /INSERT INTO nonces \(nonce, issued_at, expiry_at, committed_at\)\s+VALUES \(\?1, \?2, \?3, NULL\)/,
+    "phase 1 stores an open reservation",
+    `${replayCitation} no longer inserts a NULL committed_at reservation`,
+  );
+  requireText(
+    ctx,
+    row,
+    replay,
+    /UPDATE nonces SET committed_at = \?2\s+WHERE nonce = \?1 AND committed_at IS NULL/,
+    "phase 2 commits only an open reservation",
+    `${replayCitation} no longer commits only a NULL committed_at reservation`,
+  );
+  requireText(
+    ctx,
+    row,
+    replay,
+    /DELETE FROM nonces WHERE committed_at IS NULL/,
+    "startup recovery reclaims only open reservations",
+    `${replayCitation} no longer limits reclamation to open reservations`,
+  );
+  requireText(
+    ctx,
+    row,
+    replay,
     /"synchronous",\s*"FULL"/,
     "the SQLite replay store requests FULL synchronous durability",
     `${replayCitation} no longer configures synchronous=FULL`,
   );
+
+  // The two-phase host ordering (reservation before Lean, then receipt, burn
+  // commit, child forward) is witnessed BEHAVIOURALLY by the G2 crash suite,
+  // not by grepping variable names in main.rs. The gate cannot run the suite,
+  // so it establishes reachability instead: the tests exist, none is ignored,
+  // each arms a crash point the host really implements, and a CI cargo test
+  // step actually selects them.
+  const mainCitation = "rust/src/main.rs";
+  const main = fs.readFileSync(path.join(ROOT, mainCitation), "utf8");
+  const hostPathCitation = "rust/tests/host_path.rs";
+  const hostPath = fs.readFileSync(path.join(ROOT, hostPathCitation), "utf8");
+  const ciSteps = parseCiRunSteps().filter(
+    (step) => step.workingDirectory === "rust",
+  );
+
+  const injector = extractFunction(main, "maybe_test_crash");
+  if (!injector || !injector.includes("std::process::abort()")) {
+    reportMismatch(
+      ctx,
+      row,
+      "maybe_test_crash aborts the process at an armed crash point",
+      `${mainCitation}: maybe_test_crash is ${injector ? "present but no longer calls std::process::abort()" : "missing"}`,
+    );
+  }
+
+  for (const test of G2_CRASH_TESTS) {
+    const witness = extractG2TestWitness(hostPath, test.name);
+    if (!witness) {
+      reportMismatch(
+        ctx,
+        row,
+        `live G2 crash control ${test.name}`,
+        `${hostPathCitation} no longer declares ${test.name}`,
+      );
+      continue;
+    }
+    if (!/#\[test\]/.test(witness.attributes)) {
+      reportMismatch(
+        ctx,
+        row,
+        `${test.name} is a #[test]`,
+        `${hostPathCitation}: ${test.name} carries no #[test] attribute, so no harness runs it`,
+      );
+    }
+    if (/#\[\s*ignore\b/.test(witness.attributes)) {
+      reportMismatch(
+        ctx,
+        row,
+        `${test.name} runs unconditionally`,
+        `${hostPathCitation}: ${test.name} is #[ignore]d; an ignored test is not a witness`,
+      );
+    }
+    if (test.crashPoint) {
+      const arming = new RegExp(
+        `\\(\\s*"SEAL_TEST_CRASH_POINT"\\s*,\\s*"${escaped(test.crashPoint)}"\\s*\\)`,
+      );
+      if (!arming.test(witness.body)) {
+        reportMismatch(
+          ctx,
+          row,
+          `${test.name} arms SEAL_TEST_CRASH_POINT=${test.crashPoint}`,
+          `${hostPathCitation}: ${test.name} no longer sets that crash point in its spawn environment`,
+        );
+      }
+      const injection = new RegExp(
+        `maybe_test_crash\\([^;]*"${escaped(test.crashPoint)}"\\s*\\)`,
+      );
+      if (!injection.test(main)) {
+        reportMismatch(
+          ctx,
+          row,
+          `crash point ${test.crashPoint} is a real injection site`,
+          `${mainCitation} has no maybe_test_crash(..., "${test.crashPoint}") call; the armed test would pass by never crashing`,
+        );
+      }
+    }
+    if (
+      !ciSteps.some((step) =>
+        cargoTestRunReachesTest(step.run, "host_path", test.name),
+      )
+    ) {
+      reportMismatch(
+        ctx,
+        row,
+        `a CI cargo test step in rust/ selects ${test.name}`,
+        `no ci.yml run step reaches --test host_path with ${test.name} unfiltered; the behavioural witness would not execute`,
+      );
+    }
+  }
+}
+
+const G2_CRASH_TESTS = Object.freeze([
+  {
+    name: "g2_t1_crash_between_reserve_and_recorded_recovers_the_approval",
+    crashPoint: "g2-before-record",
+  },
+  {
+    name: "g2_t2_second_presentation_fails_while_reservation_open",
+    crashPoint: null,
+  },
+  {
+    name: "g2_t3_crash_after_recorded_keeps_burn_and_receipt",
+    crashPoint: "g2-after-burn",
+  },
+]);
+
+// Slice of `source` from `fn name(` to the next top-level `fn`, or null.
+function extractFunction(source, name) {
+  const start = source.search(new RegExp(`^fn\\s+${escaped(name)}\\s*\\(`, "m"));
+  if (start === -1) return null;
+  const rest = source.slice(start + 1);
+  const next = rest.search(/^fn\s/m);
+  return source.slice(start, next === -1 ? source.length : start + 1 + next);
+}
+
+// A test's attribute block (contiguous #[...] / doc-comment lines above the
+// fn) and its body (up to the next #[test] or end of file), or null.
+function extractG2TestWitness(source, testName) {
+  const lines = source.split("\n");
+  const header = new RegExp(`^\\s*fn\\s+${escaped(testName)}\\s*\\(`);
+  const fnLine = lines.findIndex((line) => header.test(line));
+  if (fnLine === -1) return null;
+  let attrStart = fnLine;
+  while (attrStart > 0 && /^\s*(#\[|#!\[|\/\/)/.test(lines[attrStart - 1])) {
+    attrStart -= 1;
+  }
+  const attributes = lines.slice(attrStart, fnLine).join("\n");
+  const bodyStart = lines.slice(0, fnLine).join("\n").length;
+  const nextTest = source.indexOf("\n#[test]", bodyStart + 1);
+  const body = source.slice(bodyStart, nextTest === -1 ? source.length : nextTest);
+  return { attributes, body };
+}
+
+const CARGO_VALUE_FLAGS = new Set([
+  "--package",
+  "-p",
+  "--exclude",
+  "--features",
+  "--profile",
+  "--target",
+  "--target-dir",
+  "--manifest-path",
+  "--jobs",
+  "-j",
+  "--message-format",
+  "--color",
+  "--bin",
+  "--example",
+  "--bench",
+]);
+const CARGO_NON_TEST_TARGET_FLAGS = new Set([
+  "--lib",
+  "--bins",
+  "--bin",
+  "--doc",
+  "--examples",
+  "--example",
+  "--benches",
+  "--bench",
+]);
+const HARNESS_VALUE_FLAGS = new Set([
+  "--test-threads",
+  "--logfile",
+  "--format",
+  "--color",
+  "-Z",
+]);
+
+// Would `run` (one CI step's script) execute `testName` inside the named
+// integration test target? Conservative: anything unparseable counts as NOT
+// reaching the test, so novel CI shapes fail closed and must be classified.
+function cargoTestRunReachesTest(run, targetName, testName) {
+  return run
+    .split("\n")
+    .some((line) => cargoTestLineReachesTest(line.trim(), targetName, testName));
+}
+
+function cargoTestLineReachesTest(line, targetName, testName) {
+  let tokens = line.split(/\s+/).filter(Boolean);
+  while (tokens.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) {
+    tokens.shift();
+  }
+  if (tokens[0] !== "cargo" || tokens[1] !== "test") return false;
+  tokens = tokens.slice(2);
+  const separator = tokens.indexOf("--");
+  const cargoArgs = separator === -1 ? tokens : tokens.slice(0, separator);
+  const harnessArgs = separator === -1 ? [] : tokens.slice(separator + 1);
+
+  const testTargets = [];
+  const filters = [];
+  let allTargets = false;
+  let nonTestTargetOnly = false;
+  for (let i = 0; i < cargoArgs.length; i += 1) {
+    const arg = cargoArgs[i];
+    if (arg === "--test") {
+      testTargets.push(cargoArgs[++i]);
+    } else if (arg === "--all-targets") {
+      allTargets = true;
+    } else if (CARGO_NON_TEST_TARGET_FLAGS.has(arg)) {
+      nonTestTargetOnly = true;
+      if (CARGO_VALUE_FLAGS.has(arg)) i += 1;
+    } else if (arg.startsWith("-")) {
+      if (CARGO_VALUE_FLAGS.has(arg)) i += 1;
+    } else {
+      filters.push(arg);
+    }
+  }
+  const targetSelected =
+    allTargets ||
+    testTargets.includes(targetName) ||
+    (testTargets.length === 0 && !nonTestTargetOnly);
+  if (!targetSelected) return false;
+
+  const exact = harnessArgs.includes("--exact");
+  const matches = (pattern) =>
+    exact ? pattern === testName : testName.includes(pattern);
+  if (harnessArgs.includes("--ignored")) return false;
+  for (let i = 0; i < harnessArgs.length; i += 1) {
+    const arg = harnessArgs[i];
+    if (arg === "--skip") {
+      if (matches(harnessArgs[++i])) return false;
+    } else if (arg.startsWith("--skip=")) {
+      if (matches(arg.slice("--skip=".length))) return false;
+    } else if (arg.startsWith("-")) {
+      if (HARNESS_VALUE_FLAGS.has(arg)) i += 1;
+    } else {
+      filters.push(arg);
+    }
+  }
+  if (filters.length > 0 && !filters.some(matches)) return false;
+  return true;
 }
 
 function trackedSourceFiles(directory) {
@@ -1026,11 +1532,15 @@ export const CHECKS = Object.freeze({
 export function runGate() {
   process.chdir(ROOT);
   const parsed = parseLedger();
+  const ciRunSteps = parseCiRunSteps();
   const ctx = {
     ...parsed,
     failures: [],
     specificationOnlyCount: 0,
+    ciRunStepCount: ciRunSteps.length,
   };
+  const ciFloorFailure = ciRunStepFloorFailure(ciRunSteps.length);
+  if (ciFloorFailure) ctx.failures.push(ciFloorFailure);
 
   for (const policy of GATED_ROWS) {
     const matches = matchingRows(ctx.rows, policy.anchor);

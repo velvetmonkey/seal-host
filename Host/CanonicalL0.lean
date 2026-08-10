@@ -69,19 +69,13 @@ theorem classifyLine_act_ast (line : String) (a : CanonicalAction)
     a.ast? = SealV2.parse line.trimAscii.toString := by
   simp only [classifyLine] at hclass
   split at hclass
-  · exact absurd hclass (by simp)      -- pathological ⇒ .refuse ≠ .act a
+  · exact absurd hclass (by simp)      -- unsafe wire ⇒ .refuse ≠ .act a
   · split at hclass
-    · exact absurd hclass (by simp)    -- duplicate/escaped key ⇒ .refuse
+    · exact absurd hclass (by simp)    -- parse error ⇒ .passthrough
     · split at hclass
-      · exact absurd hclass (by simp)  -- canonical-equivalent key ⇒ .refuse
-      · split at hclass
-        · exact absurd hclass (by simp)  -- oversized number ⇒ .refuse
-        · split at hclass
-          · exact absurd hclass (by simp)  -- parse error ⇒ .passthrough
-          · split at hclass
-            · exact absurd hclass (by simp)  -- not a tools/call ⇒ .passthrough
-            · cases hclass
-              rfl
+      · exact absurd hclass (by simp)  -- not a tools/call ⇒ .passthrough
+      · cases hclass
+        rfl
 
 /-- **Reject-on-parse-failure (soundness).** A wire line the V1 view
     recognises as a `tools/call` whose canonical parse fails routes to

@@ -152,9 +152,12 @@ Still trusted after this work:
   belt-and-braces, not the sole defense.
 - **Evidence marshalling**: `serde_json`, `ed25519-dalek`, `hex` on the
   host approval path. Its NDJSON signed-token provider signs exact
-  `ApprovalRecord` JSON payload bytes; the SealV2 canonical
+  `ApprovalRecord` JSON payload bytes; the SealV2 kernel-defined
   `(target, session, issuedAt, expiry, nonce)` token path lives in
-  `mcp-seal-dev`. Failure direction is drop-the-record ⇒ deny.
+  `mcp-seal-dev`. "Canonical" on that path means the pinned kernel byte rule,
+  not RFC 8785/JCS; see
+  [`docs/CANONICAL-BYTE-CONTRACT.md`](docs/CANONICAL-BYTE-CONTRACT.md). Failure
+  direction is drop-the-record ⇒ deny.
 - **Line framing**: the terminator strip that defines what "one line" means
   (the only byte-level transformation on the request path).
 - **Host-authored refusals**: the static `SEAM_ERROR_RESPONSE` and the

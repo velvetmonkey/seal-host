@@ -18,12 +18,15 @@ from difflib import unified_diff
 from pathlib import Path
 
 import golden_path as gp
+import mcp_eras
 from doctrine import DemoTrace
+
+MCP_ERAS = mcp_eras.declared_eras(__file__)
 
 ROOT = gp.ROOT
 KIT = gp.KIT
 HOST = gp.HOST
-PHASE_B_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
+PHASE_B_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
 SERVER_IDENTITY = "seal-token-governor-demo@1.0.0"
 TOOL = "llm_call"
 CAP = 10
@@ -134,9 +137,6 @@ def preflight() -> None:
     kit_head = gp.run(["git", "rev-parse", "HEAD"], cwd=KIT).stdout.strip()
     if kit_head != PHASE_B_KIT_REV:
         raise gp.DemoSkip(f"pinned assurance kit required: got {kit_head}, need {PHASE_B_KIT_REV}")
-    frozen = stable_hash_parts(["store.update", "store"])
-    if frozen != "6bff1759cf3c00f781f0b15d428f4cf84e59f8b10be48dd4dd742175a3e6f984":
-        raise gp.DemoFailure("approval-target SHA-256/netstring self-check failed")
     check("base + prerequisites", f"{branch}@{head}; pinned kit; deterministic local adapter")
 
 
@@ -192,7 +192,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     approvals.write_text("", encoding="utf-8")
     replay = work / "token-approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 2,
+        "namespace_encoding_version": 1,
+    }
     value["budget"]["budgets"][0]["cap"] = CAP
     rules = value["safety"]["tools"]
     if len(rules) != 1 or rules[0]["name"] != TOOL or rules[0]["mode"] != "guard":
@@ -230,6 +234,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     signed_output = (signed.stdout or "") + (signed.stderr or "")
     if "ACTIVE (2)" not in signed_output or "PRESENT-BUT-INACTIVE (0)" not in signed_output:
         raise gp.DemoFailure("sign acknowledgement did not report exactly two active kernels")
+    gp.initialize_replay_store(trusted, config_pub)
     check("token recipe review + signed policy", "ACTIVE {S,B}; cap=10; costArg=usage.tokens; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub
 
@@ -296,19 +301,8 @@ class HostSession:
         self.proc.close()
 
 
-def stable_hash_parts(parts: list[str]) -> str:
-    framed = "".join(f"{len(part)}:{part}" for part in parts)
-    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
-
-
-def approval_target(arguments: dict) -> str:
-    canonical_args = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return stable_hash_parts([SERVER_IDENTITY, TOOL, canonical_args])
-
-
-def signed_token(key: Path, arguments: dict, label: str) -> dict:
-    target = approval_target(arguments)
-    return gp.approval_token(key, target, f"c4-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"c4-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -351,18 +345,19 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     retry_args = {"prompt": prompt, "usage": {"tokens": RETRY_COST}}
     session = HostSession(trusted, config_pub, approval_pub, work, adapter)
     try:
-        # Mint both exact full-argument approvals before either mediated call.
-        # This keeps the first human-visible receipt on the required Budget deny,
-        # with no hidden approval-discovery tool call.
-        session.append(signed_token(approval_key, over_args, "over-cap"))
-        session.append(signed_token(approval_key, retry_args, "retry"))
-
+        over_refusal, over_discovery = session.call(over_args)
+        assert_block(over_refusal, "approval required")
+        trace.record_receipt(
+            over_discovery, role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
+        )
+        session.append(signed_token(approval_key, over_refusal, "over-cap"))
         denied, deny_receipt = session.call(over_args)
         assert_block(denied, "over budget token-usage (0+11>10)")
         deny_record = verify_receipt(seal, deny_receipt, "BLOCK")
         if deny_record.get("deny_kernel") != "budget":
             raise gp.DemoFailure(f"first call deny_kernel is not budget: {deny_record.get('deny_kernel')}")
-        require_cert(deny_record, "safety", "allow", approval_target(over_args))
+        require_cert(deny_record, "safety", "allow", gp.target_from(over_refusal))
         require_cert(deny_record, "budget", "deny", "over budget token-usage (0+11>10): llm_call")
         if session.marker_count() != 0:
             raise gp.DemoFailure("over-budget llm_call reached the adapter")
@@ -375,10 +370,17 @@ def hero_pair(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
             },
         )
 
+        retry_refusal, retry_discovery = session.call(retry_args)
+        assert_block(retry_refusal, "approval required")
+        trace.record_receipt(
+            retry_discovery, role=gp.APPROVAL_SUBJECT_ROLE,
+            theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
+        )
+        session.append(signed_token(approval_key, retry_refusal, "retry"))
         allowed, allow_receipt = session.call(retry_args)
         assert_allow(allowed)
         allow_record = verify_receipt(seal, allow_receipt, "ALLOW")
-        require_cert(allow_record, "safety", "allow", approval_target(retry_args))
+        require_cert(allow_record, "safety", "allow", gp.target_from(retry_refusal))
         require_cert(allow_record, "budget", "allow", "within budget: llm_call")
         if session.marker_count() != 1:
             raise gp.DemoFailure(f"in-budget retry downstream count != 1: {session.marker_count()}")

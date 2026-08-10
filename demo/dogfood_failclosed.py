@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT / "test" / "integration"))
 sys.path.insert(0, str(ROOT / "test" / "tools"))
 
 from approval_loop import env_with_ld, run_signed_ed25519_loop  # noqa: E402
+from process_witness import raise_with_child_stderr  # noqa: E402
 from sign_approval import generate_approval_keypair, sign_approval_token  # noqa: E402
 
 
@@ -47,22 +48,25 @@ def leg2_tampered() -> bool:
             cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, env=env_with_ld())
         try:
-            proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
-            proc.stdin.flush()
-            proc.stdout.readline()
-            call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                               "params": {"name": "db.execute",
-                                          "arguments": {"database": "prod",
-                                                        "sql": "drop table users"}}},
-                              separators=(",", ":"))
-            proc.stdin.write(call + "\n")
-            proc.stdin.flush()
-            blocked = ""
-            for _ in range(20):
-                blocked += proc.stdout.readline()
-                if "approval required:" in blocked:
-                    break
-                time.sleep(0.05)
+            try:
+                proc.stdin.write('{"jsonrpc":"2.0","id":0,"method":"initialize"}\n')
+                proc.stdin.flush()
+                proc.stdout.readline()
+                call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                   "params": {"name": "db.execute",
+                                              "arguments": {"database": "prod",
+                                                            "sql": "drop table users"}}},
+                                  separators=(",", ":"))
+                proc.stdin.write(call + "\n")
+                proc.stdin.flush()
+                blocked = ""
+                for _ in range(20):
+                    blocked += proc.stdout.readline()
+                    if "approval required:" in blocked:
+                        break
+                    time.sleep(0.05)
+            except Exception as error:
+                raise_with_child_stderr(proc, error)
             m = re.search(r"approval required: ([0-9a-f]{64})", blocked)
             if not m:
                 print("LEG 2 BROKEN: no block/target. Raw:", blocked)

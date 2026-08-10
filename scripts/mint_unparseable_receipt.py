@@ -3,11 +3,12 @@
 """Mint the fleet's unparseable-request BLOCK receipt, reproducibly.
 
 The fleet fixtures (seal-assurance-kit fixtures/receipt-unparseable.json,
-seal-verify-action fixtures/pass/unparseable.receipt.json, seal-check
+seal-verify-action fixtures/reduced/unparseable.receipt.json, seal-check
 test/fixtures/unparseable-block.receipt.json) are REAL native-host output on
-the pinned `1e309` line — the line serde cannot parse but the Lean kernel
-mediates fine (the differential corpus pins it; rust/tests/host_path.rs
-`receipt_layer_never_vetoes_kernel_verdicts` proves the behaviour).
+the pinned argument-less tools/call line. The line is valid JSON and the Lean
+kernel mediates it, but the receipt layer cannot derive structured arguments;
+rust/tests/host_path.rs `receipt_layer_never_vetoes_kernel_verdicts` pins the
+kernel-owned BLOCK and reduced-scope receipt shape.
 
 Before this script the mint was a manual host run (kit commit f3660b5); every
 re-pin re-derived it by hand. Run this, then copy the printed receipt to the
@@ -37,14 +38,11 @@ from sign_config import sign_payload  # noqa: E402
 VECTOR1_SEED = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
 VECTOR1_PUB = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
-# The pinned divergent line: 1e309 overflows f64, the whole serde parse
-# fails, the kernel mediates fine. Golden-vectored in Host/Audit.lean (v2)
-# and authorization_decision.rs request_hash_golden_vectors_match_lean.
-LINE = (
-    '{"jsonrpc":"2.0","id":90,"method":"tools/call","params":'
-    '{"name":"db.execute","arguments":{"database":"prod",'
-    '"sql":"drop table accounts","x":1e309}}}'
-)
+# The pinned divergent shape: Lean admits the tools/call and returns its own
+# default-deny response; request_parts deliberately refuses to fabricate a
+# missing arguments object. Unlike the former 1e309 vector, this remains
+# host-admitted after the raw numeric-agreement guard was promoted.
+LINE = '{"jsonrpc":"2.0","id":92,"method":"tools/call","params":{"name":"db.execute"}}'
 
 
 def main() -> int:
@@ -65,10 +63,9 @@ def main() -> int:
                 "name": "db.execute",
                 "mode": "guarded",
                 "match": {"type": "contains_any_ci", "arg": "sql", "needles": ["drop"]},
-                "target": [
-                    {"literal": "db"}, {"arg": "database"},
-                    {"literal": "write"}, {"arg": "sql"},
-                ],
+                # Legacy target committed: "db", arguments.database, "write",
+                # arguments.sql. Stage A commits the entire arguments object.
+                "target": [{"full_arguments": True}],
             }],
         },
     }
@@ -88,7 +85,7 @@ def main() -> int:
     proc.wait(timeout=10)
     if proc.returncode != 0:
         raise RuntimeError(f"host exited {proc.returncode}: {proc.stderr.read()}")
-    if not re.search(r"approval required: [0-9a-f]{64}", blocked):
+    if not re.search(r'"isError":true', blocked):
         raise RuntimeError(f"expected the kernel's own BLOCK, got: {blocked}")
 
     produced = sorted(receipts.glob("receipt-*.json"))
@@ -104,8 +101,19 @@ def main() -> int:
     if audit["request_sha256"] != receipt["request_sha256"]:
         raise RuntimeError("kernel-attested hash disagrees with request_sha256")
 
+    # The native writer persists the superset authorization-decision record.
+    # Fleet verifiers consume the public v2 receipt projection: replace the
+    # native record discriminator and omit its framing-only transport fields,
+    # exactly as the historical fleet fixture did.
+    public_receipt = {"seal_receipt": "v2"}
+    native_only = {
+        "record_type", "record_version",
+        "framed_subject_sha256", "framed_subject_length",
+    }
+    public_receipt.update({k: v for k, v in receipt.items() if k not in native_only})
+
     out = out_dir / "receipt-unparseable.json"
-    out.write_text(produced[0].read_text(encoding="utf-8"), encoding="utf-8")
+    out.write_text(json.dumps(public_receipt, indent=2) + "\n", encoding="utf-8")
     print(f"minted: {out}")
     print(f"  request_sha256: {receipt['request_sha256']}")
     print(f"  kernel wasm pin: {receipt['kernel_identity']['wasm_sha256']}")

@@ -10,47 +10,197 @@ on:
 permissions:
   contents: read
 
+# Every step in each job reports independently. The final aggregate converts
+# any recorded failure back into a failing job; never remove that aggregate
+# while continue-on-error is present.
 jobs:
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions/dependency-review-action@v5
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        uses: actions/dependency-review-action@v5
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
 
   cargo-audit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: "1.96.0", cache: false }
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings
+      - id: control_03
+        continue-on-error: true
+        run: cargo install cargo-audit --locked
+      - id: control_04
+        continue-on-error: true
+        run: cargo audit --deny warnings
         working-directory: rust
 
-  fuzz-hostile-ingress:
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
+  fuzz-hostile-ingress-lean:
     runs-on: ubuntu-24.04
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
-      - name: Require private build access
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Require private build access
         run: test -n "$SEAL_CI_READ_TOKEN"
-      - name: Configure private Lake dependency auth
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
         run: |
+          python3 scripts/lean_test_driver_gate.py
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         with:
           use-github-cache: false
           build: false
-      - run: test -d .lake/packages/mcp-seal || lake update
-      - run: bash .lake/packages/mcp-seal/c/build.sh
-      - run: lake build +Ffi:c.o.export
-      - run: scripts/build_ffi_so.sh
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+          test: false
+          lint: false
+      - id: control_05
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_06
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_12
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build with disk telemetry
+        run: python3 scripts/ci_disk_telemetry.py security-lean-aggregate -- lake test
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
+  fuzz-hostile-ingress:
+    needs: fuzz-hostile-ingress-lean
+    runs-on: ubuntu-24.04
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Require private build access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - id: control_05
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
+      - id: control_06
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_07
+        continue-on-error: true
+        run: lake build +Ffi:c.o.export
+      - id: control_08
+        continue-on-error: true
+        run: scripts/build_ffi_so.sh
+      - id: control_09
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: nightly, cache: false }
-      - run: cargo install cargo-fuzz --locked
-      - run: cargo +nightly fuzz run hostile_ingress -- -max_total_time=60 -timeout=5
+      - id: control_10
+        continue-on-error: true
+        run: cargo install cargo-fuzz --locked
+      - id: control_11
+        continue-on-error: true
+        name: Build and run hostile-ingress fuzz target with disk telemetry
+        run: |
+          df -h .
+          du -sh target fuzz/target 2>/dev/null || true
+          status=0
+          python3 ../scripts/ci_disk_telemetry.py security-fuzz -- \
+            cargo +nightly fuzz run hostile_ingress -- -max_total_time=60 -timeout=5 \
+            || status=$?
+          df -h .
+          du -sh target fuzz/target 2>/dev/null || true
+          exit "$status"
         working-directory: rust
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

@@ -26,10 +26,12 @@ CFLAGS="-O2 -I lean4-src/src/include -I gen/include -I gen -D LEAN_EMSCRIPTEN=1"
 # Ffi-reachable project modules (ir-relative paths, no .c). Output name = path
 # with '/' -> '_'. Host/Step is present because Ffi routes through Host.stepRoute;
 # Host/UnicodeKeys supplies the runtime NFD key-identity guard used by
-# Host/Canonical.
+# Host/Canonical. Host/SurrogateEscapes and Host/NestingDepth supply the A2
+# pre-parse guards reached through Host/Canonical.
 MODULES=(
   Ffi
-  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/Kernel Host/Registry Host/Sha256 Host/Step Host/UnicodeKeys
+  Host/Action Host/Audit Host/Canonical Host/Config Host/Evidence Host/JsonWire Host/Kernel Host/Registry Host/Sha256 Host/Step Host/UnicodeKeys
+  Host/SurrogateEscapes Host/NestingDepth
   Host/Principal Host/Provenance
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
@@ -61,8 +63,10 @@ SEAL_IR="$SEAL_ROOT/.lake/build/ir"
 SEAL_MODULES=(
   SealCore SealCore/Automaton SealCore/Event SealCore/Safety SealCore/Sha256
   Seal/Block Seal/Channel Seal/Classify Seal/Hash Seal/JsonUtil
+  Seal/EffectCommitment Seal/EncodingInjective
   Seal/PolicyWire Seal/Policy Seal/PolicyBundle
   SealV2/Canonical SealV2/Crypto SealV2/Decide SealV2/Escape SealV2/Parser
+  SealV2/EffectEnvelope SealV2/McpVersionGate
   SealV2/Serialization SealV2/Validation
 )
 

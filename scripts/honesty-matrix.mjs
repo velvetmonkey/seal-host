@@ -53,10 +53,29 @@ function die(msg) {
 // Source 1: the Lean derivation.
 // ---------------------------------------------------------------------------
 
+// A missing, empty or unparseable artefact means the PRODUCER died, not that
+// the honesty matrix drifted. Those are opposite findings and this gate exists
+// to report the second one, so it must never be able to report a dead producer
+// as drift — nor as an unlabelled `SyntaxError` from JSON.parse (2026-08-03,
+// CI run 30857266859: `lake build` link crashed, /tmp/honesty.json was left
+// 0 bytes, and this gate's whole contribution was
+// `SyntaxError: Unexpected end of JSON input`).
 function loadLeanJson(argPath) {
   let raw;
   if (argPath) {
-    raw = readFileSync(argPath, "utf8");
+    try {
+      raw = readFileSync(argPath, "utf8");
+    } catch (error) {
+      die(
+        `PRODUCER FAILURE, not drift: cannot read ${argPath} (${error.code ?? error.message}). ` +
+          `The Lean honesty_matrix step did not produce its artefact. Fix that step; this gate has no finding.`,
+      );
+    }
+    if (raw.length === 0)
+      die(
+        `PRODUCER FAILURE, not drift: ${argPath} is empty (0 bytes). ` +
+          `The Lean honesty_matrix step exited without writing its JSON. Fix that step; this gate has no finding.`,
+      );
   } else {
     raw = execFileSync("lake", ["exe", "honesty_matrix"], {
       cwd: REPO,
@@ -64,7 +83,15 @@ function loadLeanJson(argPath) {
       stdio: ["ignore", "pipe", "inherit"],
     });
   }
-  const data = JSON.parse(raw);
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (error) {
+    die(
+      `PRODUCER FAILURE, not drift: ${argPath ?? "lake exe honesty_matrix"} is not valid JSON ` +
+        `(${error.message}; ${raw.length} bytes). Fix the producer; this gate has no finding.`,
+    );
+  }
   if (data.schema !== "seal-honesty-matrix/v2")
     die(`unexpected Lean JSON schema: ${data.schema}`);
   for (const key of ["kernels", "arithmetic", "boundTheorems", "mandatory", "identity"])

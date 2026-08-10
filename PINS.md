@@ -39,22 +39,22 @@ today, and nothing would notice if it stopped being correct.
 
 | site | status | evidence | note |
 |---|---|---|---|
-| Lean-side `seal_host_classify` integer encoding | `PINNED-BY-TEST` | `Test/ClassifyEncoding.lean` (three build-gated real-input guards) | pins `.passthrough` / `.act` / `.refuse` to exactly `0` / `1` / `2`; together with `rust/tests/differential.rs` `classify_literal_only`, pins the two-sided correspondence stated in `RUST_BRIDGE.md` |
+| Lean-side `seal_host_classify` integer encoding | `PINNED-BY-TEST` | `Test/ClassifyEncoding.lean` (9 build-gated real-input guards) | pins `.passthrough` / `.act` / `.refuse` to exactly `0` / `1` / `2`; together with `rust/tests/differential.rs` `classify_literal_only`, pins the two-sided correspondence stated in `RUST_BRIDGE.md` |
 | Rust `route_of_classify` mapping | `PINNED-BY-TEST` | `rust/tests/differential.rs` `classify_literal_only` | property test over all `u32`; fails closed on everything except literal 0 and 1 |
 | Lean panic default on the classify seam | `PINNED` | `rust/tests/panic_probe.rs`, F1 fix | a compiled Lean panic returns the type default, and for `UInt32` that is `0 = passthrough`. Guarded by `lean_set_exit_on_panic`, with a probe driving the real binary AND an unguarded variant demonstrating the fail-open is genuine |
 | canonical-equivalent duplicate keys | `PINNED` | commit `7f0739d`, `Host/UnicodeKeys.lean` | NFD identity; rejects a repeated canonical identity only, NOT non-ASCII keys generally. Justified by Swift `String ==` canonical equivalence plus the official MCP Swift SDK decoding into `[String: Value]` |
-| `effect_message` Rust ↔ Lean byte twin | `PINNED-BY-TEST` | `rust/tests/envelope_v23_twin.rs` | layer 1 runs against a frozen expectation; layer 2 is the active live differential over the same 13-vector corpus, with no frozen middleman. **Layer 2 is unblocked and runs against manifest-pinned `bd03bf7`, which contains Stage B2 commit `4f39f20`** |
+| `effect_message` Rust ↔ Lean byte twin | `PINNED-BY-TEST` | `rust/tests/envelope_v23_twin.rs` | layer 1 runs against a frozen expectation; layer 2 is the active live differential over the same 13-vector corpus, with no frozen middleman. **Layer 2 is unblocked and runs against manifest-pinned `316d741`, which contains Stage B2 commit `4f39f20`** |
 | trim vs forwarded bytes | `CHARACTERISED` | `Host/Canonical.lean:43` vs `:77` | guards and parsing run on `line.trimAscii.toString`; `raw := line` is forwarded. Lean 4.28 `Char.isWhitespace` is exactly `0x09/0x0A/0x0D/0x20`, trimmed only from the ends, which is precisely RFC 8259 whitespace around a complete JSON value. Semantically inert. No pin required |
 | `rust/` ↔ `sealAdapter` byte-level refinement | `TCB` | `CLAIMS.md`, `Host/SealAdapter.lean` "TRUST BOUNDARY (residual, stated loud)" | named future work. The model emits `serialize checked`; the host forwards `raw`. Disclosed, not enforced |
 | classify-passthrough path in the adapter model | `TCB` | `Host/SealAdapter.lean` "Fidelity to `rust/src/main.rs` (P1-P6), stated honestly" | P1 named explicitly as unrepresented, along with P5, P6, P4, P7-P9 |
-| nonce durable-consume vs decision ordering | `CHARACTERISED` | `rust/src/a3.rs:47,95-130`, `rust/src/replay_store.rs:70` | the nonce is durably burned before the decision lands, so a failure between them costs a caller their token. Fails CLOSED. The in-memory cache is rebuilt from the store on startup and is only ever a fast-path reject, so it cannot be more permissive than the durable record |
+| nonce durable-consume vs decision ordering | `PINNED-BY-TEST` | `rust/src/a3.rs::reserve_nonce`/`commit_nonce`, `rust/src/replay_store.rs` schema 2, `rust/tests/host_path.rs` G2 T1-T3 | G2 cut (a), Ben's two-phase ruling 2026-08-06. Previously `CHARACTERISED`: the nonce was durably burned before the decision landed, so a crash between them cost a caller their token with no receipt. Now the pre-Lean write is a durable RESERVATION; the burn COMMITS at RECORDED (after the receipt, before the child write) and startup recovery reclaims unrecorded holds. Residual, stated loud: receipt (file) and burn (SQLite) are two durable acts — a crash exactly between them permits a duplicate RECEIPT after recovery, never a duplicate forward. Fails CLOSED. The in-memory cache is rebuilt from the store on startup after reclaim and is only ever a fast-path reject |
 
 ## Specification-only (named in the design spec, absent from both codebases)
 
 Verified by repository-wide fixed-string search, zero matches each. These are **specification**
 defects if they are defects at all. Do not add machinery to satisfy a document.
 
-`judged_request_sha256` · `trust_context_ref` · `canonical_plane_encoding` ·
+`trust_context_ref` · `canonical_plane_encoding` ·
 `m_code` / `n_code` / `m_pol` / `n_pol` · `deprecated_from` · `permitted_profiles` ·
 `admission_key` · `kernel_tool_namespace`
 

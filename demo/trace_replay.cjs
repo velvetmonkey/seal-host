@@ -20,6 +20,20 @@ function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
+function canonicalRequestFromReceipt(formatModule, receipt) {
+  const value = JSON.parse(formatModule.canonicalRequest(receipt.tool, receipt.arguments));
+  if (Object.prototype.hasOwnProperty.call(receipt, "_meta")) {
+    value.params._meta = receipt._meta;
+  }
+  if (Object.prototype.hasOwnProperty.call(receipt, "requestState")) {
+    value.params.requestState = receipt.requestState;
+  }
+  if (Object.prototype.hasOwnProperty.call(receipt, "inputResponses")) {
+    value.params.inputResponses = receipt.inputResponses;
+  }
+  return JSON.stringify(value);
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2);
   const transcript = args.shift();
@@ -133,11 +147,15 @@ async function main() {
     payload: transcript.signed_config.payload,
     signature: transcript.signed_config.signature,
   });
-  const initialized = JSON.parse(module.ccall(
-    "seal_init", "string", ["string", "string"],
-    [envelope, transcript.signed_config.pubkey],
-  ));
-  if (initialized.ok !== true) fail(`seal_init rejected pinned signed config: ${JSON.stringify(initialized)}`);
+  function initialize() {
+    const initialized = JSON.parse(module.ccall(
+      "seal_init", "string", ["string", "string"],
+      [envelope, transcript.signed_config.pubkey],
+    ));
+    if (initialized.ok !== true)
+      fail(`seal_init rejected pinned signed config: ${JSON.stringify(initialized)}`);
+  }
+  initialize();
 
   if (options.dropSequence !== null && !transcript.steps.some((step) => step.sequence === options.dropSequence))
     fail(`drop sequence ${options.dropSequence} is absent`);
@@ -149,7 +167,8 @@ async function main() {
   }
   const selected = options.dropSequence === null
     ? transcript.steps : transcript.steps.filter((step) => step.sequence !== options.dropSequence);
-  for (const step of selected) {
+  const committed = [];
+  function executeStep(step, variantName, report) {
     let receiptBytes, receipt;
     try {
       receiptBytes = Buffer.from(step.receipt_bytes_base64, "base64");
@@ -166,7 +185,7 @@ async function main() {
     if (!isDeepStrictEqual(receipt.signed_config, transcript.signed_config))
       fail(`step ${step.sequence} signed config differs from transcript pin`);
 
-    const canonical = formatModule.canonicalRequest(receipt.tool, receipt.arguments);
+    const canonical = canonicalRequestFromReceipt(formatModule, receipt);
     if (canonical !== step.canonical_request || canonical !== receipt.canonical_request)
       fail(`step ${step.sequence} canonical request mismatch`);
     const canonicalSha = sha256(Buffer.from(canonical));
@@ -177,7 +196,7 @@ async function main() {
       receipt.kernel_config, receipt.granted_capabilities,
     );
     if (grants.errors.length) fail(`step ${step.sequence} approval derivation: ${grants.errors.join("; ")}`);
-    const explicit = replayInput(step, receipt, grants, canonical, options.variant);
+    const explicit = replayInput(step, receipt, grants, canonical, variantName);
     const input = explicit || configModule.buildStepInput({
       tool: receipt.tool, args: receipt.arguments, approvals: grants.approvals,
       now: receipt.now, id: requestId,
@@ -190,10 +209,21 @@ async function main() {
         `actual_route=${routeOf(actual)}`,
       );
     }
-    console.log(
-      `PASS trace step=${step.sequence} tool=${receipt.tool} ` +
-      `raw_sha256=${sha256(Buffer.from(actual))}`,
-    );
+    if (report) {
+      console.log(
+        `PASS trace step=${step.sequence} tool=${receipt.tool} ` +
+        `raw_sha256=${sha256(Buffer.from(actual))}`,
+      );
+    }
+  }
+  for (const step of selected) {
+    executeStep(step, options.variant, true);
+    if (step.commit === false) {
+      initialize();
+      for (const prior of committed) executeStep(prior, null, false);
+    } else {
+      committed.push(step);
+    }
   }
   console.log(
     `PASS trace transcript steps=${selected.length} wasm_sha256=${wasmSha} ` +

@@ -170,7 +170,12 @@ fn refusal_fires_on_the_inputs_it_must() {
             ));
         }
     }
-    assert!(failures.is_empty(), "{} guard(s) not firing:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} guard(s) not firing:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 fn assert_all<'a>(lines: impl IntoIterator<Item = &'a str>, check: fn(&str) -> Result<(), String>) {

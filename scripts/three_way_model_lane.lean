@@ -4,11 +4,12 @@ import Ffi
 /-!
 MODEL lane runner for the three-way differential (rust/tests/three_way.rs).
 
-Evaluates the REAL Lean decision core (`Ffi.modelStep`) in the Lean INTERPRETER
-via `#eval` under `lake env lean` — the same Lean source the theorems govern,
-never a re-implementation. The harness diffs this against the compiled native
-`.so` and the pinned emscripten wasm to test that both compiles preserve the
-proven decisions + audit bytes on the generated corpus.
+Evaluates the REAL public composition (`Ffi.gatePlanFor` followed, on
+`continue`, by `Ffi.modelStep`) in the Lean INTERPRETER via `#eval` under
+`lake env lean` — the same Lean source the theorems govern, never a
+re-implementation. The harness diffs this against the compiled native `.so`
+and pinned emscripten wasm to test that both compiles preserve the proven
+decisions + audit bytes on the generated corpus.
 
 R6 boundary (same as scripts/model_oracle.lean): the interpreter cannot execute
 the `@[extern]` Ed25519 config-signature leaf, so this lane initialises from the
@@ -37,6 +38,7 @@ open Ffi
   let corpusPath := (← IO.getEnv "SEAL_CONF_CORPUS").getD ""
   let outPath := (← IO.getEnv "SEAL_CONF_OUT").getD ""
   let payload ← IO.FS.readFile payloadPath
+  let mut revision := McpRevisionSelection.undetermined
   let initOk : IO Bool := do
     let initOut ← modelInitFromTrustedPayload payload
     if (initOut.splitOn "\"ok\":true").length == 1 then
@@ -55,6 +57,12 @@ open Ffi
     if input == "#REINIT" then
       if !(← initOk) then
         return ()
+      revision := .undetermined
       continue
-    h.putStr ((← modelStep input) ++ "\n")
+    let (decision, next) := gatePlanFor revision input
+    revision := next
+    let out ← match decision with
+      | .continue => modelStep input
+      | .reject _ => pure decision.toJson.compress
+    h.putStr (out ++ "\n")
   h.flush

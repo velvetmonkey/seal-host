@@ -20,13 +20,15 @@
 //! report it, never paper over it.
 //!
 //! Lanes:
-//!   native — in-process `LeanHost::init/step` against the freshly built
-//!            `.lake/build/lib/libsealffi.so` this test binary links;
+//!   native — in-process `LeanHost` against the freshly built native `.so`,
+//!            composing the M.7 gate/session fold before `step` exactly as
+//!            the public wasm `seal_decide` wrapper does;
 //!   wasm   — `scripts/three_way_wasm_lane.mjs` driving the PINNED artifact
 //!            `wasm-spike/verified/seal.wasm` (sha256 checked against
 //!            `PINNED_WASM_SHA256` below; never rebuilt here);
 //!   model  — `scripts/three_way_model_lane.lean` running the REAL
-//!            `Ffi.modelStep` in the Lean interpreter under `lake env lean`.
+//!            `Ffi.gatePlanFor` + `Ffi.modelStep` composition in the Lean
+//!            interpreter under `lake env lean`.
 //!
 //! Corpus protocol (shared by all three lanes): one compact-JSON step input
 //! per line; the literal control line `#REINIT` starts a FRESH session every
@@ -39,10 +41,9 @@
 //! behavior; init agreement (accept + byte-equal summary, and tamper ⇒
 //! reject) is asserted native≡wasm two-way in `init_agreement_two_way`.
 //! There is no classify export in the wasm build, so classify agreement is
-//! covered (a) by the step surface itself (`route == "passthrough"` iff
-//! `classifyLine` passes the line through — same function, Ffi.lean) and
-//! (b) by the per-case native invariant `classify == 0 ⇔ route ==
-//! "passthrough"` asserted inside the native runner.
+//! covered on gate-admitted lines by the per-case native invariant
+//! `classify == 0 ⇔ route == "passthrough"`. Gate-rejected lines are compared
+//! byte-for-byte across the three composed lanes instead.
 //!
 //! Volume knobs (case counts are the FUZZ counts; the curated families are
 //! always included on top):
@@ -62,6 +63,7 @@
 mod common;
 
 use common::{as_arguments, as_method, as_name, as_params, boundary_corpus, in_value, nested};
+use seal_host_rs::adapter_revision::McpRevisionSession;
 use seal_host_rs::lean::LeanHost;
 use seal_host_rs::route::{route_of_step_output, Route};
 use sha2::{Digest, Sha256};
@@ -73,11 +75,12 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// Pinned wasm artifact under test. Authority: wasm-spike/verified/PROVENANCE.txt
-/// (rebuilt for the V2.2 authority-bound principal envelope, P6 byte frames,
-/// and raw-wire guards from mcp-seal-dev 6c74b61 + seal-host 4b0845e; Lean
-/// v4.28.0, emscripten 6.0.0). This harness
+/// (Phase-M kernel `316d741`, host source base `a6f4d5c`, and the public M.7
+/// gate-before-step wrapper; Lean v4.28.0, emscripten 6.0.0). This harness
 /// NEVER rebuilds the wasm; a hash mismatch is a preflight failure.
-const PINNED_WASM_SHA256: &str = "70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf";
+const PINNED_WASM_SHA256: &str = "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657";
+const PINNED_WASM_JS_SHA256: &str =
+    "801417decfbc49b926a16c9968aa3e77e792abf05eb782ec8ed530325fb8c6c5";
 
 const DEFAULT_SEED: u64 = 0x5EA1_C0DE_2026_0716;
 /// Fresh session every SEGMENT cases — bounds failure repro to one segment.
@@ -604,9 +607,10 @@ fn mint_envelope(workdir: &Path) -> (String, String, String) {
 // ---- lane runners -----------------------------------------------------------------
 
 /// Native lane, in-process. Also asserts the per-case native invariants:
-/// classify == 0 ⇔ route == "passthrough" (routing subsumption for the
-/// classify surface wasm does not export) and `route_of_step_output` (the
-/// binary's routing fn) only Forwards on the exact forward literal.
+/// on gate-admitted lines, classify == 0 ⇔ route == "passthrough" (routing
+/// subsumption for the classify surface wasm does not export); and
+/// `route_of_step_output` (the binary's routing fn) only Forwards on the exact
+/// forward literal.
 fn run_native(
     corpus: &[CorpusLine],
     envelope: &str,
@@ -614,16 +618,21 @@ fn run_native(
     failures: &mut Vec<String>,
 ) -> Vec<String> {
     let h = host();
-    let init = |failures: &mut Vec<String>| match h.init(envelope, pk) {
-        Ok(out) if out.contains("\"ok\":true") => {}
+    let mut revision = McpRevisionSession::default();
+    let init = |failures: &mut Vec<String>, revision: &mut McpRevisionSession| match h
+        .init(envelope, pk)
+    {
+        Ok(out) if out.contains("\"ok\":true") => {
+            *revision = McpRevisionSession::default();
+        }
         Ok(out) => failures.push(format!("native init rejected: {out}")),
         Err(e) => failures.push(format!("native init seam error: {e}")),
     };
-    init(failures);
+    init(failures, &mut revision);
     let mut outs = Vec::new();
     for (idx, cl) in corpus.iter().enumerate() {
         match cl {
-            CorpusLine::Reinit => init(failures),
+            CorpusLine::Reinit => init(failures, &mut revision),
             CorpusLine::Case(c) => {
                 // Corpus-protocol trim: the step input is the corpus line
                 // after ASCII-whitespace trim, identical in all three lanes
@@ -633,13 +642,37 @@ fn run_native(
                 let step = c
                     .step
                     .trim_matches(|ch: char| matches!(ch, ' ' | '\t' | '\r' | '\n'));
-                let out = match h.step(step) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        // surfaces as a three-way divergence, never a skip
-                        format!("{{\"seam_error\":\"{e}\"}}")
-                    }
-                };
+                // The promoted wasm's public `seal_decide` composes the M.7
+                // revision gate before `seal_host_step`. Run that same public
+                // composition here; comparing raw native step to wrapped wasm
+                // would manufacture a divergence on gate-rejected lines.
+                let mut gate_continued = true;
+                let out = match &c.inner {
+                    Some(inner) => match h.classify(inner) {
+                        // Classifier-refused lines bypass the JSON-parsing
+                        // gate and fail closed in step, matching `gatePlanFor`.
+                        Ok(2) => h.step(step),
+                        Ok(_) => match h.mcp_version_gate(inner, revision.version_gate_input()) {
+                            Ok(gate) if gate == r#"{"route":"continue"}"# => {
+                                match revision.observe_received_call(h, inner) {
+                                    Ok(()) => h.step(step),
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            Ok(reject) => {
+                                gate_continued = false;
+                                Ok(reject)
+                            }
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    },
+                    None => h.step(step),
+                }
+                .unwrap_or_else(|e| {
+                    // Surfaces as a three-way divergence, never a skip.
+                    format!("{{\"seam_error\":\"{e}\"}}")
+                });
                 // invariant: the binary's routing fn only Forwards on the literal
                 let route = route_of_step_output(Ok(out.clone()));
                 if matches!(route, Route::Forward { .. }) && !out.contains("\"route\":\"forward\"")
@@ -648,12 +681,13 @@ fn run_native(
                         "[corpus {idx}] route_of_step_output Forwarded without the forward literal: {out}"
                     ));
                 }
-                // invariant: classify == 0 ⇔ step route == passthrough
+                // Invariant on gate-admitted lines: classify == 0 iff step
+                // route is passthrough. A gate rejection owns the route first.
                 if let Some(inner) = &c.inner {
                     match h.classify(inner) {
                         Ok(cls) => {
                             let is_pass = out == r#"{"route":"passthrough"}"#;
-                            if (cls == 0) != is_pass {
+                            if gate_continued && (cls == 0) != is_pass {
                                 failures.push(format!(
                                     "[corpus {idx}] classify/step disagree: classify={cls}, step={out} for line {inner:?}"
                                 ));
@@ -821,9 +855,20 @@ fn preflight(root: &Path) -> Result<Vec<String>, String> {
         "wasm artifact : {} (sha256 {got}, pin OK)",
         wasm_path.display()
     ));
-    if !root.join("wasm-spike/verified/seal.js").exists() {
-        return Err("wasm-spike/verified/seal.js missing".into());
+    let js_path = root.join("wasm-spike/verified/seal.js");
+    let js_bytes = fs::read(&js_path)
+        .map_err(|e| format!("cannot read pinned wasm loader {}: {e}", js_path.display()))?;
+    let js_got = sha256_hex(&js_bytes);
+    if js_got != PINNED_WASM_JS_SHA256 {
+        return Err(format!(
+            "seal.js sha256 mismatch: pinned {PINNED_WASM_JS_SHA256}, on disk {js_got} — refusing \
+             a wasm/loader pair not reviewed in wasm-spike/verified/PROVENANCE.txt"
+        ));
     }
+    banner.push(format!(
+        "wasm loader   : {} (sha256 {js_got}, pin OK)",
+        js_path.display()
+    ));
     for (tool, args) in [("node", vec!["--version"]), ("lake", vec!["--version"])] {
         let out = Command::new(tool).args(&args).output().map_err(|e| {
             format!(

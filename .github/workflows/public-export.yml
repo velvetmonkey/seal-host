@@ -8,38 +8,220 @@ permissions:
   contents: read
   id-token: write
 
+# Every step reports independently. The final aggregate converts any recorded
+# failure back into a failing job; never remove that aggregate while
+# continue-on-error is present.
 jobs:
+  q0-keyless-release-provenance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Install cosign for the hosted keyless probe
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with: { cosign-release: v3.0.6 }
+      - id: control_03
+        continue-on-error: true
+        name: Prove Fulcio issuance and certificate-identity verification
+        run: |
+          q0_release="$RUNNER_TEMP/q0-release-provenance"
+          mkdir -p "$q0_release"
+          for arch in aarch64 x86_64; do
+            printf 'q0 keyless release probe %s\n' "$arch" > "$q0_release/seal-host-q0-linux-${arch}.tar.gz"
+            printf '{"bomFormat":"CycloneDX","specVersion":"1.6"}\n' > "$q0_release/seal-host-q0-linux-${arch}.cdx.json"
+          done
+          install -m 0755 scripts/release_provenance.py "$q0_release/release_provenance.py"
+          (
+            cd "$q0_release"
+            sha256sum \
+              release_provenance.py \
+              seal-host-q0-linux-aarch64.cdx.json \
+              seal-host-q0-linux-aarch64.tar.gz \
+              seal-host-q0-linux-x86_64.cdx.json \
+              seal-host-q0-linux-x86_64.tar.gz > SHA256SUMS
+          )
+          identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
+          python3 scripts/release_provenance.py create \
+            --release-dir "$q0_release" \
+            --release-version q0 \
+            --output "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
+            --signer-identity "$identity" \
+            --oidc-issuer "https://token.actions.githubusercontent.com"
+          cosign sign-blob --yes \
+            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            "$q0_release/SEAL-RELEASE-PROVENANCE.json"
+          python3 scripts/release_provenance.py verify \
+            --release-dir "$q0_release" \
+            --release-version q0 \
+            --statement "$q0_release/SEAL-RELEASE-PROVENANCE.json" \
+            --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   export:
     runs-on: ubuntu-24.04
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
         with: { fetch-depth: 0 }
-      - name: Require private build dependency access
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Require private build dependency access
         run: test -n "$SEAL_CI_READ_TOKEN"
-      - name: Configure private build dependency access
-        run: git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
-      - uses: leanprover/lean-action@v1.5.0
-        with: { use-github-cache: false, build: false }
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_03
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+      - id: control_04
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - id: control_13
+        continue-on-error: true
+        name: Build native Lean test link dependency
+        run: |
+          set -euo pipefail
+          test -d .lake/packages/mcp-seal || lake update
+          bash .lake/packages/mcp-seal/c/build.sh
+      - id: control_14
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build
+        run: lake test
+      - id: control_05
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: "1.96.0", cache: false }
-      - uses: actions/setup-node@v7.0.0
+      - id: control_06
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         with: { node-version: "22" }
-      - uses: sigstore/cosign-installer@v4.1.2
+      - id: control_07
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with: { cosign-release: v3.0.6 }
-      - run: cargo install cargo-cyclonedx --locked
-      - name: Run and verify first export
+      - id: control_08
+        continue-on-error: true
+        run: cargo install cargo-cyclonedx --locked
+      - id: control_09
+        continue-on-error: true
+        name: Run and verify first export
         run: |
           scripts/export_public.sh "$RUNNER_TEMP/public-export-a"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-a"
-      - name: Run and verify independent second export
+      - id: control_10
+        continue-on-error: true
+        name: Run and verify independent second export
         run: |
           scripts/export_public.sh "$RUNNER_TEMP/public-export-b"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-b"
-      - name: Compare deterministic payloads across separate runs
+      - id: control_11
+        continue-on-error: true
+        name: Compare deterministic payloads across separate runs
         run: scripts/compare_public_exports.sh "$RUNNER_TEMP/public-export-a" "$RUNNER_TEMP/public-export-b"
-      - uses: actions/upload-artifact@v7
+      - id: control_12
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
         with:
           name: signed-public-export-${{ github.sha }}
           path: ${{ runner.temp }}/public-export-a
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
+  clean-source-build:
+    needs: export
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+        with:
+          persist-credentials: false
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      # This job's lean-action was the second call site in this file and had
+      # no preceding test-driver wiring gate. The per-file assertion in
+      # test/test_lean_test_driver_gate.py counts gates against actions across
+      # the whole workflow, so the single gate in `export` above was masking
+      # this omission until a lexically earlier workflow failed first.
+      - id: control_06
+        continue-on-error: true
+        name: Guard Lean test-driver wiring
+        run: python3 scripts/lean_test_driver_gate.py
+      - id: control_02
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - id: control_03
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with: { toolchain: "1.96.0", cache: false }
+      - id: control_04
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: signed-public-export-${{ github.sha }}
+          path: ${{ runner.temp }}/public-export
+      - id: control_05
+        continue-on-error: true
+        name: Build the final source tarball with no private access
+        run: |
+          mapfile -t archives < <(find "$RUNNER_TEMP/public-export" -maxdepth 1 -name '*-source.tar.gz' -type f)
+          test "${#archives[@]}" -eq 1
+          scripts/verify_public_source_build.sh "${archives[0]}"
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

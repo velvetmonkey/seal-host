@@ -5,8 +5,100 @@ name: Golden Path - deterministic shell + Postgres + deploy + token governor + t
 on:
   push:
 
+# Every step reports independently. The final aggregate converts any recorded
+# failure back into a failing job; never remove that aggregate while
+# continue-on-error is present.
 jobs:
+  lean-aggregate:
+    runs-on: ubuntu-latest
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+
+      - id: control_02
+        continue-on-error: true
+        name: Require private dependency access
+        run: |
+          test -n "$SEAL_CI_READ_TOKEN" || {
+            echo "::error::SEAL_CI_READ_TOKEN is required; aggregate Lean tests were not run."
+            exit 1
+          }
+
+      - id: control_04
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
+        run: |
+          python3 scripts/lean_test_driver_gate.py
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+
+      - id: control_05
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+
+      - id: control_21
+        continue-on-error: true
+        name: Build native Lean test link dependency
+        run: |
+          set -euo pipefail
+          test -d .lake/packages/mcp-seal || lake update
+          bash .lake/packages/mcp-seal/c/build.sh
+
+      - id: control_22
+        continue-on-error: true
+        name: Run aggregate Lean tests after native link dependency build with disk telemetry
+        run: python3 scripts/ci_disk_telemetry.py golden-lean-aggregate -- lake test
+
+      - id: control_06
+        continue-on-error: true
+        name: Changed proven Lean surface must re-prove axiom-clean
+        run: |
+          set -o pipefail
+          PUSH_BASE="${{ github.event.before }}"
+          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
+            PUSH_BASE="$(git merge-base origin/main HEAD)"
+          fi
+          if git diff --quiet "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'; then
+            echo "No Lean changes in this push; proof gate not needed."
+            exit 0
+          fi
+          echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
+          lake exe cache get
+          lake build
+          lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
+          ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"
+          lake exe host_unit_tests
+          lake exe dx_surface_tests
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py
+
   deterministic-shell:
+    needs: lean-aggregate
     runs-on: ubuntu-latest
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
@@ -15,11 +107,15 @@ jobs:
       SEAL_POSTGRES_IMAGE: postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
       SEAL_ASSURANCE_KIT_ROOT: ${{ github.workspace }}/seal-assurance-kit
     steps:
-      - uses: actions/checkout@v6.0.3
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
 
-      - name: Require private dependency access
+      - id: control_02
+        continue-on-error: true
+        name: Require private dependency access
         run: |
           test -n "$SEAL_CI_READ_TOKEN" || {
             echo "::error::SEAL_CI_READ_TOKEN is required; deterministic acceptance was not run."
@@ -31,83 +127,103 @@ jobs:
       # verifies today's receipts against yesterday's kernel and fails
       # "kernel binary matches receipt". It is a commit SHA, so a `grep df42`
       # re-pin sweep cannot see it — when the kernel sha changes, bump it here
-      # by hand. d5e14d1 carries kernel d7d81e27 and descends from the current
+      # by hand. dfa49da carries kernel 28bb3ae7 and descends from the current
       # 7-kernel policy bundle lineage.
-      - name: Check out pinned assurance kit
+      - id: control_03
+        continue-on-error: true
+        name: Check out pinned assurance kit
         uses: actions/checkout@v6.0.3
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: d5e14d173bd8b2170e244a91ad2ddc42ae168cff
+          ref: 8946ec2a81e0e3e25b8920a9f7506ff4b37219f9
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
-      - name: Configure private Lake dependency auth
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+
+      - id: control_04
+        continue-on-error: true
+        name: Guard Lean test-driver wiring and configure private dependency auth
         run: |
+          python3 scripts/lean_test_driver_gate.py
           git config --global \
             url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
             "https://github.com/velvetmonkey/"
 
-      - uses: leanprover/lean-action@v1.5.0
+      - id: control_05
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
         with:
           use-github-cache: false
           build: false
+          test: false
+          lint: false
 
-      - name: Changed proven Lean surface must re-prove axiom-clean
-        run: |
-          PUSH_BASE="${{ github.event.before }}"
-          if ! git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null; then
-            PUSH_BASE="$(git merge-base origin/main HEAD)"
-          fi
-          if git diff --quiet "$PUSH_BASE" "${{ github.sha }}" -- '*.lean'; then
-            echo "No Lean changes in this push; proof gate not needed."
-            exit 0
-          fi
-          echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
-          lake exe cache get
-          bash .lake/packages/mcp-seal/c/build.sh
-          lake build
-          lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
-          ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"
-          lake exe host_unit_tests
-          lake exe dx_surface_tests
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - id: control_07
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: "1.96.0"
           cache: false
 
-      - uses: actions/setup-node@v7.0.0
+      - id: control_08
+        continue-on-error: true
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
 
-      - name: Stage pinned container image
+      - id: control_09
+        continue-on-error: true
+        name: Stage pinned container image
         run: docker pull "$SEAL_GOLDEN_PATH_IMAGE"
 
-      - name: Stage pinned Postgres image
+      - id: control_10
+        continue-on-error: true
+        name: Stage pinned Postgres image
         run: docker pull "$SEAL_POSTGRES_IMAGE"
 
-      - name: Doctrine spine unit checks
+      - id: control_11
+        continue-on-error: true
+        name: Doctrine spine unit checks
         run: python3 -m unittest discover -s demo/tests -v
 
-      - name: Deterministic shell acceptance (no model, no operator auth)
+      - id: control_12
+        continue-on-error: true
+        name: Deterministic shell acceptance (no model, no operator auth)
         run: |
-          C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
-          ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
-          python3 demo/doctrine_check.py "$C1_ARTIFACT"
-          python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
-            --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
-          cmp "$C1_ARTIFACT/receipt-strip.md" "$C1_ARTIFACT/receipt-strip.regenerated.md"
-          grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c1.txt"
-          grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
-          grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
+          python3 scripts/ci_disk_telemetry.py golden-rust-acceptance -- \
+            bash -euo pipefail -c '
+              C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
+              ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
+              python3 demo/doctrine_check.py "$C1_ARTIFACT"
+              python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
+                --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
+              cmp "$C1_ARTIFACT/receipt-strip.md" "$C1_ARTIFACT/receipt-strip.regenerated.md"
+              grep -F "ANTI-FORGE rejected exit=" "$RUNNER_TEMP/golden-path-c1.txt"
+              grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
+              grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
+            '
 
       # Runs after C1 because golden_path.py's named-target build is what
       # produces rust/target/debug/seal-host-rs on the runner.
-      - name: Policy schema anti-drift gate (codec single source)
+      - id: control_13
+        continue-on-error: true
+        name: Policy schema anti-drift gate (codec single source)
         run: ./scripts/policy_schema_gate.sh
 
-      - name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
+      - id: control_14
+        continue-on-error: true
+        name: Deterministic Postgres S+B+T acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"
           ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
           python3 demo/doctrine_check.py "$C2_ARTIFACT"
@@ -120,8 +236,11 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c2.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c2.txt"
 
-      - name: Deterministic token-governor S+B acceptance (no model, no operator auth)
+      - id: control_15
+        continue-on-error: true
+        name: Deterministic token-governor S+B acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C4_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c4"
           ./demo/run c4 --output-dir "$C4_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c4.txt"
           python3 demo/doctrine_check.py "$C4_ARTIFACT"
@@ -132,9 +251,13 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 2, lines
-          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  llm_call"), lines[0]
-          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT  llm_call"), lines[1]
+          assert len(lines) == 4, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  llm_call"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  llm_call"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  llm_call"), lines[2]
+          assert lines[3].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT  llm_call"), lines[3]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "deny_kernel=budget" "$RUNNER_TEMP/golden-path-c4.txt"
           grep -F "budget=token-usage costArg=usage.tokens cost=11 cap=10 remaining=10→would-exceed (unchanged=10)" "$RUNNER_TEMP/golden-path-c4.txt"
@@ -144,8 +267,11 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c4.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c4.txt"
 
-      - name: Deterministic deploy S+C+L acceptance (no model, no operator auth)
+      - id: control_16
+        continue-on-error: true
+        name: Deterministic deploy S+C+L acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C3_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c3"
           ./demo/run c3 --output-dir "$C3_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c3.txt"
           python3 demo/doctrine_check.py "$C3_ARTIFACT"
@@ -168,10 +294,15 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 3, lines
-          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m QUORUM-SHORT  deploy"), lines[0]
-          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m DEPLOY-OK  deploy"), lines[1]
-          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m REPLAY-DENY  deploy"), lines[2]
+          assert len(lines) == 6, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  deploy"), lines[0]
+          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m QUORUM-SHORT  deploy"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  deploy"), lines[2]
+          assert lines[3].startswith("\x1b[32;1mALLOW\x1b[0m DEPLOY-OK  deploy"), lines[3]
+          assert lines[4].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  deploy"), lines[4]
+          assert lines[5].startswith("\x1b[31;1mDENY\x1b[0m REPLAY-DENY  deploy"), lines[5]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:DENY[ACTIVE], linear:ALLOW[ACTIVE]; deny_kernel=consensus" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], consensus:ALLOW[ACTIVE], linear:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c3.txt"
@@ -180,7 +311,7 @@ jobs:
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→1 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=1→0 consumed=true" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "linear=deploy-cap-c3-001 capArg=capability.id committed=0→0 consumed=false" "$RUNNER_TEMP/golden-path-c3.txt"
-          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 3
+          test "$(grep -c 'seal-verify=TRACE-SCOPED' "$RUNNER_TEMP/golden-path-c3.txt")" -eq 6
           grep -F "TRACE-CONTROL quorum-met expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "TRACE-CONTROL drop-deploy-ok expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "TRACE-CONTROL byte-flip expected=FAIL observed=FAIL status=PASS" "$RUNNER_TEMP/golden-path-c3.txt"
@@ -188,8 +319,11 @@ jobs:
           grep -F "deploy executed exactly once; capability 1->0" "$RUNNER_TEMP/golden-path-c3.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c3.txt"
 
-      - name: Deterministic replicated-store S+V convergence acceptance (no model, no operator auth)
+      - id: control_17
+        continue-on-error: true
+        name: Deterministic replicated-store S+V convergence acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C5_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c5"
           ./demo/run c5 --output-dir "$C5_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c5.txt"
           python3 demo/doctrine_check.py "$C5_ARTIFACT"
@@ -199,7 +333,7 @@ jobs:
           node demo/trace_replay.cjs "$C5_ARTIFACT/trace-transcript.json" \
             --kit "$SEAL_ASSURANCE_KIT_ROOT"
           if node demo/trace_replay.cjs "$C5_ARTIFACT/trace-transcript.json" \
-            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-sequence 2; then
             echo "::error::dropping the C5 first call unexpectedly preserved transcript bytes"
             exit 1
           fi
@@ -207,9 +341,13 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 2, lines
-          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  store.update"), lines[0]
-          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  store.update"), lines[1]
+          assert len(lines) == 4, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  store.update"), lines[0]
+          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  store.update"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  store.update"), lines[2]
+          assert lines[3].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  store.update"), lines[3]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], convergence:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c5.txt"
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ABSENT/OFF], convergence:DENY[ACTIVE]; deny_kernel=convergence" "$RUNNER_TEMP/golden-path-c5.txt"
@@ -228,8 +366,11 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c5.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c5.txt"
 
-      - name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
+      - id: control_18
+        continue-on-error: true
+        name: Deterministic trigger-driven S+T freeze acceptance (no model, no operator auth)
         run: |
+          set -o pipefail
           C6_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c6"
           ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
           python3 demo/doctrine_check.py "$C6_ARTIFACT"
@@ -239,7 +380,7 @@ jobs:
           node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
             --kit "$SEAL_ASSURANCE_KIT_ROOT"
           if node demo/trace_replay.cjs "$C6_ARTIFACT/trace-transcript.json" \
-            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-trigger; then
+            --kit "$SEAL_ASSURANCE_KIT_ROOT" --drop-sequence 2; then
             echo "::error::dropping the Temporal trigger unexpectedly preserved transcript bytes"
             exit 1
           fi
@@ -247,9 +388,13 @@ jobs:
           import sys
           lines = [line for line in open(sys.argv[1], encoding="utf-8")
                    if line.startswith(("\x1b[31;1mDENY\x1b[0m", "\x1b[32;1mALLOW\x1b[0m"))]
-          assert len(lines) == 2, lines
-          assert lines[0].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[0]
-          assert lines[1].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[1]
+          assert len(lines) == 4, lines
+          assert lines[0].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  session.revoke"), lines[0]
+          assert lines[1].startswith("\x1b[32;1mALLOW\x1b[0m LEGIT-TRIGGER  session.revoke"), lines[1]
+          assert lines[2].startswith("\x1b[31;1mDENY\x1b[0m APPROVAL-SUBJECT-BLOCK  audit.destroy"), lines[2]
+          assert lines[3].startswith("\x1b[31;1mDENY\x1b[0m ATTACK-DENY  audit.destroy"), lines[3]
+          for block, decision in zip(lines[::2], lines[1::2]):
+              assert block.rsplit("  args=", 1)[1] == decision.rsplit("  args=", 1)[1], (block, decision)
           PY
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:ALLOW[ACTIVE]; deny_kernel=-" "$RUNNER_TEMP/golden-path-c6.txt"
           grep -F "kernel_fired=safety:ALLOW[ACTIVE], temporal:DENY[ACTIVE]; deny_kernel=temporal" "$RUNNER_TEMP/golden-path-c6.txt"
@@ -271,9 +416,15 @@ jobs:
           grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c6.txt"
           grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c6.txt"
 
-      - name: Deterministic filesystem S+B acceptance (no model, no operator auth)
+      - id: control_19
+        continue-on-error: true
+        name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
-          python3 demo/golden_path.py filesystem --deterministic | tee /tmp/golden-path-filesystem.txt
+          set -o pipefail
+          python3 demo/golden_path.py filesystem --deterministic --era 2025 | tee /tmp/golden-path-filesystem.txt
+          grep -F "MCP_DEMO_ERA=2025 revision=2025-06-18 entry=initialize" /tmp/golden-path-filesystem.txt
+          grep -F "ERA_ATTRIBUTION=2025 declared=2025-06-18 observed=initialize; alternate-entry-count=0" /tmp/golden-path-filesystem.txt
+          grep -F "legacy request and receipt carry no 2026 _meta" /tmp/golden-path-filesystem.txt
           grep -F "containment preflight" /tmp/golden-path-filesystem.txt
           grep -F "only /workspace writable" /tmp/golden-path-filesystem.txt
           grep -F "init + add-kernel B policy" /tmp/golden-path-filesystem.txt
@@ -288,7 +439,7 @@ jobs:
           grep -F "path escape rejection" /tmp/golden-path-filesystem.txt
           grep -F "PATH_REJECTED both before filesystem access" /tmp/golden-path-filesystem.txt
           grep -F "approved one-shot real write" /tmp/golden-path-filesystem.txt
-          grep -F "replayed_nonce BLOCK" /tmp/golden-path-filesystem.txt
+          grep -F "v2 context-mismatch replay BLOCK" /tmp/golden-path-filesystem.txt
           grep -F "accumulated Budget cap" /tmp/golden-path-filesystem.txt
           grep -F "Budget stateful evidence" /tmp/golden-path-filesystem.txt
           grep -F "fresh write receipt verification" /tmp/golden-path-filesystem.txt
@@ -297,8 +448,14 @@ jobs:
           grep -F "receipt not called independently verified" /tmp/golden-path-filesystem.txt
           grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-filesystem.txt
           grep -F "operator-untested until run by Ben" /tmp/golden-path-filesystem.txt
+          python3 demo/golden_path.py filesystem --deterministic --era 2026 | tee /tmp/golden-path-filesystem-2026.txt
+          grep -F "MCP_DEMO_ERA=2026 revision=2026-07-28 entry=server/discover" /tmp/golden-path-filesystem-2026.txt
+          grep -F "ERA_ATTRIBUTION=2026 declared=2026-07-28 observed=server/discover; alternate-entry-count=0" /tmp/golden-path-filesystem-2026.txt
+          grep -F "request _meta equals receipt._meta and effect_view.effect._meta" /tmp/golden-path-filesystem-2026.txt
 
-      - name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
+      - id: control_20
+        continue-on-error: true
+        name: Preserve doctrine traces, manifests, receipts, and renderings (including failures)
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -310,3 +467,9 @@ jobs:
             ${{ runner.temp }}/seal-doctrine-c4
             ${{ runner.temp }}/seal-doctrine-c5
             ${{ runner.temp }}/seal-doctrine-c6
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

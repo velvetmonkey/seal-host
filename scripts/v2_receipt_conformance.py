@@ -63,10 +63,9 @@ def main():
                     "name": "db.execute",
                     "mode": "guarded",
                     "match": {"type": "contains_any_ci", "arg": "sql", "needles": ["drop"]},
-                    "target": [
-                        {"literal": "db"}, {"arg": "database"},
-                        {"literal": "write"}, {"arg": "sql"},
-                    ],
+                    # Legacy target committed: "db", arguments.database,
+                    # "write", arguments.sql. Stage A commits all arguments.
+                    "target": [{"full_arguments": True}],
                 }],
             },
         }

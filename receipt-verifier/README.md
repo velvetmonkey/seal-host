@@ -4,7 +4,7 @@
 `kernel_identity.wasm_sha256` in native-host authorization decisions. Its SHA-256 is:
 
 ```text
-d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be
+28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
 ```
 
 It replays the authorization-decision-carried policy to check decision bytes. The native

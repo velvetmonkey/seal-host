@@ -6,11 +6,13 @@
 #   1. BYTE-COMPARE `seal-host-rs schema` against the schema artifact checked
 #      into the pinned authority (.lake/packages/mcp-seal/docs/
 #      policy-bundle.schema.json). A stale artifact fails CI.
-#   2. Run `seal-host-rs validate` — the Lean parser chain AND the
+#   2. Verify the shipped trusted example's Ed25519 signature over its exact
+#      payload bytes against the separately documented example trust root.
+#   3. Run `seal-host-rs validate` — the Lean parser chain AND the
 #      emitted-schema validator in the SAME invocation — over every real
 #      policy payload in the repo (config examples, profile payloads,
 #      envelope example) and assert full agreement (agree_accept).
-#   3. Run the negative parity corpus (unknown keys, missing fields, wrong
+#   4. Run the negative parity corpus (unknown keys, missing fields, wrong
 #      types, enum/discriminator, aliases, defaults, parser-only
 #      refinements) and assert the EXPECTED agreement class per case —
 #      including the host-layer duplicate-Budget-cap rejection the signer
@@ -20,20 +22,51 @@
 # the binary); any unexpected agreement class fails this script.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 BIN="${SEAL_HOST_BIN:-rust/target/debug/seal-host-rs}"
 ARTIFACT=".lake/packages/mcp-seal/docs/policy-bundle.schema.json"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "==> [1/3] schema byte-compare vs pinned authority artifact"
+echo "==> [1/4] schema byte-compare vs pinned authority artifact"
 "$BIN" schema > "$TMP/schema.json"
 if ! diff -u "$ARTIFACT" "$TMP/schema.json"; then
   echo "FAIL: emitted schema differs from pinned authority artifact" >&2
   exit 1
 fi
 echo "    schema byte-identical to $ARTIFACT"
+
+echo "==> [2/4] trusted example signature vs documented trust root"
+python3 - config/trusted.example.json config/trusted.example.pub <<'PY'
+import json
+import sys
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+envelope_path, public_key_path = sys.argv[1:]
+with open(envelope_path, encoding="utf-8") as f:
+    envelope = json.load(f)
+with open(public_key_path, encoding="ascii") as f:
+    public_key = bytes.fromhex(f.read().strip())
+
+try:
+    signature = bytes.fromhex(envelope["signature"])
+    payload = envelope["payload"].encode("utf-8")
+    Ed25519PublicKey.from_public_bytes(public_key).verify(signature, payload)
+except (InvalidSignature, KeyError, TypeError, ValueError) as error:
+    detail = type(error).__name__ if not str(error) else str(error)
+    raise SystemExit(
+        f"FAIL: {envelope_path} signature invalid under {public_key_path}: {detail}"
+    )
+
+print(f"    ok: {envelope_path} signature valid under {public_key_path}")
+PY
 
 expect_class() { # file expected-class [expected-lean-stage] [expected-lean-error]
   local file="$1" expected="$2" stage="${3:-}" expected_error="${4:-}"
@@ -69,13 +102,13 @@ expect_class() { # file expected-class [expected-lean-stage] [expected-lean-erro
   echo "    ok: $(basename "$file") -> $expected${stage:+ (stage=$stage)}"
 }
 
-echo "==> [2/3] real payloads: parser and schema must both accept"
+echo "==> [3/4] real payloads: parser and schema must both accept"
 for f in config/payload.example.json config/trusted.example.json \
          profiles/policies-v1/*.payload.json profiles/policies-v2/*.payload.json; do
   expect_class "$f" agree_accept
 done
 
-echo "==> [3/3] negative parity corpus"
+echo "==> [4/4] negative parity corpus"
 SAFETY='"safety":{"approval":{"control_file":"/tmp/a","ttl_seconds":60},"tools":[{"name":"t","mode":"guard","target":[{"full_arguments":true}]}]}'
 
 mk() { printf '%s' "$2" > "$TMP/$1"; }

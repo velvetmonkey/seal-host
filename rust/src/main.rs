@@ -14,7 +14,7 @@
 //! | P2| stdin line                | `child_in.write_all` (step path)       | YES — `seal_host_step` route `forward`, exact parse (`route_of_step_output`) |
 //! | P3| stdin line                | `child_in.write_all` (interactive retry)| YES — second `seal_host_step == forward` after a human-minted approval |
 //! | P4| operator argv             | `Command::new(...).spawn()`            | N/A — operator-trusted setup; the child IS the guarded resource |
-//! | P5| kernel block response     | client stdout                          | YES — kernel-authored bytes |
+//! | P5| kernel block response     | client stdout                          | YES — kernel-authored response plus host-owned exact framed-subject metadata on approval refusals |
 //! | P6| child stdout              | client stdout (relay thread)           | NO — response egress is unmediated BY DESIGN (requests are mediated, responses are not; see RUST_BRIDGE.md) |
 //! | P7| audit / A3 drops / errors | stderr                                 | telemetry only, no effect |
 //! | P8| approval evidence         | (feeds Lean via A3 only)               | parse failure drops the record ⇒ deny |
@@ -39,13 +39,16 @@
 //! lines: the inner bytes verbatim + `\n`) — the host never reconstructs,
 //! re-encodes, or trims what the child receives.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use seal_host_rs::a3;
+use seal_host_rs::adapter_revision::McpRevisionSession;
 use seal_host_rs::authorization_decision::{
     request_parts, sha256_hex, ApprovalIdentity, AuthorizationDecisionWriter, DecisionInput,
-    SignedConfig,
+    PersistedAuthorizationDecision, SignedConfig,
 };
+use seal_host_rs::crash_injection;
 use seal_host_rs::envelope_v23::{
-    self, AdapterClaim, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
+    self, EnvelopeV23, HostContext as EnvelopeHostContext, VerifiedEnvelope,
 };
 use seal_host_rs::health::HealthServer;
 use seal_host_rs::lean;
@@ -56,10 +59,12 @@ use seal_host_rs::limits::{
 use seal_host_rs::output::{OutputQueue, OutputSender};
 use seal_host_rs::providers::{self, ApprovalProvider};
 use seal_host_rs::receipt::ReceiptChain;
-use seal_host_rs::replay_store::SqliteReplayStore;
+use seal_host_rs::release::{ReleaseInput, ReleaseStatus};
+use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::{
-    numeric_agreement_refusal_response, route_of_classify, route_of_step_output, ClassifyRoute,
-    Route, RESOURCE_LIMIT_RESPONSE, SEAM_ERROR_RESPONSE,
+    numeric_agreement_refusal_response, route_of_classify, route_of_step_output,
+    route_of_version_gate, ClassifyRoute, Route, VersionGateRoute,
+    CANONICAL_AGREEMENT_REFUSAL_RESPONSE, RESOURCE_LIMIT_RESPONSE, SEAM_ERROR_RESPONSE,
 };
 use seal_host_rs::secure_fs;
 use serde_json::{json, Value};
@@ -108,12 +113,42 @@ struct Args {
     health: bool,
     health_listen: String,
     health_token_file: Option<String>,
+    initialize_replay_store: bool,
     cmd: Vec<String>,
 }
 
-fn parse_args() -> Result<Args, String> {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    parse_args_from(argv)
+const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const USAGE: &str = "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
+[--channel file|ed25519|interactive] [--token-file <path>] \
+[--approval-pubkey <hex>] [--receipt-dir <path>] \
+[--production|--insecure-development-mode] [--envelope-v23] \
+[--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
+(--initialize-replay-store | -- <server-cmd> <args...>)";
+
+const HELP: &str = "seal-host mediates an MCP server and fails guarded calls closed.
+
+Run modes:
+  --initialize-replay-store  Initialize the durable approval replay store, then exit
+  -- <server-cmd> <args...>  Start the named MCP server behind seal-host
+
+Required inputs:
+  --config <path>             Signed trusted configuration envelope
+  --pubkey <hex>              Ed25519 public key that verifies the configuration
+
+Discovery:
+  -h, --help                  Print this help and exit
+  --version                   Print the manifest-derived version and exit
+
+Full install and configuration walkthrough:
+  https://github.com/velvetmonkey/seal-host/blob/main/docs/GETTING-STARTED.md";
+
+fn is_version_request(argv: &[String]) -> bool {
+    matches!(argv, [flag] if flag == "--version")
+}
+
+fn is_help_request(argv: &[String]) -> bool {
+    matches!(argv, [flag] if flag == "--help" || flag == "-h")
 }
 
 fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
@@ -130,6 +165,7 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     let mut health = false;
     let mut health_listen = "127.0.0.1:9464".to_string();
     let mut health_token_file = None;
+    let mut initialize_replay_store = false;
     let mut cmd = Vec::new();
     let mut i = 0;
     while i < argv.len() {
@@ -185,6 +221,10 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
                 health_token_file = argv.get(i + 1).cloned();
                 i += 2
             }
+            "--initialize-replay-store" => {
+                initialize_replay_store = true;
+                i += 1
+            }
             "--" => {
                 cmd = argv[i + 1..].to_vec();
                 break;
@@ -194,6 +234,12 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
     }
     if production_requested && insecure_development_mode {
         return Err("--production conflicts with --insecure-development-mode".into());
+    }
+    if initialize_replay_store && !cmd.is_empty() {
+        return Err("--initialize-replay-store conflicts with a server command".into());
+    }
+    if !initialize_replay_store && cmd.is_empty() {
+        return Err("server command required after --".into());
     }
     Ok(Args {
         config: config.ok_or("--config required")?,
@@ -207,11 +253,8 @@ fn parse_args_from(argv: Vec<String>) -> Result<Args, String> {
         health,
         health_listen,
         health_token_file,
-        cmd: if cmd.is_empty() {
-            return Err("server command required after --".into());
-        } else {
-            cmd
-        },
+        initialize_replay_store,
+        cmd,
     })
 }
 
@@ -246,6 +289,44 @@ fn extract_target_hex(s: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Add the exact delimiter-bearing approval subject to an approval-required
+/// refusal. The kernel-authored target text is retained byte-for-byte as a
+/// JSON string value; this host-owned sibling is transport metadata only and
+/// is never fed back into target derivation, Lean, or approval verification.
+fn refusal_with_framed_subject(
+    response: &str,
+    framed_subject: &[u8],
+    framed_subject_sha256: &str,
+) -> Result<String, String> {
+    if response
+        .split("approval required: ")
+        .nth(1)
+        .and_then(extract_target_hex)
+        .is_none()
+    {
+        return Ok(response.to_owned());
+    }
+
+    let mut refusal: Value = serde_json::from_str(response)
+        .map_err(|error| format!("cannot add framed subject to refusal: {error}"))?;
+    let result = refusal
+        .get_mut("result")
+        .and_then(Value::as_object_mut)
+        .ok_or("cannot add framed subject to refusal: result is not an object")?;
+    result.insert(
+        "framed_subject".into(),
+        json!({
+            "encoding": "base64",
+            "length": framed_subject.len(),
+            "sha256": framed_subject_sha256,
+            "base64": STANDARD.encode(framed_subject),
+        }),
+    );
+    serde_json::to_string(&refusal)
+        .map(|text| text + "\n")
+        .map_err(|error| format!("cannot serialize framed-subject refusal: {error}"))
 }
 
 fn read_or_empty(path: &str) -> String {
@@ -350,11 +431,11 @@ fn production_preflight(args: &Args, replay_store_path: Option<&str>) -> Result<
 fn persist_decision(
     writer: &mut AuthorizationDecisionWriter,
     input: DecisionInput<'_>,
-) -> Result<Option<String>, ()> {
+) -> Result<PersistedAuthorizationDecision, ()> {
     match writer.persist(input) {
         Ok(decision) => {
             eprintln!("{}", json!({"authorization_decision": decision.path}));
-            Ok(decision.consumed_target)
+            Ok(decision)
         }
         Err(error) => {
             eprintln!(
@@ -366,6 +447,98 @@ fn persist_decision(
     }
 }
 
+/// Two-phase burn, phase 2 (G2 cut (a), ruled by Ben 2026-08-06): at
+/// RECORDED — the durable authorization-decision receipt exists — the
+/// consumed approval's nonce flips from reserved hold to committed burn.
+/// The receipt (file fsync + rename + dir fsync) and the burn (SQLite) live
+/// in different stores, so the two acts cannot be one atomic commit; the
+/// burn follows the receipt IMMEDIATELY, and a failure here refuses the
+/// forward (fail closed): forwarding on an uncommitted burn would let a
+/// later crash's recovery un-burn a used approval.
+fn commit_consumed_approval_nonce(
+    a3: &mut a3::A3Filter,
+    pending: &[providers::ApprovalRecord],
+    consumed: &Option<String>,
+    now_ms: u64,
+) -> Result<(), ()> {
+    let Some(target) = consumed else {
+        return Ok(());
+    };
+    let Some(record) = pending.iter().find(|record| &record.target == target) else {
+        return Ok(());
+    };
+    // Nonceless channels (control-file / interactive) keep in-memory replay
+    // state only; there is no durable hold to commit.
+    let Some(nonce) = &record.nonce else {
+        return Ok(());
+    };
+    a3.commit_nonce(nonce, now_ms).map_err(|error| {
+        eprintln!(
+            "{}",
+            json!({
+                "error": "approval nonce burn commit failure",
+                "detail": error.to_string()
+            })
+        );
+    })
+}
+
+/// Test-only crash injection for the G2 crash suite (T1/T3). Armed ONLY via
+/// SEAL_TEST_CRASH_POINT in the environment; production never sets it.
+/// `abort()` so the process dies without unwinding — a real process death,
+/// not a simulated recovery call.
+fn maybe_test_crash(armed: Option<&str>, point: &str) {
+    if armed == Some(point) {
+        eprintln!("{}", json!({"seal_test_crash_point": point}));
+        std::process::abort();
+    }
+}
+
+fn release_recorded_allow(
+    writer: &AuthorizationDecisionWriter,
+    decision: &PersistedAuthorizationDecision,
+    release: &ReleaseInput,
+    child: &mut impl Write,
+    ready: &AtomicBool,
+) -> Result<(), ()> {
+    crash_injection::abort_if_armed("g2-b-after-recorded");
+    if let Err(error) = writer.commit_operation_state(&decision.path) {
+        eprintln!(
+            "{}",
+            json!({"error": "operation state commit failure", "detail": error})
+        );
+        return Err(());
+    }
+    crash_injection::abort_if_armed("g2-c-after-state-commit");
+    if let Err(error) = writer.transition_release(
+        &decision.path,
+        ReleaseStatus::Pending,
+        ReleaseStatus::Unknown,
+    ) {
+        eprintln!(
+            "{}",
+            json!({"error": "release attempt persistence failure", "detail": error})
+        );
+        return Err(());
+    }
+    if write_child(child, &release.frame, ready).is_err() {
+        return Err(());
+    }
+    if let Err(error) = writer.transition_release(
+        &decision.path,
+        ReleaseStatus::Unknown,
+        ReleaseStatus::Released,
+    ) {
+        eprintln!(
+            "{}",
+            json!({"error": "released status persistence failure", "detail": error})
+        );
+        return Err(());
+    }
+    crash_injection::abort_if_armed("g2-e-after-released");
+    Ok(())
+}
+
 fn consume_pending_approval(records: &mut Vec<providers::ApprovalRecord>, target: Option<String>) {
     if let Some(target) = target {
         if let Some(index) = records.iter().position(|record| record.target == target) {
@@ -374,16 +547,18 @@ fn consume_pending_approval(records: &mut Vec<providers::ApprovalRecord>, target
     }
 }
 
-fn replay_store_path_from_envelope(envelope: &str) -> Result<Option<String>, String> {
-    let envelope_json: Value =
-        serde_json::from_str(envelope).map_err(|e| format!("bad envelope JSON: {e}"))?;
-    let payload_text = envelope_json
-        .get("payload")
-        .and_then(Value::as_str)
-        .ok_or("missing string payload")?;
-    let payload_json: Value =
-        serde_json::from_str(payload_text).map_err(|e| format!("bad payload JSON: {e}"))?;
-    let Some(replay_store) = payload_json.pointer("/safety/approval/replay_store") else {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplayStoreConfig {
+    sqlite_path: String,
+    expected_lineage: ReplayStoreLineage,
+}
+
+/// Extract the replay-store contract from the already authority-verified
+/// payload. The store never supplies its own expected lineage.
+fn replay_store_config_from_signed_payload(
+    kernel_config: &Value,
+) -> Result<Option<ReplayStoreConfig>, String> {
+    let Some(replay_store) = kernel_config.pointer("/safety/approval/replay_store") else {
         return Ok(None);
     };
     if replay_store.is_null() {
@@ -399,7 +574,40 @@ fn replay_store_path_from_envelope(envelope: &str) -> Result<Option<String>, Str
     if path.is_empty() {
         return Err("safety.approval.replay_store.sqlite_path must be non-empty".to_string());
     }
-    Ok(Some(path.to_string()))
+    let schema_version = obj
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .ok_or("safety.approval.replay_store.schema_version must be an unsigned integer")?;
+    let namespace_encoding_version = obj
+        .get("namespace_encoding_version")
+        .and_then(Value::as_u64)
+        .ok_or(
+            "safety.approval.replay_store.namespace_encoding_version \
+             must be an unsigned integer",
+        )?;
+    let schema_version = u32::try_from(schema_version)
+        .map_err(|_| "safety.approval.replay_store.schema_version is out of range")?;
+    let namespace_encoding_version = u32::try_from(namespace_encoding_version)
+        .map_err(|_| "safety.approval.replay_store.namespace_encoding_version is out of range")?;
+    for key in obj.keys() {
+        if !matches!(
+            key.as_str(),
+            "sqlite_path" | "schema_version" | "namespace_encoding_version"
+        ) {
+            return Err(format!("unknown safety.approval.replay_store key: {key}"));
+        }
+    }
+    let expected_lineage = ReplayStoreLineage {
+        schema_version,
+        namespace_encoding_version,
+    };
+    expected_lineage
+        .require_supported()
+        .map_err(|error| error.to_string())?;
+    Ok(Some(ReplayStoreConfig {
+        sqlite_path: path.to_string(),
+        expected_lineage,
+    }))
 }
 
 struct GrantsCursor {
@@ -440,6 +648,26 @@ fn write_frame(output: &OutputSender, line: &str) -> Result<(), ()> {
 }
 
 fn write_child(child: &mut impl Write, bytes: &[u8], ready: &AtomicBool) -> Result<(), ()> {
+    // Cut (d) injection is deliberately inside the write: one byte may have
+    // reached the receiver, but no complete MCP frame has. Recovery must not
+    // infer whether the receiver acted and must not retry without receiver
+    // dedupe keyed by a receiver-visible operation_id.
+    if std::env::var_os(crash_injection::CRASH_POINT_ENV).as_deref()
+        == Some(std::ffi::OsStr::new("g2-d-during-child-write"))
+        && !bytes.is_empty()
+    {
+        child
+            .write_all(&bytes[..1])
+            .and_then(|_| child.flush())
+            .map_err(|error| {
+                ready.store(false, Ordering::Release);
+                eprintln!(
+                    "{}",
+                    json!({"error": format!("downstream child transport failed: {error}")})
+                );
+            })?;
+        crash_injection::abort_if_armed("g2-d-during-child-write");
+    }
     child
         .write_all(bytes)
         .and_then(|_| child.flush())
@@ -887,17 +1115,19 @@ fn run_validate(files: &[String]) -> i32 {
 }
 
 fn run() -> i32 {
-    let args = match parse_args() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if is_version_request(&argv) {
+        println!("{BUILD_VERSION}");
+        return 0;
+    }
+    if is_help_request(&argv) {
+        println!("{USAGE}\n\n{HELP}");
+        return 0;
+    }
+    let args = match parse_args_from(argv) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!(
-                "usage: seal-host-rs --config <trusted.json> --pubkey <config-pubkey-hex> \
-                [--channel file|ed25519|interactive] [--token-file <path>] \
-                [--approval-pubkey <hex>] [--receipt-dir <path>] \
-                [--production|--insecure-development-mode] [--envelope-v23] \
-                [--health [--health-listen 127.0.0.1:9464] --health-token-file <path>] \
-                -- <server-cmd> <args...>\nerror: {e}"
-            );
+            eprintln!("{USAGE}\nerror: {e}");
             return 2;
         }
     };
@@ -967,14 +1197,50 @@ fn run() -> i32 {
     let approval_file = summary["approval_file"].as_str().unwrap_or("").to_string();
     let votes_file = summary["votes_file"].as_str().unwrap_or("").to_string();
     let forecasts_file = summary["forecasts_file"].as_str().unwrap_or("").to_string();
-    let replay_store_path = match replay_store_path_from_envelope(&envelope) {
-        Ok(path) => path,
+    let replay_store_config = match replay_store_config_from_signed_payload(&kernel_config) {
+        Ok(config) => config,
         Err(e) => {
             eprintln!("trusted config rejected: replay store config: {e}");
             return 3;
         }
     };
-    if let Err(error) = production_preflight(&args, replay_store_path.as_deref()) {
+    if args.initialize_replay_store {
+        if let Err(error) =
+            secure_fs::validate_private_file(std::path::Path::new(&args.config), "trusted config")
+        {
+            eprintln!("replay store initialization refused: {error}");
+            return 3;
+        }
+        let Some(config) = replay_store_config else {
+            eprintln!(
+                "replay store initialization refused: signed config has no \
+                 safety.approval.replay_store"
+            );
+            return 3;
+        };
+        match SqliteReplayStore::initialize(&config.sqlite_path, config.expected_lineage) {
+            Ok(()) => {
+                eprintln!(
+                    "replay store initialized: {} \
+                     (schema_version={}, namespace_encoding_version={})",
+                    config.sqlite_path,
+                    config.expected_lineage.schema_version,
+                    config.expected_lineage.namespace_encoding_version
+                );
+                return 0;
+            }
+            Err(error) => {
+                eprintln!("replay store initialization refused: {error}");
+                return 3;
+            }
+        }
+    }
+    if let Err(error) = production_preflight(
+        &args,
+        replay_store_config
+            .as_ref()
+            .map(|config| config.sqlite_path.as_str()),
+    ) {
         eprintln!("production startup refused: {error}");
         return 3;
     }
@@ -1053,14 +1319,14 @@ fn run() -> i32 {
         }
     };
     let mut a3 = if args.channel == "ed25519" {
-        let Some(path) = replay_store_path else {
+        let Some(config) = replay_store_config else {
             eprintln!(
                 "trusted config rejected: ed25519 channel requires \
-                safety.approval.replay_store.sqlite_path"
+                safety.approval.replay_store with sqlite_path and lineage versions"
             );
             return 3;
         };
-        let store = match SqliteReplayStore::open(&path) {
+        let store = match SqliteReplayStore::open(&config.sqlite_path, config.expected_lineage) {
             Ok(store) => store,
             Err(e) => {
                 eprintln!("trusted config rejected: cannot open replay store: {e}");
@@ -1094,7 +1360,13 @@ fn run() -> i32 {
         }
     };
     let mut pending_approvals: Vec<providers::ApprovalRecord> = Vec::new();
+    // G2 crash-suite hook; None on every production launch.
+    let test_crash_point = std::env::var("SEAL_TEST_CRASH_POINT").ok();
     let mut approval_context_drop_counter: u64 = 0;
+    // M.2/M.2a: select the transparent MCP era from the received entry-call
+    // shape. There is intentionally no legacy default; a V2.3 mediated call
+    // before selection (or after conflicting entry calls) refuses below.
+    let mut mcp_revision_session = McpRevisionSession::default();
     // ApprovalRecord v2 is admitted only while an exact-frame challenge for
     // its target is outstanding. One slot is enough for this lockstep stdio
     // protocol; a later block replaces it and a forward clears it.
@@ -1223,6 +1495,37 @@ fn run() -> i32 {
             }
         }
     });
+
+    let recovery = authorization_decisions.recover_pending(now_ms(), |frame| {
+        write_child(&mut child_in, frame, &readiness)
+            .map_err(|()| "startup release transport failed".to_string())
+    });
+    match recovery {
+        Ok(report) => {
+            eprintln!(
+                "{}",
+                json!({
+                    "startup_release_recovery": {
+                        "redone_state_transitions": report.redone_state_transitions,
+                        "released": report.released,
+                        "stale": report.stale,
+                    }
+                })
+            );
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"error": "startup release recovery failure", "detail": error})
+            );
+            readiness.store(false, Ordering::Release);
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = relay.join();
+            output_queue.shutdown();
+            return 4;
+        }
+    }
 
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
@@ -1362,6 +1665,46 @@ fn run() -> i32 {
                 continue;
             }
         }
+        // M.7 kernel gate: before entry observation, classify, provider/replay
+        // work, audit, approval consumption, or decision persistence.
+        match route_of_version_gate(
+            host.mcp_version_gate(line, mcp_revision_session.version_gate_input()),
+        ) {
+            VersionGateRoute::Continue => {}
+            VersionGateRoute::Reject { response } => {
+                eprintln!(
+                    "{}",
+                    json!({"seal_host_event": "mcp_version_gate_rejected"})
+                );
+                if write_frame(&output, &response).is_err() {
+                    break;
+                }
+                continue;
+            }
+            VersionGateRoute::SeamFailure { reason } => {
+                eprintln!("{}", json!({"error": reason}));
+                if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                    break;
+                }
+                continue;
+            }
+        }
+        // M.2 observation feeds the next kernel gate and signed adapter claim.
+        // The fold is the kernel's (seal_host_mcp_revision_observe); a seam
+        // failure refuses the line and leaves the selection unchanged, like
+        // every other seam error on this path.
+        if let Err(error) = mcp_revision_session.observe_received_call(&host, line) {
+            eprintln!(
+                "{}",
+                json!({
+                    "error": format!("revision observe seam failure; line refused: {error}")
+                })
+            );
+            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                break;
+            }
+            continue;
+        }
         // Bytes the child receives on allow: the original wire verbatim for
         // a plain line; for an enveloped line, exactly the judged inner
         // string plus ONE host-authored `\n` (the inner string is verifiably
@@ -1424,16 +1767,68 @@ fn run() -> i32 {
                     }
                     continue;
                 };
-                let deployed_adapter = AdapterClaim::deployed_mcp();
+                let actual_revision = match mcp_revision_session.actual_revision() {
+                    Ok(revision) => revision,
+                    Err(reason) => {
+                        eprintln!(
+                            "{}",
+                            json!({"error": format!("V2.3 envelope refused: {reason}")})
+                        );
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let actual_adapter = actual_revision.adapter_claim();
+                // Full-domain canonical-byte containment.  A present effect
+                // is signature-bearing, so compare the actual pinned Lean
+                // derivation with Rust's independent derivation before the
+                // signature preimage is reconstructed or verified.  Effect
+                // absence has no canonical JSON seats and is therefore not
+                // routed through this gate.
+                let canonical_agreement = if envelope.effect.is_some() {
+                    let lean_observation = match host.canonical_effect(line) {
+                        Ok(observation) => observation,
+                        Err(error) => {
+                            let typed =
+                                envelope_v23::CanonicalAgreementError::LeanSeam(error.to_string());
+                            eprintln!(
+                                "{}",
+                                json!({"error": "canonical agreement refusal", "detail": typed.to_string()})
+                            );
+                            if write_frame(&output, CANONICAL_AGREEMENT_REFUSAL_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+                    match envelope_v23::canonical_effect_agreement(line, &lean_observation) {
+                        Ok(agreement) => Some(agreement),
+                        Err(error) => {
+                            eprintln!(
+                                "{}",
+                                json!({"error": "canonical agreement refusal", "detail": error.to_string()})
+                            );
+                            if write_frame(&output, CANONICAL_AGREEMENT_REFUSAL_RESPONSE).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 match envelope_v23::verify(
                     envelope,
                     line,
                     &EnvelopeHostContext {
                         authority_hex: &args.pubkey,
                         session,
-                        adapter: &deployed_adapter,
+                        adapter: &actual_adapter,
                         kernel_config: &kernel_config,
                     },
+                    canonical_agreement.as_ref(),
                 ) {
                     Ok(verified) => Some(verified),
                     Err(error) => {
@@ -1567,10 +1962,26 @@ fn run() -> i32 {
                         continue;
                     }
                 }
-                let consumed = match persist_decision(
+                let release = match ReleaseInput::prepare(&forward, now, ttl_ms) {
+                    Ok(release) => release,
+                    Err(error) => {
+                        eprintln!(
+                            "{}",
+                            json!({"error": "release authority construction failure", "detail": error})
+                        );
+                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                // T1 window: the nonce is reserved, RECORDED has not happened.
+                maybe_test_crash(test_crash_point.as_deref(), "g2-before-record");
+                let decision = match persist_decision(
                     &mut authorization_decisions,
                     DecisionInput {
                         line,
+                        framed_subject: &wire,
                         session: &receipt_session,
                         now,
                         emitted_bytes: &step_output,
@@ -1579,9 +1990,10 @@ fn run() -> i32 {
                         approvals: &pending_approvals,
                         approval_identity: &approval_identity,
                         approval_ttl_ms: ttl_ms,
+                        release: Some(&release),
                     },
                 ) {
-                    Ok(consumed) => consumed,
+                    Ok(decision) => decision,
                     Err(()) => {
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
                             break;
@@ -1589,7 +2001,22 @@ fn run() -> i32 {
                         continue;
                     }
                 };
-                consume_pending_approval(&mut pending_approvals, consumed);
+                if commit_consumed_approval_nonce(
+                    &mut a3,
+                    &pending_approvals,
+                    &decision.consumed_target,
+                    now,
+                )
+                .is_err()
+                {
+                    if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                // T3 window: receipt durable, burn durable, child untouched.
+                maybe_test_crash(test_crash_point.as_deref(), "g2-after-burn");
+                consume_pending_approval(&mut pending_approvals, decision.consumed_target.clone());
                 // P2-c passive observability tap: an ALLOW about to be forwarded
                 // with an UNRECOVERABLE request (reduced-scope authorization
                 // decision) is a forced downgrade an operator must be able to
@@ -1603,7 +2030,15 @@ fn run() -> i32 {
                     reduced_scope_forward_attempts += 1;
                     eprintln!("{signal}");
                 }
-                if write_child(&mut child_in, &forward, &readiness).is_err() {
+                if release_recorded_allow(
+                    &authorization_decisions,
+                    &decision,
+                    &release,
+                    &mut child_in,
+                    &readiness,
+                )
+                .is_err()
+                {
                     let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                     break;
                 }
@@ -1624,6 +2059,7 @@ fn run() -> i32 {
                     &mut authorization_decisions,
                     DecisionInput {
                         line,
+                        framed_subject: &wire,
                         session: &receipt_session,
                         now,
                         emitted_bytes: &step_output,
@@ -1632,6 +2068,7 @@ fn run() -> i32 {
                         approvals: &pending_approvals,
                         approval_identity: &approval_identity,
                         approval_ttl_ms: ttl_ms,
+                        release: None,
                     },
                 )
                 .is_err()
@@ -1771,10 +2208,26 @@ fn run() -> i32 {
                                             continue;
                                         }
                                     }
-                                    let consumed = match persist_decision(
+                                    let release = match ReleaseInput::prepare(
+                                        &forward, retry_now, ttl_ms,
+                                    ) {
+                                        Ok(release) => release,
+                                        Err(error) => {
+                                            eprintln!(
+                                                "{}",
+                                                json!({"error": "release authority construction failure", "detail": error})
+                                            );
+                                            if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
+                                    };
+                                    let decision = match persist_decision(
                                         &mut authorization_decisions,
                                         DecisionInput {
                                             line,
+                                            framed_subject: &wire,
                                             session: &receipt_session,
                                             now: retry_now,
                                             emitted_bytes: &retry_output,
@@ -1783,9 +2236,10 @@ fn run() -> i32 {
                                             approvals: &pending_approvals,
                                             approval_identity: &approval_identity,
                                             approval_ttl_ms: ttl_ms,
+                                            release: Some(&release),
                                         },
                                     ) {
-                                        Ok(consumed) => consumed,
+                                        Ok(decision) => decision,
                                         Err(()) => {
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
                                                 break;
@@ -1793,8 +2247,33 @@ fn run() -> i32 {
                                             continue;
                                         }
                                     };
-                                    consume_pending_approval(&mut pending_approvals, consumed);
-                                    if write_child(&mut child_in, &forward, &readiness).is_err() {
+                                    if commit_consumed_approval_nonce(
+                                        &mut a3,
+                                        &pending_approvals,
+                                        &decision.consumed_target,
+                                        retry_now,
+                                    )
+                                    .is_err()
+                                    {
+                                        if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    maybe_test_crash(test_crash_point.as_deref(), "g2-after-burn");
+                                    consume_pending_approval(
+                                        &mut pending_approvals,
+                                        decision.consumed_target.clone(),
+                                    );
+                                    if release_recorded_allow(
+                                        &authorization_decisions,
+                                        &decision,
+                                        &release,
+                                        &mut child_in,
+                                        &readiness,
+                                    )
+                                    .is_err()
+                                    {
                                         let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
                                         break;
                                     }
@@ -1816,6 +2295,7 @@ fn run() -> i32 {
                                         &mut authorization_decisions,
                                         DecisionInput {
                                             line,
+                                            framed_subject: &wire,
                                             session: &receipt_session,
                                             now: retry_now,
                                             emitted_bytes: &retry_output,
@@ -1824,6 +2304,7 @@ fn run() -> i32 {
                                             approvals: &pending_approvals,
                                             approval_identity: &approval_identity,
                                             approval_ttl_ms: ttl_ms,
+                                            release: None,
                                         },
                                     )
                                     .is_err()
@@ -1848,6 +2329,13 @@ fn run() -> i32 {
                         }
                     }
                 }
+                response = match refusal_with_framed_subject(&response, &wire, &framed_sha256) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        eprintln!("{}", json!({"error": error}));
+                        SEAM_ERROR_RESPONSE.to_string()
+                    }
+                };
                 if write_frame(&output, &response).is_err() {
                     break;
                 }
@@ -1875,6 +2363,38 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn approval_refusal_emits_exact_framed_subject_with_explicit_identity() {
+        let frame = b"{\"jsonrpc\":\"2.0\",\"id\":1}\r\n";
+        let digest = sha256_hex(frame);
+        let response = concat!(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",",
+            "\"text\":\"approval required: ",
+            "58309503cc30803da92ad66ba02f9b3e182d6513fad532dea18d37d3f25eb39d",
+            "\"}],\"isError\":true}}\n"
+        );
+        let enriched =
+            refusal_with_framed_subject(response, frame, &digest).expect("enrich refusal");
+        let parsed: Value = serde_json::from_str(&enriched).expect("enriched refusal parses");
+        let subject = &parsed["result"]["framed_subject"];
+        assert_eq!(subject["encoding"], "base64");
+        assert_eq!(subject["length"], frame.len());
+        assert_eq!(subject["sha256"], digest);
+        assert_eq!(
+            STANDARD
+                .decode(subject["base64"].as_str().expect("base64 string"))
+                .expect("base64 decodes"),
+            frame
+        );
+        assert_eq!(
+            parsed["result"]["content"][0]["text"],
+            concat!(
+                "approval required: ",
+                "58309503cc30803da92ad66ba02f9b3e182d6513fad532dea18d37d3f25eb39d"
+            )
+        );
+    }
+
+    #[test]
     fn production_preflight_requires_complete_private_state() {
         let root =
             std::env::temp_dir().join(format!("seal-production-preflight-{}", std::process::id()));
@@ -1898,6 +2418,7 @@ mod tests {
             health: false,
             health_listen: "127.0.0.1:9464".into(),
             health_token_file: None,
+            initialize_replay_store: false,
             cmd: vec!["/bin/cat".into()],
         };
         let replay = root.join("replay.sqlite");
@@ -1935,6 +2456,22 @@ mod tests {
     }
 
     #[test]
+    fn version_request_is_standalone_and_crate_derived() {
+        assert!(is_version_request(&["--version".into()]));
+        assert!(!is_version_request(&["--version".into(), "extra".into()]));
+        assert_eq!(BUILD_VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn help_request_is_standalone() {
+        assert!(is_help_request(&["--help".into()]));
+        assert!(is_help_request(&["-h".into()]));
+        assert!(!is_help_request(&["--help".into(), "extra".into()]));
+        assert!(!is_help_request(&["--config".into(), "--help".into()]));
+        assert!(HELP.contains("Full install and configuration walkthrough:"));
+    }
+
+    #[test]
     fn production_preflight_is_the_default_mode() {
         let args = parse_args_from(mode_args(&[])).unwrap();
         assert!(args.production);
@@ -1955,6 +2492,33 @@ mod tests {
         assert!(args.envelope_v23);
         assert!(args.production);
         assert_eq!(startup_mode_warning(&args), None);
+    }
+
+    #[test]
+    fn replay_store_initialization_is_a_separate_no_server_action() {
+        let args = parse_args_from(vec![
+            "--config".into(),
+            "config.json".into(),
+            "--pubkey".into(),
+            "00".repeat(32),
+            "--initialize-replay-store".into(),
+        ])
+        .unwrap();
+        assert!(args.initialize_replay_store);
+        assert!(args.cmd.is_empty());
+
+        let conflict = parse_args_from(vec![
+            "--config".into(),
+            "config.json".into(),
+            "--pubkey".into(),
+            "00".repeat(32),
+            "--initialize-replay-store".into(),
+            "--".into(),
+            "/bin/cat".into(),
+        ])
+        .err()
+        .expect("initializer with server command must be rejected");
+        assert!(conflict.contains("conflicts with a server command"));
     }
 
     /// V2.1 envelope extractor: plain lines are BYTE-UNTOUCHED (any JSON
@@ -2157,33 +2721,35 @@ mod tests {
         );
     }
 
-    fn envelope(payload: Value) -> String {
-        let payload = payload.to_string();
-        json!({"payload": payload, "signature": "00"}).to_string()
-    }
-
     #[test]
-    fn replay_store_path_reads_signed_payload_field() {
-        let env = envelope(json!({
+    fn replay_store_config_reads_signed_payload_fields() {
+        let payload = json!({
             "epoch": 1,
             "safety": {
                 "approval": {
                     "control_file": "/tmp/approvals.ndjson",
                     "ttl_seconds": 120,
-                    "replay_store": {"sqlite_path": "/tmp/replay.sqlite"}
+                    "replay_store": {
+                        "sqlite_path": "/tmp/replay.sqlite",
+                        "schema_version": 2,
+                        "namespace_encoding_version": 1
+                    }
                 },
                 "tools": []
             }
-        }));
+        });
         assert_eq!(
-            replay_store_path_from_envelope(&env).unwrap(),
-            Some("/tmp/replay.sqlite".to_string())
+            replay_store_config_from_signed_payload(&payload).unwrap(),
+            Some(ReplayStoreConfig {
+                sqlite_path: "/tmp/replay.sqlite".to_string(),
+                expected_lineage: ReplayStoreLineage::CURRENT,
+            })
         );
     }
 
     #[test]
-    fn replay_store_path_absent_is_none() {
-        let env = envelope(json!({
+    fn replay_store_config_absent_is_none() {
+        let payload = json!({
             "epoch": 1,
             "safety": {
                 "approval": {
@@ -2192,13 +2758,16 @@ mod tests {
                 },
                 "tools": []
             }
-        }));
-        assert_eq!(replay_store_path_from_envelope(&env).unwrap(), None);
+        });
+        assert_eq!(
+            replay_store_config_from_signed_payload(&payload).unwrap(),
+            None
+        );
     }
 
     #[test]
-    fn replay_store_path_rejects_malformed_field() {
-        let env = envelope(json!({
+    fn replay_store_config_rejects_missing_unknown_and_transitional_lineage() {
+        let mut payload = json!({
             "epoch": 1,
             "safety": {
                 "approval": {
@@ -2208,7 +2777,36 @@ mod tests {
                 },
                 "tools": []
             }
-        }));
-        assert!(replay_store_path_from_envelope(&env).is_err());
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("sqlite_path must be non-empty"));
+
+        payload["safety"]["approval"]["replay_store"] = json!({
+            "sqlite_path": "/tmp/replay.sqlite",
+            "schema_version": 1
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("namespace_encoding_version"));
+
+        payload["safety"]["approval"]["replay_store"] = json!({
+            "sqlite_path": "/tmp/replay.sqlite",
+            "schema_version": 0,
+            "namespace_encoding_version": 1
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("unsupported or transitional expected replay-store schema version 0"));
+
+        payload["safety"]["approval"]["replay_store"] = json!({
+            "sqlite_path": "/tmp/replay.sqlite",
+            "schema_version": 1,
+            "namespace_encoding_version": 1,
+            "typo": 1
+        });
+        assert!(replay_store_config_from_signed_payload(&payload)
+            .unwrap_err()
+            .contains("unknown safety.approval.replay_store key: typo"));
     }
 }

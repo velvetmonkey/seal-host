@@ -278,7 +278,7 @@ fn write_canonical_json(value: &Value, out: &mut Vec<u8>) -> Result<(), String> 
                 .as_u64()
                 .ok_or("approval payload numbers must be unsigned integers")?;
             if integer > MAX_CANONICAL_JSON_INTEGER {
-                return Err("approval payload integer exceeds canonical JSON range".to_string());
+                return Err("approval payload integer exceeds renderer range".to_string());
             }
             out.extend_from_slice(integer.to_string().as_bytes());
         }
@@ -348,7 +348,7 @@ fn validate_approval_v2_payload(payload: &ApprovalRecordV2Payload) -> Result<(),
         ("shown_length", payload.shown_length),
     ] {
         if number > MAX_CANONICAL_JSON_INTEGER {
-            return Err(format!("{name} exceeds canonical JSON range"));
+            return Err(format!("{name} exceeds approval renderer range"));
         }
     }
     if payload.expiry < payload.authorized_at {
@@ -685,7 +685,8 @@ struct SignedToken {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApprovalRecordV2Token {
-    /// Canonical JSON text for ApprovalRecordV2Payload.
+    /// Exact custom-renderer JSON text for ApprovalRecordV2Payload. This is
+    /// the ApprovalRecord byte contract, not RFC 8785/JCS.
     payload: String,
     signature_algorithm: String,
     signature_encoding: String,
@@ -1368,6 +1369,72 @@ mod tests {
         );
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].reason, "target_or_subject_mismatch");
+    }
+
+    /// M.4 stage 3 isolated length admission control. The negative record is
+    /// validly signed and agrees with the admitted frame on target, scope,
+    /// encoding, and SHA-256; only its signed byte length differs. Removing
+    /// the production length conjunct must therefore make this test fail.
+    #[test]
+    fn approval_v2_rejects_length_only_subject_mismatch() {
+        let signing_key = SigningKey::from_bytes(&[41u8; 32]);
+        let framed_bytes =
+            b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{}}\n";
+        let payload = v2_payload(&signing_key, framed_bytes, b"length-only control");
+        let (valid_token, _) = sign_v2_token(&signing_key, &payload);
+        let valid_record =
+            verify_approval_record_v2_token(&signing_key.verifying_key(), valid_token.as_bytes())
+                .expect("valid positive-twin record");
+
+        let mut counter = 0;
+        let (accepted, dropped) = filter_approval_context(
+            vec![valid_record.clone(), valid_record],
+            framed_bytes,
+            Some(&payload.target),
+            &mut counter,
+        );
+        assert_eq!(
+            accepted.len(),
+            2,
+            "LENGTH-ONLY-POSITIVE-TWIN RED: byte-identical valid records were not both admitted"
+        );
+        assert!(dropped.is_empty());
+        println!(
+            "LENGTH-ONLY-POSITIVE-TWIN GREEN target=digest=length=byte-identical admission=allow"
+        );
+
+        let mut wrong_length = payload.clone();
+        wrong_length.subject_length = payload.subject_length + 1;
+        assert_eq!(wrong_length.target, payload.target);
+        assert_eq!(wrong_length.subject_sha256, digest(framed_bytes));
+        assert_eq!(wrong_length.subject_scope, payload.subject_scope);
+        assert_eq!(wrong_length.subject_encoding, payload.subject_encoding);
+        assert_ne!(
+            wrong_length.subject_length,
+            framed_bytes.len() as u64,
+            "negative must differ only at signed subject_length"
+        );
+        let (wrong_length_token, _) = sign_v2_token(&signing_key, &wrong_length);
+        let wrong_length_record = verify_approval_record_v2_token(
+            &signing_key.verifying_key(),
+            wrong_length_token.as_bytes(),
+        )
+        .expect("length-only negative remains a validly signed record");
+        let (accepted, dropped) = filter_approval_context(
+            vec![wrong_length_record],
+            framed_bytes,
+            Some(&payload.target),
+            &mut counter,
+        );
+        assert!(
+            accepted.is_empty(),
+            "LENGTH-ONLY-ADMISSION RED: signed length mismatch was admitted while target and digest matched"
+        );
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].reason, "target_or_subject_mismatch");
+        println!(
+            "LENGTH-ONLY-ADMISSION GREEN target=aligned digest=aligned signed_length=mismatched admission=deny"
+        );
     }
 
     #[test]

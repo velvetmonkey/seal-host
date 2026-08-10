@@ -107,7 +107,7 @@ export const PIN_ROWS = Object.freeze([
     anchor: "nonce durable-consume vs decision ordering",
     check: "nonce-consume-ordering",
     fact:
-      "durable insert precedes survivor release and Lean decision; startup cache is rebuilt from the durable store",
+      "the store layer keeps its two-phase shape (a3.rs reclaim-before-rebuild and reserve-before-survival orderings; replay_store.rs open-reservation SQL and synchronous=FULL), and the host ordering itself is witnessed by the G2 crash suite: the three host_path G2 tests exist, none is #[ignore]d, T1/T3 arm crash points that main.rs really implements via an aborting maybe_test_crash, and a CI cargo test step selects them unfiltered",
   },
 ]);
 
