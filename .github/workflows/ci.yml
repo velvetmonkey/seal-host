@@ -519,10 +519,11 @@ jobs:
       # cannot silently inherit the gap; its own tests prove it goes red.
       - id: control_11
         continue-on-error: true
-        name: Every job running a PyYAML-dependent script provisions PyYAML
+        name: Workflow dependencies provision and mirrored credibility claims stay in sync
         run: |
           python3 scripts/workflow_pyyaml_gate.py
           python3 test/test_workflow_pyyaml_gate.py -v
+          node scripts/claims-drift.mjs
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
