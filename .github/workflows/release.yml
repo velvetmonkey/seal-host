@@ -19,7 +19,7 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.1
       - name: Require this tag push's full CI release evidence
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -55,7 +55,7 @@ jobs:
     steps:
       - id: control_01
         continue-on-error: true
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
         with: { fetch-depth: 0 }
       # Reserved id control_90: this step is provisioning, not a product
       # control, so it sits out of the per-job numbering. It still reports
@@ -200,7 +200,7 @@ jobs:
     steps:
       - id: control_01
         continue-on-error: true
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
       # Reserved id control_90: this step is provisioning, not a product
       # control, so it sits out of the per-job numbering. It still reports
       # like every other step -- test/test_ci_control_reporting.py requires

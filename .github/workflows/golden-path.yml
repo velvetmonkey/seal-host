@@ -16,7 +16,7 @@ jobs:
     steps:
       - id: control_01
         continue-on-error: true
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -109,7 +109,7 @@ jobs:
     steps:
       - id: control_01
         continue-on-error: true
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -132,7 +132,7 @@ jobs:
       - id: control_03
         continue-on-error: true
         name: Check out pinned assurance kit
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
         with:
           repository: velvetmonkey/seal-assurance-kit
           ref: 8946ec2a81e0e3e25b8920a9f7506ff4b37219f9

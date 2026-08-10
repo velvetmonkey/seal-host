@@ -29,7 +29,7 @@ jobs:
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
         with: { node-version: "22" }
       # The footprint gate fetches every repository in the fleet lock, and
