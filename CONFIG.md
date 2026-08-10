@@ -540,11 +540,11 @@ chmod 600 .seal/trusted.json
   --initialize-replay-store
 ```
 
-Observed output:
+Observed output (the workstation prefix is redacted as `[workstation path]`):
 
 ```text
 WARNING: INSECURE DEVELOPMENT MODE ENABLED; production preflight is disabled
-replay store initialized: /home/monkey/scratch/releaseistrue-gaps.tPM8xC/worktree/.seal/replay.sqlite (schema_version=2, namespace_encoding_version=1)
+replay store initialized: [workstation path]/.seal/replay.sqlite (schema_version=2, namespace_encoding_version=1)
 ```
 
 The signer validates the policy shape and signs the exact compact payload.
@@ -623,10 +623,11 @@ arguments elided because this is discovery evidence, not a reusable command):
 sealSqliteSandbox: …/seal-host-rs … -- python3 …/demo/sqlite_mcp_server.py … - ⏸ Pending approval (run `claude` to approve)
 ```
 
-Clean launch result against the published v0.1.5 host:
+Clean launch result against the published v0.1.5 host (the workstation prefix
+is redacted as `[workstation path]`):
 
 ```text
-production startup refused: cannot inspect approval token file /home/monkey/scratch/releaseistrue3.cpSXhd/.seal/approval-tokens.ndjson: No such file or directory (os error 2)
+production startup refused: cannot inspect approval token file [workstation path]/.seal/approval-tokens.ndjson: No such file or directory (os error 2)
 configured_host_command_exit=3
 ```
 
