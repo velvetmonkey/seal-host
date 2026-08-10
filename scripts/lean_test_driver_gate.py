@@ -19,6 +19,9 @@ CHILD_ARRAY = re.compile(
     re.DOTALL,
 )
 CHILD_LINE = re.compile(r'\s*"([A-Za-z0-9_-]+)"\s*,?\s*(?:--.*)?')
+FULL_DRIVER_LOOP = re.compile(r"(?m)^\s*for\s+name\s+in\s+testBinaries\s+do\s*$")
+EXPECTED_COUNT_GUARD = "if passed.size != expectedTestCount"
+COUNT_MISMATCH_DIAGNOSTIC = "COUNT MISMATCH"
 
 
 def read_children(path: Path) -> tuple[list[str], list[str]]:
@@ -52,10 +55,48 @@ def read_children(path: Path) -> tuple[list[str], list[str]]:
     return children, failures
 
 
+def runtime_driver_failures(path: Path) -> list[str]:
+    """Refuse a driver that can silently run only a prefix of its roster."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        return [f"cannot read runtime driver {path}: {error}"]
+
+    # Small wiring fixtures contain only Lake declarations. Audit runtime
+    # shape when the actual executable driver is present.
+    if "def main : IO UInt32" not in source:
+        return []
+
+    failures: list[str] = []
+    loop = FULL_DRIVER_LOOP.search(source)
+    if loop is None:
+        failures.append(
+            "LeanTests driver must iterate the complete testBinaries array; "
+            "partial iteration such as testBinaries.take is forbidden"
+        )
+
+    guard = source.find(EXPECTED_COUNT_GUARD)
+    if guard == -1:
+        failures.append(
+            "LeanTests driver must refuse when passed.size differs from "
+            "the literal expectedTestCount"
+        )
+    if COUNT_MISMATCH_DIAGNOSTIC not in source:
+        failures.append(
+            "LeanTests driver must emit COUNT MISMATCH evidence for a partial run"
+        )
+    if loop is not None and guard != -1 and guard < loop.end():
+        failures.append(
+            "LeanTests COUNT MISMATCH guard must occur after the complete run loop"
+        )
+    return failures
+
+
 def check(root: Path) -> list[str]:
     lakefile = root / "lakefile.toml"
     source = root / "Test" / "LeanTests.lean"
     children, failures = read_children(source)
+    failures.extend(runtime_driver_failures(source))
 
     try:
         with lakefile.open("rb") as handle:
