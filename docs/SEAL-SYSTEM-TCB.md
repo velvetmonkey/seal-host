@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # seal — System Trusted Computing Base ledger
 
-**Audience:** reviewers and acquirers (internal). Names the private repositories.
+**Audience:** reviewers and acquirers. Names the public repositories and the remaining proprietary boundary.
 The public, hygiene-clean extract of this document is
 `seal-check/docs/SEAL-ASSURANCE-STATEMENT.md`; where the two disagree, this
 ledger is authoritative and the public extract is corrected to match.
