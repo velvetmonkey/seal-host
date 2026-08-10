@@ -503,6 +503,9 @@ time bash scripts/build_all.sh
 export SEAL_BIN="$SEAL_HOST_ROOT/rust/target/debug/seal-host-rs"
 ```
 
+The equivalent executed install sequence is also recorded in
+[Getting started](docs/GETTING-STARTED.md#install-and-verify-the-published-host).
+
 Generate separate config-signing and approval-signing keys:
 
 ```bash

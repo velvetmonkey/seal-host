@@ -41,7 +41,9 @@ exact request.
 - GitHub CLI authenticated to GitHub for the release download.
 - The verified v0.1.5 Linux archive install from
   [Getting started](GETTING-STARTED.md#install-and-verify-the-published-host),
-  with its `SEAL_BIN` value still set.
+  whose executed sequence runs `release_provenance.py verify` against the
+  `SEAL-RELEASE-PROVENANCE.sigstore.json` bundle before extraction, with its
+  `SEAL_BIN` value still set.
 - Python 3 with the `cryptography` package (for the config signer). If it is
   absent, follow the [official installation guide](https://cryptography.io/en/latest/installation/)
   before continuing.

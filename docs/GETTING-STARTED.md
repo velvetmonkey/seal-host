@@ -366,3 +366,9 @@ UNKNOWN, never a passing result.
 The source-build path is not the release install above. Its recorded cold cost
 is **20m55s**, and its repair lives on a separate branch. This page does not
 silently substitute that path for v0.1.5 or claim a fresh source-build run.
+
+## Not built into the published v0.1.5 binary
+
+The published v0.1.5 binary does not report its own version. The source-tree
+version support landed after the release was built; a future release will
+include it.

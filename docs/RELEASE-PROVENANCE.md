@@ -20,8 +20,10 @@ The release page is
 ## Download and verify
 
 Prerequisites are Linux, GitHub CLI `gh`, `sha256sum`, Python 3, tar, and
-[cosign](https://docs.sigstore.dev/cosign/system_config/installation/). The
-following complete sequence was run from a fresh directory on Linux x86_64:
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/). A
+selective download must include `--pattern release_provenance.py` so the signed
+standalone verifier is present. The following all-assets sequence was run from
+a fresh directory on Linux x86_64:
 
 ```bash
 mkdir seal-host-v0.1.5-download && cd seal-host-v0.1.5-download
