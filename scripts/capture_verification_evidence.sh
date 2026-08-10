@@ -11,7 +11,11 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRATCH="${SCRATCH:-/tmp/seal-host-evidence}"
 mkdir -p "$SCRATCH"
 
@@ -25,20 +29,32 @@ export LIBRARY_PATH="${LEAN_LIB}:${LAKE_LIB}"
 export LD_LIBRARY_PATH="${LEAN_LIB}:${LAKE_LIB}:${LD_LIBRARY_PATH:-}"
 
 echo "=== 1. branch + status ===" | tee "$SCRATCH/branch.log"
-( cd "$ROOT"; echo "BRANCH:"; git branch --show-current; echo "PORCELAIN:"; P=$(git status --porcelain); if [ -z "$P" ]; then echo "(clean committed tree - no modified/untracked files)"; else echo "$P"; fi; echo "PORCELAIN_END" ) | tee -a "$SCRATCH/branch.log"
+(
+  cd "$ROOT" || exit
+  echo "BRANCH:"
+  git branch --show-current || exit
+  echo "PORCELAIN:"
+  P=$(git status --porcelain) || exit
+  if [ -z "$P" ]; then
+    echo "(clean committed tree - no modified/untracked files)"
+  else
+    echo "$P"
+  fi
+  echo "PORCELAIN_END"
+) | tee -a "$SCRATCH/branch.log"
 
 echo "=== 2. cargo test (providers decline) ===" | tee "$SCRATCH/cargo-test.log"
-( cd "$ROOT/rust"; \
+( cd "$ROOT/rust" || exit; \
   export LIBRARY_PATH="${LEAN_LIB}:${LAKE_LIB}"; \
   export LD_LIBRARY_PATH="${LEAN_LIB}:${LAKE_LIB}:${LD_LIBRARY_PATH:-}"; \
-  cargo test ed25519_provider_accepts_signed_decline_and_allow --lib 2>&1 ) | tee -a "$SCRATCH/cargo-test.log" || true
+  cargo test ed25519_provider_accepts_signed_decline_and_allow --lib 2>&1 ) | tee -a "$SCRATCH/cargo-test.log"
 
 echo "=== 3. quickstart x2 (documented entrypoint over synthetic, fresh state each) ==="
-( cd "$ROOT"; python3 demo/see_the_loop.py ) 2>&1 | tee "${SCRATCH}/quickstart-1.log" || true
-( cd "$ROOT"; QS_SQL1="drop table users" QS_SQL2="truncate table audit" python3 demo/see_the_loop.py ) 2>&1 | tee "${SCRATCH}/quickstart-2.log" || true
+( cd "$ROOT" || exit; python3 demo/see_the_loop.py ) 2>&1 | tee "${SCRATCH}/quickstart-1.log"
+( cd "$ROOT" || exit; QS_SQL1="drop table users" QS_SQL2="truncate table audit" python3 demo/see_the_loop.py ) 2>&1 | tee "${SCRATCH}/quickstart-2.log"
 
 echo "=== 4. consumer (real Ed25519TokenProvider) ===" | tee "$SCRATCH/signer-consumer.log"
-( cd "$ROOT"; python3 test/integration/test_approval_consumer.py ) 2>&1 | tee "$SCRATCH/signer-consumer.log" || true
+( cd "$ROOT" || exit; python3 test/integration/test_approval_consumer.py ) 2>&1 | tee "$SCRATCH/signer-consumer.log"
 
 echo "=== Evidence captured to $SCRATCH ==="
 ls -l "$SCRATCH"/{branch.log,cargo-test.log,quickstart-*.log,signer-consumer.log} 2>/dev/null || true

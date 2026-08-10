@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# THE SINGLE PROVISIONING POINT FOR PyYAML.
+#
+# scripts/ci_control_aggregate.py and scripts/proof_inventory.py parse workflow
+# YAML with PyYAML and refuse to run without it -- they will not fall back to
+# text scanning, because a gate that measures the wrong thing is worse than a
+# gate that stops. That refusal is correct and must not be softened; what has
+# to be guaranteed instead is the dependency.
+#
+# Until 2026-08-08 no job declared this dependency except ci.yml:build, and the
+# other nineteen call sites were green only because the ubuntu-latest image
+# happens to ship python3-yaml for /usr/bin/python3. That is an undeclared
+# dependency on a runner image, and it broke the moment one job -- contract-
+# freeze -- added actions/setup-python, which puts a hostedtoolcache
+# interpreter with no PyYAML ahead of the system one on PATH. Main went red.
+#
+# Consequences for anyone editing a workflow:
+#   * Use this action, do not copy its body. scripts/workflow_pyyaml_gate.py
+#     derives the set of jobs that need PyYAML from the source tree and fails
+#     closed when one of them does not reference this action, so a new job
+#     cannot silently inherit the old bug.
+#   * Place it AFTER any actions/setup-python step. Provisioning the system
+#     interpreter and then shadowing it is exactly the failure above; the gate
+#     enforces the ordering.
+
+name: Provision PyYAML
+description: >-
+  Guarantee that `import yaml` succeeds for the interpreter this job's `python3`
+  resolves to, or fail the job.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      name: Provision PyYAML for the active python3
+      run: |
+        # Three routes, cheapest first. The `import yaml` probe makes this a
+        # no-op on images that already ship it, so the common path costs no
+        # network. If every route fails the step fails, which is the correct
+        # direction: a gate that cannot read the trigger must not report
+        # coverage.
+        python3 -c 'import yaml' 2>/dev/null \
+          || python3 -m pip install --break-system-packages pyyaml==6.0.2 \
+          || python3 -m pip install pyyaml==6.0.2 \
+          || sudo apt-get install -y -qq python3-yaml \
+          || true
+        # Verify against the interpreter the workflow actually invokes, not
+        # against whichever one the installer chose. `apt-get install
+        # python3-yaml` lands in /usr/lib/python3/dist-packages, which a
+        # hostedtoolcache Python from actions/setup-python cannot see -- so an
+        # installer that reports success proves nothing. This probe does.
+        python3 - <<'PY'
+        import sys
+        try:
+            import yaml
+        except ModuleNotFoundError:
+            print(
+                "::error::PyYAML could not be provisioned for "
+                f"{sys.executable}; every install route was exhausted"
+            )
+            raise SystemExit(1)
+        print(f"PyYAML {yaml.__version__} available to {sys.executable}")
+        PY

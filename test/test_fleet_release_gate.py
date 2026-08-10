@@ -74,8 +74,16 @@ class FleetReleaseGateTests(unittest.TestCase):
         self.assertIn("fleet lock rejected", result.stderr)
 
     def test_release_workflow_runs_fleet_gate(self) -> None:
+        # The fleet gate command lives exactly once, in the reusable
+        # acceptance workflow (roadmap 8y item 8); the release workflow must
+        # invoke that workflow so the tag path still runs the gate.
+        acceptance = (
+            ROOT / ".github" / "workflows" / "acceptance.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("python3 scripts/fleet_release_gate.py", acceptance)
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("python3 scripts/fleet_release_gate.py", workflow)
+        self.assertIn("uses: ./.github/workflows/acceptance.yml", workflow)
+        self.assertIn("secrets: inherit", workflow)
 
 
 if __name__ == "__main__":

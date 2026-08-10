@@ -6,6 +6,12 @@
 # Usage: ./build_wasm.sh [strict]
 #   strict -> link with -sERROR_ON_UNDEFINED_SYMBOLS=1 (proves full symbol closure)
 set -euo pipefail
+# Deterministic link: the object list comes from shell globs, glob order is
+# LC_COLLATE-dependent, and object order assigns wasm function indices — an
+# en_US.UTF-8 host and a C-locale clean runner produced different (equally
+# valid) bytes from identical objects. Pin the C locale so every environment
+# links the clean runner's bytes.
+export LC_ALL=C
 cd "$(dirname "$0")"
 source ./emsdk/emsdk_env.sh >/dev/null 2>&1
 
@@ -45,17 +51,57 @@ CLOSURE_O=$(ls build-stdlib-closure/*.o 2>/dev/null)
 # that Kernels_Temporal + Consensus_Checker reference; DCE keeps only those.
 SPEC_O=$(ls build-spec/*.o 2>/dev/null)
 
-echo "[build_wasm] linking seal.js / seal.wasm ($UNDEF)"
+# The artifact is linked UNPUBLISHED (build-core/pending/) and only moved to
+# its real path after the link-set audit below positively passes. Any prior
+# artifact is removed first, so a failed gate leaves nothing at the published
+# path that could be mistaken for a vetted build. The link must come before
+# the audit: emscripten builds the sysroot archives (libc.a, libc++, ...)
+# lazily at first link, and the audit resolves libc references against those
+# same archives — pre-link in a cold tree every libc call is unresolved.
+PENDING=build-core/pending
+rm -rf "$PENDING" build-core/seal.js build-core/seal.wasm
+mkdir -p "$PENDING"
+
+echo "[build_wasm] linking seal.js / seal.wasm ($UNDEF) into $PENDING (unpublished)"
 emcc -O2 \
   build-core/*.o build-seal/*.o build-pkg/*.o $STDLIB_O $CLOSURE_O $SPEC_O \
   build-wasm-rt/libleanrt.a \
-  -o build-core/seal.js \
-  -s EXPORTED_FUNCTIONS='["_seal_init","_seal_decide","_malloc","_free"]' \
+  -o "$PENDING/seal.js" \
+  -s EXPORTED_FUNCTIONS='["_seal_init","_seal_decide","_seal_mcp_version_gate","_malloc","_free"]' \
   -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s MODULARIZE=1 -s EXPORT_NAME=SealModule \
   $UNDEF \
   -Wl,--allow-multiple-definition \
-  || { echo "[build_wasm] LINK FAILED"; exit 1; }
+  || { echo "[build_wasm] LINK FAILED"; rm -rf "$PENDING"; exit 1; }
+
+# --- Link-set audit gate, fail-closed --------------------------------------
+# The stub warrant is proven per-link, never assumed per-name: the audit must
+# POSITIVELY pass over exactly the objects linked above. A nonzero exit
+# (offenders, unparseable object, unmodelled relocation, missing tool) refuses
+# to publish — and so does exit 0 without the printed PASS verdict, so a
+# silent or truncated audit can never read as success.
+AUDIT_LOG=build-core/link_set_audit.log
+rm -f "$AUDIT_LOG"
+echo "[build_wasm] link-set audit (gate: no PASS verdict, no artifact)"
+set +e
+./audit_link_set.sh > "$AUDIT_LOG" 2>&1
+audit_rc=$?
+set -e
+if [ "$audit_rc" -ne 0 ]; then
+  tail -n 40 "$AUDIT_LOG" >&2
+  echo "[build_wasm] LINK-SET AUDIT FAILED rc=$audit_rc; refusing to emit" >&2
+  rm -rf "$PENDING"
+  exit 1
+fi
+if ! grep -q '^\[link-set-audit\] PASS fail-closed initializer-state rule$' "$AUDIT_LOG"; then
+  tail -n 40 "$AUDIT_LOG" >&2
+  echo "[build_wasm] audit exited 0 but printed no PASS verdict; refusing to emit" >&2
+  rm -rf "$PENDING"
+  exit 1
+fi
+echo "[build_wasm] link-set audit PASS ($AUDIT_LOG); publishing artifact"
+mv "$PENDING/seal.js" "$PENDING/seal.wasm" build-core/
+rmdir "$PENDING"
 
 echo "[build_wasm] done: $(ls -la build-core/seal.wasm | awk '{print $5}') bytes"

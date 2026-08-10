@@ -1,90 +1,234 @@
-seal.wasm — verified conformance build provenance
-==================================================
-Built from the current P6 byte-carrier kernel with the V2.2 authority-bound
-principal-envelope host, the raw-wire guards, and the single-source policy
-codec. The signed-message domain is
-`seal/v2.2/principal-envelope\0` and commits to the 32-byte config authority,
-the length-prefixed registry key id, nonce, issue time, and exact judged line.
-This intentionally rejects V2.1 envelopes and closes the V2.1 authority-
-transplant and same-pubkey registry-relabel gaps. Non-principal decision
-semantics are unchanged.
+seal.wasm — V2.3 verified runtime build provenance
+=================================================
 
-Kernel source    : mcp-seal-dev 6c74b61382f8b7057cfb332a44a45e9e1b04e2b4
-                   (current pin — raw-key and significant-digit guards)
-Host source      : seal-host main
-                   4b0845e5d16ba058ef5b3503ffac334a144d8541
-                   (raw-wire guards including Unicode-canonical key identity)
-Build date       : 2026-07-26
-Lean toolchain   : leanprover/lean4:v4.28.0
-Emscripten       : 6.0.0 (vendored wasm-spike/emsdk)
+Artifact identity
+-----------------
 
-Artifact sha256:
-  seal.wasm  70bee4b9ce4bed005429cb62515d6de7c61cb151a16b28c680399534d187cabf  (5701292 bytes)
-  seal.js    071d7a3d4504d9e6024554e7fc6be68d3849a77c4585a4c40422fee9f63ed245
+Build date       : 2026-08-02
+Kernel source    : mcp-seal-dev
+                   316d74126b4cb164d501fea21738d6880469bcb4
+Host source base : seal-host
+                   f1a45ca2064cbbed36a28046bf747a56945a5f27
+Host build delta : wasm-spike/build_core.sh adds the four runtime modules
+                   Seal.EffectCommitment, Seal.EncodingInjective,
+                   SealV2.EffectEnvelope, and SealV2.McpVersionGate to the
+                   explicit wasm allow-list. wasm-spike/seal_wrapper.c and
+                   build_wasm.sh expose the Lean `seal_host_mcp_version_gate`
+                   through the public `seal_mcp_version_gate` wasm export.
+                   Ffi.lean carries the gate bridge: the C `seal_decide`
+                   wrapper admits `seal_host_step` only after the internal
+                   step-envelope adapter returns the gate's exact
+                   `route=continue`. The adapter COMPOSES the existing
+                   classification path — it extracts the judged line through
+                   the shared `stepLineOf?` and never parses a line
+                   `classifyLine` refuses (raw-wire guards run before any
+                   gate parse; theorem `gatePlanFor_refuse_continue`) — and
+                   gates under an M.2 revision session: a module-level port
+                   of the native `McpRevisionSession` fold (entry-call
+                   method mapping via the kernel-owned
+                   `mcpEntryCallOfMethod` seam; gate-before-observe ordering
+                   as in rust/src/main.rs; reset by `seal_init`). Envelopes
+                   with no usable line gate continue and step to the
+                   documented compatible-profile `route=passthrough`.
+                   build_wasm.sh pins LC_ALL=C so the link's glob-derived
+                   object order (which assigns wasm function indices) is
+                   locale-independent.
+Artifact delta   : removes only the unused `Repr Kernels.TemporalPolicy`
+                   slice. The public three-function ABI, decision semantics,
+                   source-kernel revision, signed schemas, 27-record
+                   conformance surface, and exact axiom ceiling are unchanged.
+                   The link set is audit-clean under the current gate.
 
-Golden Path assurance-kit/kernel history
-(machine-readable authority: wasm-spike/verified/pin-history.json):
+Outputs:
+
+  seal.wasm  28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
+             5,845,911 bytes
+  seal.js    801417decfbc49b926a16c9968aa3e77e792abf05eb782ec8ed530325fb8c6c5
+             63,087 bytes
+
+The checked-in wasm and JS are a matched pair copied byte-for-byte from
+wasm-spike/build-core after the strict link. The independently rebuilt pair
+has the same two hashes and sizes.
+
+Observable identity
+-------------------
+
+Every public `seal_decide` call runs the kernel MCP version gate before the
+decision, under the session revision selected by previously admitted entry
+calls: after `initialize`, a current-marked `tools/call` rejects -32602
+(inconsistent with selected session version 2025-06-18); after
+`server/discover`, an unmarked `tools/call` rejects -32602 (required _meta
+object is missing); after both entry shapes, either rejects -32602 (session
+MCP era is ambiguous); with no entry call observed, the empty-selection
+semantics apply (unmarked legacy traffic admitted, modern markers fully
+validated). These verdicts are byte-identical to the native path's
+`mcp_version_gate(line, version_gate_input())` for the same session states.
+An inner line nested to depth 5,000 returns the classifier's fail-closed
+-32600 block (164 bytes), exactly as the pre-gate `5f4d8400` artifact did;
+the reviewed `2ef55925` candidate instead trapped with a JavaScript stack
+overflow because its bridge parsed before the raw-line guards. The 27
+conformance records are byte-identical to both prior artifacts; the 12 V2.3
+probes differ from `5f4d8400` only in the intended malformed-modern-metadata
+forward-to-reject subtraction (probe output SHA-256
+dc165762758fc7347490dbee799d9a3a95621a9e7d2431c1ca52796c8076f812, equal to
+the reviewed candidate's).
+
+Pinned dependency graph
+-----------------------
+
+The authoritative manifest is `lake-manifest.json`, SHA-256
+`ad4d98ca35cde0598794e4c08509bc8b21e79cbab39151c9a65d9e1cb3821dc0`.
+It remained byte-identical before dependency materialization, after
+`lake update`, and after the complete build. Direct and transitive pins used:
+
+  UnicodeBasic         ff04f5c424e50e23476d3539c7c0cc4956e971ad
+  mcp-seal             316d74126b4cb164d501fea21738d6880469bcb4
+  calibration-lean     804c9a6c49400de779a39a5aca00407bd96c46f4
+  consensus-lean       6b300f00ab98660dc87a363c087ed8114fd36206
+  temporal-logic-lean  6e1cb65409f11c3edebbfd937f56175787774583
+  crdt-lean            08e06785db8b175ad814357319dce17863090d9b
+  aesop                 f642a64c76df8ba9cb53dba3b919425a0c2aeaf1
+  batteries             495c008c3e3f4fb4256ff5582ddb3abf3198026f
+  mathlib                8f9d9cff6bd728b17a24e163c9402775d9e6a365
+  plausible             55c8532eb21ec9f6d565d51d96b8ca50bd1fbef3
+  LeanSearchClient      c5d5b8fe6e5158def25cd28eb94e4141ad97c843
+  importGraph           85b59af46828c029a9168f2f9c35119bd0721e6e
+  proofwidgets          be3b2e63b1bbf496c478cef98b86972a37c1417d
+  Qq                    b8f98e9087e02c8553945a2c5abf07cec8e798c3
+  Cli                   4f10f47646cb7d5748d6f423f4a07f98f7bbcc9e
+
+Toolchain
+---------
+
+  lean-toolchain       leanprover/lean4:v4.28.0
+  Lean source commit   7e01a1bf5c70fc6167d49c345d3bf80596e9a79b
+  Lean release archive ceb3a3f844f7aebf63245e2b51c28d5b0ed38942c19f93cf3febd520302160bd
+  Lean patch input     e79761006e0e7d9e7cd4024b038a7182cf1c56a31dd8dc4672892a7ec24b4d8a
+                       wasm-spike/lean4-v4.28.0-interrupt.patch
+  patched source       src/runtime/interrupt.cpp
+                       1f7acc450960a469c909d995f1f88affc5470d28080983c8706f143d4b078c64
+  Emscripten           6.0.0
+  emsdk commit         d223ae73c6998296e3ab27cf81dc2c2c9fd383de
+  emscripten release   772bb4648be4a897ca062d6adc65bc70223d2703
+  wasm archive         b5ed0963521f1d35b8967f20b1776327980bcfd5133166b40e018f27f2380e89
+                       269,920,796 bytes
+  emsdk Node           22.16.0
+  Node archive         f4cb75bb036f0d0eddf6b79d9596df1aaab9ddccd6a20bf489be5abe9467e84e
+
+Build inputs
+------------
+
+  lean-toolchain                         db7bb24b756d745bbde83fe92718b51bd3625dae3701ba0f598d0eedcd3f3028
+  lake-manifest.json                     ad4d98ca35cde0598794e4c08509bc8b21e79cbab39151c9a65d9e1cb3821dc0
+  Ffi.lean                               092b67ff2a17380c3b3f9ed560395443bc0b749a3ae3a42b3d9af1a8256fe0f3
+  lean4-v4.28.0-interrupt.patch          e79761006e0e7d9e7cd4024b038a7182cf1c56a31dd8dc4672892a7ec24b4d8a
+  provision_toolchain.sh                 0367d4469643cb3fd763ae69318b0c8f01e6ba969795b605df0497870185c494
+  build_runtime_wasm.sh                  c553172ea115531c8c6115622449909ecc788ad7e9ca2b8e779e9c44e770f687
+  build_core.sh                          0a2f7c7986e46fb92f142529cdd4b536839defc05331915f0bca163067733760
+  build_base.sh                          75970692256e23e6d347e0f8aa481f12f5d59ef301296ee694e135a3948c8a7f
+  build_closure.sh                       9ba6168c9bf789444da2cd598dc39b13e10bb4b78a329cef4e4a2dfe38ffd50c
+  build_wasm.sh                          d3ed4e50693625adfc38273d16bdd95c257f523f3e97fe462a03add6c77ee391
+  seal_wrapper.c                         4c73ce6fc8cd34d03cbe42689d63039ac8f2a048b5da031f40988cb9dd1e6eb1
+  scripts/ffi_shim.c                     a18dd1853a5e1c9ce675e8dc19f85be29f7b8c32e9261a45947d76b2ac53aa07
+
+Local build procedure
+---------------------
+
+From the repository root, the only host Lean build was serialized by
+`/home/monkey/bin/leanbuild`; no outer flock and no raw host `lake`
+invocation were used:
+
+  /home/monkey/bin/leanbuild build
+  (cd wasm-spike && ./build_core.sh)
+  (cd wasm-spike && ./build_wasm.sh strict)
+
+The guarded Lake build completed 16,271/16,271 jobs (including the module's
+new bridge theorems and their axiom pins; no sorry, no maxHeartbeats).
+Toolchain, runtime-wasm, base and closure object trees were unchanged from
+the prior provisioned state and were reused; the clean-room run below
+rebuilt all of them from scratch. Strict linking used
+`-sERROR_ON_UNDEFINED_SYMBOLS=1` under the pinned C locale and succeeded.
+
+Determinism note: identical object sets link to different (equally valid)
+bytes under different LC_COLLATE glob orders. The canonical bytes are the
+C-locale link; build_wasm.sh now pins LC_ALL=C, and the en_US.UTF-8 host
+relink reproduced the clean-room hash exactly.
+
+Clean-room reproduction
+-----------------------
+
+The independent gate-fix run started 2026-08-01T23:15:01Z and
+ended 2026-08-01T23:30:43Z on Linux x86-64. It used runner image
+`seal-wasm-clean-runner@sha256:770b606e55d3e89448392d432bb05000ab806114452a9fa8350621aeb1aede83`,
+built from Ubuntu 24.04
+`sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90`.
+The complete host source input was Git bundle SHA-256
+`f02ef083b8c78f53ee67702b18153871449b542a82af7716743187c3fcb79d74`;
+the FFI/module/wrapper/export patch input was
+`436c67a25e925606bdad86ba3852b5f81337da0a2ebfeba9108dcc77208e0c9b`.
+
+Isolation flags were:
+
+  --read-only --cap-drop ALL --security-opt no-new-privileges
+  --user 1000:1000 --pids-limit 4096
+  --tmpfs /tmp:rw,nosuid,nodev,size=4g,mode=1777
+
+Only the evidence/bundle directory was mounted at `/runner/io`; the host
+repository, `/home/monkey`, host `.lake`, host toolchains, caches, Docker
+socket, and Docker volumes were not mounted. A transient GitHub credential was
+passed only to the guarded dependency-update exec and was not present during
+compilation. Both Lake phases were invoked through the host's
+`/home/monkey/bin/leanbuild` serialization guard, with no outer flock. The
+runner rejected warm `.lake`, Cargo, toolchain, and wasm object paths before
+building.
+
+All nine clean phases exited 0: toolchain provisioning, dependency update,
+crypto leaf, Lake build, Lean wasm runtime, core objects, base objects,
+initializer closure, and strict link. Its 16,271-job Lake build and fresh
+640-object closure (3 proof-library umbrella stubs) produced byte-identical
+wasm and JS. PID 1 printed the final
+wasm SHA-256 to stdout, and
+`docker logs seal-wasm-clean-gatefix-hermetic`
+records the same hash as the file under `/runner/io`. Detailed evidence is
+retained on the build host at:
+
+  /home/monkey/.mega-monkey/kernelbuild-gatefix-hermetic/evidence/
+
+Supersession and limits
+-----------------------
+
+This artifact supersedes the reviewed structural-enforcement candidate
+`2ef559250c56b1be4f8c346c6ca237393e6dc000aac611762a549a1638d694ca`
+(whose bridge parsed the raw line before the raw-wire guards and used a
+stateless empty session selection), the exported-but-bypassable V2.3 wasm
+`5f4d84007f8ff78d97ae5a5bc837eae28e47a6c156a53dbc96cdf3f536c67205`,
+the unreachable-gate V2.3 wasm
+`1d4f5457d7105489e0248b81e17e9bc1bacd853300a38526852f23f7703efea8`,
+the V2.2 verified pair
+`dd00cd2bd01531113e3c687eb0df62f23860213219a01d2cb1f3e219adfa48c3`
+and the shipped fleet kernel
+`d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be`.
+At artifact-review time no fleet pin, fixture, freeze file, axiom pin, or
+expected-value constant had been advanced; the old conformance fixture and
+scenario target schema were intentionally red pending separately authorized
+Phase 2 re-minting. Phase 2 was authorized on 2026-08-02 after the independent
+PROMOTE disposition and advances the fleet/fixtures without changing this
+artifact or any axiom pin. Known target asymmetries versus the native host (pre-init
+gate rejections; guards-first ordering on refuse-class lines) are documented
+in /home/monkey/.mega-monkey/gatefix-report.md.
+
+Fleet pin history
+-----------------
+
+The machine-readable history in `pin-history.json` is mirrored here without
+collapsing intermediate pin transitions:
+
+  8946ec2a81e0e3e25b8920a9f7506ff4b37219f9 -> 28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
+  193c6be1bf83f9d93f14840f2b928fcb46937cc0 -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
+  39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
   d5e14d173bd8b2170e244a91ad2ddc42ae168cff -> d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be
   62f5fe5d2f3f9d1d700b524aa1d415db449799fc -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
   f95ac81265982b443e04fba2692f412721d68769 -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
   0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
   6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
   0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
-
-Supersedes the previously checked-in conformance artifact sha256
-  d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be
-  (the P6 byte-carrier build before the duplicate-key,
-  canonical-equivalent-key, and significant-digit guards). The repin closes
-  the verified wasm fail-open on those raw-wire inputs.
-That build superseded
-  c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda
-  (the V2.2 authority-bound build against mcp-seal-dev 1d356694). The new
-  hash is expected: the kernel advances to c3bea29 and carries P6 byte frames.
-That build superseded
-  3d70637f60f31c7c71dd6f65f3f2740d28db3b7620578b146a2ab4b1dec9ce01
-  (the V2.1 principal-envelope build). The new hash is expected: V2.2 changes
-  the signed-message domain and layout and therefore changes the kernel binary.
-That build superseded
-  0d3536e5624bccf2c81a94c247d8c8e7a15db4f9850d56b1d6ba59ed4b6ad130
-  (committed at cdb9447 with provenance claiming source mcp-seal-dev 1d35669;
-  a clean rebuild of 1d35669 yields 3d70637f, NOT 0d3536e5, so 3d70637f is the
-  authoritative rebuild-from-source pin. Whether 0d3536e5 was a stale/mispinned
-  artifact or the Lean->wasm build is not byte-deterministic is pending
-  clean-runner CI confirmation; the CI rebuild of 1d35669 is the reproducibility
-  judge of record.)
-That build superseded
-  fab75d9def6f7741ca91db809f15233e4cb715f1f0139033f2e9f009461bd878
-  (the codec-refactor build; its parsers carry into this build unchanged and
-  the principal section is the sole delta). That build superseded a3790181
-(7-kernel DX surface), which superseded ff1bfd68 (pathological-number
-fail-closed), which superseded d3067bc0 (Lane C divergence, closed), which
-superseded the fleet pin df42cbad.
-
-Reproduce (from wasm-spike/, after provisioning the ignored Emscripten,
-Lean-source, runtime, package, stdlib, specialization and closure directories
-described in RESUME.md):
-  source ./emsdk/emsdk_env.sh
-  (cd .. && /home/monkey/bin/leanbuild build)
-                                  # emit HEAD project C -> .lake/build/ir/*.c
-  ./build_runtime_wasm.sh        # rebuild Lean runtime archive
-  ./build_core.sh               # ir -> build-core/*.o (incl Host/UnicodeKeys)
-  ./build_base.sh               # package/Unicode/stdlib/specialization objects
-  ./build_closure.sh            # module-initializer closure + external-lib stubs
-  ./build_wasm.sh strict        # link; -sERROR_ON_UNDEFINED_SYMBOLS=1 must pass
-  # then: cp build-core/seal.wasm verified/
-
-Local-rebuild note: the installed Emscripten and Lean sources were used through
-the existing wasm-spike build path. The Lean runtime archive, every project and
-mcp-seal object, the runtime package objects (including UnicodeBasic), the
-stdlib/specialization providers, and the initializer closure were rebuilt from
-empty object directories before the strict link. A second strict link
-reproduced the wasm hash and generated glue hash
-`72124956d480295ef0ffb1d75034662bf9bb801441a03a53bd9f7521f5ef6a13`
-byte-for-byte. Only `seal.wasm` is repinned here; the existing verified
-`seal.js` loader above is retained and was exercised against the new module by
-the three-way Node lane. This is a same-machine build, not a clean-runner
-reproduction; independent clean-runner minting remains the judge of record.
-
-Entrypoints (C aliases over Lean @[export] seal_host_init/seal_host_step):
-  seal_init(envelope, pubkey) -> {ok,...}
-  seal_decide(stepInput)      -> {route, audit, response?}

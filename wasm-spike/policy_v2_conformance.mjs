@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Producer-independent policy-v2 check over the rebuilt public-wasm shape.
 import { createRequire } from "node:module";
-import { buildEnvelope, PUBKEY, stableHash } from "./seal_scenarios.mjs";
+import { buildEnvelope, guardTarget, PUBKEY } from "./seal_scenarios.mjs";
 
 const require = createRequire(import.meta.url);
 const SealModule = require("./build-core/seal.js");
@@ -52,11 +52,10 @@ assert(decide(3, { operation: "read", path: "/safe/secrets/key" }).route === "bl
   "deny did not dominate explicit allow");
 
 const write = { operation: "write", path: "/safe/output.txt", content: "one" };
-const canonicalArgs = JSON.stringify({ content: "one", operation: "write", path: "/safe/output.txt" });
-const expected = stableHash(["conformance-server", "fs.call", canonicalArgs]);
+const expected = guardTarget("fs.call", write, "conformance-server");
 const blocked = decide(4, write);
 assert(blocked.route === "block" && blocked.response.includes(expected),
-  "guard target did not bind server+tool+canonical full arguments");
+  "guard target did not bind tool+canonical full arguments and absent request context");
 assert(decide(5, write, [{ target: expected }]).route === "forward",
   "exact target approval did not forward");
 assert(decide(6, write).route === "block", "approval replay did not block");

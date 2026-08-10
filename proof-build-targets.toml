@@ -1,0 +1,247 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# DECLARED CI LAKE INVOCATIONS -- the sole authority for REACHED.
+#
+# scripts/proof_inventory.py computes REACHED from the transitive import
+# closure of the targets named here and from nothing else. No text found in a
+# workflow can add a row to this file. Workflow text is read only to REFUTE:
+# every row below must still correspond to a lake command in shell command
+# position, at the named job and step, under the recorded guard, and its
+# `push_main = true` must explicitly assert unconditional push-to-main scope.
+# A non-admitting trigger removes that credit and is listed as
+# TRIGGER-EXCEPTED; an unclassifiable trigger fails closed. A false assertion
+# stays uncredited even if workflow text is widened, so no text-derived
+# predicate can grant coverage. See docs/LIMITATIONS.md.
+#
+# To add a build: add the command to the workflow AND add a row here. Adding
+# only the row fails the cross-check; adding only the command fails the
+# undeclared-invocation check. Both edits are visible in one diff.
+#
+# `guard` records, verbatim, the condition under which the command runs. An
+# empty guard asserts the command runs whenever its job runs. A guard is
+# DATA, not an excuse: a guarded invocation still confers REACHED, but the
+# reader can see what it is conditional on.
+#
+# declared_by: orphanfix lane, 2026-08-04, derived from the tree at 9f12745;
+#   rebased 2026-08-07 and hand-checked row by row against the current workflow
+#   coordinates cited below.
+# NOT OWNER-RULED: this repository has no CODEOWNERS file, so no named owner
+#   has signed these assertions. That gap is real and is recorded in the
+#   external `orphanfix-report.md` under UNVERIFIED.
+#
+# EIGHT ROWS REMOVED, leandeduperegistry lane, 2026-08-08. Roadmap 8y item 6
+# consolidates duplicate Lean execution; each removal below is a control the
+# same commit genuinely deletes from .github/workflows/ci.yml, not a row
+# removed to reach exit 0:
+#   ci.yml:build:control_09  lake exe axiom_check
+#       The axiom report is now captured by control_20's `lake test 2>&1 |
+#       tee /tmp/axioms.txt`; the sorry-axiom grep in control_10 reads the
+#       same file and is unchanged. The aggregate already runs axiom_check.
+#   ci.yml:build:control_11  lake exe host_unit_tests
+#   ci.yml:build:control_12  lake exe dx_surface_tests
+#   ci.yml:build:control_13  lake exe policy_server_identity_tests
+#   ci.yml:build:control_14  lake exe sha256_selfcheck
+#       Four children of the `lake test` aggregate that control_20 in the
+#       same job already runs; running them again re-executed the same code.
+#   ci.yml:build:control_17  lake build perimeter_probe
+#   ci.yml:build:control_17  lake exe perimeter_probe
+#       One deleted step, two rows: the step's literal block held both
+#       commands. perimeter_probe is likewise a testDriver child.
+#   ci.yml:rust-conformance:control_16  lake build (default targets)
+#       A second default-target build in a later job, identical to
+#       ci.yml:build:control_08, which survives and keeps the declaration.
+# The `rust-conformance-lean` job the same commit deletes contributed no
+# rows: its two lake commands were `lake update` (not a declarable kind) and
+# `lake test` behind `ci_disk_telemetry.py`, which is not in shell command
+# position, so nothing there was ever declared and nothing is removed for it.
+# Every surviving row was re-checked against the tree and its cited line
+# number re-measured; the pyyamlpop lane's line comments had drifted for
+# golden-path.yml, public-export.yml, release.yml and security.yml, which
+# this lane touches in none of their workflow content -- only the comments.
+
+# ---------------------------------------------------------------- ci.yml
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_20"
+kind     = "test"
+target   = ""
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:154
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_08"
+kind     = "build"
+target   = ""
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:157
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "build"
+step     = "control_16"
+kind     = "build"
+target   = "Test.A2DivergenceClassification"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:198
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_11"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:311
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_27"
+kind     = "build"
+target   = "SealV2.EffectEnvelope"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:345
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_17"
+kind     = "build"
+target   = "downstream_parser_oracle"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:366
+
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_21"
+kind     = "exe"
+target   = "honesty_matrix"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:394
+
+# ------------------------------------------------- g2-mutation-ablation.yml
+#
+# declared_by: pyyamlpop lane, 2026-08-08. This workflow landed at df50f48
+# with an undeclared `lake build +Ffi:c.o.export`, which is what actually
+# reddened ci.yml:build -- control_18 reported
+#   PROOF INVENTORY UNCLASSIFIED: g2-mutation-ablation.yml:g2-mutation-
+#   ablation:control_09@103 (lake build +Ffi:c.o.export): undeclared lake
+#   invocation; add it to proof-build-targets.toml or remove it
+# The remedy the gate names is this row. push_main is false and asserted so:
+# the workflow declares only `schedule` and `workflow_dispatch`, so it does
+# not admit a push to refs/heads/main and confers no push-to-main coverage.
+# It is expected to be listed TRIGGER-EXCEPTED, not REACHED.
+[[invocation]]
+workflow = "g2-mutation-ablation.yml"
+job      = "g2-mutation-ablation"
+step     = "control_09"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = false
+# g2-mutation-ablation.yml:122
+
+# ---------------------------------------------------------------- golden-path.yml
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "lean-aggregate"
+step     = "control_06"
+kind     = "exe"
+target   = "cache"
+guard    = "shell-conditional"
+push_main = true
+# golden-path.yml:87
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "lean-aggregate"
+step     = "control_06"
+kind     = "build"
+target   = ""
+guard    = "shell-conditional"
+push_main = true
+# golden-path.yml:88
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "lean-aggregate"
+step     = "control_06"
+kind     = "exe"
+target   = "axiom_check"
+guard    = "shell-conditional"
+push_main = true
+# golden-path.yml:89
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "lean-aggregate"
+step     = "control_06"
+kind     = "exe"
+target   = "host_unit_tests"
+guard    = "shell-conditional"
+push_main = true
+# golden-path.yml:91
+
+[[invocation]]
+workflow = "golden-path.yml"
+job      = "lean-aggregate"
+step     = "control_06"
+kind     = "exe"
+target   = "dx_surface_tests"
+guard    = "shell-conditional"
+push_main = true
+# golden-path.yml:92
+
+# ---------------------------------------------------------------- public-export.yml
+[[invocation]]
+workflow = "public-export.yml"
+job      = "export"
+step     = "control_14"
+kind     = "test"
+target   = ""
+guard    = ""
+push_main = false
+# public-export.yml:61
+
+# ---------------------------------------------------------------- release.yml
+[[invocation]]
+workflow = "release.yml"
+job      = "build"
+step     = "control_19"
+kind     = "test"
+target   = ""
+guard    = ""
+push_main = false
+# release.yml:109
+
+[[invocation]]
+workflow = "release.yml"
+job      = "build"
+step     = "control_09"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = ""
+push_main = false
+# release.yml:112
+
+# ---------------------------------------------------------------- security.yml
+[[invocation]]
+workflow = "security.yml"
+job      = "fuzz-hostile-ingress"
+step     = "control_07"
+kind     = "build"
+target   = "+Ffi:c.o.export"
+guard    = ""
+push_main = true
+# security.yml:176

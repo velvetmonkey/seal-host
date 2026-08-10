@@ -20,8 +20,10 @@ is `rollingHead H genesis`, where the newest entry is the outermost commitment.
   reorder, or mutation changes the head and is detected.
 
 Both are `sorry`-free and depend on **no axioms** (a strict subset of the L0
-baseline `[propext, Classical.choice, Quot.sound]`). Gate:
-`lake env lean Test/AxiomCheckRecord.lean`.
+baseline `[propext, Classical.choice, Quot.sound]`). The live gate is
+`lake exe axiom_check`: `Test/Axioms.lean` imports the record module and carries
+guarded pins for both theorem symbols. `Test/AxiomCheckRecord.lean` is an orphan
+probe and is not the gate.
 
 ## Honest scope — the commitment is a named assumption, not proven
 

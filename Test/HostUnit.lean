@@ -24,7 +24,7 @@ private def testPolicy : Seal.Policy := {
     { name := "db.execute"
       mode := .guarded
       matcher := .containsAnyCi ["sql"] ["drop", "delete", "truncate"]
-      target := [.literal "db", .argPath ["database"], .literal "write", .argPath ["sql"]] },
+      target := [.fullArguments] },
     { name := "approve", mode := .deny }
   ]
 }
@@ -36,7 +36,7 @@ private def dbArgs : Lean.Json :=
   ]
 
 private def dbTarget : SealCore.TargetHash :=
-  Seal.stableHashParts ["db.execute", "db", "prod", "write", "drop table users"]
+  Seal.guardTarget testPolicy "db.execute" [dbArgs.compress] .absent
 
 private def mkAct (tool : String) (args : Lean.Json) : CanonicalAction :=
   { tool, argsJson := args, ast? := none, raw := "", requestId := Lean.Json.null }
@@ -163,7 +163,7 @@ def main : IO Unit := do
 
   let (v1, st1) := decideS act noEv State.empty
   check "guarded without approval -> deny" (v1.kind == .deny)
-  check "deny reason carries target text" (v1.reason == "3c4d52262e213368bda15abc0f2c3ae14fecfc015f3878f1714add48437e0783")
+  check "deny reason carries target text" (v1.reason == "85545fe075783b72f2703c8b4769da0b5ef1962bc2e8ecf62e3c9bf366a65aca")
 
   let approvedEv : Kernels.SafetyEvidence :=
     { now, approvalEvents := [.approval dbTarget (now + 120000)] }

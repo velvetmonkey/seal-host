@@ -283,7 +283,8 @@ theorem deny_mode_rule_wins (policy : Policy) (toolName : String) (args : Json)
     (classifyToolCall policy toolName args).toEvent = .defaultDeny := by
   refine classify_blocking_rule_denies policy toolName args hmem
     (d := .deny s!"flat deny: {toolName}") ?_ rfl
-  simp [evaluateRule, hname, hmatch, hmode]
+  simp [evaluateRule, evaluateRuleWithMeta, evaluateRuleWithContext,
+    hname, hmatch, hmode]
 
 /-- Conflicting guard targets at the policy level: two rules that both match
     the call but commit to DIFFERENT targets force the `defaultDeny` outcome.

@@ -72,7 +72,8 @@ function usage() {
     "  node scripts/kernel_hash_footprint.mjs --check",
     "",
     "diagnostic override:",
-    "  --repo-root=<repo>=<checkout>  scan a pinned local checkout",
+    "  --repo-root=<repo>=<checkout>  select a local checkout",
+    "  --allow-local-repo-roots       explicitly opt in to local checkouts",
     "  --manifest=<path>              compare with an alternate manifest",
   ].join("\n");
 }
@@ -81,6 +82,7 @@ function parseArgs(argv) {
   const options = {
     mode: null,
     repoRoots: new Map(),
+    allowLocalRepoRoots: false,
     manifestPath:
       process.env.KERNEL_HASH_FOOTPRINT_MANIFEST ?? MANIFEST_PATH,
     cacheDir:
@@ -105,6 +107,8 @@ function parseArgs(argv) {
       );
     } else if (arg.startsWith("--cache-dir=")) {
       options.cacheDir = path.resolve(arg.slice("--cache-dir=".length));
+    } else if (arg === "--allow-local-repo-roots") {
+      options.allowLocalRepoRoots = true;
     } else if (arg.startsWith("--manifest=")) {
       options.manifestPath = path.resolve(arg.slice("--manifest=".length));
     } else if (arg === "--help" || arg === "-h") {
@@ -158,21 +162,76 @@ function safeCacheName(name) {
   return name.replaceAll(/[^A-Za-z0-9_.-]/g, "_");
 }
 
+function subjectRefusal(expectedCommit, observedCommit, checkout, reason) {
+  return new Error(
+    `REFUSING REPOSITORY SUBJECT: expected commit ${expectedCommit}; ` +
+      `observed commit ${observedCommit}; path ${checkout}; reason: ${reason}`,
+  );
+}
+
+function observedCommit(checkout) {
+  try {
+    return run("git", ["rev-parse", "HEAD"], { cwd: checkout }).trim();
+  } catch {
+    return "UNREADABLE";
+  }
+}
+
+function verifyPinnedCheckout(checkout, expectedCommit) {
+  const actualCommit = observedCommit(checkout);
+  if (actualCommit !== expectedCommit) {
+    throw subjectRefusal(
+      expectedCommit,
+      actualCommit,
+      checkout,
+      "checkout is not at the fleet-pinned commit",
+    );
+  }
+
+  // walkFiles scans the materialized filesystem, including untracked and
+  // ignored files. Therefore subject identity requires more than a clean
+  // default `git status`: ignored residue must also make the scan refuse.
+  const dirty = run(
+    "git",
+    [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--ignored=matching",
+    ],
+    { cwd: checkout },
+  ).trim();
+  if (dirty !== "") {
+    throw subjectRefusal(
+      expectedCommit,
+      actualCommit,
+      checkout,
+      `checkout is dirty or contains untracked/ignored files (${dirty.split("\n")[0]})`,
+    );
+  }
+  return checkout;
+}
+
 function checkoutPinnedRepository(name, repository, options) {
   const override = options.repoRoots.get(name);
   if (override !== undefined) {
     if (!fs.statSync(override, { throwIfNoEntry: false })?.isDirectory()) {
-      throw new Error(`local override is not a directory: ${override}`);
-    }
-    const actualCommit = run("git", ["rev-parse", "HEAD"], {
-      cwd: override,
-    }).trim();
-    if (actualCommit !== repository.commit) {
-      throw new Error(
-        `local override HEAD ${actualCommit} does not equal pinned commit ${repository.commit}`,
+      throw subjectRefusal(
+        repository.commit,
+        "UNREADABLE",
+        override,
+        "local override is not a directory",
       );
     }
-    return override;
+    if (!options.allowLocalRepoRoots) {
+      throw subjectRefusal(
+        repository.commit,
+        observedCommit(override),
+        override,
+        "local override requires explicit --allow-local-repo-roots opt-in",
+      );
+    }
+    return verifyPinnedCheckout(override, repository.commit);
   }
 
   const checkout = path.join(
@@ -181,19 +240,7 @@ function checkoutPinnedRepository(name, repository, options) {
     repository.commit,
   );
   if (fs.existsSync(path.join(checkout, ".git"))) {
-    const actualCommit = run("git", ["rev-parse", "HEAD"], {
-      cwd: checkout,
-    }).trim();
-    if (actualCommit !== repository.commit) {
-      throw new Error(
-        `cache HEAD ${actualCommit} does not equal pinned commit ${repository.commit}`,
-      );
-    }
-    const dirty = run("git", ["status", "--porcelain"], { cwd: checkout });
-    if (dirty !== "") {
-      throw new Error(`cached checkout is dirty: ${checkout}`);
-    }
-    return checkout;
+    return verifyPinnedCheckout(checkout, repository.commit);
   }
 
   fs.mkdirSync(checkout, { recursive: true });
@@ -207,7 +254,7 @@ function checkoutPinnedRepository(name, repository, options) {
   run("git", ["checkout", "--quiet", "--detach", repository.commit], {
     cwd: checkout,
   });
-  return checkout;
+  return verifyPinnedCheckout(checkout, repository.commit);
 }
 
 function walkFiles(root) {

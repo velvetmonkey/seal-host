@@ -22,6 +22,9 @@
 //! wrapper bytes, or minting a principal for a tampered/unknown/replayed
 //! envelope.
 
+#[path = "support/operation_forward.rs"]
+mod operation_forward;
+
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Write};
@@ -243,7 +246,11 @@ impl Host {
         let mut paths: Vec<_> = std::fs::read_dir(self.dir.join("seal-receipts"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("receipt-") && name.ends_with(".json"))
+            })
             .collect();
         paths.sort();
         paths
@@ -357,10 +364,7 @@ fn principal_binds_registry_key_and_ignores_planted_identity() {
     let wire = signed_envelope(ALICE_SEED, "alice", hostile_inner, &[0xa1; 32], now_ms());
     host.send(&wire);
     let echoed = host.expect_line();
-    assert_eq!(
-        echoed, hostile_inner,
-        "the child must receive EXACTLY the inner judged line — never wrapper bytes"
-    );
+    operation_forward::assert_operation_forward(&echoed, hostile_inner);
     let r = host.last_receipt();
     assert_eq!(r["verdict"], "ALLOW", "{r}");
     assert_eq!(
@@ -477,7 +481,7 @@ fn tampered_unknown_wrongline_and_replayed_envelopes_fail_closed() {
     // the envelope A3 filter and downgrades to no-envelope ⇒ deny.
     let once = signed_envelope(ALICE_SEED, "alice", PLAIN_CALL, &[0x44; 32], now_ms());
     host.send(&once);
-    assert_eq!(host.expect_line(), PLAIN_CALL, "fresh nonce must forward");
+    operation_forward::assert_operation_forward(&host.expect_line(), PLAIN_CALL);
     host.send(&once);
     let out = host.expect_line();
     assert!(
@@ -496,15 +500,10 @@ fn tampered_unknown_wrongline_and_replayed_envelopes_fail_closed() {
 fn per_principal_budgets_debit_independently() {
     let mut host = Host::spawn("isolation");
 
-    for (i, nonce) in [[0x51u8; 32], [0x52; 32]].iter().enumerate() {
+    for nonce in [[0x51u8; 32], [0x52; 32]].iter() {
         let wire = signed_envelope(ALICE_SEED, "alice", PLAIN_CALL, nonce, now_ms());
         host.send(&wire);
-        assert_eq!(
-            host.expect_line(),
-            PLAIN_CALL,
-            "alice call {} within cap must forward",
-            i + 1
-        );
+        operation_forward::assert_operation_forward(&host.expect_line(), PLAIN_CALL);
         assert_eq!(host.last_receipt()["principal"], "alice");
     }
 
@@ -525,11 +524,7 @@ fn per_principal_budgets_debit_independently() {
     // bob is isolated: alice's exhaustion moved nothing of his.
     let bobs = signed_envelope(BOB_SEED, "bob", PLAIN_CALL, &[0x54; 32], now_ms());
     host.send(&bobs);
-    assert_eq!(
-        host.expect_line(),
-        PLAIN_CALL,
-        "bob must be unaffected by alice's exhaustion"
-    );
+    operation_forward::assert_operation_forward(&host.expect_line(), PLAIN_CALL);
     assert_eq!(host.last_receipt()["principal"], "bob");
 }
 
@@ -544,16 +539,12 @@ fn terminator_canonicalization_and_line_smuggling() {
 
     let w1 = signed_envelope(ALICE_SEED, "alice", PLAIN_CALL, &[0x61; 32], now_ms());
     host.send_raw(&format!("{w1}\n"));
-    assert_eq!(host.expect_line(), PLAIN_CALL);
+    operation_forward::assert_operation_forward(&host.expect_line(), PLAIN_CALL);
     let r1 = host.last_receipt();
 
     let w2 = signed_envelope(ALICE_SEED, "alice", PLAIN_CALL, &[0x62; 32], now_ms());
     host.send_raw(&format!("{w2}\r\n"));
-    assert_eq!(
-        host.expect_line(),
-        PLAIN_CALL,
-        "CRLF-terminated wrapper must yield the same child line"
-    );
+    operation_forward::assert_operation_forward(&host.expect_line(), PLAIN_CALL);
     let r2 = host.last_receipt();
     assert_eq!(
         r1["request_sha256"], r2["request_sha256"],
@@ -577,9 +568,5 @@ fn terminator_canonicalization_and_line_smuggling() {
     // on w1/w2 above.)
     let probe = signed_envelope(BOB_SEED, "bob", PLAIN_CALL, &[0x63; 32], now_ms());
     host.send(&probe);
-    assert_eq!(
-        host.expect_line(),
-        PLAIN_CALL,
-        "no smuggled bytes may precede the probe's echo"
-    );
+    operation_forward::assert_operation_forward(&host.expect_line(), PLAIN_CALL);
 }

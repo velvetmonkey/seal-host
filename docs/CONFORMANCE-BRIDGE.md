@@ -116,9 +116,9 @@ the **same** SHA-256 record head as the Lean model over corpus C.
 - **"Which recent proof gaps does this bridge name?"** It names the model
   theorems landed for single-request NI
   (`Host.NonInterference.observe_noninterference`), replay isolation
-  (`Host.ReplayIsolation.replay_isolation_trace`), and deployed-adapter O1/O2
-  plus non-vacuity (`Host.Channel.deployed_O1`, `deployed_O2`,
-  `deployed_nonvacuous`). The bridge tests binary correspondence on C; it does
+  (`Host.ReplayIsolation.replay_isolation_trace`), and gated-sink-adapter
+  O1/O2 plus non-vacuity (`Host.Channel.gatedSink_O1`, `gatedSink_O2`,
+  `gatedSink_nonvacuous`). The bridge tests binary correspondence on C; it does
   not turn those model theorems into a universal binary proof.
 
 ## TCB (named, not proven)
@@ -163,7 +163,7 @@ before the differential, and driving the fresh artifact:
   authority-bound principal envelope: domain tag
   `seal/v2.2/principal-envelope\0`, config authority, and length-prefixed key
   id, plus the existing Kernel PB)
-- `seal.wasm` sha256: `d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be`
+- `seal.wasm` sha256: `28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657`
 - emscripten `6.0.0` (vendored `wasm-spike/emsdk`), Lean `v4.28.0`
 - Supersedes `c9f32b00543c2dd3b1493b3d89ded98abd4d50b8f2dd4e17c2d5256813388eda`
   (the V2.2 authority-bound build against mcp-seal-dev `1d35669`), which

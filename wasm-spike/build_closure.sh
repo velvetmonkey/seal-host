@@ -126,4 +126,8 @@ emit_stubs
 normalize_init_system_io_abi
 echo "[closure] compiled objs: $(ls "$OUTDIR"/*.o 2>/dev/null | wc -l), stubbed: $(sort -u "$STUBLIST" | grep -c .)"
 echo "[closure] stub list:"; sort -u "$STUBLIST" | sed 's/^/   /'
+# The stubs are a recorded debt, not a warrant: build_wasm.sh's link-set audit
+# must discharge every one of them against the real relocation graph before an
+# artifact may be emitted. STUB_RE only chooses what to ATTEMPT stubbing.
+sort -u "$STUBLIST" > build-core/stubbed_initializers.txt
 rm -f "$STUBLIST"

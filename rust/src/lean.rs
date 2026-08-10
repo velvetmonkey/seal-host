@@ -69,7 +69,10 @@ extern "C" {
     fn seal_host_init(envelope: LeanObj, pubkey: LeanObj) -> LeanObj;
     fn seal_host_step(input: LeanObj) -> LeanObj;
     fn seal_host_classify(line: LeanObj) -> c_uint;
+    fn seal_host_mcp_version_gate(line: LeanObj, selected_revision: LeanObj) -> LeanObj;
+    fn seal_host_mcp_revision_observe(line: LeanObj, selection: LeanObj) -> LeanObj;
     fn seal_host_first_agreement_unsafe_number(line: LeanObj) -> LeanObj;
+    fn seal_host_canonical_effect(line: LeanObj) -> LeanObj;
     fn seal_policy_schema(unit: LeanObj) -> LeanObj;
     fn seal_policy_validate(payload: LeanObj) -> LeanObj;
 }
@@ -227,6 +230,29 @@ impl LeanHost {
         .map_err(|_| SeamError::Panic)
     }
 
+    /// Opaque call into the Lean-owned M.7 request gate.
+    pub fn mcp_version_gate(
+        &self,
+        line: &str,
+        selected_revision: &str,
+    ) -> Result<String, SeamError> {
+        self.call_string(|| unsafe {
+            seal_host_mcp_version_gate(to_lean_string(line), to_lean_string(selected_revision))
+        })
+    }
+
+    /// M.2 revision fold, kernel-owned: the selection after observing one
+    /// gate-admitted line, from the selection before it. Both strings use
+    /// the gate-input encoding (`""` / revision / the conflict sentinel) —
+    /// the same vocabulary `mcp_version_gate` receives. The caller stores
+    /// the result opaquely and maps any `SeamError` to a refused line with
+    /// the selection left unchanged.
+    pub fn mcp_revision_observe(&self, line: &str, selection: &str) -> Result<String, SeamError> {
+        self.call_string(|| unsafe {
+            seal_host_mcp_revision_observe(to_lean_string(line), to_lean_string(selection))
+        })
+    }
+
     /// Return the first raw numeric literal whose exact Lean value is not
     /// preserved by an IEEE-754 binary64 round trip. `None` means the
     /// independent agreement scan accepted every unquoted number.
@@ -241,6 +267,13 @@ impl LeanHost {
                 Some(literal)
             }
         })
+    }
+
+    /// Observe the exact canonical effect fields derived by the pinned Lean
+    /// kernel.  The caller must compare this opaque JSON result with Rust's
+    /// independent derivation and reject every error or mismatch.
+    pub fn canonical_effect(&self, line: &str) -> Result<String, SeamError> {
+        self.call_string(|| unsafe { seal_host_canonical_effect(to_lean_string(line)) })
     }
 
     /// Test seam for `tests/panic_probe.rs` ONLY: trigger a Lean panic. With

@@ -21,12 +21,15 @@ from difflib import unified_diff
 from pathlib import Path
 
 import golden_path as gp
+import mcp_eras
 from doctrine import DemoTrace
+
+MCP_ERAS = mcp_eras.declared_eras(__file__)
 
 ROOT = gp.ROOT
 KIT = gp.KIT
 HOST = gp.HOST
-PHASE_B_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
+PHASE_B_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
 SERVER_IDENTITY = "seal-c3-deploy-demo@1.0.0"
 DEPLOY_TOOL = "deploy"
 ROLLBACK_TOOL = "rollback"
@@ -208,7 +211,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     votes.write_text(SHORT_VOTES + "\n", encoding="utf-8")
     grants.write_text(GRANT + "\n", encoding="utf-8")
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 2,
+        "namespace_encoding_version": 1,
+    }
     value["consensus"]["roster"] = ROSTER
     value["consensus"]["votes_file"] = str(votes)
     value["linear"]["grants_file"] = str(grants)
@@ -245,6 +252,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path):
     signed_output = (signed.stdout or "") + (signed.stderr or "")
     if "ACTIVE (3)" not in signed_output or "PRESENT-BUT-INACTIVE (0)" not in signed_output:
         raise gp.DemoFailure("signed C3 policy did not report exactly three active kernels")
+    gp.initialize_replay_store(trusted, config_pub)
     check("deploy recipe review + signed policy", "ACTIVE {S,C,L}; real roster/votes/grant; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub, approvals, votes, grants
 
@@ -312,18 +320,8 @@ class HostSession:
         self.proc.close()
 
 
-def stable_hash_parts(parts: list[str]) -> str:
-    framed = "".join(f"{len(part)}:{part}" for part in parts)
-    return hashlib.sha256(framed.encode()).hexdigest()
-
-
-def approval_target(arguments: dict) -> str:
-    canonical_args = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return stable_hash_parts([SERVER_IDENTITY, DEPLOY_TOOL, canonical_args])
-
-
-def signed_token(key: Path, arguments: dict, label: str) -> dict:
-    return gp.approval_token(key, approval_target(arguments), f"c3-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"c3-{label}-{uuid.uuid4().hex}")
 
 
 def assert_block(response: dict, text: str) -> None:
@@ -372,32 +370,43 @@ def hero_flow(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
     }
     session = HostSession(trusted, config_pub, approval_pub, approvals, votes, work, adapter)
     try:
-        session.append_token(signed_token(approval_key, short_args, "quorum-short"))
+        short_refusal, short_discovery = session.call(short_args)
+        assert_block(short_refusal, "approval required")
+        session.append_token(signed_token(approval_key, short_refusal, "quorum-short"))
         denied, short_receipt = session.call(short_args)
         assert_block(denied, "quorum missing (1/3)")
         short_record = receipt_json(short_receipt)
-        require_cert(short_record, "safety", "allow", approval_target(short_args))
+        require_cert(short_record, "safety", "allow", gp.target_from(short_refusal))
         require_cert(short_record, "consensus", "deny", "quorum missing (1/3): deploy")
         require_cert(short_record, "linear", "allow", f"capability spent (0 uses left): {CAPABILITY}")
         if short_record.get("deny_kernel") != "consensus" or session.deploy_count() != 0:
             raise gp.DemoFailure("QUORUM-SHORT did not veto before downstream execution")
 
         session.reach_quorum()
-        session.append_token(signed_token(approval_key, deploy_args, "deploy-ok"))
+        deploy_refusal, deploy_discovery = session.call(deploy_args)
+        assert_block(deploy_refusal, "approval required")
+        session.append_token(signed_token(approval_key, deploy_refusal, "deploy-ok"))
         allowed, ok_receipt = session.call(deploy_args)
         assert_allow(allowed)
         ok_record = receipt_json(ok_receipt)
-        require_cert(ok_record, "safety", "allow", approval_target(deploy_args))
+        require_cert(ok_record, "safety", "allow", gp.target_from(deploy_refusal))
         require_cert(ok_record, "consensus", "allow", "quorum ok (2/3): deploy")
         require_cert(ok_record, "linear", "allow", f"capability spent (0 uses left): {CAPABILITY}")
+        # The adapter writes this stderr marker before its stdout response, but
+        # LineProcess drains those pipes on separate threads. Synchronize with
+        # the marker before counting it; otherwise a loaded runner can observe
+        # the response while the stderr reader has not appended the marker yet.
+        session.wait_stderr("SEAL_C3_EXECUTED tool=deploy")
         if session.deploy_count() != 1:
             raise gp.DemoFailure("DEPLOY-OK did not execute exactly once")
 
-        session.append_token(signed_token(approval_key, deploy_args, "replay-deny"))
+        replay_refusal, replay_discovery = session.call(deploy_args)
+        assert_block(replay_refusal, "approval required")
+        session.append_token(signed_token(approval_key, replay_refusal, "replay-deny"))
         replay, replay_receipt = session.call(deploy_args)
         assert_block(replay, "capability exhausted")
         replay_record = receipt_json(replay_receipt)
-        require_cert(replay_record, "safety", "allow", approval_target(deploy_args))
+        require_cert(replay_record, "safety", "allow", gp.target_from(replay_refusal))
         require_cert(replay_record, "consensus", "allow", "quorum ok (2/3): deploy")
         require_cert(replay_record, "linear", "deny", f"capability exhausted, double-spend denied: {CAPABILITY}")
         if replay_record.get("deny_kernel") != "linear" or session.deploy_count() != 1:
@@ -407,6 +416,7 @@ def hero_flow(seal: Path, trusted: Path, config_pub: str, approval_key: Path,
         check("linear replay denial", "identical deploy denied by Linear after consumption; downstream count remains one")
         return {
             "receipt_root": session.receipts,
+            "discovery_receipts": [short_discovery, deploy_discovery, replay_discovery],
             "receipts": [short_receipt, ok_receipt, replay_receipt],
             "records": [short_record, ok_record, replay_record],
             "arguments": [short_args, deploy_args, deploy_args],
@@ -424,14 +434,36 @@ def replay_input(record: dict, votes: str, grants: str) -> dict:
 
 
 def build_transcript(artifact_dir: Path, flow: dict) -> tuple[Path, str]:
-    records = flow["records"]
-    receipts = flow["receipts"]
+    records = [
+        item
+        for pair in zip(
+            [
+                receipt_json(receipt)
+                for receipt in flow["discovery_receipts"]
+            ],
+            flow["records"],
+        )
+        for item in pair
+    ]
+    receipts = [
+        item
+        for pair in zip(flow["discovery_receipts"], flow["receipts"])
+        for item in pair
+    ]
     if any(record.get("signed_config") != records[0].get("signed_config") for record in records[1:]):
         raise gp.DemoFailure("C3 runtime receipts disagree on signed config")
     wasm_sha = records[0].get("kernel_identity", {}).get("wasm_sha256")
-    roles = ["QUORUM-SHORT", "DEPLOY-OK", "REPLAY-DENY"]
-    votes = [SHORT_VOTES, QUORUM_VOTES, QUORUM_VOTES]
-    grants = [GRANT, "", ""]
+    roles = [
+        gp.APPROVAL_SUBJECT_ROLE, "QUORUM-SHORT",
+        gp.APPROVAL_SUBJECT_ROLE, "DEPLOY-OK",
+        gp.APPROVAL_SUBJECT_ROLE, "REPLAY-DENY",
+    ]
+    votes = [
+        SHORT_VOTES, SHORT_VOTES,
+        QUORUM_VOTES, QUORUM_VOTES,
+        QUORUM_VOTES, QUORUM_VOTES,
+    ]
+    grants = [GRANT, GRANT, "", "", "", ""]
     steps = []
     for sequence, (role, receipt, record, vote_text, grant_text) in enumerate(
             zip(roles, receipts, records, votes, grants), 1):
@@ -439,6 +471,7 @@ def build_transcript(artifact_dir: Path, flow: dict) -> tuple[Path, str]:
         step = {
             "sequence": sequence,
             "role": role,
+            "commit": role != gp.APPROVAL_SUBJECT_ROLE,
             "canonical_request": record["canonical_request"],
             "canonical_request_sha256": record["canonical_request_sha256"],
             "step_input": replay_input(record, vote_text, grant_text),
@@ -448,9 +481,9 @@ def build_transcript(artifact_dir: Path, flow: dict) -> tuple[Path, str]:
             "receipt_bytes_base64": base64.b64encode(receipt_bytes).decode("ascii"),
         }
         steps.append(step)
-    quorum_variant = copy.deepcopy(steps[0]["step_input"])
+    quorum_variant = copy.deepcopy(steps[1]["step_input"])
     quorum_variant["votes"] = QUORUM_VOTES
-    steps[0]["input_variants"] = {"quorum-met": quorum_variant}
+    steps[1]["input_variants"] = {"quorum-met": quorum_variant}
     transcript = {
         "schema": "seal-demo-trace-transcript/v1", "demo_id": "c3",
         "harness": "demo/trace_replay.cjs",
@@ -468,16 +501,16 @@ def replay_command(transcript: Path, *extra: str) -> list[str]:
 
 def exercise_trace_controls(transcript: Path, transcript_sha: str) -> dict:
     full = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=3" not in full.stdout:
-        raise gp.DemoFailure("C3 full replay did not pass all three steps")
+    if "PASS trace transcript steps=6" not in full.stdout:
+        raise gp.DemoFailure("C3 full replay did not pass all six calls")
     quorum = gp.run(replay_command(transcript, "--variant", "quorum-met"), expect=1)
     quorum_output = (quorum.stdout or "") + (quorum.stderr or "")
     if "expected_route=block actual_route=forward" not in quorum_output:
         raise gp.DemoFailure("C3 quorum-met control did not flip Consensus BLOCK to ALLOW")
-    dropped = gp.run(replay_command(transcript, "--drop-sequence", "2"), expect=1)
+    dropped = gp.run(replay_command(transcript, "--drop-sequence", "4"), expect=1)
     dropped_output = (dropped.stdout or "") + (dropped.stderr or "")
-    if "expected_route=block actual_route=forward" not in dropped_output:
-        raise gp.DemoFailure("C3 drop-DEPLOY-OK control did not preserve the capability")
+    if "byte mismatch" not in dropped_output or "actual_route=block" not in dropped_output:
+        raise gp.DemoFailure("C3 drop-DEPLOY-OK control did not change replay-discovery bytes")
 
     original = transcript.read_bytes()
     role = original.find(b'"role": "REPLAY-DENY"')
@@ -499,7 +532,7 @@ def exercise_trace_controls(transcript: Path, transcript_sha: str) -> dict:
     if restored_sha != transcript_sha or transcript.read_bytes() != original:
         raise gp.DemoFailure("C3 transcript did not restore byte-exact")
     restored = gp.run(replay_command(transcript))
-    if "PASS trace transcript steps=3" not in restored.stdout:
+    if "PASS trace transcript steps=6" not in restored.stdout:
         raise gp.DemoFailure("restored C3 transcript did not replay")
     check("trace controls", "full PASS; quorum-met FAIL; drop-DEPLOY-OK FAIL; byte-flip FAIL; restore SHA+PASS")
     return {"exit_code": flipped.returncode, "original_sha256": transcript_sha, "restored_sha256": restored_sha}
@@ -545,9 +578,19 @@ def execute(artifact_dir: Path, color: str) -> int:
         transcript, transcript_sha = build_transcript(artifact_dir, flow)
         control = exercise_trace_controls(transcript, transcript_sha)
         standalone = [
-            standalone_scope(seal, flow["receipts"][0], "BLOCK"),
-            standalone_scope(seal, flow["receipts"][1], "ALLOW"),
-            standalone_scope(seal, flow["receipts"][2], "BLOCK"),
+            item
+            for pair in zip(
+                [
+                    standalone_scope(seal, receipt, "BLOCK")
+                    for receipt in flow["discovery_receipts"]
+                ],
+                [
+                    standalone_scope(seal, flow["receipts"][0], "BLOCK"),
+                    standalone_scope(seal, flow["receipts"][1], "ALLOW"),
+                    standalone_scope(seal, flow["receipts"][2], "BLOCK"),
+                ],
+            )
+            for item in pair
         ]
 
         trace = DemoTrace(artifact_dir, "c3", seal, C3_THEOREMS, color)
@@ -563,41 +606,53 @@ def execute(artifact_dir: Path, color: str) -> int:
                 },
             },
         )
-        trace.record_receipt(
-            flow["receipts"][0], role="QUORUM-SHORT",
-            theorem_ids=["Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed"],
-            consensus={"roster": ROSTER, "value": "deploy", "votes": 1, "required": 2, "quorum_met": False},
-            linear={"cap_arg": "capability.id", "capability_id": CAPABILITY, "grant_events": 1,
-                    "remaining_before": 1, "remaining_after": 1, "consumed": False},
-            verification_lane="trace", requires_trace=transcript_sha, standalone_failure=standalone[0],
-        )
-        trace.record_receipt(
-            flow["receipts"][1], role="DEPLOY-OK",
-            theorem_ids=["Host.registry_closed_algebra", "Host.composed_non_bypass",
-                         "Host.composed_no_conflicting_agreement", "Host.composed_linear_conservation"],
-            consensus={"roster": ROSTER, "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
-            linear={"cap_arg": "capability.id", "capability_id": CAPABILITY, "grant_events": 0,
-                    "remaining_before": 1, "remaining_after": 0, "consumed": True},
-            verification_lane="trace", requires_trace=transcript_sha, standalone_failure=standalone[1],
-        )
-        trace.record_receipt(
-            flow["receipts"][2], role="REPLAY-DENY",
-            theorem_ids=["Host.linear_committed_trace_no_double_spend", "Host.pureCommit_deny_of_member",
-                         "Host.registry_deny_no_capability_consumed"],
-            consensus={"roster": ROSTER, "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
-            linear={"cap_arg": "capability.id", "capability_id": CAPABILITY, "grant_events": 0,
-                    "remaining_before": 0, "remaining_after": 0, "consumed": False},
-            verification_lane="trace", requires_trace=transcript_sha, standalone_failure=standalone[2],
-        )
+        for index, (discovery, receipt) in enumerate(
+                zip(flow["discovery_receipts"], flow["receipts"])):
+            trace.record_receipt(
+                discovery, role=gp.APPROVAL_SUBJECT_ROLE,
+                theorem_ids=[
+                    "Host.pureCommit_deny_of_member",
+                    "Host.registry_deny_no_capability_consumed",
+                ],
+                verification_lane="trace", requires_trace=transcript_sha,
+                standalone_failure=standalone[index * 2],
+            )
+            roles = ["QUORUM-SHORT", "DEPLOY-OK", "REPLAY-DENY"]
+            theorem_sets = [
+                ["Host.pureCommit_deny_of_member", "Host.registry_deny_no_capability_consumed"],
+                ["Host.registry_closed_algebra", "Host.composed_non_bypass",
+                 "Host.composed_no_conflicting_agreement", "Host.composed_linear_conservation"],
+                ["Host.linear_committed_trace_no_double_spend", "Host.pureCommit_deny_of_member",
+                 "Host.registry_deny_no_capability_consumed"],
+            ]
+            consensus = [
+                {"roster": ROSTER, "value": "deploy", "votes": 1, "required": 2, "quorum_met": False},
+                {"roster": ROSTER, "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
+                {"roster": ROSTER, "value": "deploy", "votes": 2, "required": 2, "quorum_met": True},
+            ]
+            linear = [
+                {"cap_arg": "capability.id", "capability_id": CAPABILITY, "grant_events": 1,
+                 "remaining_before": 1, "remaining_after": 1, "consumed": False},
+                {"cap_arg": "capability.id", "capability_id": CAPABILITY, "grant_events": 0,
+                 "remaining_before": 1, "remaining_after": 0, "consumed": True},
+                {"cap_arg": "capability.id", "capability_id": CAPABILITY, "grant_events": 0,
+                 "remaining_before": 0, "remaining_after": 0, "consumed": False},
+            ]
+            trace.record_receipt(
+                receipt, role=roles[index], theorem_ids=theorem_sets[index],
+                consensus=consensus[index], linear=linear[index],
+                verification_lane="trace", requires_trace=transcript_sha,
+                standalone_failure=standalone[index * 2 + 1],
+            )
         trace.emit({
             "schema": "seal-demo-trace/v1", "event": "trace_replay", "status": "PASS",
             "transcript_path": "trace-transcript.json", "transcript_sha256": transcript_sha,
             "wasm_sha256": flow["records"][0]["kernel_identity"]["wasm_sha256"],
-            "steps": 3, "harness": "demo/trace_replay.cjs",
+            "steps": 6, "harness": "demo/trace_replay.cjs",
         })
         controls = [
             ("quorum-met", "1-of-3 Consensus BLOCK changed to 2-of-3 forward/ALLOW and mismatched receipt bytes"),
-            ("drop-deploy-ok", "without DEPLOY-OK the one-use capability remained held and REPLAY-DENY re-derived forward/ALLOW"),
+            ("drop-deploy-ok", "without DEPLOY-OK the later replay-discovery BLOCK carried different capability-state bytes"),
             ("byte-flip", "one byte flipped in the REPLAY-DENY raw kernel output"),
         ]
         for name, evidence in controls:

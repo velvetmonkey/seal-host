@@ -14,7 +14,17 @@ The object has this shape:
   "adapter": {"type": "mcp-jsonrpc/tools-call", "version": "1"},
   "principal": {"id": "authenticated-id", "session": "runtime-session"},
   "session": "runtime-session",
-  "effect": {"resource": "tool.name", "action": "call", "arguments": {}},
+  "effect": {
+    "resource": "tool.name",
+    "action": "call",
+    "arguments": {},
+    "_meta": {"traceparent": "00-example"},
+    "requestState": {"opaque": {"token": "complete-value"}},
+    "inputResponses": {
+      "confirm": {"action": "accept"},
+      "extension": {"retained": true}
+    }
+  },
   "raw_preimage_sha256": "existing-request_sha256",
   "policy_hash": "trusted-config-sha256",
   "idempotency_key": "runtime-session:existing-request_sha256",
@@ -24,8 +34,16 @@ The object has this shape:
 }
 ```
 
-`effect.resource` and `effect.arguments` are derived host-side from the exact
-line already judged by Lean. Arguments remain by value; neither
+`effect.resource`, `effect.arguments`, optional `effect._meta`, optional
+`effect.requestState`, and optional `effect.inputResponses` are derived
+host-side from the exact line already judged by Lean. `_meta` is absent from
+the view exactly when `params._meta` was absent and otherwise remains by
+value, including the distinction between absence and an empty object. The
+MRTR fields likewise use structural omission for absence. `requestState` is
+copied as one opaque complete JSON value with no member lookup, decode, or
+subfield projection; `inputResponses` is copied whole without dropping any
+member. Present `{}` and present `null` remain distinct from absence.
+Arguments, metadata, and MRTR values remain by value; neither
 `canonical_request`, `canonical_request_sha256`, nor `args_hash` replaces
 them. `principal` is absent unless the kernel authenticated an id; when
 present its `id` is copied from the authenticated principal already exposed

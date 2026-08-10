@@ -9,16 +9,28 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::envelope_v23::{
-    effect_message, verify, verify_kernel_principal, wire_view, AdapterClaim, EffectClaim,
-    EnvelopeV23, HostContext, PrincipalClaim, VerifiedEnvelope, WireView, DOMAIN_TAG,
+    canonical_effect_agreement, effect_message, effect_message_for_signing, verify,
+    verify_kernel_principal, wire_view, AdapterClaim, CanonicalAgreement, EffectClaim, EnvelopeV23,
+    HostContext, PrincipalClaim, VerifiedEnvelope, WireView, DOMAIN_TAG,
 };
+use seal_host_rs::lean::LeanHost;
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const PRINCIPAL_SEED: [u8; 32] = [1; 32];
+
+fn agreement(line: &str) -> CanonicalAgreement {
+    static HOST: OnceLock<LeanHost> = OnceLock::new();
+    let observation = HOST
+        .get_or_init(LeanHost::new)
+        .canonical_effect(line)
+        .expect("Lean canonical effect observation");
+    canonical_effect_agreement(line, &observation).expect("Rust/Lean canonical agreement")
+}
 
 /// The RETIRED `seal.effect/v1` domain tag — test-local on purpose: the
 /// production module must not export the dead tag.
@@ -43,6 +55,9 @@ fn proof_golden_envelope() -> EnvelopeV23 {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     }
 }
@@ -52,7 +67,7 @@ fn byte_twin_matches_fable_golden_vector() {
     let authority: [u8; 32] = std::array::from_fn(|index| 0xa0 + index as u8);
     let actual =
         hex::encode(effect_message(&authority, &proof_golden_envelope(), r#"{"m":1}"#).unwrap());
-    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d";
+    let expected = "7365616c2e6566666563742f763200a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000005616c696365000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000004d2000000000000162e00000000000000077b226d223a317d00000000000000036d6370000000000000000a323032352d30362d31380000000000000006736573732d310000000000000005706f6c2d3101000000000000000a64622e65786563757465000000000000000463616c6c00000000000000077b2271223a317d00";
     assert_eq!(actual, expected);
 }
 
@@ -82,17 +97,39 @@ fn fixture() -> (EnvelopeV23, String, String, serde_json::Value) {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     };
+    let _agreement = agreement(&line);
     envelope.sig = hex::encode(
         signing_key
-            .sign(&effect_message(&authority, &envelope, &line).unwrap())
+            .sign(
+                &effect_message_for_signing(&authority, &envelope, &line, Some(&_agreement))
+                    .unwrap(),
+            )
             .to_bytes(),
     );
     (envelope, line, hex::encode(authority), kernel_config)
 }
 
 fn resign(envelope: &mut EnvelopeV23, line: &str, authority_hex: &str) {
+    let authority: [u8; 32] = hex::decode(authority_hex).unwrap().try_into().unwrap();
+    let _agreement = agreement(line);
+    envelope.sig = hex::encode(
+        SigningKey::from_bytes(&PRINCIPAL_SEED)
+            .sign(
+                &effect_message_for_signing(&authority, envelope, line, Some(&_agreement)).unwrap(),
+            )
+            .to_bytes(),
+    );
+}
+
+/// Deliberately bypass the agreement gate to forge an adversarial envelope.
+/// This helper is confined to negative controls whose assertion is that the
+/// verifier rejects a byte-valid signature over a request/effect mismatch.
+fn resign_unchecked_negative_control(envelope: &mut EnvelopeV23, line: &str, authority_hex: &str) {
     let authority: [u8; 32] = hex::decode(authority_hex).unwrap().try_into().unwrap();
     envelope.sig = hex::encode(
         SigningKey::from_bytes(&PRINCIPAL_SEED)
@@ -125,6 +162,7 @@ fn verify_fixture(
     kernel_config: &serde_json::Value,
 ) -> Result<VerifiedEnvelope, String> {
     let adapter = AdapterClaim::deployed_mcp();
+    let agreement = agreement(line);
     verify(
         envelope,
         line,
@@ -134,6 +172,7 @@ fn verify_fixture(
             adapter: &adapter,
             kernel_config,
         },
+        Some(&agreement),
     )
 }
 
@@ -233,6 +272,9 @@ fn legacy_v1_effect_message(authority: &[u8; 32], envelope: &EnvelopeV23, line: 
         resource: String::new(),
         action: String::new(),
         args: String::new(),
+        metadata: None,
+        request_state: None,
+        input_responses: None,
     });
     // v1 seats ride at their "unset" wire values regardless of what the v2
     // envelope now carries (policy_version framed empty, expires_at 0): the
@@ -293,7 +335,7 @@ fn v1_tagged_authorization_decision_fails_closed_under_v2() {
 fn confused_deputy_effect_mismatch_fails_closed_even_when_signed() {
     let (mut envelope, line, authority, config) = fixture();
     envelope.effect.as_mut().unwrap().resource = "prod.root".into();
-    resign(&mut envelope, &line, &authority);
+    resign_unchecked_negative_control(&mut envelope, &line, &authority);
     let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
     assert!(error.contains("effect claim"), "{error}");
 }
@@ -326,8 +368,8 @@ fn kernel_principal_is_cross_checked() {
 /// omitted from the wire at all.
 #[test]
 fn strict_wire_shape_effect_omission_is_declared_absence() {
-    let (envelope, line, _, _) = fixture();
-    let mut env = serde_json::to_value(envelope).unwrap();
+    let (mut envelope, line, _, _) = fixture();
+    let mut env = serde_json::to_value(&envelope).unwrap();
     env.as_object_mut().unwrap().remove("effect");
     let wrapper = json!({"seal_env": env, "request": line}).to_string();
     match wire_view(&wrapper) {
@@ -336,6 +378,24 @@ fn strict_wire_shape_effect_omission_is_declared_absence() {
         }
         other => panic!("unexpected wire view: {other:?}"),
     }
+
+    // `Option<Value>` normally collapses a JSON null to `None`. The claim's
+    // custom deserializer must retain field presence so the signed identities
+    // absent, `{}`, and `null` remain distinct on the actual wire path.
+    envelope.effect.as_mut().unwrap().request_state = None;
+    let absent = json!({"seal_env": &envelope, "request": &line}).to_string();
+    envelope.effect.as_mut().unwrap().request_state = Some(json!({}));
+    let empty = json!({"seal_env": &envelope, "request": &line}).to_string();
+    envelope.effect.as_mut().unwrap().request_state = Some(serde_json::Value::Null);
+    let null = json!({"seal_env": &envelope, "request": &line}).to_string();
+
+    let parsed_state = |wire: &str| match wire_view(wire) {
+        WireView::Enveloped { envelope, .. } => envelope.effect.unwrap().request_state,
+        other => panic!("unexpected wire view: {other:?}"),
+    };
+    assert_eq!(parsed_state(&absent), None);
+    assert_eq!(parsed_state(&empty), Some(json!({})));
+    assert_eq!(parsed_state(&null), Some(serde_json::Value::Null));
 }
 
 #[test]
@@ -380,8 +440,11 @@ fn all_empty_effect_sentinel_is_a_checked_claim() {
         resource: String::new(),
         action: String::new(),
         args: String::new(),
+        metadata: None,
+        request_state: None,
+        input_responses: None,
     });
-    resign(&mut envelope, &line, &authority);
+    resign_unchecked_negative_control(&mut envelope, &line, &authority);
     let error = verify_fixture(&envelope, &line, &authority, &config).unwrap_err();
     assert!(error.contains("effect claim"), "{error}");
 }
@@ -538,11 +601,23 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
             resource: "db.execute".into(),
             action: "call".into(),
             args: r#"{"q":1}"#.into(),
+            metadata: None,
+            request_state: None,
+            input_responses: None,
         }),
     };
+    let canonical_agreement = agreement(line);
     envelope.sig = hex::encode(
         principal_key
-            .sign(&effect_message(&authority, &envelope, line).unwrap())
+            .sign(
+                &effect_message_for_signing(
+                    &authority,
+                    &envelope,
+                    line,
+                    Some(&canonical_agreement),
+                )
+                .unwrap(),
+            )
             .to_bytes(),
     );
     // Prove the Rust side accepts this exact tuple before exercising the
@@ -555,7 +630,8 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
             session,
             adapter: &AdapterClaim::deployed_mcp(),
             kernel_config: &kernel_config,
-        }
+        },
+        Some(&canonical_agreement),
     )
     .is_ok());
     host.send(&json!({"seal_env": envelope, "request": line}).to_string());

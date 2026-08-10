@@ -68,7 +68,7 @@ _MAX_CANONICAL_JSON_INTEGER = 9_007_199_254_740_991
 
 
 def _canonical_json(value: Any) -> bytes:
-    """AUTHORIZATION-RECORD.md §2.1 canonical JSON."""
+    """ApprovalRecord v2's exact custom renderer; not RFC 8785/JCS."""
 
     def encode(inner: Any) -> str:
         if inner is None:

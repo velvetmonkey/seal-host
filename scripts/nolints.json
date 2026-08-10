@@ -1,0 +1,7 @@
+[["unusedArguments", "Host.instReprVerdict.repr"],
+ ["unusedArguments", "Host.NestingDepth.instReprDepthScan.repr"],
+ ["unusedArguments", "Host.instReprPrincipalKey.repr"],
+ ["unusedArguments", "Host.instReprEnvelope.repr"],
+ ["unusedArguments", "Host.instReprAuthenticatedPrincipal.repr"],
+ ["docBlame", "Test.AxiomAllowlist.check"],
+ ["docBlame", "main"]]

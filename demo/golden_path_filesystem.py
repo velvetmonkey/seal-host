@@ -21,6 +21,9 @@ from difflib import unified_diff
 from pathlib import Path
 
 import golden_path as gp
+import mcp_eras
+
+MCP_ERAS = mcp_eras.declared_eras(__file__)
 
 ROOT = gp.ROOT
 KIT = gp.KIT
@@ -32,13 +35,16 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # either, because both name the staleness as a COMMIT sha.
 # Full pairs below mirror the machine-readable authority at
 # wasm-spike/verified/pin-history.json and are cross-checked by a regression:
+# 8946ec2a81e0e3e25b8920a9f7506ff4b37219f9 -> 28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
+# 193c6be1bf83f9d93f14840f2b928fcb46937cc0 -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
+# 39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
 # d5e14d173bd8b2170e244a91ad2ddc42ae168cff -> d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be
 # 62f5fe5d2f3f9d1d700b524aa1d415db449799fc -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
 # f95ac81265982b443e04fba2692f412721d68769 -> a37901811df4767fd08142243622b8372254e6ec5bd2d3aca18f0e61d0f109af
 # 0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
 # 6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
 # 0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
-PHASE_B_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
+PHASE_B_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
 
@@ -59,9 +65,15 @@ SERVER_SOURCE = r'''const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 const ROOT = "/workspace";
+const LEGACY_REVISION = "2025-06-18";
+const MODERN_REVISION = "2026-07-28";
+const SUPPORTED_REVISIONS = [LEGACY_REVISION, MODERN_REVISION];
+const SERVER_INFO = {name:"seal-filesystem-demo",version:"1.0.0"};
 
 const send = value => { process.stdout.write(JSON.stringify(value) + "\n"); };
-const result = (id, text, error=false) => send({jsonrpc:"2.0",id,result:{content:[{type:"text",text}],isError:error}});
+const meta = {"io.modelcontextprotocol/serverInfo":SERVER_INFO};
+const success = (value, modern) => modern ? {...value,resultType:"complete",_meta:meta} : value;
+const result = (id, text, error=false, modern=false) => send({jsonrpc:"2.0",id,result:success({content:[{type:"text",text}],isError:error},modern)});
 const rejectPath = value => {
   console.error("SEAL_FILESYSTEM_PATH_REJECTED " + JSON.stringify(value));
   throw new Error("PATH_REJECTED: path must remain beneath /workspace");
@@ -110,44 +122,49 @@ rl.on("line", line => {
   try { message = JSON.parse(line); } catch { return; }
   const id = message.id;
   const method = message.method;
+  const modern = message.params?._meta?.["io.modelcontextprotocol/protocolVersion"] === MODERN_REVISION;
   if (method === "initialize") {
-    send({jsonrpc:"2.0",id,result:{protocolVersion:"2025-06-18",capabilities:{tools:{}},serverInfo:{name:"seal-filesystem-demo",version:"1.0.0"}}});
+    console.error("SEAL_FILESYSTEM_INITIALIZE_RECEIVED");
+    send({jsonrpc:"2.0",id,result:{protocolVersion:LEGACY_REVISION,capabilities:{tools:{}},serverInfo:SERVER_INFO}});
+  } else if (method === "server/discover") {
+    console.error("SEAL_FILESYSTEM_DISCOVER_RECEIVED");
+    send({jsonrpc:"2.0",id,result:success({supportedVersions:SUPPORTED_REVISIONS,capabilities:{tools:{}}},true)});
   } else if (method === "tools/list") {
     console.error("SEAL_FILESYSTEM_TOOLS_LIST_RECEIVED");
-    send({jsonrpc:"2.0",id,result:{tools}});
+    send({jsonrpc:"2.0",id,result:success({tools},modern)});
   } else if (method === "tools/call") {
     const name = message.params?.name;
     const args = message.params?.arguments || {};
     try {
       if (name === "read_text_file") {
         console.error("SEAL_FILESYSTEM_READ_RECEIVED");
-        result(id, fs.readFileSync(confined(args.path, false), "utf8"));
+        result(id, fs.readFileSync(confined(args.path, false), "utf8"), false, modern);
       } else if (name === "read_media_file") {
-        result(id, fs.readFileSync(confined(args.path, false)).toString("base64"));
+        result(id, fs.readFileSync(confined(args.path, false)).toString("base64"), false, modern);
       } else if (name === "read_multiple_files") {
-        result(id, JSON.stringify(args.paths.map(p => ({path:p,content:fs.readFileSync(confined(p,false),"utf8")}))));
+        result(id, JSON.stringify(args.paths.map(p => ({path:p,content:fs.readFileSync(confined(p,false),"utf8")}))), false, modern);
       } else if (name === "list_directory") {
-        result(id, JSON.stringify(fs.readdirSync(confined(args.path))));
+        result(id, JSON.stringify(fs.readdirSync(confined(args.path))), false, modern);
       } else if (name === "list_directory_with_sizes") {
-        const dir = confined(args.path); result(id, JSON.stringify(fs.readdirSync(dir).map(n => ({name:n,size:fs.statSync(path.join(dir,n)).size}))));
+        const dir = confined(args.path); result(id, JSON.stringify(fs.readdirSync(dir).map(n => ({name:n,size:fs.statSync(path.join(dir,n)).size}))), false, modern);
       } else if (name === "directory_tree") {
-        result(id, JSON.stringify(walk(confined(args.path))));
+        result(id, JSON.stringify(walk(confined(args.path))), false, modern);
       } else if (name === "search_files") {
         const base = confined(args.path); const needle = String(args.pattern).toLowerCase();
-        const found=[]; const visit=d=>fs.readdirSync(d,{withFileTypes:true}).forEach(e=>{const f=path.join(d,e.name);if(e.isDirectory())visit(f);else if(e.name.toLowerCase().includes(needle))found.push(f)}); visit(base); result(id,JSON.stringify(found));
+        const found=[]; const visit=d=>fs.readdirSync(d,{withFileTypes:true}).forEach(e=>{const f=path.join(d,e.name);if(e.isDirectory())visit(f);else if(e.name.toLowerCase().includes(needle))found.push(f)}); visit(base); result(id,JSON.stringify(found),false,modern);
       } else if (name === "get_file_info") {
-        const stat=fs.statSync(confined(args.path)); result(id,JSON.stringify({size:stat.size,isFile:stat.isFile(),isDirectory:stat.isDirectory()}));
+        const stat=fs.statSync(confined(args.path)); result(id,JSON.stringify({size:stat.size,isFile:stat.isFile(),isDirectory:stat.isDirectory()}),false,modern);
       } else if (name === "list_allowed_directories") {
-        result(id, ROOT);
+        result(id, ROOT, false, modern);
       } else if (name === "write_file" || name === "edit_file") {
         const target=confined(args.path,false); if(name === "edit_file" && !fs.existsSync(target)) throw new Error("edit target missing");
-        fs.writeFileSync(target,String(args.content),"utf8"); console.error("SEAL_FILESYSTEM_" + name.toUpperCase() + "_RECEIVED"); result(id,"written");
+        fs.writeFileSync(target,String(args.content),"utf8"); console.error("SEAL_FILESYSTEM_" + name.toUpperCase() + "_RECEIVED"); result(id,"written",false,modern);
       } else if (name === "create_directory") {
-        fs.mkdirSync(confined(args.path,false)); console.error("SEAL_FILESYSTEM_CREATE_DIRECTORY_RECEIVED"); result(id,"created");
+        fs.mkdirSync(confined(args.path,false)); console.error("SEAL_FILESYSTEM_CREATE_DIRECTORY_RECEIVED"); result(id,"created",false,modern);
       } else if (name === "move_file") {
-        fs.renameSync(confined(args.source,false),confined(args.destination,false)); console.error("SEAL_FILESYSTEM_MOVE_FILE_RECEIVED"); result(id,"moved");
-      } else result(id,"unknown tool",true);
-    } catch (error) { result(id,String(error.message || error),true); }
+        fs.renameSync(confined(args.source,false),confined(args.destination,false)); console.error("SEAL_FILESYSTEM_MOVE_FILE_RECEIVED"); result(id,"moved",false,modern);
+      } else result(id,"unknown tool",true,modern);
+    } catch (error) { result(id,String(error.message || error),true,modern); }
   } else if (id !== undefined) send({jsonrpc:"2.0",id,error:{code:-32601,message:"method not found"}});
 });
 '''
@@ -175,10 +192,130 @@ def print_table() -> None:
     print("=================================================================")
 
 
+def era_request(
+    era: mcp_eras.McpEra,
+    request_id: int,
+    method: str,
+    params: dict | None = None,
+    *,
+    client_name: str,
+) -> dict:
+    return mcp_eras.request(
+        era, request_id, method, params, client_name=client_name
+    )
+
+
+def assert_result_era(result: dict, era: mcp_eras.McpEra) -> None:
+    if era is mcp_eras.McpEra.MCP_2026:
+        if result.get("resultType") != "complete":
+            raise gp.DemoFailure(f"2026 result lacks resultType=complete: {result}")
+        expected = {"name": "seal-filesystem-demo", "version": "1.0.0"}
+        if result.get("_meta", {}).get("io.modelcontextprotocol/serverInfo") != expected:
+            raise gp.DemoFailure(f"2026 result lacks serverInfo metadata: {result}")
+    elif "resultType" in result or "_meta" in result:
+        raise gp.DemoFailure(f"2025 result was silently modernized: {result}")
+
+
+def begin_protocol(
+    proc: gp.LineProcess,
+    era: mcp_eras.McpEra,
+    *,
+    client_name: str,
+    request_id: int,
+) -> dict:
+    if era is mcp_eras.McpEra.MCP_2025:
+        proc.send(era_request(
+            era,
+            request_id,
+            "initialize",
+            {
+                "protocolVersion": era.revision,
+                "capabilities": {},
+                "clientInfo": {"name": client_name, "version": "1"},
+            },
+            client_name=client_name,
+        ))
+        initialized = json.loads(proc.line())["result"]
+        assert_result_era(initialized, era)
+        if initialized.get("protocolVersion") != era.revision:
+            raise gp.DemoFailure(f"2025 initialize selected wrong revision: {initialized}")
+        return initialized["serverInfo"]
+
+    proc.send(era_request(
+        era,
+        request_id,
+        "server/discover",
+        client_name=client_name,
+    ))
+    discovered = json.loads(proc.line())["result"]
+    assert_result_era(discovered, era)
+    if discovered.get("supportedVersions") != list(mcp_eras.SUPPORTED_REVISIONS):
+        raise gp.DemoFailure(f"2026 discovery advertised wrong revisions: {discovered}")
+    return discovered["_meta"]["io.modelcontextprotocol/serverInfo"]
+
+
+def wait_for_protocol_marker(
+    proc: gp.LineProcess, marker: str, timeout: float = 5
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(marker in line for line in proc.stderr_lines):
+            return
+        time.sleep(.02)
+    raise gp.DemoFailure(f"missing protocol marker: {marker}")
+
+
+def assert_protocol_attribution(
+    proc: gp.LineProcess, era: mcp_eras.McpEra
+) -> None:
+    expected = (
+        "SEAL_FILESYSTEM_INITIALIZE_RECEIVED"
+        if era is mcp_eras.McpEra.MCP_2025
+        else "SEAL_FILESYSTEM_DISCOVER_RECEIVED"
+    )
+    unexpected = (
+        "SEAL_FILESYSTEM_DISCOVER_RECEIVED"
+        if era is mcp_eras.McpEra.MCP_2025
+        else "SEAL_FILESYSTEM_INITIALIZE_RECEIVED"
+    )
+    wait_for_protocol_marker(proc, expected)
+    expected_count = sum(expected in line for line in proc.stderr_lines)
+    unexpected_count = sum(unexpected in line for line in proc.stderr_lines)
+    if expected_count != 1 or unexpected_count != 0:
+        raise gp.DemoFailure(
+            f"era attribution mismatch: expected {expected}=1 and {unexpected}=0, "
+            f"saw {expected_count}/{unexpected_count}"
+        )
+
+
+def assert_receipt_era(
+    record: dict,
+    era: mcp_eras.McpEra,
+    *,
+    client_name: str,
+) -> None:
+    expected = mcp_eras.request_meta(era, client_name)
+    top_level = record.get("_meta")
+    effect = record.get("effect_view", {}).get("effect", {})
+    effect_meta = effect.get("_meta")
+    canonical = json.loads(record["canonical_request"])
+    canonical_meta = canonical.get("params", {}).get("_meta")
+    if era is mcp_eras.McpEra.MCP_2026:
+        if top_level != expected or effect_meta != expected or canonical_meta != expected:
+            raise gp.DemoFailure(
+                "2026 request _meta did not reach receipt top level, "
+                "effect_view.effect, and canonical request unchanged"
+            )
+    elif top_level is not None or effect_meta is not None or canonical_meta is not None:
+        raise gp.DemoFailure("2025 receipt was silently assigned 2026 request metadata")
+
+
 def build_named_release_targets() -> None:
     env = os.environ.copy(); env.pop("SEAL_LAKE_OLD", None)
     gp.run(["bash", "scripts/build_ffi_so.sh"], env=env)
-    gp.run(["cargo", "build", "--release", "--manifest-path", "rust/Cargo.toml", "--bin", "seal-host-rs"], env=env)
+    # See golden_path.build_named_targets: rustup picks the toolchain from the working
+    # directory, so cargo must run inside rust/ where rust-toolchain.toml lives.
+    gp.run(["cargo", "build", "--release", "--bin", "seal-host-rs"], cwd=gp.ROOT / "rust", env=env)
     if not HOST.is_file(): raise gp.DemoFailure("named release host build did not produce seal-host-rs")
     check("named release build", "PASS", "exact FFI runtime closure + release seal-host-rs")
 
@@ -186,8 +323,8 @@ def build_named_release_targets() -> None:
 def preflight(deterministic: bool) -> None:
     branch = gp.run(["git", "branch", "--show-current"]).stdout.strip()
     head = gp.run(["git", "rev-parse", "--short", "HEAD"]).stdout.strip()
-    if branch != "main" and os.environ.get("GITHUB_ACTIONS") != "true":
-        raise gp.DemoSkip(f"seal-host must run from main, got {branch or 'detached'}")
+    if not branch and os.environ.get("GITHUB_ACTIONS") != "true":
+        raise gp.DemoSkip("seal-host demo requires a named local branch")
     for binary in ["docker", "node", "npm", "cargo", "lake", "python3"]:
         if not shutil.which(binary): raise gp.DemoSkip(f"required command missing: {binary}")
     if FILESYSTEM_IMAGE != PINNED_FILESYSTEM_IMAGE:
@@ -198,7 +335,7 @@ def preflight(deterministic: bool) -> None:
     if image.returncode != 0: raise gp.DemoSkip(f"pinned filesystem image is not local; refusing to pull: {FILESYSTEM_IMAGE}")
     if not deterministic and (not sys.stdin.isatty() or not sys.stderr.isatty()):
         raise gp.DemoSkip("live mode requires a controlling TTY")
-    check("base + prerequisites", "PASS", f"main@{head}; Phase B kit pinned; mode={'deterministic' if deterministic else 'live'}")
+    check("base + prerequisites", "PASS", f"{branch or 'detached'}@{head}; Phase B kit pinned; mode={'deterministic' if deterministic else 'live'}")
 
 
 def container_args(name: str) -> list[str]:
@@ -278,16 +415,27 @@ def server_command(name: str) -> list[str]:
     return ["docker","exec","-i",name,"node","-e",SERVER_SOURCE]
 
 
-def capture_manifest(name: str, work: Path) -> Path:
+def capture_manifest(
+    name: str, work: Path, era: mcp_eras.McpEra
+) -> Path:
     proc=gp.LineProcess(server_command(name))
     try:
-        proc.send(gp.request(100,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"fs-gp","version":"1"}})); init=json.loads(proc.line())
-        proc.send(gp.request(101,"tools/list")); listed=json.loads(proc.line())
-        ident=init["result"]["serverInfo"]
+        ident=begin_protocol(proc,era,client_name="fs-gp",request_id=100)
+        proc.send(era_request(era,101,"tools/list",client_name="fs-gp"))
+        listed=json.loads(proc.line())
+        assert_result_era(listed["result"],era)
+        assert_protocol_attribution(proc,era)
         manifest={"server":f"{ident['name']}@{ident['version']}","tools":listed["result"]["tools"]}
         expected=["read_text_file","read_media_file","read_multiple_files","list_directory","list_directory_with_sizes","directory_tree","search_files","get_file_info","list_allowed_directories","write_file","edit_file","create_directory","move_file"]
         if [t["name"] for t in manifest["tools"]] != expected: raise gp.DemoFailure("filesystem manifest mismatch")
         path=work/"filesystem.tools.json"; path.write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+        observed=era.entry_method
+        check(
+            "era attribution control",
+            "PASS",
+            f"ERA_ATTRIBUTION={era.value} declared={era.revision} "
+            f"observed={observed}; alternate-entry-count=0",
+        )
         check("live tools/list manifest","PASS",f"captured {len(expected)} filesystem tools from contained server")
         return path
     finally: proc.close()
@@ -301,7 +449,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     before=policy.read_text(encoding="utf-8"); value=json.loads(before)
     approvals=work/"unused-control-approvals.ndjson"; approvals.write_text("",encoding="utf-8")
     value["safety"]["approval"]["control_file"]=str(approvals)
-    value["safety"]["approval"]["replay_store"]={"sqlite_path":str(work/"approval-replay.sqlite")}
+    value["safety"]["approval"]["replay_store"]={
+        "sqlite_path":str(work/"approval-replay.sqlite"),
+        "schema_version":2,
+        "namespace_encoding_version":1,
+    }
     # The a3790181 parser hard-errors on unknown keys inside kernel sections and
     # entries; display metadata (_comment, _seal_demo_tier) may only ride inside
     # a safety RULE interior (rule-level strictness is a named kit follow-up).
@@ -329,6 +481,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     if deterministic:
         output=(signed.stdout or "")+(signed.stderr or "")
         if "ACTIVE (2)" not in output or "PRESENT-BUT-INACTIVE (0)" not in output: raise gp.DemoFailure("sign ack not ACTIVE {S,B}")
+    gp.initialize_replay_store(trusted,config_pub,host=HOST)
     check("init + add-kernel B policy","PASS","ACTIVE {S,B}; cap=2 over four destructive tools; zero vacuity/placeholders")
     return policy,trusted,config_pub,approval_key,approval_pub
 
@@ -337,7 +490,13 @@ def host_command(name: str, trusted: Path, config_pub: str, approval_pub: str, t
     return [str(HOST),"--insecure-development-mode","--config",str(trusted),"--pubkey",config_pub,"--channel","ed25519","--token-file",str(tokens),"--approval-pubkey",approval_pub,"--receipt-dir",str(receipts),"--",*server_command(name)]
 
 
-def secure_default_preflight_leg(trusted: Path, config_pub: str, approval_pub: str, work: Path) -> None:
+def secure_default_preflight_leg(
+    trusted: Path,
+    config_pub: str,
+    approval_pub: str,
+    work: Path,
+    era: mcp_eras.McpEra,
+) -> None:
     """Prove the default mode accepts the signed config and rejects its tamper."""
     secure=work/"secure-default-preflight"; secure.mkdir(mode=0o700)
     os.chmod(secure,0o700)
@@ -346,7 +505,9 @@ def secure_default_preflight_leg(trusted: Path, config_pub: str, approval_pub: s
     marker="SEAL_SECURE_DEFAULT_CHILD_STARTED"
     child_response=gp.compact({"jsonrpc":"2.0","id":0,"result":{"marker":marker}})
     child=[sys.executable,"-c",f"import sys\nfor line in sys.stdin:\n print({child_response!r},flush=True)"]
-    probe=gp.compact(gp.request(0,"initialize"))+"\n"
+    probe=gp.compact(era_request(
+        era, 0, era.entry_method, client_name="secure-default-preflight"
+    ))+"\n"
     insecure_warning="WARNING: INSECURE DEVELOPMENT MODE ENABLED"
 
     def invoke(config: Path, receipts: Path) -> tuple[subprocess.CompletedProcess[str],list[str]]:
@@ -382,11 +543,15 @@ def secure_default_preflight_leg(trusted: Path, config_pub: str, approval_pub: s
 
 
 class HostSession:
-    def __init__(self,label: str,name: str,trusted: Path,config_pub: str,approval_pub: str,work: Path):
-        self.label=label; self.tokens=work/f"{label}-tokens.ndjson"; self.tokens.write_text("",encoding="utf-8"); self.receipts=work/f"{label}-receipts"
+    def __init__(self,label: str,name: str,trusted: Path,config_pub: str,approval_pub: str,work: Path,era: mcp_eras.McpEra):
+        self.label=label; self.era=era; self.tokens=work/f"{label}-tokens.ndjson"; self.tokens.write_text("",encoding="utf-8"); self.receipts=work/f"{label}-receipts"
         self.proc=gp.LineProcess(host_command(name,trusted,config_pub,approval_pub,self.tokens,self.receipts))
-        self.proc.send(gp.request(100,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":label,"version":"1"}})); json.loads(self.proc.line())
-        self.proc.send(gp.request(101,"tools/list")); json.loads(self.proc.line()); self.wait_stderr("SEAL_FILESYSTEM_SERVER_READY")
+        begin_protocol(self.proc,era,client_name=label,request_id=100)
+        self.proc.send(era_request(era,101,"tools/list",client_name=label))
+        listed=json.loads(self.proc.line())
+        assert_result_era(listed["result"],era)
+        assert_protocol_attribution(self.proc,era)
+        self.wait_stderr("SEAL_FILESYSTEM_SERVER_READY")
     def wait_stderr(self,text: str,timeout: float=5)->None:
         deadline=time.monotonic()+timeout
         while time.monotonic()<deadline:
@@ -412,11 +577,13 @@ class HostSession:
         if seen!=count: raise gp.DemoFailure(f"{self.label}: expected {count}x {text}, saw {seen}")
     def call(self,tool: str,args: dict)->tuple[dict,Path]:
         before=set(self.receipts.glob("receipt-*.json")) if self.receipts.exists() else set()
-        self.proc.send(gp.request(1,"tools/call",{"name":tool,"arguments":args})); response=json.loads(self.proc.line())
+        self.proc.send(era_request(self.era,1,"tools/call",{"name":tool,"arguments":args},client_name=self.label)); response=json.loads(self.proc.line())
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             created=sorted((set(self.receipts.glob("receipt-*.json")) if self.receipts.exists() else set())-before)
-            if len(created)==1: return response,created[0]
+            if len(created)==1:
+                assert_receipt_era(receipt(created[0]),self.era,client_name=self.label)
+                return response,created[0]
             if len(created)>1: raise gp.DemoFailure("multiple receipts for one call")
             time.sleep(.02)
         raise gp.DemoFailure(f"missing receipt for {tool}")
@@ -430,11 +597,12 @@ def block(response: dict,contains: str="approval required")->None:
     if response.get("result",{}).get("isError") is not True or contains.lower() not in gp.compact(response).lower(): raise gp.DemoFailure(f"expected BLOCK {contains}: {response}")
 
 
-def forwarded(response: dict)->None:
+def forwarded(response: dict, era: mcp_eras.McpEra)->None:
     if response.get("result",{}).get("isError") is not False: raise gp.DemoFailure(f"expected forwarded success: {response}")
+    assert_result_era(response["result"],era)
 
 
-def token(key: Path,target: str,label: str)->dict: return gp.approval_token(key,target,f"filesystem-{label}-{uuid.uuid4().hex}")
+def token(key: Path,refusal: dict,label: str)->dict: return gp.approval_token(key,refusal,f"filesystem-{label}-{uuid.uuid4().hex}")
 def receipt(path: Path)->dict: return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -473,27 +641,64 @@ def export_gate0a_receipts(work: Path,output: Path,trusted: Path,config_pub: str
     check("Gate 0A receipt export", "PASS", "release ALLOW + BLOCK carry the exact init envelope + matching config pubkey; host hashes match live artifacts; equivalence=not_proven")
 
 
-def verify_receipt(seal: Path,path: Path,verdict: str)->None:
+def verify_receipt(
+    seal: Path,
+    path: Path,
+    verdict: str,
+    era: mcp_eras.McpEra,
+) -> bool:
     record=receipt(path)
     tier_rules=record.get("kernel_config",{}).get("safety",{}).get("tools",[])
     if not tier_rules or tier_rules[0].get("_seal_demo_tier")!=FILESYSTEM_TIER: raise gp.DemoFailure("receipt tier mismatch")
-    result=gp.run([str(seal),"verify",str(path)])
-    if "PASS  VERIFIED" not in result.stdout or record.get("verdict")!=verdict: raise gp.DemoFailure(f"receipt verification failed: {path}")
+    if record.get("verdict")!=verdict: raise gp.DemoFailure(f"receipt verdict mismatch: {path}")
+    if era is mcp_eras.McpEra.MCP_2025:
+        result=gp.run([str(seal),"verify",str(path)])
+        if "PASS  VERIFIED" not in result.stdout: raise gp.DemoFailure(f"receipt verification failed: {path}")
+        return True
+
+    # M.6 is deliberately no-repin. The pinned 2025 verifier reconstructs a
+    # canonical request from only (tool, arguments), so accepting a 2026
+    # canonical request containing `_meta` would be a false compatibility
+    # claim. Pin the old verifier's exact rejection while the runtime checks
+    # the modern receipt projections above.
+    result=subprocess.run(
+        [str(seal),"verify",str(path)],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    expected="canonical_request: does not equal the line derived from (tool, arguments)"
+    if result.returncode!=1 or expected not in result.stdout or "FAIL  NOT VERIFIED" not in result.stdout:
+        raise gp.DemoFailure(
+            f"pinned 2025 verifier did not expose the expected 2026 no-repin boundary: "
+            f"exit={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+    return False
 
 
 def approved_retry(session: HostSession,key: Path,tool: str,args: dict,label: str):
-    first,_=session.call(tool,args); block(first); session.append(token(key,gp.target_from(first),label)); return session.call(tool,args)
+    first,_=session.call(tool,args); block(first); session.append(token(key,first,label)); return session.call(tool,args)
 
 
-def read_leg(name: str,seal: Path,trusted: Path,config_pub: str,approval_pub: str,work: Path)->None:
+def read_leg(name: str,seal: Path,trusted: Path,config_pub: str,approval_pub: str,work: Path,era: mcp_eras.McpEra)->None:
     path="/workspace/demo_read.txt"; content="contained benign read\n"; seed_file(name,path,content)
-    session=HostSession("read",name,trusted,config_pub,approval_pub,work)
+    session=HostSession("read",name,trusted,config_pub,approval_pub,work,era)
     try:
-        response,record=session.call("read_text_file",{"path":path}); forwarded(response)
+        response,record=session.call("read_text_file",{"path":path}); forwarded(response,era)
         observed=response["result"]["content"][0]["text"]
         if observed != content: raise gp.DemoFailure("read response content mismatch")
-        verify_receipt(seal,record,"ALLOW")
-        check("benign read flows","PASS","read_text_file forwarded; exact tmpfs content observed; fresh-state ALLOW receipt VERIFIED")
+        verified=verify_receipt(seal,record,"ALLOW",era)
+        if era is mcp_eras.McpEra.MCP_2026:
+            check("2026 _meta receipt identity","PASS","request _meta equals receipt._meta and effect_view.effect._meta")
+        else:
+            check("2025 receipt era boundary","PASS","legacy request and receipt carry no 2026 _meta")
+        evidence=(
+            "read_text_file forwarded; exact tmpfs content observed; fresh-state ALLOW receipt VERIFIED"
+            if verified
+            else "read_text_file forwarded; exact tmpfs content observed; modern receipt inspected; pinned 2025 verifier rejection matched"
+        )
+        check("benign read flows","PASS",evidence)
     finally: session.close()
 
 
@@ -510,19 +715,20 @@ def policy_tamper(name: str,trusted: Path,config_pub: str,approval_pub: str,work
     check("policy tamper fail-closed","PASS","payload byte changed; host rejected before filesystem MCP exec; sentinel unchanged")
 
 
-def approval_tamper(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path)->None:
-    path="/workspace/demo_approval_tamper.txt"; session=HostSession("approval-tamper",name,trusted,config_pub,approval_pub,work)
+def approval_tamper(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path,era: mcp_eras.McpEra)->None:
+    path="/workspace/demo_approval_tamper.txt"; session=HostSession("approval-tamper",name,trusted,config_pub,approval_pub,work,era)
     try:
-        args={"path":path,"content":"must not exist"}; first,_=session.call("write_file",args); block(first); bad=token(key,gp.target_from(first),"bad-signature"); sig=bad["signature"]; bad["signature"]=sig[:-1]+("0" if sig[-1]!="0" else "1"); session.append(bad)
+        args={"path":path,"content":"must not exist"}; first,_=session.call("write_file",args); block(first); bad=token(key,first,"bad-signature"); sig=bad["signature"]; bad["signature"]=sig[:-1]+("0" if sig[-1]!="0" else "1"); session.append(bad)
         second,record=session.call("write_file",args); block(second); session.wait_stderr("bad_signature")
         if file_exists(name,path) or session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=0: raise gp.DemoFailure("tampered approval wrote file")
-        verify_receipt(seal,record,"BLOCK")
-        check("approval tamper fail-closed","PASS","bad_signature; no downstream write; file absent; fresh-state BLOCK receipt VERIFIED")
+        verified=verify_receipt(seal,record,"BLOCK",era)
+        suffix="fresh-state BLOCK receipt VERIFIED" if verified else "modern BLOCK receipt inspected; pinned 2025 verifier rejection matched"
+        check("approval tamper fail-closed","PASS",f"bad_signature; no downstream write; file absent; {suffix}")
     finally: session.close()
 
 
-def path_escape_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path)->None:
-    session=HostSession("path-escape",name,trusted,config_pub,approval_pub,work)
+def path_escape_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path,era: mcp_eras.McpEra)->None:
+    session=HostSession("path-escape",name,trusted,config_pub,approval_pub,work,era)
     try:
         paths=["/etc/seal_demo_escape","../../etc/seal_demo_escape"]
         for index,path in enumerate(paths):
@@ -544,16 +750,21 @@ def path_escape_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_p
     finally: session.close()
 
 
-def one_shot(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path)->None:
-    path="/workspace/demo_approved_once.txt"; args={"path":path,"content":"written exactly once\n"}; session=HostSession("one-shot",name,trusted,config_pub,approval_pub,work)
+def one_shot(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path,era: mcp_eras.McpEra)->None:
+    path="/workspace/demo_approved_once.txt"; args={"path":path,"content":"written exactly once\n"}; session=HostSession("one-shot",name,trusted,config_pub,approval_pub,work,era)
     try:
-        first,block_record=session.call("write_file",args); block(first); verify_receipt(seal,block_record,"BLOCK"); signed=token(key,gp.target_from(first),"one-shot"); session.append(signed)
-        allowed,allow_record=session.call("write_file",args); forwarded(allowed)
+        first,block_record=session.call("write_file",args); block(first); block_verified=verify_receipt(seal,block_record,"BLOCK",era); signed=token(key,first,"one-shot"); session.append(signed)
+        allowed,allow_record=session.call("write_file",args); forwarded(allowed,era)
         if read_file(name,path)!=args["content"] or session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("approved write observation mismatch")
-        verify_receipt(seal,allow_record,"ALLOW"); session.append(signed); replay,_=session.call("write_file",args); block(replay); session.wait_stderr("replayed_nonce")
+        allow_verified=verify_receipt(seal,allow_record,"ALLOW",era); session.append(signed); replay,_=session.call("write_file",args); block(replay); session.wait_stderr("target_or_subject_mismatch")
         if session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("replay reached filesystem")
-        check("approved one-shot real write","PASS","BLOCK→signed ALLOW→file observed; replayed_nonce BLOCK; one downstream write")
-        check("fresh write receipt verification","PASS","initial write BLOCK + first approved write ALLOW independently re-derived")
+        check("approved one-shot real write","PASS","BLOCK→signed ALLOW→file observed; v2 context-mismatch replay BLOCK; one downstream write")
+        receipt_evidence=(
+            "initial write BLOCK + first approved write ALLOW independently re-derived"
+            if block_verified and allow_verified
+            else "modern BLOCK + ALLOW receipt projections inspected; pinned 2025 verifier rejections matched"
+        )
+        check("fresh write receipt verification","PASS",receipt_evidence)
     finally: session.close()
 
 
@@ -576,12 +787,12 @@ def verify_audit(session: HostSession,work: Path)->None:
     if [x["head"] for x in computed["entries"]]!=[x["head"] for x in records]: raise gp.DemoFailure("audit heads differ")
 
 
-def budget_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path)->None:
-    paths=[f"/workspace/demo_budget_{x}.txt" for x in ["one","two","three"]]; session=HostSession("budget",name,trusted,config_pub,approval_pub,work); terminal=None
+def budget_leg(name: str,trusted: Path,config_pub: str,key: Path,approval_pub: str,work: Path,era: mcp_eras.McpEra)->None:
+    paths=[f"/workspace/demo_budget_{x}.txt" for x in ["one","two","three"]]; session=HostSession("budget",name,trusted,config_pub,approval_pub,work,era); terminal=None
     try:
         for index,path in enumerate(paths):
             response,record=approved_retry(session,key,"write_file",{"path":path,"content":f"budget {index}\n"},f"budget-{index}")
-            if index<2: forwarded(response)
+            if index<2: forwarded(response,era)
             else: block(response,"over budget"); terminal=record
         if not file_exists(name,paths[0]) or not file_exists(name,paths[1]) or file_exists(name,paths[2]): raise gp.DemoFailure("Budget file observations mismatch")
         if session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=2: raise gp.DemoFailure("Budget downstream count != 2")
@@ -598,7 +809,20 @@ def scan(seal: Path,manifest: Path,policy: Path)->None:
     check("seal scan composition","PASS","ACTIVE {S,B}; zero vacuous, unknown, uncovered, or ungated entries")
 
 
-def boundary_card(config_pub: str,approval_pub: str)->None:
+def boundary_card(
+    config_pub: str,
+    approval_pub: str,
+    era: mcp_eras.McpEra,
+)->None:
+    receipt_claim=(
+        """Fresh-state read ALLOW, Safety BLOCK, bad-signature BLOCK, and first approved
+  write ALLOW independently re-derived."""
+        if era is mcp_eras.McpEra.MCP_2025
+        else """Modern receipts expose exact request _meta at the top level and in
+  effect_view.effect._meta. The pinned 2025 verifier rejects their modern
+  canonical request at its known no-repin boundary; they are not labelled
+  independently re-derived in this lane."""
+    )
     print(f"""
 ===================== FILESYSTEM SEAL BOUNDARY CARD =====================
 PROVEN REFERENCE ENFORCEMENT
@@ -613,11 +837,10 @@ SIGNED / VERIFIED KEYS
   Approval exact {{target,issuedAt,nonce}} bytes: Ed25519 {approval_pub}
 
 RECEIPTS / CONTAINMENT EVIDENCE
-  Fresh-state read ALLOW, Safety BLOCK, bad-signature BLOCK, and first approved
-  write ALLOW independently re-derived. Budget receipt + file observations +
-  markers + audit chain are stateful evidence. Absolute/traversal rejection is
-  runtime integration evidence; adapter/path resolver/Node/Docker/symlink
-  behavior remain TCB. Session/trace receipt verification is future work.
+  {receipt_claim} Budget receipt + file observations + markers + audit chain
+  are stateful evidence. Absolute/traversal rejection is runtime integration
+  evidence; adapter/path resolver/Node/Docker/symlink behavior remain TCB.
+  Session/trace receipt verification is future work.
 
 HOST IDENTITY NON-CLAIM
   host_identity is ASSERTED provenance. The portable verifier checks shape
@@ -672,18 +895,29 @@ def live_claude(name: str,trusted: Path,config_pub: str,key: Path,approval_pub: 
     finally: proc.close()
 
 
-def execute(deterministic: bool,receipt_output: Path|None=None)->int:
+def execute(
+    deterministic: bool,
+    era: mcp_eras.McpEra,
+    receipt_output: Path|None=None,
+)->int:
     if receipt_output is not None and not deterministic: raise gp.DemoFailure("receipt export requires deterministic mode")
+    if not deterministic and era is mcp_eras.McpEra.MCP_2026:
+        raise gp.DemoSkip("live Claude controls its own MCP era; the explicit 2026 path is deterministic")
+    check(
+        "MCP era declaration",
+        "PASS",
+        f"MCP_DEMO_ERA={era.value} revision={era.revision} entry={era.entry_method}",
+    )
     preflight(deterministic); build_named_release_targets()
     with tempfile.TemporaryDirectory(prefix="seal-filesystem-golden-path-") as td:
         work=Path(td); name=start_container()
         try:
-            seal=gp.temporary_install(work); manifest=capture_manifest(name,work); policy,trusted,config_pub,key,approval_pub=prepare_policy(seal,manifest,work,deterministic)
-            secure_default_preflight_leg(trusted,config_pub,approval_pub,work)
+            seal=gp.temporary_install(work); manifest=capture_manifest(name,work,era); policy,trusted,config_pub,key,approval_pub=prepare_policy(seal,manifest,work,deterministic)
+            secure_default_preflight_leg(trusted,config_pub,approval_pub,work,era)
             if deterministic:
-                read_leg(name,seal,trusted,config_pub,approval_pub,work); policy_tamper(name,trusted,config_pub,approval_pub,work); approval_tamper(name,seal,trusted,config_pub,key,approval_pub,work); path_escape_leg(name,trusted,config_pub,key,approval_pub,work); one_shot(name,seal,trusted,config_pub,key,approval_pub,work); budget_leg(name,trusted,config_pub,key,approval_pub,work); check("live authenticated Claude","SKIP","not invoked by deterministic/CI mode; operator-verified remains NO")
+                read_leg(name,seal,trusted,config_pub,approval_pub,work,era); policy_tamper(name,trusted,config_pub,approval_pub,work); approval_tamper(name,seal,trusted,config_pub,key,approval_pub,work,era); path_escape_leg(name,trusted,config_pub,key,approval_pub,work,era); one_shot(name,seal,trusted,config_pub,key,approval_pub,work,era); budget_leg(name,trusted,config_pub,key,approval_pub,work,era); check("live authenticated Claude","SKIP","not invoked by deterministic/CI mode; operator-verified remains NO")
             else: live_claude(name,trusted,config_pub,key,approval_pub,work)
-            scan(seal,manifest,policy); boundary_card(config_pub,approval_pub)
+            scan(seal,manifest,policy); boundary_card(config_pub,approval_pub,era)
             if receipt_output is not None: export_gate0a_receipts(work,receipt_output,trusted,config_pub)
         finally: stop_container(name)
     return 0
@@ -692,8 +926,8 @@ def execute(deterministic: bool,receipt_output: Path|None=None)->int:
 def main()->int:
     # --color is accepted for parity with the golden_path.py dispatcher, which appends it to every
     # sub-demo command; this demo emits no DemoTrace, so there is no rendering for it to drive.
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--deterministic",action="store_true"); parser.add_argument("--receipt-output"); parser.add_argument("--color",choices=["auto","always","never"],default="auto"); args=parser.parse_args()
-    try: return execute(args.deterministic,Path(args.receipt_output).resolve() if args.receipt_output else None)
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("--deterministic",action="store_true"); parser.add_argument("--era",choices=[era.value for era in MCP_ERAS],required=True,help="explicit MCP wire era; there is no default"); parser.add_argument("--receipt-output"); parser.add_argument("--color",choices=["auto","always","never"],default="auto"); args=parser.parse_args()
+    try: return execute(args.deterministic,mcp_eras.parse_era(args.era,MCP_ERAS),Path(args.receipt_output).resolve() if args.receipt_output else None)
     except gp.DemoSkip as error: check("demo","SKIP",str(error)); return 2
     except Exception as error: check("demo","FAIL",str(error)); return 1
     finally:

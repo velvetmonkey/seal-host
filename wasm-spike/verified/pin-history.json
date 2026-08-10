@@ -2,9 +2,24 @@
   "schema": 1,
   "golden_path_assurance_kit": [
     {
+      "kit_commit": "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9",
+      "kernel_sha256": "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657",
+      "status": "active"
+    },
+    {
+      "kit_commit": "193c6be1bf83f9d93f14840f2b928fcb46937cc0",
+      "kernel_sha256": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "status": "superseded"
+    },
+    {
+      "kit_commit": "39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd",
+      "kernel_sha256": "0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec",
+      "status": "superseded"
+    },
+    {
       "kit_commit": "d5e14d173bd8b2170e244a91ad2ddc42ae168cff",
       "kernel_sha256": "d7d81e277ba0b5e9df385129d86abf6f7469e6da2a65bb2ec35626caa44ea2be",
-      "status": "active"
+      "status": "superseded"
     },
     {
       "kit_commit": "62f5fe5d2f3f9d1d700b524aa1d415db449799fc",

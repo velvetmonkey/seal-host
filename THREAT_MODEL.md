@@ -35,7 +35,7 @@ kernel allows)**. Composition is itself proven invariant-preserving
 
 | Kernel | Stops | Proof anchor |
 |---|---|---|
-| **S** safety | prompt-injected destructive/exfil call without an un-mintable, target-bound, one-shot human approval | `SealCore.no_allow_guarded_without_matching_approval_in_state` |
+| **S** safety | prompt-injected destructive/exfil call without an un-mintable, target-bound, one-shot approval record (record origin/custody is a declared assumption, not part of the theorem) | `SealCore.no_allow_guarded_without_matching_approval_in_state` |
 | **T** temporal | replay-after-revoke, out-of-order sequence attacks (each call legal, the order not) | `Temporal.monitor_sound`, `gateTrace_sealSafe` |
 | **C** consensus | single compromised approver, rogue node, silent roster swap on high-stakes actions | `Consensus.Checker.agreement` |
 | **V** convergence | divergent / last-writer-wins writes to replicated state | `Crdt.converged_states_agree`, `Crdt.ORSet.add_wins` |
@@ -53,6 +53,11 @@ claimed eliminated.
    destructive action the policy does not classify as guarded is not gated.
    Completeness of the policy is the operator's burden; the host proves only
    that *what the policy classifies as guarded* is enforced without bypass.
+   In the deployed `compatible` profile, classification reads exactly
+   `name` and `arguments` within `params`; every other member of `params` is
+   outside policy matching and every kernel verdict and, on a forward, is sent
+   to the child verbatim (`.lake/packages/mcp-seal/Seal/Classify.lean:278-288`,
+   `rust/src/main.rs:527`, `:1559`; measurement record: `docs/A2-UNJUDGED-SIBLING-EVIDENCE.md`).
 
 2. **OS-permission origin.** The trusted config (signed), the approval/votes/
    grants/forecast files, and the approval keys are trusted inputs. Their
@@ -63,7 +68,7 @@ claimed eliminated.
    existing `SealV2.ed25519Verify` leaf; the startup `--pubkey` is the named
    config-signing trust root and is not read from the config it verifies. The
    separate host approval back-channel can use real Ed25519 (`ed25519-dalek`)
-   over exact `ApprovalRecord` JSON payload bytes. The SealV2 canonical token
+   over exact `ApprovalRecord` JSON payload bytes. The SealV2 kernel-defined token
    path signs `(target, session, issuedAt, expiry, nonce)` bytes in
    `mcp-seal-dev`. These are three distinct signing channels and keys.
 
@@ -73,13 +78,17 @@ claimed eliminated.
    not surfaced as MCP calls are **out of scope by design**. The host is a
    boundary monitor, not a sandbox.
 
-4. **Parser/translation residual.** The shared SealV2 canonical parser closes
-   the parser-differential *on the seal side*: a canonical line has exactly one
-   byte form, the form an approval signature commits to. The residual gap
-   between the upstream server's wire parser and the seal canonical view is a
+4. **Parser/translation residual.** The shared SealV2 parser closes
+   the parser-differential *on the seal side*: a kernel-admitted line has the
+   one byte form defined by `SealV2.serializeAstValue`, the form an approval
+   signature commits to. "Canonical" here names the kernel rule, not RFC
+   8785/JCS; its known divergences and the host's cross-implementation
+   containment are documented in
+   [`docs/CANONICAL-BYTE-CONTRACT.md`](docs/CANONICAL-BYTE-CONTRACT.md). The residual gap
+   between the upstream server's wire parser and the Seal kernel-defined view is a
    per-server trusted-translation assumption, pinned (not eliminated) by the
    G6 property-based differential conformance harness
-   (`rust/tests/differential.rs`). The canonical parser is an audit/signing
+   (`rust/tests/differential.rs`). The kernel-defined parser is an audit/signing
    aid, **not** a traffic filter — legitimate multiline/Unicode arguments are
    mediated on the value view, not refused.
 
@@ -126,5 +135,4 @@ call blocked (S), an out-of-order replay blocked (T), a single-signer
 high-stakes action gated on quorum (C), a divergent write refused (V), an
 over-budget call denied (B), and a human (Ed25519-signed) approval unlocking a
 legitimate retry through a swappable back-channel — audit certificates emitted
-throughout — then the whole host placed in front of a real LangGraph agent
-(the canary compliance pipeline) mediating its live vault writes.
+throughout.

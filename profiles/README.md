@@ -39,8 +39,9 @@ The guarded DBHub call with the exact ordered arguments
 to target
 `fe0eebfb14836c463ff644f596a5bc8a48b590d689972c97cbc4bf077d865a04`.
 Changing the SQL, adding an argument, or removing an argument changes the
-full-arguments pre-image. Object-key order alone does not: Lean canonicalizes
-JSON object keys before hashing, while the receipt separately preserves and
+full-arguments pre-image. Object-key order alone does not: Lean applies its
+kernel-defined Unicode-scalar object-key order before hashing (not RFC
+8785/JCS; see [`../docs/CANONICAL-BYTE-CONTRACT.md`](../docs/CANONICAL-BYTE-CONTRACT.md)), while the receipt separately preserves and
 hashes incoming argument order. The 64-hex value shown by the live host remains
 the value to compare before signing.
 

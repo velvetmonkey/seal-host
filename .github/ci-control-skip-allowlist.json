@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "controls": [
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_03",
+      "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_04",
+      "reason": "Tokenless CI suppresses the private Lean suite as a unit; this toolchain setup action itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_05",
+      "reason": "Lake must fetch the manifest-pinned private dependencies, including mcp-seal, on a clean runner."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_20",
+      "reason": "On the tokenless path there is no credential, so Lake cannot fetch the private mcp-seal dependency and this control cannot link or run the aggregate Lean tests."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_06",
+      "reason": "The PINS gate reads the checked-out private mcp-seal source tree as part of its anti-drift checks."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_07",
+      "reason": "The crypto build script lives in the private mcp-seal Lake package fetched with the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_08",
+      "reason": "The default Lean build imports manifest-pinned private Lake dependencies unavailable on a clean tokenless runner."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_10",
+      "reason": "This assertion consumes the axiom report captured from the token-dependent aggregate Lean test control."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_16",
+      "reason": "The A2 divergence module is built from the Lean graph that imports the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_18",
+      "reason": "The proof inventory validates artifacts produced by the token-dependent default Lean build and its private dependency graph."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "build",
+      "id": "control_33",
+      "reason": "On the tokenless path Lake cannot fetch the manifest-pinned private dependencies, so the import closure this gate walks cannot be resolved and no reachability inventory can be produced. Ben ruled 2026-08-06: the token is deliberately not supplied on that path, so the skip is the intended behaviour rather than an unexplained gap."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_32",
+      "reason": "Disk ballast free is only needed when the private conformance suite runs; tokenless CI skips the suite as a unit."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_03",
+      "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_04",
+      "reason": "Tokenless CI suppresses the private conformance suite as a unit; this Rust toolchain setup action itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_05",
+      "reason": "Tokenless CI suppresses the private conformance suite as a unit; cargo fmt itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_06",
+      "reason": "Tokenless CI suppresses the private conformance suite as a unit; this Lean toolchain setup action itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_07",
+      "reason": "Tokenless CI suppresses the private conformance suite as a unit; this Node setup action itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_08",
+      "reason": "Tokenless CI suppresses the private conformance suite as a unit; checking the tracked wasm files itself does not require the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_09",
+      "reason": "Lake must fetch the manifest-pinned private dependencies, including mcp-seal, on a clean runner."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_10",
+      "reason": "The crypto build script lives in the private mcp-seal Lake package fetched with the token."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_11",
+      "reason": "The exported Lean FFI build imports manifest-pinned private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_12",
+      "reason": "The shared-library linker consumes objects built from mcp-seal and the other private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_13",
+      "reason": "Clippy checks all targets, whose build links the Lean FFI artifacts produced from private dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_14",
+      "reason": "The Rust tests link and exercise the Lean FFI artifacts produced from private dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_15",
+      "reason": "The release binaries link the Lean FFI artifacts produced from private dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_17",
+      "reason": "The downstream parser oracle is built from the Lean graph that imports private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_18",
+      "reason": "The debug Rust host links the Lean FFI artifacts produced from private dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_19",
+      "reason": "The preservation test executes the debug host built against the token-dependent Lean FFI artifacts."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_20",
+      "reason": "The Python integration entrypoints execute Lean and Rust hosts built from private dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_21",
+      "reason": "The honesty matrix executable is built from the Lean graph that imports private Lake dependencies."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_22",
+      "reason": "This renderer checks the honesty JSON emitted by the token-dependent preceding Lean control, and is deliberately skipped when that producer (control_21) failed: with a dead producer this gate has no finding of its own, and control_21 already fails the job."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_23",
+      "reason": "The wasm conformance bridge invokes the Lean model through the private Lake dependency graph."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_24",
+      "reason": "The production-startup check executes the release host linked to token-dependent Lean FFI artifacts."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_25",
+      "reason": "The three-way differential links the private-backed Lean FFI and invokes the private Lake model."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_26",
+      "reason": "The receipt demo executes the release host linked to token-dependent Lean FFI artifacts."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_27",
+      "reason": "SealV2.EffectEnvelope is supplied by the private mcp-seal Lake dependency."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_28",
+      "reason": "The byte-twin test invokes the private mcp-seal Lean encoder and links token-dependent FFI artifacts."
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_30",
+      "reason": "The secure-default golden path executes the Rust host linked to Lean FFI artifacts built from token-dependent private Lake dependencies."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_02",
+      "reason": "The tokenless-path notice is inapplicable, and therefore skipped, when the private dependency token is configured."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_03",
+      "reason": "Disk ballast free is only needed when the token-dependent scratch-tree cargo builds run; the tokenless path never reaches them."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_04",
+      "reason": "A non-empty token is required to configure authenticated fetches for the private Lake dependencies."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_05",
+      "reason": "The tokenless path cannot build the Lean FFI the G2 suite links, so the Rust toolchain it would feed is suppressed as a unit; this setup action itself does not require the token."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_06",
+      "reason": "The tokenless path suppresses the Lean FFI build as a unit; this Lean toolchain setup action itself does not require the token."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_07",
+      "reason": "Lake must fetch the manifest-pinned private dependencies, including mcp-seal, on a clean runner."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_08",
+      "reason": "The crypto build script lives in the private mcp-seal Lake package fetched with the token."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_09",
+      "reason": "The exported Lean FFI build imports manifest-pinned private Lake dependencies."
+    },
+    {
+      "workflow": "g2-mutation-ablation.yml",
+      "job": "g2-mutation-ablation",
+      "id": "control_10",
+      "reason": "The shared library the G2 crash tests link is built from objects produced by mcp-seal and the other private Lake dependencies."
+    }
+  ]
+}

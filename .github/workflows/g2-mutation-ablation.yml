@@ -1,0 +1,150 @@
+name: G2 crash-property mutation ablation
+
+# Scheduled, NOT per-push, and deliberately not part of `rust-conformance`.
+#
+# This job proves the G2 crash suite's assertions are load-bearing by breaking
+# the product and requiring the suite to notice (scripts/
+# test_g2_crash_property_ablation.sh). It defends against a hostile or careless
+# edit that hollows out an assertion body — a class of defect that needs a
+# deliberate edit and cannot appear by accident between two pushes. The
+# rust-conformance path is already the heaviest job we run; adding three more
+# scratch-tree cargo builds to every push would tax every author every time to
+# catch something that only ever arrives once. Nightly is single-digit minutes
+# a day and catches it within one day of landing.
+
+on:
+  schedule:
+    # 05:27 UTC daily. Off the hour to avoid the GitHub-wide cron stampede.
+    - cron: "27 5 * * *"
+  workflow_dispatch:
+
+# One ablation at a time: concurrent runs would share CARGO_TARGET_DIR-adjacent
+# runner state for no benefit, and a queued duplicate measures nothing new.
+concurrency:
+  group: g2-mutation-ablation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  g2-mutation-ablation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - id: control_01
+        continue-on-error: true
+        uses: actions/checkout@v6.0.3
+      # Reserved id control_90: this step is provisioning, not a product
+      # control, so it sits out of the per-job numbering. It still reports
+      # like every other step -- test/test_ci_control_reporting.py requires
+      # every step in a job to be an isolated control that the final
+      # aggregate converts back into a job failure.
+      - id: control_90
+        continue-on-error: true
+        name: Provision PyYAML for the workflow-inspecting gates
+        uses: ./.github/actions/pyyaml
+      - id: control_02
+        continue-on-error: true
+        name: Report the tokenless path before it fails the ablation
+        if: ${{ env.SEAL_CI_READ_TOKEN == '' }}
+        run: |
+          echo "::notice::SEAL_CI_READ_TOKEN is not configured; the FFI artifacts the G2 suite links cannot be built, and the ablation below will fail loudly rather than skip."
+      # The ablation builds three scratch trees (one control, one per mutant)
+      # against a shared target directory. Free the large hosted SDKs this job
+      # never uses so the debug artifacts have headroom.
+      - id: control_03
+        continue-on-error: true
+        name: Free unused runner SDKs before the scratch-tree builds
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          set -uo pipefail
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/powershell \
+            /usr/share/swift \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/go \
+            /opt/hostedtoolcache/Ruby \
+            2>/dev/null || true
+          sudo apt-get clean || true
+          df -h /
+      - id: control_04
+        continue-on-error: true
+        name: Configure private dependency auth
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+      - id: control_05
+        continue-on-error: true
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        with:
+          toolchain: "1.96.0"
+          cache: false
+      # Every lean-action call site in this estate is preceded by the
+      # test-driver wiring gate, and test/test_lean_test_driver_gate.py
+      # enforces that pairing across all workflows. This workflow landed
+      # without it, which is one of the three population gates it skipped.
+      # The gate reads lakefile.toml and Test/LeanTests.lean out of the
+      # checkout, so it needs no token and runs unconditionally.
+      - id: control_12
+        continue-on-error: true
+        name: Guard Lean test-driver wiring
+        run: python3 scripts/lean_test_driver_gate.py
+      - id: control_06
+        continue-on-error: true
+        uses: leanprover/lean-action@v1.5.0
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        with:
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - id: control_07
+        continue-on-error: true
+        run: test -d .lake/packages/mcp-seal || lake update
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_08
+        continue-on-error: true
+        run: bash .lake/packages/mcp-seal/c/build.sh
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_09
+        continue-on-error: true
+        run: lake build +Ffi:c.o.export
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # The G2 crash tests spawn the real host, which links this .so.
+      - id: control_10
+        continue-on-error: true
+        run: scripts/build_ffi_so.sh
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      # The ablation itself. Deliberately has no `if:`, for the same reason the
+      # M.4a format-stamp ablation in ci.yml has none: skipped controls fail the
+      # aggregate unless their exact workflow/job/id is allowlisted, and this
+      # one is intentionally not allowlisted. A mutation control that can quietly
+      # skip is a mutation control that measures nothing. Without the FFI
+      # artifacts built above it fails loudly instead.
+      #
+      # It goes red in three distinct ways, all of them findings:
+      #   * an unmutated scratch tree fails the G2 tests — the harness is broken;
+      #   * a mutant does not compile or the test fails for the wrong reason;
+      #   * a mutant PASSES — the product property is broken and its own crash
+      #     test does not notice, which is the hollow-assertion detector firing.
+      - id: control_11
+        continue-on-error: true
+        name: G2 crash-property product-mutation ablation (T1 reclaim, T3 burn)
+        run: bash scripts/test_g2_crash_property_ablation.sh
+
+      - name: Require every isolated CI step to pass
+        if: ${{ always() }}
+        env:
+          SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+        run: python3 scripts/ci_control_aggregate.py

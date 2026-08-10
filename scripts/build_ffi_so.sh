@@ -9,10 +9,26 @@
 # libleanrt.a cannot enter a shared object).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT="$ROOT/.lake/build/lib/libsealffi.so"
 TMP="$ROOT/.lake/build/ffi-archives"
-LEANBUILD="${LEANBUILD:-/home/monkey/bin/leanbuild}"
+# Build command resolution: explicit LEANBUILD wins, then a `leanbuild`
+# wrapper on PATH (the dev box installs one that serializes builds and caps
+# memory — box protections, not build semantics), else bare `lake` (CI
+# runners are ephemeral and single-build, so the wrapper adds nothing there).
+# The wrapper forwards its arguments to lake, so both spellings take the
+# same argument list.
+if [ -z "${LEANBUILD:-}" ]; then
+  if command -v leanbuild >/dev/null 2>&1; then
+    LEANBUILD=leanbuild
+  else
+    LEANBUILD=lake
+  fi
+fi
 LEAN_PREFIX="$(lean --print-prefix)"
 MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
 if [ "$MCP_TYPE" = "path" ]; then
@@ -49,7 +65,7 @@ MCP_MODULES=(
   Seal.Block Seal.Channel Seal.Classify Seal.Hash Seal.JsonUtil Seal.Policy
   Seal.PolicyBundle
   SealV2.Canonical SealV2.Crypto SealV2.Decide SealV2.Escape SealV2.Parser
-  SealV2.Serialization SealV2.Validation
+  SealV2.EffectEnvelope SealV2.McpVersionGate SealV2.Serialization SealV2.Validation
 )
 PROJECT_MODULES=(
   Ffi
@@ -61,6 +77,14 @@ PROJECT_MODULES=(
   # comment above): adding a Lean module under Host/ that Ffi's import closure
   # reaches REQUIRES adding it here, or the shared object cannot be rebuilt.
   Host/UnicodeKeys
+  # Added 2026-08-03. SECOND occurrence of the 2026-07-25 Host/UnicodeKeys
+  # incident above: Host/JsonWire entered Ffi's import closure via
+  # Host/Canonical without being added to this manual list, leaving its
+  # initializer and safe predicate unresolved in every rebuilt shared object.
+  Host/JsonWire
+  # Added 2026-07-30 with the class-(a)/(c) pre-parse guards: both are in
+  # Ffi's import closure via Host/Canonical.
+  Host/SurrogateEscapes Host/NestingDepth
   Kernels
   Kernels/Budget Kernels/BudgetCore Kernels/Calibration Kernels/Consensus
   Kernels/Convergence Kernels/Linear Kernels/LinearCore Kernels/PrincipalBudget
@@ -147,7 +171,16 @@ archive_package_ir() {
     exit 1
   fi
   archive="$TMP/lib_${pkg}.a"
-  if [ "$force" = "1" ] || [ ! -f "$archive" ] || [ "$(find "$irdir" -name '*.c.o.export' -newer "$archive" | head -1)" ]; then
+  rebuild=0
+  if [ "$force" = "1" ] || [ ! -f "$archive" ]; then
+    rebuild=1
+  else
+    newer_object="$(find "$irdir" -name '*.c.o.export' -newer "$archive" -print -quit)"
+    if [ -n "$newer_object" ]; then
+      rebuild=1
+    fi
+  fi
+  if [ "$rebuild" = "1" ]; then
     rm -f "$archive"
     # Thin archive built by chunked quick-append (q), then indexed (s) once
     # at the end — replace-mode chunking silently truncated earlier.
@@ -213,7 +246,13 @@ nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
 # false-fail correct artifacts the way a blanket "no undefined symbols"
 # nm check would. Anything still unresolved means a module object was
 # dropped from the link — refuse to call that "built".
-UNRESOLVED="$(ldd -r "$OUT" 2>&1 | grep -F 'undefined symbol' || true)"
+LDD_OUTPUT="$(ldd -r "$OUT" 2>&1)"
+UNRESOLVED=""
+while IFS= read -r line; do
+  if [[ "$line" == *"undefined symbol"* ]]; then
+    UNRESOLVED+="${UNRESOLVED:+$'\n'}$line"
+  fi
+done <<< "$LDD_OUTPUT"
 if [ -n "$UNRESOLVED" ]; then
   echo "FATAL: $OUT has unresolved symbols after load-time resolution:" >&2
   echo "$UNRESOLVED" | head -20 >&2

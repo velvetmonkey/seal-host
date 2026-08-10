@@ -5,7 +5,11 @@
 # under the parent directory of this repo.
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR=.
+fi
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC="$(cd "$ROOT/.." && pwd)"
 MCP_SEAL_DEV="$SRC/mcp-seal-dev"
 SEAL_CHECK="$SRC/seal-check"

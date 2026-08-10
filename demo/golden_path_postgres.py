@@ -21,7 +21,10 @@ from difflib import unified_diff
 from pathlib import Path
 
 import golden_path as gp
+import mcp_eras
 from doctrine import DemoTrace
+
+MCP_ERAS = mcp_eras.declared_eras(__file__)
 
 ROOT = gp.ROOT
 KIT = gp.KIT
@@ -31,9 +34,9 @@ HOST = gp.HOST
 # yesterday's kernel. Keep it in step with the checkout ref in
 # .github/workflows/golden-path.yml — a `grep <kernel-sha>` sweep cannot see
 # either, because both name the staleness as a COMMIT sha.
-# d5e14d1 carries the pinned d7d81e27 kernel and the current 7-kernel policy
+# a5f9a91 carries the pinned 28bb3ae7 kernel and the current 7-kernel policy
 # bundle used by the doctrine-clean S+B+T recipe.
-PHASE_B_KIT_REV = "d5e14d173bd8b2170e244a91ad2ddc42ae168cff"
+PHASE_B_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
 PINNED_POSTGRES_IMAGE = "postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb"
 POSTGRES_IMAGE = os.environ.get("SEAL_POSTGRES_IMAGE", PINNED_POSTGRES_IMAGE)
 C2_THEOREMS = [
@@ -317,7 +320,11 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
     approvals = work / "unused-control-approvals.ndjson"; approvals.write_text("", encoding="utf-8")
     replay = work / "approval-replay.sqlite"
     value["safety"]["approval"]["control_file"] = str(approvals)
-    value["safety"]["approval"]["replay_store"] = {"sqlite_path": str(replay)}
+    value["safety"]["approval"]["replay_store"] = {
+        "sqlite_path": str(replay),
+        "schema_version": 2,
+        "namespace_encoding_version": 1,
+    }
     # The a3790181 parser hard-errors on unknown keys inside kernel sections and
     # entries; display metadata (_comment, _seal_demo_tier) may only ride inside
     # a safety RULE interior (rule-level strictness is a named kit follow-up).
@@ -359,6 +366,7 @@ def prepare_policy(seal: Path, manifest: Path, work: Path, deterministic: bool):
         output = (signed.stdout or "") + (signed.stderr or "")
         if "ACTIVE (3)" not in output or "PRESENT-BUT-INACTIVE (0)" not in output:
             raise gp.DemoFailure("sign ack did not report exactly three active, zero vacuous kernels")
+    gp.initialize_replay_store(trusted, config_pub)
     check("prod-db review + signed policy", "PASS", "recipe edited to ACTIVE {S,T,B}; cap=10; costArg=cost_units; freeze_db→execute_sql; zero placeholders")
     return policy, trusted, config_pub, approval_key, approval_pub
 
@@ -428,8 +436,8 @@ def assert_allow(response: dict) -> None:
         raise gp.DemoFailure(f"expected forwarded success, got {response}")
 
 
-def signed_token(key: Path, target: str, label: str) -> dict:
-    return gp.approval_token(key, target, f"postgres-{label}-{uuid.uuid4().hex}")
+def signed_token(key: Path, refusal: dict, label: str) -> dict:
+    return gp.approval_token(key, refusal, f"postgres-{label}-{uuid.uuid4().hex}")
 
 
 def receipt_json(path: Path) -> dict:
@@ -480,13 +488,12 @@ def approval_tamper(name: str, seal: Path, trusted: Path, config_pub: str,
         verify_receipt(seal, first_receipt, "BLOCK")
         if trace:
             trace.record_receipt(
-                first_receipt, role="CONTROL",
+                first_receipt, role=gp.APPROVAL_SUBJECT_ROLE,
                 theorem_ids=["Host.registry_deny_no_budget_spend"],
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        target = gp.target_from(first)
-        token = signed_token(approval_key, target, "bad-signature")
+        token = signed_token(approval_key, first, "bad-signature")
         signature = token["signature"]
         token["signature"] = signature[:-1] + ("0" if signature[-1] != "0" else "1")
         session.append(token)
@@ -520,13 +527,12 @@ def doctrine_path(name: str, seal: Path, trusted: Path, config_pub: str,
         verify_receipt(seal, block_receipt, "BLOCK")
         if trace:
             trace.record_receipt(
-                block_receipt, role="ATTACK-DENY",
+                block_receipt, role=gp.APPROVAL_SUBJECT_ROLE,
                 theorem_ids=["Host.registry_deny_no_budget_spend"],
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        target = gp.target_from(blocked)
-        token = signed_token(approval_key, target, "one-shot")
+        token = signed_token(approval_key, blocked, "one-shot")
         session.append(token)
         allowed, allow_receipt = session.call("execute_sql", args); assert_allow(allowed)
         if table_exists(name, table): raise gp.DemoFailure("approved DROP did not execute")
@@ -557,12 +563,12 @@ def budget_control(name: str, seal: Path, trusted: Path, config_pub: str,
         verify_receipt(seal, first_receipt, "BLOCK")
         if trace:
             trace.record_receipt(
-                first_receipt, role="CONTROL",
+                first_receipt, role=gp.APPROVAL_SUBJECT_ROLE,
                 theorem_ids=["BudgetCore.over_budget_denied", "Host.registry_deny_no_budget_spend"],
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        session.append(signed_token(approval_key, gp.target_from(blocked), "over-cap"))
+        session.append(signed_token(approval_key, blocked, "over-cap"))
         denied, terminal = session.call("execute_sql", args); assert_block(denied, "over budget")
         verify_receipt(seal, terminal, "BLOCK")
         record = receipt_json(terminal)
@@ -600,10 +606,10 @@ def invalid_cost_controls(name: str, seal: Path, trusted: Path, config_pub: str,
             verify_receipt(seal, discovery, "BLOCK")
             if trace:
                 trace.record_receipt(
-                    discovery, role="CONTROL",
+                    discovery, role=gp.APPROVAL_SUBJECT_ROLE,
                     theorem_ids=["Host.registry_deny_no_budget_spend"],
                 )
-            session.append(signed_token(approval_key, gp.target_from(blocked), f"cost-{label}"))
+            session.append(signed_token(approval_key, blocked, f"cost-{label}"))
             denied, terminal = session.call("execute_sql", args); assert_block(denied, "missing cost field")
             verify_receipt(seal, terminal, "BLOCK")
             if trace:

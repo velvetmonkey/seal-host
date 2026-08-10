@@ -49,7 +49,7 @@ from liveness, and `hACR` lifts that to part-list equality.
 * **Minting (TCB):** Rust providers (`rust/src/providers.rs`) mint
   `ApprovalRecord { target: "<64 lowercase hex>", … }` via control-file / Ed25519
   signed-token / TTY. The host Ed25519 signed-token provider signs the exact
-  `ApprovalRecord` JSON payload bytes; it is separate from the SealV2 canonical
+  `ApprovalRecord` JSON payload bytes; it is separate from the SealV2 kernel-defined
   `(target, session, issuedAt, expiry, nonce)` token path in `mcp-seal-dev`.
   `rust/src/a3.rs` freshness-filters every record (nonce-once per session, TTL,
   +5s future-skew, wall clock) before Lean sees it — `A3Filter`, fail-closed.
@@ -79,7 +79,9 @@ from liveness, and `hACR` lifts that to part-list equality.
   not have — rejected as the target, recorded here as a scope finding.
 * **Signature:** `SealV2.SignatureVerified` (`Validation.lean:191`) is a
   Prop over `verifySignature`; in `mcp-seal-dev` that path calls real Ed25519
-  over canonical `(target, session, issuedAt, expiry, nonce)` bytes. The host's
+  over kernel-defined `(target, session, issuedAt, expiry, nonce)` bytes. This
+  is not an RFC 8785/JCS claim; see
+  [`CANONICAL-BYTE-CONTRACT.md`](CANONICAL-BYTE-CONTRACT.md). The host's
   NDJSON provider is also real Ed25519 (`ed25519-dalek`) but over exact
   `ApprovalRecord` JSON payload bytes. The trusted config envelope is a third,
   separate Ed25519 channel over exact config payload bytes, verified with the
@@ -93,7 +95,7 @@ from liveness, and `hACR` lifts that to part-list equality.
 |---|---|
 | `SealCore.no_allow_guarded_without_matching_approval_in_state` | allow ⇒ live (authority tracing at one step) |
 | `SealCore.approval_binds_to_target` | hash≠ ⇒ not live (separation) |
-| `SealCore.confused_deputy_blocks_from_single_other_approval` | the step-level refusal exemplar |
+| `SealCore.approval_not_transferable_across_targets` | the step-level refusal exemplar (single other approval ⇒ block) |
 | `SealCore.consumed_approval_not_live` / `fresh_approval_live` / `expired_not_live` | one-shot + freshness discipline |
 | `SealV2.decide_emit_unique` | value-level: every Allow carries a `ValidCapability` witness (held, session-bound, target-equal approval) |
 
@@ -101,7 +103,7 @@ from liveness, and `hACR` lifts that to part-list equality.
 in Lean proves SHA-256 collision resistance. The theorem exposes that as
 `hACR` over `Seal.stableHashString`; deployment makes the assumption
 credible by using SHA-256 over the injective `encodeParts` bytes. NI (state
-secrecy), ReplayIsolation (store isolation), DeployedAdapter O1∧O2 (channel
+secrecy), ReplayIsolation (store isolation), GatedSinkAdapter O1∧O2 (channel
 mediation) are orthogonal — none speak to authority binding across the hash
 seam.
 
@@ -132,7 +134,7 @@ the named assurance-case hypothesis `hACR`; the old FNV path is confined to
 2. **Not-held refused:** instance of `approval_binds_to_target` at two
    concrete distinct part-lists from the exemplar universe.
 3. **Cross-approval refusal:** cite the landed
-   `confused_deputy_blocks_from_single_other_approval` (already the
+   `approval_not_transferable_across_targets` (already the
    refusal witness; re-witnessing optional, council Q5).
 4. **Adequacy discharge:** `Adequate U₀` for a concrete small universe
    `U₀` by `decide` (decidability instance probe-confirmed). Council Q5:
@@ -151,7 +153,9 @@ Green bare `lake build` (gate closure); axioms exactly
 `[propext, Classical.choice, Quot.sound]` per pinned theorem (observed
 footprints pinned if lighter, per repo precedent); zero `sorry`; zero
 `native_decide`; per-theorem `#guard_msgs in #print axioms` pins; module
-wired via `Test/Axioms.lean` import like every Wave module. Proposed home:
+wired via an explicit `Test/Axioms.lean` import. This is a required acceptance
+check, not a claim that every theorem-bearing module is already wired; the
+current residual is recorded in `docs/LIMITATIONS.md`. Proposed home:
 `Host/CapabilityAdequacy.lean` (council Q4).
 
 ## 7. Open questions for the design council (settle BEFORE the freeze)

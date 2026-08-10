@@ -69,8 +69,12 @@ abbrev Principal := String
       line, the canonical `ast?`). MCP stdio attaches no client identity to
       it. -/
 structure CallInputs where
+  /-- The signed-config trust plane, fixed at server boot. -/
   boot : ApprovalState
+  /-- Host-side gathered evidence (approvals, clock) — the per-call trusted
+      channel. -/
   perCall : Kernels.SafetyEvidence
+  /-- The UNTRUSTED wire request; stdio attaches no client identity to it. -/
   request : CanonicalAction
 
 /-- A principal assigner: any function of the full dispatch-time inputs. The

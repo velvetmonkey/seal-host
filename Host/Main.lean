@@ -23,23 +23,34 @@ namespace Host
 
 open Lean
 
+/-- Parsed command line of the pure-Lean demo host. -/
 structure Args where
+  /-- Path to the signed trusted-config JSON bundle. -/
   config : System.FilePath
+  /-- Hex-encoded public key the config bundle's signature is checked against. -/
   publicKey : String
+  /-- The wrapped MCP server executable. -/
   cmd : String
+  /-- Arguments passed through to the wrapped server. -/
   cmdArgs : Array String
 
+/-- Parse the fixed `--config <file> --pubkey <hex> -- <cmd> <args...>` command
+    line, or return the usage string. -/
 def parseArgs (args : List String) : Except String Args :=
   match args with
   | "--config" :: config :: "--pubkey" :: publicKey :: "--" :: cmd :: rest =>
       .ok { config := System.FilePath.mk config, publicKey, cmd, cmdArgs := rest.toArray }
   | _ => .error "usage: seal-host --config <trusted.json> --pubkey <config-pubkey-hex> -- <server-cmd> <args...>"
 
+/-- Write one line to the shared output stream under the stdout mutex, so host
+    verdicts and relayed child output never interleave mid-line. -/
 def writeLocked (lock : Std.Mutex Unit) (out : IO.FS.Stream) (line : String) : IO Unit := do
   lock.atomically do
     out.putStr line
     out.flush
 
+/-- Relay the wrapped server's stdout to the host's stdout line-by-line (under
+    the stdout mutex) until the child closes its end. -/
 partial def relayChildStdout (lock : Std.Mutex Unit) (childOut : IO.FS.Handle)
     (hostOut : IO.FS.Stream) : IO Unit := do
   let line ← childOut.getLine
@@ -53,7 +64,7 @@ partial def relayChildStdout (lock : Std.Mutex Unit) (childOut : IO.FS.Handle)
     (`Seal/Main.lean` processHostLine): one wall-clock reading per call, and
     each approval record ingested exactly once via the seen counter. -/
 def gatherSafetyEvidence (policy : Seal.Policy) (approvalSeenRef : IO.Ref Nat) :
-    CanonicalAction → IO Kernels.SafetyEvidence := fun _ => do
+    IO Kernels.SafetyEvidence := do
   let nowTs ← Std.Time.Timestamp.now
   let now := nowTs.toMillisecondsSinceUnixEpoch.toInt.toNat
   let seen ← approvalSeenRef.get
@@ -65,7 +76,7 @@ def gatherSafetyEvidence (policy : Seal.Policy) (approvalSeenRef : IO.Ref Nat) :
     Malformed lines are skipped — a vote that fails to parse simply does not
     exist, which can only shrink a quorum (fail-closed for allow). -/
 def gatherVotes (cfg : Kernels.ConsensusConfig) :
-    CanonicalAction → IO Consensus.Checker.Votes := fun _ => do
+    IO Consensus.Checker.Votes := do
   if (← cfg.votesFile.pathExists) then
     pure <| Evidence.parseVotesText (← IO.FS.readFile cfg.votesFile)
   else
@@ -75,7 +86,7 @@ def gatherVotes (cfg : Kernels.ConsensusConfig) :
     gated call. Malformed lines are skipped — a record that fails to parse
     shrinks the window, and a small window denies (fail-closed). -/
 def gatherForecasts (cfg : Kernels.CalibrationConfig) :
-    CanonicalAction → IO (List Kernels.ForecastRecord) := fun _ => do
+    IO (List Kernels.ForecastRecord) := do
   if (← cfg.recordsFile.pathExists) then
     pure <| Evidence.parseForecastsText (← IO.FS.readFile cfg.recordsFile)
   else
@@ -87,7 +98,7 @@ def gatherForecasts (cfg : Kernels.CalibrationConfig) :
     Malformed lines are skipped (a grant that fails to parse grants nothing,
     fail-closed). -/
 def gatherGrants (cfg : Kernels.LinearConfig) (seenRef : IO.Ref Nat) :
-    CanonicalAction → IO (List LinearCore.LEvent) := fun _ => do
+    IO (List LinearCore.LEvent) := do
   if (← cfg.grantsFile.pathExists) then
     let text ← IO.FS.readFile cfg.grantsFile
     let records := text.splitOn "\n" |>.filter
@@ -99,6 +110,10 @@ def gatherGrants (cfg : Kernels.LinearConfig) (seenRef : IO.Ref Nat) :
   else
     pure []
 
+/-- Mediate one client line: passthrough forwards it to the child untouched,
+    refuse blocks it fail-closed, and a classified `tools/call` is dispatched
+    through the kernel registry — forwarded on a combined allow, answered with
+    a block response on deny, with an audit line either way. -/
 def processHostLine
     (epoch : Nat)
     (registry : Registry)
@@ -127,6 +142,8 @@ def processHostLine
       | .deny =>
           writeLocked stdoutLock hostOut (Seal.blockResponseLine act.requestId (denyReason verdicts))
 
+/-- Read client lines from `hostIn` and mediate each via `processHostLine`
+    until EOF. -/
 partial def hostLoop
     (epoch : Nat)
     (registry : Registry)
@@ -140,6 +157,10 @@ partial def hostLoop
     processHostLine epoch registry line childIn hostOut stdoutLock
     hostLoop epoch registry hostIn hostOut childIn stdoutLock
 
+/-- Entry point of the pure-Lean demo host: load and verify the trusted
+    config (fail-closed before any stdio is mediated), spawn the wrapped
+    server, assemble the kernel registry from the config's deployed sections,
+    then mediate stdin until EOF and return the child's exit code. -/
 def main (rawArgs : List String) : IO UInt32 := do
   let parsed ←
     match parseArgs rawArgs with
@@ -175,7 +196,7 @@ def main (rawArgs : List String) : IO UInt32 := do
         [{ kernel := Kernels.consensusKernel
            config := cfg
            stateRef := consensusStateRef
-           gather := gatherVotes cfg }]
+           gather := fun _ => gatherVotes cfg }]
     | none => []
   let convergenceStateRef ← IO.mkRef Kernels.convergenceKernel.init
   let convergenceEntries : Registry :=
@@ -194,7 +215,7 @@ def main (rawArgs : List String) : IO UInt32 := do
           [{ kernel := Kernels.calibrationKernel
              config := cfg
              stateRef := calibrationStateRef
-             gather := gatherForecasts cfg }]
+             gather := fun _ => gatherForecasts cfg }]
         else []
     | none => []
   let linearStateRef ← IO.mkRef Kernels.linearKernel.init
@@ -205,7 +226,7 @@ def main (rawArgs : List String) : IO UInt32 := do
         [{ kernel := Kernels.linearKernel
            config := cfg
            stateRef := linearStateRef
-           gather := gatherGrants cfg linearSeenRef }]
+           gather := fun _ => gatherGrants cfg linearSeenRef }]
     | none => []
   let budgetStateRef ← IO.mkRef Kernels.budgetKernel.init
   let budgetEntries : Registry :=
@@ -219,7 +240,7 @@ def main (rawArgs : List String) : IO UInt32 := do
     { kernel := Kernels.safetyKernel
       config := config.safety
       stateRef := safetyStateRef
-      gather := gatherSafetyEvidence config.safety approvalSeenRef },
+      gather := fun _ => gatherSafetyEvidence config.safety approvalSeenRef },
     { kernel := Kernels.temporalKernel
       config := config.temporal
       stateRef := temporalStateRef
@@ -237,5 +258,6 @@ def main (rawArgs : List String) : IO UInt32 := do
 
 end Host
 
+/-- Executable entry point; defers to `Host.main`. -/
 def main (args : List String) : IO UInt32 :=
   Host.main args

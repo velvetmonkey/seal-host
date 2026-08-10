@@ -23,13 +23,22 @@ open Seal.JsonUtil
     kernel. `safety` is the V1 policy shape (kernel S); `temporal` is the LTL
     safety-policy list (kernel T), absent section = no temporal constraints. -/
 structure TrustedConfig where
+  /-- Config epoch, carried inside the signed payload (≥ 1 enforced at load)
+      and stamped into every audit line. -/
   epoch : Nat
+  /-- The V1 safety policy (kernel S). -/
   safety : Seal.Policy
+  /-- LTL safety policies (kernel T); empty list = no temporal constraints. -/
   temporal : List Kernels.TemporalPolicy
+  /-- Quorum-approval config (kernel C); `none` = kernel not deployed. -/
   consensus : Option Kernels.ConsensusConfig
+  /-- CRDT convergence config (kernel V). -/
   convergence : Kernels.ConvergenceConfig
+  /-- Forecast-calibration config (kernel K); `none` = kernel not deployed. -/
   calibration : Option Kernels.CalibrationConfig
+  /-- Linear-grant config (kernel L); `none` = kernel not deployed. -/
   linear : Option Kernels.LinearConfig
+  /-- Global budget-cap config (kernel B). -/
   budget : Kernels.BudgetConfig
   /-- V2.1: the signed principal key registry + per-principal budgets
       (kernel PB). Defaulted so existing config literals stay valid; the
@@ -283,7 +292,9 @@ def checkTrustedConfig (publicKey payload signature : String) :
   pure config
 
 /-- Pure envelope check:
-    `{"payload": "<canonical JSON>", "signature": "<ed25519 signature hex>"}`.
+    `{"payload": "<exact compact JSON bytes>", "signature": "<ed25519 signature hex>"}`.
+    The spelling is the signer-defined byte contract, not an RFC 8785/JCS
+    conformance claim.
     The config public key is a startup trust root and is not read from the
     envelope it authenticates. -/
 def checkEnvelope (text publicKey : String) : Except String TrustedConfig := do
