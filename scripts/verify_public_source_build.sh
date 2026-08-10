@@ -7,6 +7,8 @@ set -euo pipefail
 ARCHIVE=${1:?usage: verify_public_source_build.sh PUBLIC_SOURCE_TARBALL}
 ARCHIVE=$(realpath "$ARCHIVE")
 test -f "$ARCHIVE" || { echo "public source archive not found: $ARCHIVE" >&2; exit 1; }
+test -r "$ARCHIVE" || { echo "public source archive is unreadable: $ARCHIVE" >&2; exit 1; }
+test -s "$ARCHIVE" || { echo "public source archive is empty: $ARCHIVE" >&2; exit 1; }
 for command in git lake cargo python3 tar; do
   command -v "$command" >/dev/null || { echo "missing clean-build prerequisite: $command" >&2; exit 1; }
 done
