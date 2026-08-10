@@ -92,6 +92,20 @@ class LeanTestDriverGateTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("missing=['second_test']", result.stderr)
 
+    def test_partial_runtime_loop_fails_closed(self) -> None:
+        source = (ROOT / "Test" / "LeanTests.lean").read_text(encoding="utf-8")
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").write_text(
+            source.replace(
+                "for name in testBinaries do",
+                "for name in testBinaries.take 3 do",
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("partial iteration", result.stderr)
+
     def test_source_change_is_the_single_roster_authority(self) -> None:
         self.write_fixture(
             source_children=("replacement_test",),

@@ -19,6 +19,9 @@ CHILD_ARRAY = re.compile(
     re.DOTALL,
 )
 CHILD_LINE = re.compile(r'\s*"([A-Za-z0-9_-]+)"\s*,?\s*(?:--.*)?')
+FULL_DRIVER_LOOP = re.compile(r"(?m)^\s*for\s+name\s+in\s+testBinaries\s+do\s*$")
+PARTIAL_RUN_GUARD = "if passed.size != expectedTestCount"
+COUNT_MISMATCH_DIAGNOSTIC = "COUNT MISMATCH"
 
 
 def read_children(path: Path) -> tuple[list[str], list[str]]:
@@ -52,10 +55,43 @@ def read_children(path: Path) -> tuple[list[str], list[str]]:
     return children, failures
 
 
+def runtime_driver_failures(path: Path) -> list[str]:
+    """Refuse a driver that can silently execute only a prefix of its roster."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        return [f"cannot read runtime driver {path}: {error}"]
+
+    # The small synthetic fixtures used by the wiring tests contain only the
+    # roster and Lake declarations. Apply these runtime-source checks when the
+    # actual executable driver is present, not to those deliberately minimal
+    # fixtures.
+    if "def main : IO UInt32" not in source:
+        return []
+
+    failures: list[str] = []
+    if FULL_DRIVER_LOOP.search(source) is None:
+        failures.append(
+            "LeanTests driver must iterate the complete testBinaries array; "
+            "partial iteration such as testBinaries.take is forbidden"
+        )
+    if PARTIAL_RUN_GUARD not in source:
+        failures.append(
+            "LeanTests driver must refuse when passed.size differs from "
+            "the literal expectedTestCount"
+        )
+    if COUNT_MISMATCH_DIAGNOSTIC not in source:
+        failures.append(
+            "LeanTests driver must emit COUNT MISMATCH evidence for a partial run"
+        )
+    return failures
+
+
 def check(root: Path) -> list[str]:
     lakefile = root / "lakefile.toml"
     source = root / "Test" / "LeanTests.lean"
     children, failures = read_children(source)
+    failures.extend(runtime_driver_failures(source))
 
     try:
         with lakefile.open("rb") as handle:
