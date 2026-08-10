@@ -38,18 +38,37 @@ exact request.
 - A child MCP server to guard. Anything stdio works; a filesystem or sqlite MCP server
   makes the destructive-call demo obvious.
 
-## 1. Build the host
+## 1. Install and verify the released host
 
-No binary release is currently published. Build from the checkout; on the
-shared development host, have `leanbuild` on `PATH` so Lean work is serialized.
+`v0.1.5` is published. Download every signed subject and verify provenance
+before unpacking or running the host:
 
 ```sh
-time bash scripts/build_all.sh
-export SEAL_BIN="$PWD/rust/target/debug/seal-host-rs"
+mkdir -p .seal/release
+chmod 700 .seal .seal/release
+cd .seal/release
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
+  --pattern release_provenance.py \
+  --pattern SHA256SUMS \
+  --pattern SEAL-RELEASE-PROVENANCE.json \
+  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
+python3 release_provenance.py verify \
+  --release-dir . --release-version "$tag" \
+  --statement SEAL-RELEASE-PROVENANCE.json \
+  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
+cd ../..
 ```
 
-Do not continue unless the build exits zero. [Release provenance](RELEASE-PROVENANCE.md)
-records the verification contract for a future published release.
+Expected verification output: `PASS release provenance: valid signature and 6
+exact subject digests`. Do not unpack or run an artifact if verification fails.
+To build from source instead, use `time bash scripts/build_all.sh` with the
+documented Lean/Rust prerequisites, then set `SEAL_BIN="$PWD/rust/target/debug/seal-host-rs"`.
 
 ## 2. Generate separate signing keypairs
 

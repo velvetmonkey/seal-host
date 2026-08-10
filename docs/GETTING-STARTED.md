@@ -35,10 +35,33 @@ For the source path below:
   `scripts/build_all.sh` uses it automatically when present. On an ordinary
   single-user machine without that wrapper, it uses `lake` directly.
 
-There is no published binary release. The source path below is the fully
-exercised option; do not substitute a local tag for a published artifact.
+`v0.1.5` is published. For the released install path, download all signed
+subjects and verify them before unpacking:
 
-## 1. Build the host from this checkout
+```sh
+mkdir -p .seal/release && cd .seal/release
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
+  --pattern release_provenance.py --pattern SHA256SUMS \
+  --pattern SEAL-RELEASE-PROVENANCE.json \
+  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
+python3 release_provenance.py verify \
+  --release-dir . --release-version "$tag" \
+  --statement SEAL-RELEASE-PROVENANCE.json \
+  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
+cd ../..
+```
+
+The source path below remains fully exercised. Run it only when choosing the
+source alternative; it is not a substitute for provenance verification of a
+release artifact.
+
+## 1. Build the host from this checkout (source alternative)
 
 This is not a quick download: a cold Lean build can take about twenty-one
 minutes through the documented tamper check. The first-verdict timing is
@@ -55,10 +78,12 @@ continue if it exits non-zero. This command serializes Lean work through
 
 ## 2. Stand up a gate and watch it block
 
-Set the checkout and freshly built host paths:
+Set the checkout. If you installed the release above, it already set
+`SEAL_BIN`; if you chose the source alternative, set the source binary path:
 
 ```sh
 export SEAL_REPO="$PWD"
+# Source alternative only:
 export SEAL_BIN="$SEAL_REPO/rust/target/debug/seal-host-rs"
 ```
 

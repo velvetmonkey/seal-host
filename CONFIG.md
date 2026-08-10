@@ -463,16 +463,39 @@ From the `seal-host` checkout:
 
 ```bash
 export SEAL_HOST_ROOT="$PWD"
-time bash scripts/build_all.sh
-export SEAL_BIN="$SEAL_HOST_ROOT/rust/target/debug/seal-host-rs"
+mkdir -p "$PWD/.seal/release"
+chmod 700 "$PWD/.seal" "$PWD/.seal/release"
+cd "$PWD/.seal/release"
+tag=v0.1.5
+gh release download "$tag" --repo velvetmonkey/seal-host \
+  --pattern "seal-host-${tag}-linux-*" \
+  --pattern release_provenance.py --pattern SHA256SUMS \
+  --pattern SEAL-RELEASE-PROVENANCE.json \
+  --pattern SEAL-RELEASE-PROVENANCE.sigstore.json
+python3 release_provenance.py verify \
+  --release-dir . --release-version "$tag" \
+  --statement SEAL-RELEASE-PROVENANCE.json \
+  --bundle SEAL-RELEASE-PROVENANCE.sigstore.json \
+  --certificate-identity "https://github.com/velvetmonkey/seal-host/.github/workflows/release.yml@refs/tags/${tag}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+tar xzf "seal-host-${tag}-linux-x86_64.tar.gz"
+export SEAL_BIN="$PWD/seal-host-${tag}-linux-x86_64/bin/seal-host-rs"
+cd "$SEAL_HOST_ROOT"
 umask 077
 mkdir -p "$PWD/.seal/receipts"
 touch "$PWD/.seal/approval-tokens.ndjson" "$PWD/.seal/unused-approvals.ndjson"
 ```
 
-No binary release is currently published. See
-[Release provenance](docs/RELEASE-PROVENANCE.md) for the contract that applies
-when one exists; `SHA256SUMS` alone is not an authenticity check.
+The verifier must print `PASS release provenance: valid signature and 6 exact
+subject digests`; `SHA256SUMS` alone is not an authenticity check.
+
+For a source build instead of the release install, run the following in place
+of the release block:
+
+```bash
+time bash scripts/build_all.sh
+export SEAL_BIN="$SEAL_HOST_ROOT/rust/target/debug/seal-host-rs"
+```
 
 Generate separate config-signing and approval-signing keys:
 
