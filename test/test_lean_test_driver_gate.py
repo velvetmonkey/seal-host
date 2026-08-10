@@ -80,6 +80,31 @@ class LeanTestDriverGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("exactly matches all 2 children derived", result.stdout)
 
+    def test_absent_driver_source_fails(self) -> None:
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").unlink()
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot read", result.stderr)
+
+    def test_empty_driver_source_fails(self) -> None:
+        self.write_fixture()
+        (self.root / "Test" / "LeanTests.lean").write_text("", encoding="utf-8")
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot find the testBinaries array", result.stderr)
+
+    def test_unreadable_driver_source_fails(self) -> None:
+        self.write_fixture()
+        source = self.root / "Test" / "LeanTests.lean"
+        source.chmod(0)
+        try:
+            result = self.run_gate()
+        finally:
+            source.chmod(0o600)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot read", result.stderr)
+
     def test_unknown_needs_spelling_fails(self) -> None:
         self.write_fixture(needs_field="needs_TYPO")
         result = self.run_gate()
