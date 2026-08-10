@@ -524,6 +524,10 @@ jobs:
           python3 scripts/workflow_pyyaml_gate.py
           python3 test/test_workflow_pyyaml_gate.py -v
           node scripts/claims-drift.mjs
+      - id: control_12
+        continue-on-error: true
+        name: Claims drift guard must detect physical drift and bad inputs
+        run: python3 test/test_claims_drift_guard.py -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
