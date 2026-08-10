@@ -44,6 +44,18 @@ class PublicExportDeterminismTests(unittest.TestCase):
         self.assertIn("scripts/prepare_public_source.py", exporter)
         self.assertIn('moreLinkArgs = ["vendor/mcp-seal/c/build/libsealcrypto.o"]', preparer)
 
+    def test_export_toolchain_provisions_rustfmt_for_the_source_format_gate(self) -> None:
+        workflow = (ROOT / ".github/workflows/public-export.yml").read_text(encoding="utf-8")
+        exporter = (ROOT / "scripts/export_public.sh").read_text(encoding="utf-8")
+        export_job = workflow[workflow.index("  export:") : workflow.index("  clean-source-build:")]
+        rust_setup = export_job[
+            export_job.index("uses: actions-rust-lang/setup-rust-toolchain@v1.17.0") : export_job.index(
+                "      - id: control_06"
+            )
+        ]
+        self.assertIn("cargo fmt --manifest-path", exporter)
+        self.assertIn("components: rustfmt", rust_setup)
+
 
 if __name__ == "__main__":
     unittest.main()
