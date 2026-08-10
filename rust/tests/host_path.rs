@@ -30,8 +30,9 @@ use seal_host_rs::release::{ReadableDurabilityClass, ReleaseStatus, ReleaseStore
 use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -272,17 +273,27 @@ impl Oracle {
         args.push("--".to_string());
         if durable_receiver {
             const DURABLE_RECEIVER: &str = r#"
+import fcntl
 import os
 import sys
 fd = os.open(sys.argv[1], os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+frame_open = False
 try:
     while True:
         chunk = os.read(0, 1)
         if not chunk:
             break
+        if not frame_open:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            frame_open = True
         os.write(fd, chunk)
         os.fsync(fd)
+        if chunk == b"\n":
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            frame_open = False
 finally:
+    if frame_open:
+        fcntl.flock(fd, fcntl.LOCK_UN)
     os.close(fd)
 "#;
             args.extend([
@@ -670,7 +681,7 @@ fn durable_cut_state(o: &Oracle) -> DurableCutState {
         .map(|release| release.operation_id.clone())
         .collect();
     signed_operation_ids.sort();
-    let receiver_bytes = std::fs::read(o.dir.join("receiver.bin")).unwrap_or_default();
+    let receiver_bytes = read_durable_receiver(o.dir.join("receiver.bin"));
     let receiver = if receiver_bytes.is_empty() {
         DurableReceiverState::Empty
     } else if !receiver_bytes.ends_with(b"\n") {
@@ -705,6 +716,30 @@ fn durable_cut_state(o: &Oracle) -> DurableCutState {
         operation_state_entries: store.operation_count().expect("read operation state"),
         receiver,
     }
+}
+
+/// Snapshot only between receiver frames. The receiver intentionally fsyncs
+/// each byte so cut (d) can prove a prefix survived an interrupted transport,
+/// but an in-progress prefix is not yet an observable MCP frame. Its
+/// frame-scoped exclusive lock is released at the newline, or at EOF for a
+/// genuinely partial frame; this shared lock therefore distinguishes those
+/// states without polling or a timing assumption.
+fn read_durable_receiver(path: PathBuf) -> Vec<u8> {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let fd = file.as_raw_fd();
+    assert_eq!(
+        unsafe { libc::flock(fd, libc::LOCK_SH) },
+        0,
+        "lock durable receiver snapshot"
+    );
+    let mut bytes = Vec::new();
+    let read_result = file.read_to_end(&mut bytes);
+    let unlock_result = unsafe { libc::flock(fd, libc::LOCK_UN) };
+    read_result.expect("read locked durable receiver snapshot");
+    assert_eq!(unlock_result, 0, "unlock durable receiver snapshot");
+    bytes
 }
 
 fn print_cut_state(label: &str, state: &DurableCutState) {
