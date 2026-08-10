@@ -6,6 +6,19 @@ set -euo pipefail
 
 DIRECTORY=${1:?usage: verify_public_export.sh SIGNED_EXPORT_DIRECTORY}
 test -d "$DIRECTORY" || { echo "signed export directory not found: $DIRECTORY" >&2; exit 1; }
+test -r "$DIRECTORY" && test -x "$DIRECTORY" || {
+  echo "signed export directory is unreadable: $DIRECTORY" >&2
+  exit 1
+}
+
+shopt -s nullglob
+ARTIFACTS=("$DIRECTORY"/*.tar.gz "$DIRECTORY"/*.cdx.json "$DIRECTORY"/SHA256SUMS)
+test "${#ARTIFACTS[@]}" -ge 3 || {
+  echo "signed export is missing source, SBOM, or checksum artifacts" >&2
+  exit 1
+}
+
+
 COSIGN_BIN=${COSIGN_BIN:?COSIGN_BIN must name the installed cosign binary}
 COSIGN_SHA256=${COSIGN_SHA256:?COSIGN_SHA256 must pin the installed cosign binary}
 case "$COSIGN_BIN" in
@@ -41,13 +54,6 @@ else
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
   )
 fi
-
-shopt -s nullglob
-ARTIFACTS=("$DIRECTORY"/*.tar.gz "$DIRECTORY"/*.cdx.json "$DIRECTORY"/SHA256SUMS)
-test "${#ARTIFACTS[@]}" -ge 3 || {
-  echo "signed export is missing source, SBOM, or checksum artifacts" >&2
-  exit 1
-}
 
 for artifact in "${ARTIFACTS[@]}"; do
   bundle="$artifact.sigstore.json"
