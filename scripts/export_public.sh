@@ -57,7 +57,9 @@ echo "==> assert pins and public topology"
 python3 "$SOURCE/scripts/public_scrub.py" "$SOURCE"
 
 echo "==> generate CycloneDX SBOM"
-(cd "$BUILD/rust" && cargo cyclonedx --format json --override-filename seal-host-rust.cdx)
+(cd "$BUILD/rust" && SOURCE_DATE_EPOCH="$EPOCH" cargo cyclonedx --format json --override-filename seal-host-rust.cdx)
+python3 "$SOURCE/scripts/normalize_public_sbom.py" \
+  "$BUILD/rust/seal-host-rust.cdx.json" "$BUILD/rust"
 install -m 0644 "$BUILD/rust/seal-host-rust.cdx.json" "$SIGNED/seal-host-${REVISION}.cdx.json"
 
 archive() {

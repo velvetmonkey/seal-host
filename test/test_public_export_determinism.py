@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests for cross-run public export determinism."""
 
+import json
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 
@@ -24,6 +27,48 @@ class PublicExportDeterminismTests(unittest.TestCase):
         exporter = (ROOT / "scripts/export_public.sh").read_text(encoding="utf-8")
         self.assertIn('(cd "$SIGNED" && sha256sum *.tar.gz *.cdx.json > SHA256SUMS)', exporter)
         self.assertNotIn('sha256sum "$SIGNED"/', exporter)
+
+    def test_sbom_generation_uses_the_commit_epoch(self) -> None:
+        exporter = (ROOT / "scripts/export_public.sh").read_text(encoding="utf-8")
+        self.assertIn('SOURCE_DATE_EPOCH="$EPOCH" cargo cyclonedx', exporter)
+
+    def test_sbom_normalizer_removes_scratch_paths(self) -> None:
+        scratch_root = "/tmp/private-export/build/rust"
+        document = {
+            "bomFormat": "CycloneDX",
+            "metadata": {"component": {"bom-ref": f"path+file://{scratch_root}#seal-host"}},
+            "dependencies": [{"ref": f"path+file://{scratch_root}#seal-host"}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            sbom = Path(directory) / "sbom.json"
+            sbom.write_text(json.dumps(document), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(ROOT / "scripts/normalize_public_sbom.py"),
+                    str(sbom),
+                    scratch_root,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rendered = sbom.read_text(encoding="utf-8")
+            self.assertNotIn(scratch_root, rendered)
+            self.assertEqual(rendered.count("/seal-host-public-source/rust"), 2)
+
+    def test_export_toolchain_provisions_rustfmt_for_the_source_format_gate(self) -> None:
+        workflow = (ROOT / ".github/workflows/public-export.yml").read_text(encoding="utf-8")
+        exporter = (ROOT / "scripts/export_public.sh").read_text(encoding="utf-8")
+        export_job = workflow[workflow.index("  export:") : workflow.index("  clean-source-build:")]
+        rust_setup = export_job[
+            export_job.index("uses: actions-rust-lang/setup-rust-toolchain@v1.17.0") : export_job.index(
+                "      - id: control_06"
+            )
+        ]
+        self.assertIn("cargo fmt --manifest-path", exporter)
+        self.assertIn("components: rustfmt", rust_setup)
 
     def test_final_tarball_gets_a_separate_credential_isolated_build(self) -> None:
         workflow = (ROOT / ".github/workflows/public-export.yml").read_text(encoding="utf-8")
