@@ -42,7 +42,7 @@ python3 "$SOURCE/scripts/public_scrub.py" "$SOURCE"
 python3 "$BUILD/scripts/public_scrub.py" "$BUILD"
 
 echo "==> test source-only gates"
-(cd "$BUILD" && node scripts/claims-drift.mjs)
+(cd "$BUILD" && node scripts/claims-surface-drift.mjs)
 cargo fmt --manifest-path "$BUILD/rust/Cargo.toml" --check
 bash -n "$BUILD/scripts"/*.sh
 
