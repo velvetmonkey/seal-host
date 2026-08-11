@@ -21,14 +21,6 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v7.0.1
-      - id: control_06
-        continue-on-error: true
-        name: Refuse retired references on every published surface
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python3 scripts/retired_public_reference_gate.py --github-releases
-          python3 -m unittest discover -s test -p 'test_retired_public_reference_gate.py' -v
       # Reserved id control_90: this step is provisioning, not a product
       # control, so it sits out of the per-job numbering. It still reports
       # like every other step -- test/test_ci_control_reporting.py requires
@@ -71,8 +63,10 @@ jobs:
           test "$(git -C .lake/packages/mcp-seal rev-parse HEAD)" = "${dependency[1]}"
       - id: control_05
         continue-on-error: true
-        name: Gate native and wasm export surfaces
-        run: python3 scripts/export_surface_gate.py
+        name: Gate published references and native/wasm export surfaces
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/retired_public_reference_gate.py --github-releases && python3 -m unittest discover -s test -p 'test_retired_public_reference_gate.py' -v && python3 scripts/export_surface_gate.py
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
