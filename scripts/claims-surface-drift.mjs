@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Claims drift guard. Credibility-critical claim text is mirrored across
-// surfaces; this asserts each mirror is a verbatim copy of its canonical block,
-// so drift fails loudly instead of shipping silently.
+// Repository-local claim surface drift guard. Credibility-critical claim text
+// is mirrored across surfaces in this checkout; this asserts each mirror is a
+// verbatim copy of its canonical block, so local drift fails loudly instead of
+// shipping silently. It does not compare claims between repositories.
 //
 // Two guarded blocks:
 //   non-claims (<!-- claims:begin --> ... <!-- claims:end -->)      canonical docs/LIMITATIONS.md
@@ -12,7 +13,7 @@
 // are guarded.
 //
 // Exit codes: 0 in sync · 1 drift (diff printed) · 2 markers missing/malformed.
-// Node only, no dependencies. Run: node scripts/claims-drift.mjs
+// Node only, no dependencies. Run: node scripts/claims-surface-drift.mjs
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,4 +91,4 @@ if (drift) {
   console.error("\nCLAIMS DRIFT — edit the canonical file first, then mirror verbatim.");
   process.exit(1);
 }
-console.log("all claim blocks in sync across all surfaces");
+console.log("all claim blocks in sync across repository-local surfaces");

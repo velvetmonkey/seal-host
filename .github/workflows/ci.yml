@@ -519,11 +519,12 @@ jobs:
       # cannot silently inherit the gap; its own tests prove it goes red.
       - id: control_11
         continue-on-error: true
-        name: Workflow dependencies provision and mirrored credibility claims stay in sync
+        name: Workflow dependencies provision and repository-local claim drift guards pass
         run: |
           python3 scripts/workflow_pyyaml_gate.py
           python3 test/test_workflow_pyyaml_gate.py -v
-          node scripts/claims-drift.mjs
+          node scripts/claims-surface-drift.mjs
+          python3 test/test_claims_surface_drift_guard.py -v
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
