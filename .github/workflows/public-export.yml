@@ -236,7 +236,7 @@ jobs:
           set -e
           printf 'verifier_exit=%s\n%s\n' "$status" "$refusal"
           test "$status" -eq 1
-          grep -F "public source archive is empty: $empty_archive" <<<"$refusal"
+          printf '%s\n' "$refusal" | grep -F "public source archive is empty: $empty_archive"
       - id: control_04
         continue-on-error: true
         uses: actions/download-artifact@v8
