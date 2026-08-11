@@ -2,12 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Refuse a retired product name on any seal-host published surface.
 
-Published surface means every UTF-8 text file tracked by seal-host, because
-``export_public.sh`` archives the tracked tree, plus every body of an already
-published GitHub release. README, ``docs/``, checked-in release-note sources,
-and other reader documents are therefore covered without a hand-maintained
-allow-list. The dependency vendored later by ``prepare_public_source.py`` is
-upstream-authored source and is outside the seal-host surface checked here.
+Published surface means every UTF-8 text file tracked by seal-host, every UTF-8
+text file in the assembled public export (including vendored dependencies),
+and every body of an already published GitHub release. README, ``docs/``,
+checked-in release-note sources, and other reader documents are therefore
+covered without a hand-maintained allow-list.
 """
 
 from __future__ import annotations
@@ -54,6 +53,10 @@ def tracked_files(root: Path) -> list[Path]:
     ]
 
 
+def all_files(root: Path) -> list[Path]:
+    return [path for path in root.rglob("*") if path.is_file()]
+
+
 def text_hits(label: str, text: str) -> list[str]:
     return [
         f"{label}:{line_number}:{line}"
@@ -62,9 +65,10 @@ def text_hits(label: str, text: str) -> list[str]:
     ]
 
 
-def tree_hits(root: Path) -> list[str]:
+def tree_hits(root: Path, include_all_files: bool = False) -> list[str]:
     hits: list[str] = []
-    for path in tracked_files(root):
+    files = all_files(root) if include_all_files else tracked_files(root)
+    for path in files:
         if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in TEXT_NAMES:
             continue
         try:
@@ -113,6 +117,7 @@ def github_release_hits(repository: str, token: str) -> list[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--all-files", action="store_true")
     parser.add_argument("--github-releases", action="store_true")
     return parser.parse_args()
 
@@ -123,7 +128,7 @@ def main() -> None:
     if not root.is_dir():
         fail(f"root is not a directory: {root}")
 
-    hits = tree_hits(root)
+    hits = tree_hits(root, include_all_files=args.all_files)
     if args.github_releases:
         repository = os.environ.get("GITHUB_REPOSITORY", "")
         token = os.environ.get("GITHUB_TOKEN", "")
@@ -137,10 +142,15 @@ def main() -> None:
         for hit in hits:
             print(f"  {hit}", file=sys.stderr)
         raise SystemExit(1)
+    tree_status = (
+        "assembled public-export text"
+        if args.all_files
+        else "tracked public-export text"
+    )
     release_status = (
         " and published GitHub release bodies" if args.github_releases else ""
     )
-    print(f"PASS retired public reference absent from tracked public-export text{release_status}")
+    print(f"PASS retired public reference absent from {tree_status}{release_status}")
 
 
 if __name__ == "__main__":

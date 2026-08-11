@@ -27,9 +27,11 @@ class RetiredPublicReferenceGateTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
         return root
 
-    def run_gate(self, root: Path) -> subprocess.CompletedProcess[str]:
+    def run_gate(
+        self, root: Path, *arguments: str
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(GATE), "--root", str(root)],
+            [sys.executable, str(GATE), "--root", str(root), *arguments],
             text=True,
             capture_output=True,
         )
@@ -57,6 +59,15 @@ class RetiredPublicReferenceGateTests(unittest.TestCase):
         (root / "notes.md").write_text(RETIRED, encoding="utf-8")
         result = self.run_gate(root)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_assembled_export_includes_untracked_vendored_text(self) -> None:
+        root = self.make_repo({"README.md": "clean\n"})
+        vendor = root / "vendor" / "dependency"
+        vendor.mkdir(parents=True)
+        (vendor / "claim.md").write_text(RETIRED, encoding="utf-8")
+        result = self.run_gate(root, "--all-files")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("vendor/dependency/claim.md:1:", result.stderr)
 
 
 if __name__ == "__main__":
