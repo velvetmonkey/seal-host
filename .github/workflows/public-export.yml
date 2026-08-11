@@ -178,7 +178,6 @@ jobs:
         run: python3 scripts/ci_control_aggregate.py
 
   clean-source-build:
-    needs: export
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -223,8 +222,10 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
-          name: signed-public-export-${{ github.sha }}
+          name: signed-public-export-b9196f442c08c22b906f0e18805a7c060480b2cd
           path: ${{ runner.temp }}/public-export
+          github-token: ${{ github.token }}
+          run-id: 31445856516
       - id: control_05
         continue-on-error: true
         name: Build the final source tarball with no private access
