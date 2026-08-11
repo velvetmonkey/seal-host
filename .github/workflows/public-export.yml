@@ -228,6 +228,19 @@ jobs:
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with: { toolchain: "1.96.0", cache: false }
+      - id: control_07
+        continue-on-error: true
+        name: Refuse an empty public source archive
+        run: |
+          empty_archive="$RUNNER_TEMP/empty-source.tar.gz"
+          : > "$empty_archive"
+          set +e
+          refusal=$(scripts/verify_public_source_build.sh "$empty_archive" 2>&1)
+          status=$?
+          set -e
+          printf 'verifier_exit=%s\n%s\n' "$status" "$refusal"
+          test "$status" -eq 1
+          grep -F "public source archive is empty: $empty_archive" <<<"$refusal"
       - id: control_04
         continue-on-error: true
         uses: actions/download-artifact@v8
