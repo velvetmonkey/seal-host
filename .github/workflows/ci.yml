@@ -5,6 +5,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 # Every step in each job reports independently. The final aggregate converts
 # any recorded failure back into a failing job; never remove that aggregate
@@ -20,6 +21,14 @@ jobs:
       - id: control_01
         continue-on-error: true
         uses: actions/checkout@v7.0.1
+      - id: control_06
+        continue-on-error: true
+        name: Refuse retired references on every published surface
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/retired_public_reference_gate.py --github-releases
+          python3 -m unittest discover -s test -p 'test_retired_public_reference_gate.py' -v
       # Reserved id control_90: this step is provisioning, not a product
       # control, so it sits out of the per-job numbering. It still reports
       # like every other step -- test/test_ci_control_reporting.py requires
