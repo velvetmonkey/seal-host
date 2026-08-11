@@ -67,6 +67,19 @@ jobs:
             --bundle "$q0_release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
             --certificate-identity "$identity" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - id: control_04
+        continue-on-error: true
+        name: Hosted probe refuses an empty public source archive
+        run: |
+          empty_archive="$RUNNER_TEMP/empty-source.tar.gz"
+          : > "$empty_archive"
+          set +e
+          refusal=$(scripts/verify_public_source_build.sh "$empty_archive" 2>&1)
+          status=$?
+          set -e
+          printf 'verifier_exit=%s\n%s\n' "$status" "$refusal"
+          test "$status" -eq 1
+          grep -F "public source archive is empty: $empty_archive" <<<"$refusal"
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
         env:
