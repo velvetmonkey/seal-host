@@ -125,6 +125,7 @@ worktree.
    calls without asserting `o1["flowed"]` or `o2["refused"]`. The helper can
    return those flags as false without raising, so the wrapper can claim PASS
    without establishing the approve or deny outcome it advertises.
+
 This is an `INFERRED` source finding, not a measured green execution in this
 lane, because the script was blocked first by the absent debug host. No
 silent-green claim was seen in the three measured PASS scripts:
