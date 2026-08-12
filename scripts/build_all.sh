@@ -33,9 +33,15 @@ fi
 # object through `moreLinkArgs`.  On a fresh checkout `lake build +Ffi` may
 # therefore reach that link before the later FFI stage has had a chance to
 # create it.  Fetch packages first, then build the native prerequisite.
-if [ ! -f .lake/packages/mcp-seal/c/build/libsealcrypto.o ]; then
+if [ -d vendor/mcp-seal ]; then
+  MCP_SEAL_ROOT=vendor/mcp-seal
+else
+  MCP_SEAL_ROOT=.lake/packages/mcp-seal
+fi
+
+if [ ! -f "$MCP_SEAL_ROOT/c/build/libsealcrypto.o" ]; then
   "$LEANBUILD" update
-  bash .lake/packages/mcp-seal/c/build.sh
+  bash "$MCP_SEAL_ROOT/c/build.sh"
 fi
 
 echo "==> lake build +Ffi (runtime import closure)"

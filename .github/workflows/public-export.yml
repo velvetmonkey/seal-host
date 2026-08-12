@@ -91,7 +91,6 @@ jobs:
   export:
     runs-on: ubuntu-24.04
     env:
-      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
       COSIGN_SHA256: c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74
     steps:
       - id: control_01
@@ -109,14 +108,8 @@ jobs:
         uses: ./.github/actions/pyyaml
       - id: control_02
         continue-on-error: true
-        name: Require private build dependency access
-        run: test -n "$SEAL_CI_READ_TOKEN"
-      - id: control_03
-        continue-on-error: true
-        name: Guard Lean test-driver wiring and configure private dependency auth
-        run: |
-          python3 scripts/lean_test_driver_gate.py
-          git config --global url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf "https://github.com/velvetmonkey/"
+        name: Guard Lean test-driver wiring
+        run: python3 scripts/lean_test_driver_gate.py
       - id: control_04
         continue-on-error: true
         uses: leanprover/lean-action@v1.5.0
