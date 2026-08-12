@@ -198,7 +198,6 @@ jobs:
       contents: write
       id-token: write
     env:
-      COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
       COSIGN_SHA256_X86_64: c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74
       COSIGN_SHA256_AARCH64: bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8
     steps:
@@ -253,6 +252,8 @@ jobs:
       - id: control_06
         continue-on-error: true
         name: Verify the installed Sigstore verifier bytes
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
           case "$(uname -m)" in
             x86_64) expected="$COSIGN_SHA256_X86_64" ;;
@@ -285,6 +286,8 @@ jobs:
       - id: attest
         continue-on-error: true
         name: Sign Seal release provenance with the workflow OIDC identity
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
           "$COSIGN_BIN" sign-blob --yes \
             --bundle "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
@@ -293,6 +296,8 @@ jobs:
       - id: control_08
         continue-on-error: true
         name: Refuse publication unless provenance signature and digests verify
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
           python3 scripts/release_provenance.py verify \
             --release-dir "$RUNNER_TEMP/release" \

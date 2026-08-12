@@ -92,7 +92,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
-      COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
       COSIGN_SHA256: c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74
     steps:
       - id: control_01
@@ -160,12 +159,16 @@ jobs:
       - id: control_09
         continue-on-error: true
         name: Run and verify first export
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
           scripts/export_public.sh "$RUNNER_TEMP/public-export-a"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-a"
       - id: control_10
         continue-on-error: true
         name: Run and verify independent second export
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
           scripts/export_public.sh "$RUNNER_TEMP/public-export-b"
           scripts/verify_public_export.sh "$RUNNER_TEMP/public-export-b"
