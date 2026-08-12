@@ -155,12 +155,12 @@ ARCHIVES=()
 CLOSURE_EXEMPT=(Cli calibration-lean crdt-lean)
 
 archive_package_ir() {
-  local pkgdir="$1" force="${2:-0}"
+  local pkgdir="$1"
   pkg="$(basename "$pkgdir")"
   irdir="$pkgdir/.lake/build/ir"
   objs=""
   if [ -d "$irdir" ]; then
-    objs="$(find "$irdir" -name '*.c.o.export' | sort)"
+    objs="$(LC_ALL=C find "$irdir" -name '*.c.o.export' | LC_ALL=C sort)"
   fi
   if [ -z "$objs" ]; then
     for exempt in "${CLOSURE_EXEMPT[@]}"; do
@@ -175,22 +175,14 @@ archive_package_ir() {
     exit 1
   fi
   archive="$TMP/lib_${pkg}.a"
-  rebuild=0
-  if [ "$force" = "1" ] || [ ! -f "$archive" ]; then
-    rebuild=1
-  else
-    newer_object="$(find "$irdir" -name '*.c.o.export' -newer "$archive" -print -quit)"
-    if [ -n "$newer_object" ]; then
-      rebuild=1
-    fi
-  fi
-  if [ "$rebuild" = "1" ]; then
-    rm -f "$archive"
-    # Thin archive built by chunked quick-append (q), then indexed (s) once
-    # at the end — replace-mode chunking silently truncated earlier.
-    printf '%s\0' $objs | xargs -0 ar qT "$archive"
-    ar sT "$archive"
-  fi
+  # Always rebuild: an archive made by an older invocation can have a
+  # different member order (or stale members) while all of its inputs have
+  # older mtimes. Reusing it makes the final link depend on cache history.
+  rm -f "$archive"
+  # Thin archive built by chunked quick-append (q), then indexed (s) once
+  # at the end — replace-mode chunking silently truncated earlier.
+  printf '%s\0' $objs | xargs -0 ar qT "$archive"
+  ar sT "$archive"
   ARCHIVES+=("$archive")
 }
 
@@ -201,13 +193,13 @@ for pkgdir in "$ROOT"/.lake/packages/*/; do
   if [ "$(basename "$pkgdir")" = "mcp-seal" ]; then
     # Git preserves checkout mtimes poorly enough that a newly pinned commit
     # can look older than this thin archive. Never link a stale policy core.
-    archive_package_ir "$pkgdir" 1
+    archive_package_ir "$pkgdir"
   else
     archive_package_ir "$pkgdir"
   fi
 done
 if [ "$MCP_TYPE" = "path" ]; then
-  archive_package_ir "$CRYPTO_ROOT" 1
+  archive_package_ir "$CRYPTO_ROOT"
 fi
 
 # UnicodeBasic ships a HAND-WRITTEN C library (`libunicodeclib.a`), not Lean-IR
@@ -238,7 +230,7 @@ cc -shared -o "$OUT" \
   "${PROJ_OBJS[@]}" \
   -Wl,--start-group "${ARCHIVES[@]}" -Wl,--end-group \
   -L "$LEAN_PREFIX/lib/lean" -lleanshared -lLake_shared \
-  -Wl,-rpath,'$ORIGIN'
+  -Wl,-rpath,"$LEAN_PREFIX/lib/lean"
 
 nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
   echo "FATAL: exports missing" >&2; exit 1; }
