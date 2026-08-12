@@ -228,7 +228,7 @@ test("the canonical PINS door invokes the mcp-seal pin check", () => {
   );
 });
 
-test("the mcp-seal revision is obtained from Lake in a throwaway workspace", () => {
+test("the mcp-seal revision is obtained from Lake against the real package", () => {
   const checker = fs.readFileSync(
     path.join(ROOT, "scripts", "mcp_seal_pin_drift.mjs"),
     "utf8",
@@ -245,17 +245,22 @@ test("the mcp-seal revision is obtained from Lake in a throwaway workspace", () 
   assert.match(
     checker,
     /mkdtempSync\(path\.join\(scratchRoot, "mcp-seal-lake-"\)\)/,
-    "mcp-seal pin checker does not isolate Lake in a throwaway workspace",
-  );
-  assert.match(
-    checker,
-    /fs\.cpSync\(ROOT, inputDir, \{[\s\S]*?recursive:\s*true/,
-    "mcp-seal pin checker does not snapshot the whole package for Lake",
+    "mcp-seal pin checker does not isolate its generated probe files in a throwaway workspace",
   );
   assert.doesNotMatch(
     checker,
-    /copyFileSync\([^\n]*lakefile\.lean/,
-    "mcp-seal pin checker must not add lakefile.lean to a hand-written copy list",
+    /fs\.cpSync\(ROOT/,
+    "mcp-seal pin checker must not substitute a package snapshot for the real package",
+  );
+  assert.match(
+    checker,
+    /"--dir", ROOT,\s*"translate-config", "toml", normalizedConfig/,
+    "mcp-seal revision checker does not ask Lake to load the real package directory",
+  );
+  assert.match(
+    checker,
+    /Lake config presentation guard refuses lakefile\.lean in the TOML-declared seal-host package/,
+    "mcp-seal pin checker does not refuse a Lean lakefile before invoking Lake",
   );
   assert.match(
     checker,
@@ -271,11 +276,6 @@ test("the mcp-seal revision is obtained from Lake in a throwaway workspace", () 
     probe,
     /loadTomlConfig config/,
     "mcp-seal revision probe does not ask Lake to decode the normalized configuration",
-  );
-  assert.match(
-    checker,
-    /Lake config presentation guard found config file\(s\) not presented to Lake/,
-    "mcp-seal pin checker lacks the independent config-presentation guard",
   );
   assert.doesNotMatch(
     checker,

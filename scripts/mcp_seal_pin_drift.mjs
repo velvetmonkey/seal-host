@@ -15,7 +15,7 @@ const BASELINE = path.join(ROOT, "scripts", "mcp_seal_pin_baseline.json");
 const LAKE_REVISION_PROBE = path.join(ROOT, "scripts", "lake_mcp_seal_revision.lean");
 const LAKE_RESULT_PREFIX = "MCP_SEAL_LAKE_RESULT=";
 const LAKE_TIMEOUT_MS = 120_000;
-const SUPPORTED_LAKE_CONFIGS = new Set(["lakefile.lean", "lakefile.toml"]);
+const SUPPORTED_LAKE_CONFIGS = new Set(["lakefile.toml"]);
 
 function lakeConfigCandidates(directory) {
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -24,29 +24,18 @@ function lakeConfigCandidates(directory) {
     .sort();
 }
 
-function guardPresentedLakeConfigs(packageDir) {
+function guardPresentedLakeConfigs() {
   const candidates = lakeConfigCandidates(ROOT);
+  if (candidates.includes("lakefile.lean")) {
+    throw new Error(
+      "Lake config presentation guard refuses lakefile.lean in the TOML-declared seal-host package",
+    );
+  }
   const unexpected = candidates.filter((name) => !SUPPORTED_LAKE_CONFIGS.has(name));
   if (unexpected.length > 0) {
     throw new Error(
       `Lake config presentation guard rejected unsupported config candidate(s): ${unexpected.join(", ")}`,
     );
-  }
-  const copiedCandidates = lakeConfigCandidates(packageDir);
-  const missing = candidates.filter((name) => !copiedCandidates.includes(name));
-  if (missing.length > 0) {
-    throw new Error(
-      `Lake config presentation guard found config file(s) not presented to Lake: ${missing.join(", ")}`,
-    );
-  }
-  for (const name of candidates) {
-    const source = fs.readFileSync(path.join(ROOT, name));
-    const copy = fs.readFileSync(path.join(packageDir, name));
-    if (!source.equals(copy)) {
-      throw new Error(
-        `Lake config presentation guard found a non-identical config snapshot: ${name}`,
-      );
-    }
   }
   return candidates;
 }
@@ -68,20 +57,13 @@ function lakefileRevision() {
   let scratch;
   try {
     scratch = fs.mkdtempSync(path.join(scratchRoot, "mcp-seal-lake-"));
-    const inputDir = path.join(scratch, "input");
-    fs.cpSync(ROOT, inputDir, {
-      recursive: true,
-      dereference: false,
-      verbatimSymlinks: true,
-      preserveTimestamps: true,
-    });
-    const presentedConfigs = guardPresentedLakeConfigs(inputDir);
+    const permittedConfigs = guardPresentedLakeConfigs();
     fs.copyFileSync(path.join(ROOT, "lean-toolchain"), path.join(scratch, "lean-toolchain"));
     fs.writeFileSync(path.join(scratch, "lakefile.toml"), 'name = "mcp-seal-pin-probe"\n');
     const normalizedConfig = path.join(scratch, "normalized-lakefile.toml");
 
     const translation = spawnSync(lakeCommand, [
-      "--dir", inputDir,
+      "--dir", ROOT,
       "translate-config", "toml", normalizedConfig,
     ], {
       cwd: scratch,
@@ -104,7 +86,7 @@ function lakefileRevision() {
     const result = spawnSync(lakeCommand, [
       "--dir", scratch,
       "env", "lean", "--run", LAKE_REVISION_PROBE,
-      inputDir, normalizedConfig,
+      ROOT, normalizedConfig,
     ], {
       cwd: ROOT,
       encoding: "utf8",
@@ -137,8 +119,8 @@ function lakefileRevision() {
     if (!Array.isArray(dependencies) || typeof chosenConfig !== "string") {
       throw new Error("Lake returned a malformed mcp-seal dependency result");
     }
-    if (!presentedConfigs.includes(chosenConfig)) {
-      throw new Error(`Lake chose a config file not present in the verified snapshot: ${chosenConfig}`);
+    if (!permittedConfigs.includes(chosenConfig)) {
+      throw new Error(`Lake chose a config file not permitted by the presentation guard: ${chosenConfig}`);
     }
     if (dependencies.length === 0) {
       throw new Error(`Lake resolved no mcp-seal requirement in ${chosenConfig}`);
