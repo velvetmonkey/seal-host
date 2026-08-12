@@ -3,8 +3,9 @@
 // Fail-closed three-way check for the mcp-seal source pin.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -12,7 +13,9 @@ const LAKEFILE = path.join(ROOT, "lakefile.toml");
 const MANIFEST = path.join(ROOT, "lake-manifest.json");
 const CHECKOUT = path.join(ROOT, ".lake", "packages", "mcp-seal");
 const BASELINE = path.join(ROOT, "scripts", "mcp_seal_pin_baseline.json");
-const TOML_REQUIRE_PARSER = path.join(ROOT, "scripts", "parse_lake_requirements.py");
+const LAKE_REVISION_PROBE = path.join(ROOT, "scripts", "lake_mcp_seal_revision.lean");
+const LAKE_RESULT_PREFIX = "MCP_SEAL_LAKE_RESULT=";
+const LAKE_TIMEOUT_MS = 120_000;
 
 function expectedRevision() {
   const baseline = JSON.parse(fs.readFileSync(BASELINE, "utf8"));
@@ -23,25 +26,74 @@ function expectedRevision() {
 }
 
 function lakefileRevision() {
-  let requirements;
+  const configuredLake = process.env.MCP_SEAL_LAKE_COMMAND;
+  const localBuildWrapper = "/home/monkey/bin/leanbuild";
+  const lakeCommand = configuredLake || (fs.existsSync(localBuildWrapper) ? localBuildWrapper : "lake");
+  const preferredScratchRoot = "/home/monkey/scratch";
+  const scratchRoot = fs.existsSync(preferredScratchRoot) ? preferredScratchRoot : os.tmpdir();
+  let scratch;
   try {
-    requirements = JSON.parse(execFileSync("python3", [TOML_REQUIRE_PARSER, LAKEFILE], {
+    scratch = fs.mkdtempSync(path.join(scratchRoot, "mcp-seal-lake-"));
+    const inputDir = path.join(scratch, "input");
+    fs.mkdirSync(inputDir);
+    fs.copyFileSync(LAKEFILE, path.join(inputDir, "lakefile.toml"));
+    fs.copyFileSync(path.join(ROOT, "lean-toolchain"), path.join(scratch, "lean-toolchain"));
+    fs.writeFileSync(path.join(scratch, "lakefile.toml"), 'name = "mcp-seal-pin-probe"\n');
+
+    const result = spawnSync(lakeCommand, [
+      "--dir", scratch,
+      "env", "lean", "--run", LAKE_REVISION_PROBE,
+      path.join(inputDir, "lakefile.toml"),
+    ], {
       cwd: ROOT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-    }));
+      timeout: LAKE_TIMEOUT_MS,
+    });
+    if (result.error?.code === "ETIMEDOUT") {
+      throw new Error(`Lake timed out after ${LAKE_TIMEOUT_MS}ms`);
+    }
+    if (result.error) {
+      throw new Error(`Lake could not be invoked (${result.error.message})`);
+    }
+    if (result.status !== 0) {
+      const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
+      throw new Error(`Lake failed while resolving lakefile.toml (${detail})`);
+    }
+    const resultLines = result.stdout.split(/\r?\n/).filter((line) => line.startsWith(LAKE_RESULT_PREFIX));
+    if (resultLines.length !== 1) {
+      throw new Error("Lake returned no unique mcp-seal dependency result");
+    }
+    let decoded;
+    try {
+      decoded = JSON.parse(resultLines[0].slice(LAKE_RESULT_PREFIX.length));
+    } catch (error) {
+      throw new Error(`Lake returned an unparseable mcp-seal dependency result (${error.message})`);
+    }
+    const dependencies = decoded?.dependencies;
+    if (!Array.isArray(dependencies)) {
+      throw new Error("Lake returned a malformed mcp-seal dependency result");
+    }
+    if (dependencies.length === 0) {
+      throw new Error("Lake resolved no mcp-seal requirement in lakefile.toml");
+    }
+    if (dependencies.length > 1) {
+      const blocks = dependencies.map((dependency) =>
+        `block ${dependency.block} name=${JSON.stringify(dependency.name)} revision=${JSON.stringify(dependency.revision)}`,
+      );
+      throw new Error(`Lake resolved duplicate mcp-seal require blocks: ${blocks.join("; ")}`);
+    }
+    const revision = dependencies[0].revision;
+    if (!/^[0-9a-f]{40}$/.test(revision)) {
+      throw new Error("Lake resolved an mcp-seal requirement with a missing or malformed revision");
+    }
+    return revision;
   } catch (error) {
-    const detail = error.stderr?.trim() || error.message;
-    throw new Error(`could not parse lakefile.toml as TOML (${detail})`);
+    if (error.message.startsWith("Lake ")) throw error;
+    throw new Error(`Lake could not resolve lakefile.toml (${error.message})`);
+  } finally {
+    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
   }
-  requirements = requirements.filter((requirement) => requirement.name === "mcp-seal");
-  if (requirements.length === 0 || !requirements[0].rev) {
-    throw new Error("mcp-seal requirement is missing or malformed in lakefile.toml");
-  }
-  if (requirements.length > 1) {
-    throw new Error(`duplicate mcp-seal require blocks in lakefile.toml at lines ${requirements.map((requirement) => requirement.line).join(", ")}`);
-  }
-  return requirements[0].rev;
 }
 
 function manifestRevision() {

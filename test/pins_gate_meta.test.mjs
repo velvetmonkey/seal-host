@@ -228,6 +228,37 @@ test("the canonical PINS door invokes the mcp-seal pin check", () => {
   );
 });
 
+test("the mcp-seal revision is obtained from Lake in a throwaway workspace", () => {
+  const checker = fs.readFileSync(
+    path.join(ROOT, "scripts", "mcp_seal_pin_drift.mjs"),
+    "utf8",
+  );
+  const probe = fs.readFileSync(
+    path.join(ROOT, "scripts", "lake_mcp_seal_revision.lean"),
+    "utf8",
+  );
+  assert.match(
+    checker,
+    /spawnSync\(lakeCommand,\s*\[/,
+    "mcp-seal pin checker does not invoke Lake",
+  );
+  assert.match(
+    checker,
+    /mkdtempSync\(path\.join\(scratchRoot, "mcp-seal-lake-"\)\)/,
+    "mcp-seal pin checker does not isolate Lake in a throwaway workspace",
+  );
+  assert.match(
+    probe,
+    /loadTomlConfig config/,
+    "mcp-seal revision probe does not use Lake's TOML loader",
+  );
+  assert.doesNotMatch(
+    checker,
+    /parse_lake_requirements|tomllib/,
+    "mcp-seal pin checker must not independently parse Lake's TOML",
+  );
+});
+
 test("CI Cargo controls are parsed from id-first workflow steps", () => {
   const steps = parseCiRunSteps();
   assert.equal(
