@@ -214,6 +214,76 @@ test("CI runs the one checker door and this meta-test", () => {
   );
 });
 
+test("the canonical PINS door invokes the mcp-seal pin check", () => {
+  const gate = fs.readFileSync(path.join(ROOT, "scripts", "pins_gate.mjs"), "utf8");
+  assert.match(
+    gate,
+    /import\s*\{\s*checkMcpSealPin\s*\}\s*from\s*["']\.\/mcp_seal_pin_drift\.mjs["'];/,
+    "pins_gate.mjs does not import the mcp-seal pin checker",
+  );
+  assert.match(
+    gate,
+    /if\s*\(\s*checkMcpSealPin\(\)\s*!==\s*0\s*\)\s*\{\s*ctx\.failures\.push\(\s*["']mcp-seal three-way pin check failed["']\s*\);\s*\}/,
+    "pins_gate.mjs is missing the invoked mcp-seal pin checker call",
+  );
+});
+
+test("the mcp-seal revision is obtained from Lake against the real package", () => {
+  const checker = fs.readFileSync(
+    path.join(ROOT, "scripts", "mcp_seal_pin_drift.mjs"),
+    "utf8",
+  );
+  const probe = fs.readFileSync(
+    path.join(ROOT, "scripts", "lake_mcp_seal_revision.lean"),
+    "utf8",
+  );
+  assert.match(
+    checker,
+    /spawnSync\(lakeCommand,\s*\[/,
+    "mcp-seal pin checker does not invoke Lake",
+  );
+  assert.match(
+    checker,
+    /mkdtempSync\(path\.join\(scratchRoot, "mcp-seal-lake-"\)\)/,
+    "mcp-seal pin checker does not isolate its generated probe files in a throwaway workspace",
+  );
+  assert.doesNotMatch(
+    checker,
+    /fs\.cpSync\(ROOT/,
+    "mcp-seal pin checker must not substitute a package snapshot for the real package",
+  );
+  assert.match(
+    checker,
+    /"--dir", ROOT,\s*"translate-config", "toml", normalizedConfig/,
+    "mcp-seal revision checker does not ask Lake to load the real package directory",
+  );
+  assert.match(
+    checker,
+    /Lake config presentation guard refuses lakefile\.lean in the TOML-declared seal-host package/,
+    "mcp-seal pin checker does not refuse a Lean lakefile before invoking Lake",
+  );
+  assert.match(
+    checker,
+    /"translate-config", "toml", normalizedConfig/,
+    "mcp-seal revision checker does not invoke Lake's package-loading translation",
+  );
+  assert.match(
+    probe,
+    /realConfigFile \(pkgDir \/ defaultConfigFile\)/,
+    "mcp-seal revision probe does not ask Lake which config file won",
+  );
+  assert.match(
+    probe,
+    /loadTomlConfig config/,
+    "mcp-seal revision probe does not ask Lake to decode the normalized configuration",
+  );
+  assert.doesNotMatch(
+    checker,
+    /parse_lake_requirements|tomllib/,
+    "mcp-seal pin checker must not independently parse Lake's TOML",
+  );
+});
+
 test("CI Cargo controls are parsed from id-first workflow steps", () => {
   const steps = parseCiRunSteps();
   assert.equal(
