@@ -14,9 +14,9 @@ Release schedule (ARIA Safeguarded AI Track 1 bid commitment):
 | **Proofs** | Full Lean proof *sources* | **At grant kickoff** — held back from the public demo |
 | **Implementation** | Host, registry, harness, Rust FFI, tooling | **Held back** through the commercialisation window |
 
-The public demo (`mcp-seal` × `canary`) shows the gate *behaviour*; it does not
-expose the kernel proofs or the host implementation. Write about them, keep them
-back from the demo.
+The public materials describe the gate *behaviour*; they do not expose the
+kernel proofs or the host implementation. Write about them, keep them back from
+the demo.
 
 **Do NOT push this repository to a public remote pre-award.** A private remote
 (backup, collaboration) is fine.

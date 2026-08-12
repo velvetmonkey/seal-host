@@ -10,7 +10,7 @@ The prescribed environment was exported. The shared FFI directory
 no worktree-local `.lake/build/lib/lean/Ffi.olean`, and no
 `rust/target/debug/seal-host-rs` or `rust/target/release/seal-host-rs`. Other
 known absences were `/home/monkey/wt/seal-assurance-kit`,
-`/home/monkey/wt/canary`, `TELEGRAM_BOT_TOKEN`, `SEAL_TG_ALLOWED`, and any
+`TELEGRAM_BOT_TOKEN`, `SEAL_TG_ALLOWED`, and any
 completed C1-C7 artifact directory containing `events.ndjson`.
 
 Commands that could run were timeboxed at 30 seconds. No command timed out. No
@@ -40,7 +40,7 @@ prerequisite prevented the claimed demo path from running.
 | `golden_path_token.py` | SKIPPED-PREREQ | 2 | `/home/monkey/wt/seal-assurance-kit` at the pinned revision, then the C1-style debug build outputs | MEASURED: `[SKIP] demo: assurance kit missing: /home/monkey/wt/seal-assurance-kit` |
 | `proof_manifest.py` | SKIPPED-PREREQ | — (not started) | Existing worktree-local Lean `.olean` files and the axiom-check executables | INFERRED: `generate_proof_manifest()` runs `lake exe axiom_check` and can run `lake build axiom_check`; starting it would violate this lane's no-Lean-build rule. |
 | `render_trace.py` | SKIPPED-PREREQ | 1 | A generated `events.ndjson` trace | MEASURED with the absent trace path: `FileNotFoundError: [Errno 2] No such file or directory: '/tmp/demorun-measure.yzCg0a/absent-artifact/events.ndjson'` |
-| `run_g7.py` | SKIPPED-PREREQ | 1 | Worktree-local `rust/target/debug/seal-host-rs`; Part B additionally needs a Canary checkout or `CANARY_ROOT` | MEASURED: `AssertionError: build first: cargo build (missing /home/monkey/wt/demorun/rust/target/debug/seal-host-rs)` |
+| `run_g7.py` | SKIPPED-PREREQ | 1 | Worktree-local `rust/target/debug/seal-host-rs` | MEASURED: `AssertionError: build first: cargo build (missing /home/monkey/wt/demorun/rust/target/debug/seal-host-rs)` |
 | `seal_host_shim.py` | SKIPPED-PREREQ | 1 | Worktree-local `rust/target/debug/seal-host-rs` (or an explicit valid `SEAL_HOST_RS`) | MEASURED with a policy and `/bin/true` child: `FileNotFoundError: [Errno 2] No such file or directory` at `os.execv(BIN, ...)`. |
 | `see_the_loop.py` | SKIPPED-PREREQ | 1 | Worktree-local `rust/target/debug/seal-host-rs` | MEASURED: `FileNotFoundError: [Errno 2] No such file or directory: '/home/monkey/wt/demorun/rust/target/debug/seal-host-rs'` |
 | `sqlite_mcp_server.py` | PASS | 0 | A disposable database path and line-framed MCP input | MEASURED: initialized, listed both tools, executed a real SQLite `DELETE` with rowcount 1, and searched schema objects. This is an unmediated tool server component; it does not demonstrate Seal verification. |
@@ -55,9 +55,8 @@ Counts: **3 PASS / 0 FAIL / 18 SKIPPED-PREREQ / 0 NOT-ATTEMPTED = 21**.
 artifact directory; and then requires `doctrine_check.py` to succeed. It does
 not include `golden_path_filesystem.py`.
 
-`demo/run_g7.py` is a separate two-part program. Part A drives the debug Rust
-host and mock MCP server through six denial/approval cases. Part B runs a
-Canary LangGraph pipeline when a Canary checkout exists. Its report target is
+`demo/run_g7.py` is a separate program. It drives the debug Rust host and mock
+MCP server through six denial/approval cases. Its report target is
 `/tmp/seal-host-g7/G7-REPORT.md`; it is not called by `demo/run`.
 
 ## 1. Which demos need a build?
@@ -120,19 +119,15 @@ worktree.
 
 ## 3. Is any demo silently green?
 
-**YES — TWO SOURCE-LEVEL SILENT-GREEN PATHS WERE FOUND.**
+**YES — ONE SOURCE-LEVEL SILENT-GREEN PATH WAS FOUND.**
 
 1. `see_the_loop.py` prints `=== PASS ===` and returns 0 after the two helper
    calls without asserting `o1["flowed"]` or `o2["refused"]`. The helper can
    return those flags as false without raising, so the wrapper can claim PASS
    without establishing the approve or deny outcome it advertises.
-2. `run_g7.py` describes Part B as putting the host in front of a real
-   LangGraph agent, but `part_b()` returns after printing `SKIPPED` when Canary
-   is absent; `main()` then still prints `G7 DEMO PASSED` and returns 0. That is
-   a full-demo green label after omitting one of its two advertised parts.
 
-These are `INFERRED` source findings, not measured green executions in this
-lane, because both scripts were blocked first by the absent debug host. No
+This is an `INFERRED` source finding, not a measured green execution in this
+lane, because the script was blocked first by the absent debug host. No
 silent-green claim was seen in the three measured PASS scripts:
 `approve_cli.py` accurately claimed only that it signed/appended a record,
 `doctrine.py` made no success claim, and `sqlite_mcp_server.py` was driven

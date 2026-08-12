@@ -197,6 +197,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    env:
+      COSIGN_SHA256_X86_64: c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74
+      COSIGN_SHA256_AARCH64: bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8
     steps:
       - id: control_01
         continue-on-error: true
@@ -242,9 +245,30 @@ jobs:
         continue-on-error: true
         name: Install the pinned Sigstore verifier and signer
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with: { cosign-release: v3.0.6 }
+        with:
+          cosign-release: v3.0.6
+          install-dir: $RUNNER_TEMP/seal-cosign
 
       - id: control_06
+        continue-on-error: true
+        name: Verify the installed Sigstore verifier bytes
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
+        run: |
+          case "$(uname -m)" in
+            x86_64) expected="$COSIGN_SHA256_X86_64" ;;
+            aarch64) expected="$COSIGN_SHA256_AARCH64" ;;
+            *) echo "unsupported cosign runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          test -r "$COSIGN_BIN" && test -x "$COSIGN_BIN" || { echo "cosign resolution failed: $COSIGN_BIN" >&2; exit 1; }
+          actual=$(sha256sum "$COSIGN_BIN" | awk '{print $1}')
+          test "$actual" = "$expected" || {
+            echo "cosign verifier digest mismatch: expected $expected, actual $actual" >&2
+            exit 1
+          }
+          echo "COSIGN_SHA256=$expected" >> "$GITHUB_ENV"
+
+      - id: control_07
         continue-on-error: true
         name: Bind every release payload in an honest provenance statement
         run: |
@@ -262,20 +286,26 @@ jobs:
       - id: attest
         continue-on-error: true
         name: Sign Seal release provenance with the workflow OIDC identity
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
-          cosign sign-blob --yes \
+          "$COSIGN_BIN" sign-blob --yes \
             --bundle "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
             "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.json"
 
-      - id: control_07
+      - id: control_08
         continue-on-error: true
         name: Refuse publication unless provenance signature and digests verify
+        env:
+          COSIGN_BIN: ${{ runner.temp }}/seal-cosign/cosign
         run: |
           python3 scripts/release_provenance.py verify \
             --release-dir "$RUNNER_TEMP/release" \
             --release-version "$GITHUB_REF_NAME" \
             --statement "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.json" \
             --bundle "$RUNNER_TEMP/release/SEAL-RELEASE-PROVENANCE.sigstore.json" \
+            --cosign "$COSIGN_BIN" \
+            --cosign-sha256 "$COSIGN_SHA256" \
             --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 

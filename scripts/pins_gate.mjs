@@ -722,6 +722,37 @@ function requireText(ctx, row, text, pattern, claimed, actual) {
   if (!pattern.test(text)) reportMismatch(ctx, row, claimed, actual);
 }
 
+function checkCosignExecutableBytes(ctx, row) {
+  const files = {
+    release: ".github/workflows/release.yml",
+    publicExport: ".github/workflows/public-export.yml",
+    provenance: "scripts/release_provenance.py",
+    exporter: "scripts/export_public.sh",
+    publicVerifier: "scripts/verify_public_export.sh",
+    provenanceTests: "test/test_release_provenance.py",
+  };
+  const text = Object.fromEntries(
+    Object.entries(files).map(([name, relative]) => [
+      name,
+      fs.readFileSync(path.join(ROOT, relative), "utf8"),
+    ]),
+  );
+  const x86 = "c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74";
+  const arm = "bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8";
+  requireText(ctx, row, text.release, new RegExp(x86), "x86_64 cosign digest", "release.yml does not assert the recorded x86_64 digest");
+  requireText(ctx, row, text.release, new RegExp(arm), "aarch64 cosign digest", "release.yml does not assert the recorded aarch64 digest");
+  requireText(ctx, row, text.publicExport, new RegExp(x86), "public-export x86_64 cosign digest", "public-export.yml does not assert the recorded x86_64 digest");
+  for (const [name, source] of Object.entries(text)) {
+    requireText(ctx, row, source, /COSIGN_BIN|--cosign/, `${name} names the established cosign binary`, `${files[name]} has no established cosign binary reference`);
+  }
+  requireText(ctx, row, text.provenance, /--cosign-sha256/,
+    "provenance verification requires --cosign-sha256",
+    `${files.provenance} does not require a cosign digest argument`);
+  requireText(ctx, row, text.provenanceTests, /test_cosign_digest_mismatch_refuses/,
+    "the provenance test physically refuses altered cosign bytes",
+    `${files.provenanceTests} has no executable-byte mismatch test`);
+}
+
 function checkIssuedTimeUnit(ctx, row) {
   const mainFile = path.join(KERNEL, "Seal", "Main.lean");
   const envelopeFile = path.join(KERNEL, "SealV2", "EffectEnvelope.lean");
@@ -1526,6 +1557,7 @@ export const CHECKS = Object.freeze({
   "unicode-duplicate-keys": checkUnicodeDuplicateKeys,
   "effect-message-twin": checkEffectMessageTwin,
   "nonce-consume-ordering": checkNonceConsumeOrdering,
+  "cosign-executable-bytes": checkCosignExecutableBytes,
   "specification-only-inventory": checkSpecificationOnlyInventory,
 });
 

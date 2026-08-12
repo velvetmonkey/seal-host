@@ -5,6 +5,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 # Every step in each job reports independently. The final aggregate converts
 # any recorded failure back into a failing job; never remove that aggregate
@@ -62,8 +63,10 @@ jobs:
           test "$(git -C .lake/packages/mcp-seal rev-parse HEAD)" = "${dependency[1]}"
       - id: control_05
         continue-on-error: true
-        name: Gate native and wasm export surfaces
-        run: python3 scripts/export_surface_gate.py
+        name: Gate published references and native/wasm export surfaces
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/retired_public_reference_gate.py --github-releases && python3 -m unittest discover -s test -p 'test_retired_public_reference_gate.py' -v && python3 -m unittest discover -s test -p 'test_public_export_determinism.py' -v && python3 scripts/export_surface_gate.py
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
