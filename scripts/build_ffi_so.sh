@@ -30,6 +30,10 @@ if [ -z "${LEANBUILD:-}" ]; then
   fi
 fi
 LEAN_PREFIX="$(lean --print-prefix)"
+export SEAL_REPRO_ROOT="$ROOT"
+export SEAL_REPRO_LEAN_PREFIX="$LEAN_PREFIX"
+export LEAN_CC="$ROOT/scripts/reproducible_cc.sh"
+SYSTEM_CC="$ROOT/scripts/reproducible_system_cc.sh"
 MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
 if [ "$MCP_TYPE" = "path" ]; then
   MCP_DIR="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .dir' "$ROOT/lake-manifest.json")"
@@ -221,10 +225,10 @@ else
   exit 1
 fi
 
-cc -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
+"$SYSTEM_CC" -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
 CRYPTO_CFLAGS="-O2 -fPIC -fwrapv -fno-strict-aliasing"
-cc $CRYPTO_CFLAGS -c "$CRYPTO_ROOT/c/tweetnacl.c" -o "$CRYPTO_TWEET_PIC"
-cc $CRYPTO_CFLAGS -I "$LEAN_PREFIX/include" -I "$CRYPTO_ROOT/c" \
+"$SYSTEM_CC" $CRYPTO_CFLAGS -c "$CRYPTO_ROOT/c/tweetnacl.c" -o "$CRYPTO_TWEET_PIC"
+"$SYSTEM_CC" $CRYPTO_CFLAGS -I "$LEAN_PREFIX/include" -I "$CRYPTO_ROOT/c" \
   -c "$CRYPTO_ROOT/c/seal_ed25519.c" -o "$CRYPTO_ED25519_PIC"
 
 cc -shared -o "$OUT" \
@@ -234,7 +238,7 @@ cc -shared -o "$OUT" \
   "${PROJ_OBJS[@]}" \
   -Wl,--start-group "${ARCHIVES[@]}" -Wl,--end-group \
   -L "$LEAN_PREFIX/lib/lean" -lleanshared -lLake_shared \
-  -Wl,-rpath,"$LEAN_PREFIX/lib/lean"
+  -Wl,-rpath,'$ORIGIN'
 
 nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
   echo "FATAL: exports missing" >&2; exit 1; }
@@ -246,7 +250,7 @@ nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
 # false-fail correct artifacts the way a blanket "no undefined symbols"
 # nm check would. Anything still unresolved means a module object was
 # dropped from the link — refuse to call that "built".
-LDD_OUTPUT="$(ldd -r "$OUT" 2>&1)"
+LDD_OUTPUT="$(LD_LIBRARY_PATH="$LEAN_PREFIX/lib/lean${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd -r "$OUT" 2>&1)"
 UNRESOLVED=""
 while IFS= read -r line; do
   if [[ "$line" == *"undefined symbol"* ]]; then

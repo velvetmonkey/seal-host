@@ -27,7 +27,13 @@ fn main() {
 
     for dir in [&ffi_dir, &lean_dir] {
         println!("cargo:rustc-link-search=native={}", dir.display());
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+    }
+    if std::env::var_os("SEAL_REPRODUCIBLE_RELEASE").is_some() {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+    } else {
+        for dir in [&ffi_dir, &lean_dir] {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        }
     }
     // libleanshared.so bundles LLVM libunwind and exports _Unwind_* as global
     // text symbols. In DT_NEEDED order it precedes libgcc_s (which rustc adds
@@ -47,4 +53,5 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=leanshared");
     println!("cargo:rerun-if-env-changed=SEAL_FFI_LIB_DIR");
     println!("cargo:rerun-if-env-changed=LEAN_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=SEAL_REPRODUCIBLE_RELEASE");
 }

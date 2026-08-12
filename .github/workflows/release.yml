@@ -112,8 +112,7 @@ jobs:
         run: scripts/build_ffi_so.sh
       - id: control_11
         continue-on-error: true
-        run: cargo build --locked --release --bins
-        working-directory: rust
+        run: scripts/build_rust_release.sh
       - id: control_12
         continue-on-error: true
         run: python3 scripts/release_policy_gate.py

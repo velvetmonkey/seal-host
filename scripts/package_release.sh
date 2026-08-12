@@ -27,7 +27,8 @@ install -m 0755 "$ROOT/rust/target/release/seal-host-rs" "$STAGE/bin/seal-host-r
 install -m 0644 "$ROOT/.lake/build/lib/libsealffi.so" "$STAGE/lib/libsealffi.so"
 
 # Bundle the Lean runtime closure named by the freshly linked FFI library.
-ldd "$ROOT/.lake/build/lib/libsealffi.so" \
+LD_LIBRARY_PATH="$LEAN_PREFIX/lib/lean${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  ldd "$ROOT/.lake/build/lib/libsealffi.so" \
   | awk -v prefix="$LEAN_PREFIX/lib/lean/" '$3 ~ ("^" prefix) {print $3}' \
   | sort -u \
   | while IFS= read -r library; do
@@ -43,7 +44,6 @@ patchelf --set-rpath '$ORIGIN/../lib' "$STAGE/bin/seal-host-rs"
 for library in "$STAGE"/lib/*.so; do patchelf --set-rpath '$ORIGIN' "$library"; done
 "$ROOT/scripts/runtime_dependency_gate.sh" "$STAGE"
 
-tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-  -C "$OUTPUT" -czf "$OUTPUT/$NAME.tar.gz" "$NAME"
+"$ROOT/scripts/create_release_archive.sh" "$STAGE" "$OUTPUT/$NAME.tar.gz"
 sha256sum "$OUTPUT/$NAME.tar.gz" > "$OUTPUT/$NAME.tar.gz.sha256"
 echo "$OUTPUT/$NAME.tar.gz"
