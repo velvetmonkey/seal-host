@@ -214,6 +214,20 @@ test("CI runs the one checker door and this meta-test", () => {
   );
 });
 
+test("the canonical PINS door invokes the mcp-seal pin check", () => {
+  const gate = fs.readFileSync(path.join(ROOT, "scripts", "pins_gate.mjs"), "utf8");
+  assert.match(
+    gate,
+    /import\s*\{\s*checkMcpSealPin\s*\}\s*from\s*["']\.\/mcp_seal_pin_drift\.mjs["'];/,
+    "pins_gate.mjs does not import the mcp-seal pin checker",
+  );
+  assert.match(
+    gate,
+    /if\s*\(\s*checkMcpSealPin\(\)\s*!==\s*0\s*\)\s*\{\s*ctx\.failures\.push\(\s*["']mcp-seal three-way pin check failed["']\s*\);\s*\}/,
+    "pins_gate.mjs is missing the invoked mcp-seal pin checker call",
+  );
+});
+
 test("CI Cargo controls are parsed from id-first workflow steps", () => {
   const steps = parseCiRunSteps();
   assert.equal(

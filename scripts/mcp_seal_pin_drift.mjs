@@ -11,12 +11,31 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LAKEFILE = path.join(ROOT, "lakefile.toml");
 const MANIFEST = path.join(ROOT, "lake-manifest.json");
 const CHECKOUT = path.join(ROOT, ".lake", "packages", "mcp-seal");
+const BASELINE = path.join(ROOT, "scripts", "mcp_seal_pin_baseline.json");
+
+function expectedRevision() {
+  const baseline = JSON.parse(fs.readFileSync(BASELINE, "utf8"));
+  if (!/^[0-9a-f]{40}$/.test(baseline.mcpSealRevision)) {
+    throw new Error("mcp-seal expected revision is missing or malformed in scripts/mcp_seal_pin_baseline.json");
+  }
+  return baseline.mcpSealRevision;
+}
 
 function lakefileRevision() {
   const text = fs.readFileSync(LAKEFILE, "utf8");
-  const block = text.match(/\[\[require\]\]\s*\nname = "mcp-seal"\s*\n[\s\S]*?\nrev = "([0-9a-f]{40})"/);
-  if (!block) throw new Error("mcp-seal requirement is missing or malformed in lakefile.toml");
-  return block[1];
+  const blocks = [...text.matchAll(/\[\[require\]\]([\s\S]*?)(?=\n\[\[require\]\]|\s*$)/g)];
+  const requirements = blocks.map((match) => ({
+    line: text.slice(0, match.index).split("\n").length,
+    name: match[1].match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1],
+    rev: match[1].match(/^\s*rev\s*=\s*"([0-9a-f]{40})"/m)?.[1],
+  })).filter((requirement) => requirement.name === "mcp-seal");
+  if (requirements.length === 0 || !requirements[0].rev) {
+    throw new Error("mcp-seal requirement is missing or malformed in lakefile.toml");
+  }
+  if (requirements.length > 1) {
+    throw new Error(`duplicate mcp-seal require blocks in lakefile.toml at lines ${requirements.map((requirement) => requirement.line).join(", ")}`);
+  }
+  return requirements[0].rev;
 }
 
 function manifestRevision() {
@@ -44,9 +63,11 @@ function checkoutRevision() {
 }
 
 export function checkMcpSealPin() {
+  let expected;
   let lakefile;
   let manifest;
   try {
+    expected = expectedRevision();
     lakefile = lakefileRevision();
     manifest = manifestRevision();
   } catch (error) {
@@ -64,6 +85,7 @@ export function checkMcpSealPin() {
   }
 
   const values = [
+    ["expected pin", expected],
     ["lakefile.toml", lakefile],
     ["lake-manifest.json", manifest],
     [".lake/packages/mcp-seal HEAD", checkout],
@@ -83,7 +105,7 @@ export function checkMcpSealPin() {
     console.error(`mcp-seal pin values: lakefile.toml="${lakefile}" lake-manifest.json="${manifest}" checkout="${checkout}"`);
     return 1;
   }
-  console.log(`mcp-seal pin PASS: lakefile.toml="${lakefile}" lake-manifest.json="${manifest}" checkout="${checkout}"`);
+  console.log(`mcp-seal pin PASS: expected="${expected}" lakefile.toml="${lakefile}" lake-manifest.json="${manifest}" checkout="${checkout}"`);
   return 0;
 }
 

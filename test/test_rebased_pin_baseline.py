@@ -16,7 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # independent facts while publication is pending.
 FLEET_KERNEL_SHA256 = "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657"
 VERIFIED_WASM_SHA256 = "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657"
-SOURCE_KIT_REV = "316d74126b4cb164d501fea21738d6880469bcb4"
+SOURCE_KIT_REV = json.loads(
+    (ROOT / "scripts" / "mcp_seal_pin_baseline.json").read_text(encoding="utf-8")
+)["mcpSealRevision"]
 FLEET_ASSURANCE_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
 GOLDEN_PATH_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
 
