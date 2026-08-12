@@ -12,6 +12,7 @@ const LAKEFILE = path.join(ROOT, "lakefile.toml");
 const MANIFEST = path.join(ROOT, "lake-manifest.json");
 const CHECKOUT = path.join(ROOT, ".lake", "packages", "mcp-seal");
 const BASELINE = path.join(ROOT, "scripts", "mcp_seal_pin_baseline.json");
+const TOML_REQUIRE_PARSER = path.join(ROOT, "scripts", "parse_lake_requirements.py");
 
 function expectedRevision() {
   const baseline = JSON.parse(fs.readFileSync(BASELINE, "utf8"));
@@ -22,13 +23,18 @@ function expectedRevision() {
 }
 
 function lakefileRevision() {
-  const text = fs.readFileSync(LAKEFILE, "utf8");
-  const blocks = [...text.matchAll(/\[\[require\]\]([\s\S]*?)(?=\n\[\[require\]\]|\s*$)/g)];
-  const requirements = blocks.map((match) => ({
-    line: text.slice(0, match.index).split("\n").length,
-    name: match[1].match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1],
-    rev: match[1].match(/^\s*rev\s*=\s*"([0-9a-f]{40})"/m)?.[1],
-  })).filter((requirement) => requirement.name === "mcp-seal");
+  let requirements;
+  try {
+    requirements = JSON.parse(execFileSync("python3", [TOML_REQUIRE_PARSER, LAKEFILE], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+  } catch (error) {
+    const detail = error.stderr?.trim() || error.message;
+    throw new Error(`could not parse lakefile.toml as TOML (${detail})`);
+  }
+  requirements = requirements.filter((requirement) => requirement.name === "mcp-seal");
   if (requirements.length === 0 || !requirements[0].rev) {
     throw new Error("mcp-seal requirement is missing or malformed in lakefile.toml");
   }
