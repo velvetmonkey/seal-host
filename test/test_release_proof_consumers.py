@@ -119,7 +119,7 @@ class ReleaseProofConsumerTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/public-export.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/verify_public_export.sh", workflow)
         verifier = (ROOT / "scripts/verify_public_export.sh").read_text(encoding="utf-8")
-        self.assertIn("cosign verify-blob", verifier)
+        self.assertIn('"$COSIGN_BIN" verify-blob', verifier)
 
     def test_public_export_rejects_a_tampered_blob(self) -> None:
         verifier = (ROOT / "scripts/verify_public_export.sh").read_text(encoding="utf-8")
@@ -128,7 +128,7 @@ class ReleaseProofConsumerTests(unittest.TestCase):
     def test_release_signs_and_verifies_seal_provenance(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("id: attest", workflow)
-        self.assertIn("cosign sign-blob", workflow)
+        self.assertIn('"$COSIGN_BIN" sign-blob', workflow)
         self.assertIn("scripts/release_provenance.py create", workflow)
         self.assertIn("scripts/release_provenance.py verify", workflow)
         self.assertIn("SEAL-RELEASE-PROVENANCE.json", workflow)
