@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
+# The release path has a single ordering policy, independent of the caller's
+# locale. This also covers the standalone packaging invocation.
+export LC_ALL=C
+
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
   SCRIPT_DIR=.
@@ -41,7 +45,9 @@ install -m 0644 "$ROOT/NOTICE" "$STAGE/licenses/NOTICE"
 install -m 0644 "$LEAN_PREFIX/LICENSE" "$STAGE/licenses/LEAN-LICENSE"
 cp -R "$LEAN_PREFIX/LICENSES" "$STAGE/licenses/LEAN-THIRD-PARTY-LICENSES"
 patchelf --set-rpath '$ORIGIN/../lib' "$STAGE/bin/seal-host-rs"
-for library in "$STAGE"/lib/*.so; do patchelf --set-rpath '$ORIGIN' "$library"; done
+LIBRARIES=("$STAGE"/lib/*.so)
+mapfile -t LIBRARIES < <(printf '%s\n' "${LIBRARIES[@]}" | sort)
+for library in "${LIBRARIES[@]}"; do patchelf --set-rpath '$ORIGIN' "$library"; done
 "$ROOT/scripts/runtime_dependency_gate.sh" "$STAGE"
 
 "$ROOT/scripts/create_release_archive.sh" "$STAGE" "$OUTPUT/$NAME.tar.gz"

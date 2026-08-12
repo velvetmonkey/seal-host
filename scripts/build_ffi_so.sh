@@ -9,6 +9,11 @@
 # libleanrt.a cannot enter a shared object).
 set -euo pipefail
 
+# Every filesystem-derived list below is sorted under this release policy.
+# Keep this explicit at the script boundary so callers cannot change archive
+# or linker input order with LANG/LC_* settings.
+export LC_ALL=C
+
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
   SCRIPT_DIR=.
@@ -158,11 +163,13 @@ archive_package_ir() {
   local pkgdir="$1"
   pkg="$(basename "$pkgdir")"
   irdir="$pkgdir/.lake/build/ir"
-  objs=""
+  objs=()
   if [ -d "$irdir" ]; then
-    objs="$(LC_ALL=C find "$irdir" -name '*.c.o.export' | LC_ALL=C sort)"
+    mapfile -d '' -t objs < <(
+      find "$irdir" -name '*.c.o.export' -print0 | sort -z
+    )
   fi
-  if [ -z "$objs" ]; then
+  if [ "${#objs[@]}" -eq 0 ]; then
     for exempt in "${CLOSURE_EXEMPT[@]}"; do
       [ "$pkg" = "$exempt" ] && return 0
     done
@@ -181,12 +188,14 @@ archive_package_ir() {
   rm -f "$archive"
   # Thin archive built by chunked quick-append (q), then indexed (s) once
   # at the end — replace-mode chunking silently truncated earlier.
-  printf '%s\0' $objs | xargs -0 ar qT "$archive"
+  printf '%s\0' "${objs[@]}" | xargs -0 ar qT "$archive"
   ar sT "$archive"
   ARCHIVES+=("$archive")
 }
 
-for pkgdir in "$ROOT"/.lake/packages/*/; do
+PACKAGE_DIRS=("$ROOT"/.lake/packages/*/)
+mapfile -t PACKAGE_DIRS < <(printf '%s\n' "${PACKAGE_DIRS[@]}" | sort)
+for pkgdir in "${PACKAGE_DIRS[@]}"; do
   if [ "$MCP_TYPE" = "path" ] && [ "$(basename "$pkgdir")" = "mcp-seal" ]; then
     continue
   fi

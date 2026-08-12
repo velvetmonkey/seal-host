@@ -3,6 +3,10 @@
 # Build the Rust release binaries with checkout-independent embedded paths.
 set -euo pipefail
 
+# Cargo is the final release compiler; keep its environment aligned with the
+# deterministic filesystem and linker-input policy used by the native build.
+export LC_ALL=C
+
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
   SCRIPT_DIR=.

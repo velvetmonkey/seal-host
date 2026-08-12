@@ -3,6 +3,10 @@
 # Create a tar.gz whose bytes do not depend on filesystem metadata or traversal.
 set -euo pipefail
 
+# Keep all filesystem traversal and archive metadata decisions under the
+# release locale, even when this helper is invoked directly.
+export LC_ALL=C
+
 STAGE=${1:?usage: create_release_archive.sh STAGE ARCHIVE}
 ARCHIVE=${2:?usage: create_release_archive.sh STAGE ARCHIVE}
 test -d "$STAGE" || { echo "release stage is not a directory: $STAGE" >&2; exit 1; }
