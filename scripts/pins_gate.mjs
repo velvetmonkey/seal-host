@@ -16,6 +16,7 @@ import {
   GATED_SECTIONS,
   OUT_OF_SCOPE_ROWS,
 } from "./pins_gate_rows.mjs";
+import { checkMcpSealPin } from "./mcp_seal_pin_drift.mjs";
 
 export const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1571,6 +1572,9 @@ export function runGate() {
     specificationOnlyCount: 0,
     ciRunStepCount: ciRunSteps.length,
   };
+  if (checkMcpSealPin() !== 0) {
+    ctx.failures.push("mcp-seal three-way pin check failed");
+  }
   const ciFloorFailure = ciRunStepFloorFailure(ciRunSteps.length);
   if (ciFloorFailure) ctx.failures.push(ciFloorFailure);
 
