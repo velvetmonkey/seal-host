@@ -109,12 +109,16 @@ class CiControlReportingTests(unittest.TestCase):
             ),
         }
         for workflow in WORKFLOWS:
-            if workflow.name not in expected:
-                continue
-            text = workflow.read_text(encoding="utf-8")
-            for required in expected[workflow.name]:
-                with self.subTest(workflow=workflow.name, required=required):
-                    self.assertIn(required, text)
+            self.assertIn(
+                workflow.name,
+                {*expected, "public-export.yml"},
+                f"undeclared workflow in private access gate expectations: {workflow.name}",
+            )
+            if workflow.name in expected:
+                text = workflow.read_text(encoding="utf-8")
+                for required in expected[workflow.name]:
+                    with self.subTest(workflow=workflow.name, required=required):
+                        self.assertIn(required, text)
 
     def test_release_build_reports_after_fleet_failure_but_publish_stays_gated(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
