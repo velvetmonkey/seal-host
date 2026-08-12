@@ -123,7 +123,10 @@ jobs:
       - id: control_05
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
-        with: { toolchain: "1.96.0", cache: false }
+        with:
+          toolchain: "1.96.0"
+          components: rustfmt
+          cache: false
       - id: control_06
         continue-on-error: true
         uses: actions/setup-node@v7.0.0
