@@ -89,6 +89,13 @@ class PublicExportDeterminismTests(unittest.TestCase):
         self.assertIn("scripts/prepare_public_source.py", exporter)
         self.assertIn('moreLinkArgs = ["vendor/mcp-seal/c/build/libsealcrypto.o"]', preparer)
 
+    def test_export_removes_retired_upstream_docs_then_gates_assembled_tree(self) -> None:
+        exporter = (ROOT / "scripts" / "export_public.sh").read_text(encoding="utf-8")
+        preparer = (ROOT / "scripts" / "prepare_public_source.py").read_text(encoding="utf-8")
+        self.assertIn('("ASSURANCE_CASE.md", "ROADMAP_ARIA_TA2.md")', preparer)
+        self.assertIn("retired_public_reference_gate.py", exporter)
+        self.assertIn('--root "$SOURCE" --all-files', exporter)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,6 +91,15 @@ def main() -> None:
     if archive_status != 0 or extract.returncode != 0:
         fail(f"could not archive pinned mcp-seal revision {revision}")
 
+    # These planning/assurance documents describe a retired integration and
+    # are not part of the vendored package's build. Do not publish stale claims
+    # merely because the buildable source dependency is pinned to an older tree.
+    for relative in ("ASSURANCE_CASE.md", "ROADMAP_ARIA_TA2.md"):
+        obsolete = vendor / relative
+        if not obsolete.is_file():
+            fail(f"expected obsolete vendored document is absent: {obsolete}")
+        obsolete.unlink()
+
     rewrite_lakefile(source / "lakefile.toml", revision)
     package.clear()
     package.update(

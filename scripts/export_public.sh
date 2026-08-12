@@ -35,6 +35,8 @@ git -C "$ROOT" archive "$REVISION" | tar -xf - -C "$SOURCE"
 test -d "$ROOT/.lake/packages/mcp-seal" || (cd "$ROOT" && lake update)
 python3 "$SOURCE/scripts/prepare_public_source.py" \
   "$SOURCE" "$ROOT/.lake/packages/mcp-seal"
+python3 "$SOURCE/scripts/retired_public_reference_gate.py" \
+  --root "$SOURCE" --all-files
 cp -a "$SOURCE" "$BUILD"
 
 echo "==> scrub"
