@@ -2,9 +2,11 @@
 Copyright (c) 2026 velvetmonkey
 SPDX-License-Identifier: Apache-2.0
 
-Ask Lake's own TOML loader which dependency blocks name `mcp-seal`.
-This deliberately does not parse TOML or decode Lean names independently.
+Ask Lake which configuration file wins and which dependency blocks in Lake's
+normalized TOML name `mcp-seal`. This deliberately does not choose a
+configuration file, parse TOML, or decode Lean names independently.
 -/
+import Lake.Load.Package
 import Lake.Load.Toml
 
 open Lake System
@@ -16,9 +18,12 @@ private def dependencyRevision? (dep : Dependency) : Option String := do
 private def jsonString (value : String) : String :=
   (Lean.toJson value).compress
 
-private def run (input : String) : IO UInt32 := do
-  let configFile := FilePath.mk input
-  let pkgDir := configFile.parent.getD "."
+private def run (packageInput normalizedInput : String) : IO UInt32 := do
+  let pkgDir := FilePath.mk packageInput
+  let chosenConfig ← realConfigFile (pkgDir / defaultConfigFile)
+  let some chosenName := chosenConfig.fileName
+    | IO.eprintln "Lake did not choose a package configuration" *> pure 1
+  let configFile := FilePath.mk normalizedInput
   let config : LoadConfig := {
     lakeEnv := default
     wsDir := pkgDir
@@ -36,11 +41,12 @@ private def run (input : String) : IO UInt32 := do
       match dependencyRevision? dep with
       | some revision => jsonString revision ++ "}"
       | none => "null}"
-  IO.println <| "MCP_SEAL_LAKE_RESULT={\"dependencies\":[" ++
+  IO.println <| "MCP_SEAL_LAKE_RESULT={\"chosenConfig\":" ++
+    jsonString chosenName ++ ",\"dependencies\":[" ++
     String.intercalate "," entries ++ "]}"
   pure 0
 
 def main (args : List String) : IO UInt32 :=
   match args with
-  | [input] => run input
-  | _ => IO.eprintln "usage: lake_mcp_seal_revision <lakefile.toml>" *> pure 2
+  | [packageInput, normalizedInput] => run packageInput normalizedInput
+  | _ => IO.eprintln "usage: lake_mcp_seal_revision <package-directory> <normalized-toml>" *> pure 2

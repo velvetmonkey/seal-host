@@ -248,9 +248,34 @@ test("the mcp-seal revision is obtained from Lake in a throwaway workspace", () 
     "mcp-seal pin checker does not isolate Lake in a throwaway workspace",
   );
   assert.match(
+    checker,
+    /fs\.cpSync\(ROOT, inputDir, \{[\s\S]*?recursive:\s*true/,
+    "mcp-seal pin checker does not snapshot the whole package for Lake",
+  );
+  assert.doesNotMatch(
+    checker,
+    /copyFileSync\([^\n]*lakefile\.lean/,
+    "mcp-seal pin checker must not add lakefile.lean to a hand-written copy list",
+  );
+  assert.match(
+    checker,
+    /"translate-config", "toml", normalizedConfig/,
+    "mcp-seal revision checker does not invoke Lake's package-loading translation",
+  );
+  assert.match(
+    probe,
+    /realConfigFile \(pkgDir \/ defaultConfigFile\)/,
+    "mcp-seal revision probe does not ask Lake which config file won",
+  );
+  assert.match(
     probe,
     /loadTomlConfig config/,
-    "mcp-seal revision probe does not use Lake's TOML loader",
+    "mcp-seal revision probe does not ask Lake to decode the normalized configuration",
+  );
+  assert.match(
+    checker,
+    /Lake config presentation guard found config file\(s\) not presented to Lake/,
+    "mcp-seal pin checker lacks the independent config-presentation guard",
   );
   assert.doesNotMatch(
     checker,
