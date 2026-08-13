@@ -60,7 +60,8 @@ jobs:
         name: Build native Lean test link dependency
         run: |
           set -euo pipefail
-          test -d .lake/packages/mcp-seal || lake update
+          test -d .lake/packages/mcp-seal || \
+            python3 scripts/lean_fetch_outcome.py -- lake update
           bash .lake/packages/mcp-seal/c/build.sh
 
       - id: control_22
@@ -72,7 +73,9 @@ jobs:
           free -m || true
           echo "::endgroup::"
           set +e
-          timeout --signal=TERM --kill-after=30s 2100s python3 scripts/ci_disk_telemetry.py golden-lean-aggregate -- lake test
+          python3 scripts/lean_fetch_outcome.py -- \
+            timeout --signal=TERM --kill-after=30s 2100s \
+            python3 scripts/ci_disk_telemetry.py golden-lean-aggregate -- lake test
           status=$?
           set -e
           echo "::group::resources after aggregate Lean tests"
@@ -98,12 +101,13 @@ jobs:
             exit 0
           fi
           echo "Lean surface changed; rebuilding and enforcing the axiom-clean proof gates."
-          lake exe cache get
-          lake build
-          lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"
+          python3 scripts/lean_fetch_outcome.py -- lake exe cache get
+          python3 scripts/lean_fetch_outcome.py -- lake build
+          python3 scripts/lean_fetch_outcome.py -- \
+            bash -o pipefail -c 'lake exe axiom_check 2>&1 | tee "$RUNNER_TEMP/axioms.txt"'
           ! grep -E 'sorryAx|Lean\.ofReduceBool' "$RUNNER_TEMP/axioms.txt"
-          lake exe host_unit_tests
-          lake exe dx_surface_tests
+          python3 scripts/lean_fetch_outcome.py -- lake exe host_unit_tests
+          python3 scripts/lean_fetch_outcome.py -- lake exe dx_surface_tests
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
@@ -221,7 +225,8 @@ jobs:
             python3 scripts/ci_disk_telemetry.py golden-rust-acceptance -- \
             bash -euo pipefail -c '
               C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
-              ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
+              python3 scripts/lean_fetch_outcome.py -- \
+                ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
               python3 demo/doctrine_check.py "$C1_ARTIFACT"
               python3 demo/render_trace.py "$C1_ARTIFACT/events.ndjson" \
                 --format markdown --output "$C1_ARTIFACT/receipt-strip.regenerated.md"
@@ -254,7 +259,8 @@ jobs:
         run: |
           set -o pipefail
           C2_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c2"
-          ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
+          python3 scripts/lean_fetch_outcome.py -- \
+            ./demo/run c2 --output-dir "$C2_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c2.txt"
           python3 demo/doctrine_check.py "$C2_ARTIFACT"
           python3 demo/render_trace.py "$C2_ARTIFACT/events.ndjson" \
             --format markdown --output "$C2_ARTIFACT/receipt-strip.regenerated.md"
@@ -271,7 +277,8 @@ jobs:
         run: |
           set -o pipefail
           C4_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c4"
-          ./demo/run c4 --output-dir "$C4_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c4.txt"
+          python3 scripts/lean_fetch_outcome.py -- \
+            ./demo/run c4 --output-dir "$C4_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c4.txt"
           python3 demo/doctrine_check.py "$C4_ARTIFACT"
           python3 demo/render_trace.py "$C4_ARTIFACT/events.ndjson" \
             --format markdown --output "$C4_ARTIFACT/receipt-strip.regenerated.md"
@@ -302,7 +309,8 @@ jobs:
         run: |
           set -o pipefail
           C3_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c3"
-          ./demo/run c3 --output-dir "$C3_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c3.txt"
+          python3 scripts/lean_fetch_outcome.py -- \
+            ./demo/run c3 --output-dir "$C3_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c3.txt"
           python3 demo/doctrine_check.py "$C3_ARTIFACT"
           python3 demo/render_trace.py "$C3_ARTIFACT/events.ndjson" \
             --format markdown --output "$C3_ARTIFACT/receipt-strip.regenerated.md"
@@ -354,7 +362,8 @@ jobs:
         run: |
           set -o pipefail
           C5_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c5"
-          ./demo/run c5 --output-dir "$C5_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c5.txt"
+          python3 scripts/lean_fetch_outcome.py -- \
+            ./demo/run c5 --output-dir "$C5_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c5.txt"
           python3 demo/doctrine_check.py "$C5_ARTIFACT"
           python3 demo/render_trace.py "$C5_ARTIFACT/events.ndjson" \
             --format markdown --output "$C5_ARTIFACT/receipt-strip.regenerated.md"
@@ -401,7 +410,8 @@ jobs:
         run: |
           set -o pipefail
           C6_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c6"
-          ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
+          python3 scripts/lean_fetch_outcome.py -- \
+            ./demo/run c6 --output-dir "$C6_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c6.txt"
           python3 demo/doctrine_check.py "$C6_ARTIFACT"
           python3 demo/render_trace.py "$C6_ARTIFACT/events.ndjson" \
             --format markdown --output "$C6_ARTIFACT/receipt-strip.regenerated.md"
@@ -450,7 +460,8 @@ jobs:
         name: Deterministic filesystem S+B acceptance (no model, no operator auth)
         run: |
           set -o pipefail
-          python3 demo/golden_path.py filesystem --deterministic --era 2025 | tee /tmp/golden-path-filesystem.txt
+          python3 scripts/lean_fetch_outcome.py -- \
+            python3 demo/golden_path.py filesystem --deterministic --era 2025 | tee /tmp/golden-path-filesystem.txt
           grep -F "MCP_DEMO_ERA=2025 revision=2025-06-18 entry=initialize" /tmp/golden-path-filesystem.txt
           grep -F "ERA_ATTRIBUTION=2025 declared=2025-06-18 observed=initialize; alternate-entry-count=0" /tmp/golden-path-filesystem.txt
           grep -F "legacy request and receipt carry no 2026 _meta" /tmp/golden-path-filesystem.txt
@@ -477,7 +488,8 @@ jobs:
           grep -F "receipt not called independently verified" /tmp/golden-path-filesystem.txt
           grep -F "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO" /tmp/golden-path-filesystem.txt
           grep -F "operator-untested until run by Ben" /tmp/golden-path-filesystem.txt
-          python3 demo/golden_path.py filesystem --deterministic --era 2026 | tee /tmp/golden-path-filesystem-2026.txt
+          python3 scripts/lean_fetch_outcome.py -- \
+            python3 demo/golden_path.py filesystem --deterministic --era 2026 | tee /tmp/golden-path-filesystem-2026.txt
           grep -F "MCP_DEMO_ERA=2026 revision=2026-07-28 entry=server/discover" /tmp/golden-path-filesystem-2026.txt
           grep -F "ERA_ATTRIBUTION=2026 declared=2026-07-28 observed=server/discover; alternate-entry-count=0" /tmp/golden-path-filesystem-2026.txt
           grep -F "request _meta equals receipt._meta and effect_view.effect._meta" /tmp/golden-path-filesystem-2026.txt
@@ -501,5 +513,5 @@ jobs:
         if: ${{ always() }}
         env:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
-          SEAL_CONTROL_DEPENDENCIES: '{"control_05":["control_11","control_12","control_13","control_14","control_15","control_16","control_17","control_18","control_19"]}'
+          SEAL_CONTROL_DEPENDENCIES: '{"control_05":["control_11","control_12","control_13","control_14","control_15","control_16","control_17","control_18","control_19"],"control_12":["control_13","control_14","control_15","control_16","control_17","control_18","control_19"]}'
         run: python3 scripts/ci_control_aggregate.py

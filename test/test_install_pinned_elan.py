@@ -67,7 +67,9 @@ class InstallPinnedElanTests(unittest.TestCase):
         self.assertIn(
             'SEAL_CONTROL_DEPENDENCIES: \'{"control_05":["control_11",'
             '"control_12","control_13","control_14","control_15","control_16",'
-            '"control_17","control_18","control_19"]}\'',
+            '"control_17","control_18","control_19"],"control_12":["control_13",'
+            '"control_14","control_15","control_16","control_17","control_18",'
+            '"control_19"]}\'',
             workflow,
         )
 

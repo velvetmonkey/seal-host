@@ -68,6 +68,8 @@ STEP_START = re.compile(r"^      -\s+(\S.*)$")
 STEP_KEY = re.compile(r"^        ([A-Za-z0-9_-]+):\s*(.*?)\s*$")
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=", re.S)
 FD_REDIRECT = re.compile(r"\d+(?:>>|>&|<&|>|<)")
+LEAN_FETCH_WRAPPER = ("python3", "scripts/lean_fetch_outcome.py", "--")
+PIPEFAIL_SHELL = ("bash", "-o", "pipefail", "-c")
 
 # RULED by Ben on 2026-08-01. This theorem-bearing module is deliberately not
 # walked by CI because its kernel reduction cost was measured at 6.0 GiB RSS /
@@ -1409,6 +1411,32 @@ def lake_invocations_in(command: ShellCommand, step: WorkflowStep, step_dead: bo
     return [make(target) for target in arguments] if arguments else [make("")]
 
 
+def wrapped_lake_commands(command: ShellCommand) -> tuple[ShellCommand, ...]:
+    """Expose Lake commands behind the one approved fetch-outcome wrapper.
+
+    The prefix is deliberately an exact tuple.  In particular, this does not
+    search arbitrary arguments for ``lake``: a command that does not use the
+    approved wrapper, or whose wrapped command is not Lake, stays invisible to
+    the refuting census and therefore cannot accidentally gain credit.
+    """
+    words = command.words
+    if words[: len(LEAN_FETCH_WRAPPER)] != LEAN_FETCH_WRAPPER:
+        return ()
+    inner = words[len(LEAN_FETCH_WRAPPER) :]
+    if inner and inner[0] == "lake":
+        return (
+            ShellCommand(tuple(inner), command.line, command.conditional, command.dead, command.dead_reason),
+        )
+    if inner[: len(PIPEFAIL_SHELL)] == PIPEFAIL_SHELL and len(inner) == len(PIPEFAIL_SHELL) + 1:
+        nested = analyze_shell(inner[-1])
+        return tuple(
+            ShellCommand(item.words, command.line, command.conditional or item.conditional,
+                          command.dead or item.dead, item.dead_reason or command.dead_reason)
+            for item in nested
+        )
+    return ()
+
+
 def discover_lake_commands(
     steps: tuple[WorkflowStep, ...]
 ) -> tuple[tuple[BuildInvocation, ...], list[str]]:
@@ -1426,6 +1454,8 @@ def discover_lake_commands(
         step_dead = is_statically_false(step.if_expr)
         for command in commands:
             found.extend(lake_invocations_in(command, step, step_dead))
+            for wrapped in wrapped_lake_commands(command):
+                found.extend(lake_invocations_in(wrapped, step, step_dead))
     return tuple(found), errors
 
 

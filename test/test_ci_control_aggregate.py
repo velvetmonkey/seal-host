@@ -380,6 +380,29 @@ class CiControlAggregateTests(unittest.TestCase):
         )
         self.assertNotIn("isolated CI step failed", result.stdout)
 
+    def test_c1_fetch_failure_and_deterministic_dependents_are_unrunnable(self) -> None:
+        steps = full_success_steps("golden-path.yml", "deterministic-shell")
+        reason = "Lean dependency fetch could not run from https://example.invalid/aesop.git"
+        steps["control_12"] = {
+            "outcome": "failure",
+            "conclusion": "success",
+            "outputs": {"unrunnable": "true", "unrunnable-reason": reason},
+        }
+        steps["control_14"] = {"outcome": "failure", "conclusion": "success"}
+        result = self.run_aggregate(
+            steps,
+            workflow="golden-path.yml",
+            job="deterministic-shell",
+            dependencies={"control_12": ["control_14"]},
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("INFRASTRUCTURE: 0 failed, 2 unrunnable", result.stdout)
+        self.assertIn(f"UNRUNNABLE: control_12 — {reason}", result.stdout)
+        self.assertIn(
+            f"UNRUNNABLE: control_14 — blocked by control_12: {reason}",
+            result.stdout,
+        )
+
     def test_real_control_failure_is_not_unrunnable(self) -> None:
         steps = full_success_steps()
         steps["control_01"] = {"outcome": "failure", "conclusion": "success"}
