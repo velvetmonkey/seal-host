@@ -21,6 +21,23 @@ inventory = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = inventory
 SPEC.loader.exec_module(inventory)
 
+WRAPPER_SHAPES = (
+    ("phase telemetry", "python3 scripts/phase_telemetry.py -- lake build", "wrapper script is not enrolled"),
+    ("bare timeout", "timeout 60s lake build", "wrapper executable is not python3"),
+    ("fetch outcome", "python3 scripts/lean_fetch_outcome.py -- lake build", None),
+    (
+        "release telemetry",
+        "python3 scripts/release_performance_telemetry.py --phase probe -- lake build",
+        None,
+    ),
+)
+EXPECTED_WRAPPER_SHAPE_NAMES = {
+    "phase telemetry",
+    "bare timeout",
+    "fetch outcome",
+    "release telemetry",
+}
+
 
 class ProofInventoryTests(unittest.TestCase):
     def make_root(self, directory: str) -> Path:
@@ -546,6 +563,36 @@ class ProofInventoryTests(unittest.TestCase):
                 "shell command position at that step",
                 result.stderr,
             )
+
+    def test_wrapper_position_guard_classifies_all_production_shapes(self) -> None:
+        """Only exact enrolled wrappers may expose a Lake command to credit."""
+        self.assertEqual(len(WRAPPER_SHAPES), 4, "wrapper shape table must exercise four rows")
+        self.assertEqual(
+            {name for name, _, _ in WRAPPER_SHAPES},
+            EXPECTED_WRAPPER_SHAPE_NAMES,
+            "wrapper shape table is missing or renaming a required production shape",
+        )
+        for name, command, refusal_reason in WRAPPER_SHAPES:
+            with self.subTest(shape=name), tempfile.TemporaryDirectory() as directory:
+                root = self.make_root(directory)
+                workflow = root / ".github/workflows/ci.yml"
+                workflow.write_text(
+                    workflow.read_text(encoding="utf-8").replace("run: lake build", f"run: {command}", 1),
+                    encoding="utf-8",
+                )
+                shell_command = inventory.analyze_shell(command)[0]
+                self.assertEqual(inventory.wrapper_refusal_reason(shell_command), refusal_reason)
+                result = self.run_gate(root)
+                if refusal_reason is None:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("verified-invocations=2", result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(
+                        "ci.yml:build:control_a (lake build): declared command is not in "
+                        "shell command position at that step",
+                        result.stderr,
+                    )
 
     def test_manifest_must_explicitly_declare_push_main_scope(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

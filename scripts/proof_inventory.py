@@ -1417,6 +1417,21 @@ def lake_invocations_in(command: ShellCommand, step: WorkflowStep, step_dead: bo
     return [make(target) for target in arguments] if arguments else [make("")]
 
 
+def wrapper_refusal_reason(command: ShellCommand) -> str | None:
+    """Return the first closed-vocabulary reason a wrapper is not admitted."""
+    words = command.words
+    if len(words) < 4:
+        return "wrapper has fewer than four words"
+    if words[0] != "python3":
+        return "wrapper executable is not python3"
+    if words[1] not in APPROVED_WRAPPER_SCRIPTS:
+        return "wrapper script is not enrolled"
+    separators = [index for index, word in enumerate(words[2:], start=2) if word == "--"]
+    if len(separators) != 1:
+        return "wrapper does not have exactly one literal -- separator"
+    return None
+
+
 def wrapped_lake_commands(command: ShellCommand) -> tuple[ShellCommand, ...]:
     """Expose Lake commands behind an enrolled wrapper and literal separator.
 
@@ -1426,11 +1441,9 @@ def wrapped_lake_commands(command: ShellCommand) -> tuple[ShellCommand, ...]:
     refuting census and therefore cannot accidentally gain credit.
     """
     words = command.words
-    if len(words) < 4 or words[0] != "python3" or words[1] not in APPROVED_WRAPPER_SCRIPTS:
+    if wrapper_refusal_reason(command) is not None:
         return ()
     separators = [index for index, word in enumerate(words[2:], start=2) if word == "--"]
-    if len(separators) != 1:
-        return ()
     inner = words[separators[0] + 1 :]
     if inner and inner[0] == "lake":
         return (
