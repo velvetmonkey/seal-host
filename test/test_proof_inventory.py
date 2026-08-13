@@ -295,6 +295,46 @@ class ProofInventoryTests(unittest.TestCase):
             self.assertEqual(found[0].kind, "build")
             self.assertEqual(found[0].target, "")
 
+    def test_exact_fetch_wrapper_exposes_direct_and_pipefail_lake_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.add_step(
+                root,
+                "control_probe",
+                "python3 scripts/lean_fetch_outcome.py -- lake build Host.Planted\n"
+                "python3 scripts/lean_fetch_outcome.py -- bash -o pipefail -c 'lake exe probe'",
+            )
+            found, errors = inventory.discover_lake_commands(inventory.read_workflow_steps(root))
+            self.assertEqual(errors, [])
+            self.assertEqual(
+                {(item.kind, item.target) for item in found if item.step == "control_probe"},
+                {("build", "Host.Planted"), ("exe", "probe")},
+            )
+
+    def test_broken_inner_command_behind_fetch_wrapper_is_not_credited(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.plant_orphan(root)
+            self.add_step(
+                root,
+                "control_probe",
+                "python3 scripts/lean_fetch_outcome.py -- loke build Host.Planted",
+            )
+            self.add_row(
+                root,
+                workflow="ci.yml",
+                job="build",
+                step="control_probe",
+                kind="build",
+                target="Host.Planted",
+                guard="",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("ORPHANED\tHost.Planted", result.stdout)
+            self.assertNotIn("REACHED\tHost.Planted", result.stdout)
+            self.assertIn("declared command is not in shell command position", result.stderr)
+
     # -- the five never-executed constructions, each named, each tested -------
     #
     # Layer one: none of them may grant REACHED, because nothing found in
