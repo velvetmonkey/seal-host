@@ -35,6 +35,7 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # either, because both name the staleness as a COMMIT sha.
 # Full pairs below mirror the machine-readable authority at
 # wasm-spike/verified/pin-history.json and are cross-checked by a regression:
+# 962823b22d179f3354f8b8cf1a7091029a23c715 -> 28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
 # 8946ec2a81e0e3e25b8920a9f7506ff4b37219f9 -> 28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657
 # 193c6be1bf83f9d93f14840f2b928fcb46937cc0 -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
 # 39ae67dab81c6ece2cdf23fcb81eb6cb05f817dd -> 0b5e792500592b56847f70b1e27e47aecdc65023c7c59fd79695102c465f26ec
@@ -44,7 +45,7 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # 0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
 # 6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
 # 0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
-PHASE_B_KIT_REV = "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9"
+PHASE_B_KIT_REV = "962823b22d179f3354f8b8cf1a7091029a23c715"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
 
