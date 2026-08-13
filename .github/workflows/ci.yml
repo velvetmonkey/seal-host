@@ -200,6 +200,10 @@ jobs:
         name: Build exact A2 parser-divergence classification guards
         run: lake build Test.A2DivergenceClassification
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+      - id: control_34
+        continue-on-error: true
+        name: Verify six independent receipt outcomes and profile closure
+        run: node --test test/receipt_verifier.test.mjs
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
