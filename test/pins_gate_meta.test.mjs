@@ -541,6 +541,37 @@ test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   );
 });
 
+test("G2 fresh-artifact documentation matches the live control_31 invocation", () => {
+  const workflow = fs.readFileSync(
+    path.join(ROOT, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const documentation = fs.readFileSync(
+    path.join(ROOT, "docs", "CONFORMANCE.md"),
+    "utf8",
+  );
+  const step = workflow.match(
+    /\n      - id: control_31\n([\s\S]*?)(?=\n      - id: control_\d+)/,
+  );
+  assert.ok(step, "control_31 workflow step is missing or cannot be bounded");
+  const actual = [...new Set(step[1].match(/g2_[a-z0-9_]+/g) ?? [])].sort();
+  const documentedBlock = documentation.match(
+    /<!-- g2-fresh-artifact-tests:begin -->\n([\s\S]*?)<!-- g2-fresh-artifact-tests:end -->/,
+  );
+  assert.ok(
+    documentedBlock,
+    "docs/CONFORMANCE.md must carry the guarded G2 test inventory markers",
+  );
+  const documented = [...documentedBlock[1].matchAll(/`(g2_[a-z0-9_]+)`/g)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(
+    documented,
+    actual,
+    "documented G2 fresh-artifact coverage disagrees with ci.yml control_31",
+  );
+});
+
 test("CI run-step floor fails below its pinned minimum", () => {
   assert.equal(ciRunStepFloorFailure(CI_RUN_STEP_MINIMUM), null);
   assert.match(
