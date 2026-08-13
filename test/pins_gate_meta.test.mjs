@@ -525,9 +525,7 @@ test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   // `control_03`), and one arrives (`build:control_20`, now a literal block so
   // it can tee the axiom report the sorry-axiom grep reads).
   // 14 -> 15: guardwire adds the literal control_31 crash-test block.
-  // 15 -> 16: byte-lock makes control_27 a two-command literal so its
-  // Rust-invoked Lean witness is materialized before the generic Cargo suite.
-  assert.equal(literalRuns.length, 16);
+  assert.equal(literalRuns.length, 15);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),
     "a literal run block collapsed to its YAML scalar header",
@@ -585,10 +583,7 @@ test("CI run-step floor fails below its pinned minimum", () => {
 test("the live Lean witness prerequisites precede the generic Cargo suite", () => {
   const steps = parseCiRunSteps();
   const prerequisite = steps.findIndex(
-    (step) =>
-      step.run ===
-      "lake build SealV2.EffectEnvelope\n" +
-        "scripts/build_rust_test_prereqs.sh\n",
+    (step) => step.run === "lake build SealV2.EffectEnvelope three_artifact_byte_lock",
   );
   const genericSuite = steps.findIndex(
     (step) =>
