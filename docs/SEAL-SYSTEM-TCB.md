@@ -28,8 +28,8 @@ The claim seal makes is exactly this, and nothing wider:
 
 Every qualifier is load-bearing:
 
-- **policy-covered** — only calls the trusted policy identifies as guarded are
-  gated. A call the policy does not cover is out of scope, not "safe"
+- **policy-covered** — calls the trusted policy identifies as guarded and calls
+  it explicitly allows are gated. A call the policy does not cover is out of scope, not "safe"
   (residual: classifier / policy completeness, §4).
 - **unapproved** — an effect with a valid, fresh, target-bound approval is
   *admitted*; seal blocks the *unapproved*, not the approved.
