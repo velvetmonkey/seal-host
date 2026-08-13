@@ -38,7 +38,6 @@ function fatalError(message) {
   fatal = true;
   console.error(message);
 }
-
 function extract(file, begin, end) {
   let text;
   try {
