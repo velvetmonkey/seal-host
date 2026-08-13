@@ -102,13 +102,9 @@ jobs:
         run: python3 scripts/lean_test_driver_gate.py
       - id: control_06
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
       - id: control_07
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update

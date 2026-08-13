@@ -112,12 +112,8 @@ jobs:
         run: python3 scripts/lean_test_driver_gate.py
       - id: control_04
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
       - id: control_13
         continue-on-error: true
         name: Build native Lean test link dependency
@@ -214,12 +210,8 @@ jobs:
         run: python3 scripts/lean_test_driver_gate.py
       - id: control_02
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
       - id: control_03
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
