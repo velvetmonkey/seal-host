@@ -531,6 +531,7 @@ jobs:
         run: |
           python3 scripts/workflow_pyyaml_gate.py
           python3 test/test_workflow_pyyaml_gate.py -v
+          python3 test/test_golden_path_timeouts.py -v
           node scripts/claims-surface-drift.mjs
           python3 test/test_claims_surface_drift_guard.py -v
 
