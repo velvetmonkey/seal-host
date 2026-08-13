@@ -11,6 +11,7 @@ use crate::release::{RecoveryReport, ReleaseInput, ReleaseStatus, ReleaseStore, 
 use crate::{envelope_v23::canonical_json, lean, secure_fs};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -649,6 +650,57 @@ impl AuthorizationDecisionWriter {
 
     pub fn operation_count(&self) -> Result<usize, String> {
         self.release_store.operation_count()
+    }
+
+    /// Read the durable RECORDED receipt index used to finish a two-phase
+    /// approval burn during startup recovery. A match is exact equality of
+    /// `approval.nonce`; malformed receipt state refuses recovery.
+    pub fn recorded_approval_nonces(&self) -> Result<HashSet<String>, String> {
+        let mut nonces = HashSet::new();
+        let entries = std::fs::read_dir(&self.dir)
+            .map_err(|e| format!("cannot read authorization decision directory: {e}"))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|e| format!("cannot read authorization decision entry: {e}"))?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("receipt-") || !name.ends_with(".json") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(|e| {
+                format!(
+                    "authorization decision receipt unreadable at {}: {e}",
+                    path.display()
+                )
+            })?;
+            let value: Value = serde_json::from_slice(&bytes).map_err(|e| {
+                format!(
+                    "authorization decision receipt unreadable at {}: {e}",
+                    path.display()
+                )
+            })?;
+            let Some(approval) = value.get("approval") else {
+                continue;
+            };
+            let Some(nonce) = approval.get("nonce") else {
+                continue;
+            };
+            let nonce = nonce.as_str().ok_or_else(|| {
+                format!(
+                    "authorization decision receipt refused at {}: approval.nonce is not a string",
+                    path.display()
+                )
+            })?;
+            if nonce.is_empty() {
+                return Err(format!(
+                    "authorization decision receipt refused at {}: approval.nonce is empty",
+                    path.display()
+                ));
+            }
+            nonces.insert(nonce.to_owned());
+        }
+        Ok(nonces)
     }
 }
 

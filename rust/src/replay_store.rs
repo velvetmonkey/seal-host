@@ -19,7 +19,7 @@
 
 use crate::secure_fs;
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
@@ -269,6 +269,81 @@ impl SqliteReplayStore {
         }
         secure_fs::validate_private_file(path, "replay database").map_err(ReplayStoreError::new)?;
         Ok(Self { conn })
+    }
+
+    /// Reconcile the durable receipt side of the two-phase burn before A3
+    /// rebuilds its in-memory replay view. A receipt names a hold by exact
+    /// nonce equality. Receipt-backed open holds are committed; every other
+    /// open hold is reclaimed. Missing or malformed hold state refuses startup.
+    pub fn reconcile_recorded(
+        &mut self,
+        recorded_nonces: &HashSet<String>,
+        committed_at_ms: u64,
+    ) -> Result<usize, ReplayStoreError> {
+        let committed_at_ms = to_i64("committed_at", committed_at_ms)?;
+        let tx = self.conn.transaction()?;
+        let mut stmt = tx
+            .prepare(
+                "SELECT nonce, issued_at FROM nonces WHERE committed_at IS NULL ORDER BY nonce",
+            )
+            .map_err(|error| {
+                ReplayStoreError::new(format!(
+                    "replay recovery refused: hold table unreadable: {error}"
+                ))
+            })?;
+        let holds = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                ReplayStoreError::new(format!(
+                    "replay recovery refused: hold table unreadable: {error}"
+                ))
+            })?;
+        drop(stmt);
+        let mut reclaimed = 0;
+        for (nonce, issued_at) in holds {
+            let Some(issued_at) = issued_at else {
+                return Err(ReplayStoreError::new(format!(
+                    "replay recovery refused: hold {nonce} has no issued_at timestamp"
+                )));
+            };
+            if issued_at < 0 {
+                return Err(ReplayStoreError::new(format!(
+                    "replay recovery refused: hold {nonce} has invalid issued_at timestamp"
+                )));
+            }
+            if recorded_nonces.contains(&nonce) {
+                tx.execute(
+                    "UPDATE nonces SET committed_at = ?2
+                     WHERE nonce = ?1 AND committed_at IS NULL",
+                    params![nonce, committed_at_ms],
+                )?;
+            } else {
+                tx.execute(
+                    "DELETE FROM nonces WHERE nonce = ?1 AND committed_at IS NULL",
+                    params![nonce],
+                )?;
+                reclaimed += 1;
+            }
+        }
+        for nonce in recorded_nonces {
+            let present = tx
+                .query_row(
+                    "SELECT 1 FROM nonces WHERE nonce = ?1 LIMIT 1",
+                    params![nonce],
+                    |_| Ok(()),
+                )
+                .optional()?;
+            if present.is_none() {
+                return Err(ReplayStoreError::new(format!(
+                    "replay recovery refused: RECORDED receipt names missing approval hold {nonce}"
+                )));
+            }
+        }
+        tx.commit()?;
+        Ok(reclaimed)
     }
 }
 
@@ -561,6 +636,79 @@ mod tests {
             Some(true),
             "recovery must never un-burn a committed nonce"
         );
+        remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn recovery_commits_receipt_match_and_reclaims_unmatched_hold() {
+        let path = temp_db_path("receipt-reconcile");
+        initialize(&path);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+        assert!(store
+            .reserve_returning_is_new("receipt-backed", 1_000, 10_000)
+            .unwrap());
+        assert!(store
+            .reserve_returning_is_new("crashed", 1_000, 10_000)
+            .unwrap());
+        let recorded = HashSet::from(["receipt-backed".to_string()]);
+        assert_eq!(store.reconcile_recorded(&recorded, 1_500).unwrap(), 1);
+        assert_eq!(store.nonce_state("receipt-backed"), Some(true));
+        assert_eq!(store.nonce_state("crashed"), None);
+        remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn recovery_refuses_missing_timestamp_unreadable_table_and_missing_hold() {
+        let path = temp_db_path("recovery-refusals");
+        secure_fs::ensure_private_file(&path, "test replay database").unwrap();
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nonces (
+                nonce TEXT PRIMARY KEY,
+                issued_at INTEGER,
+                expiry_at INTEGER NOT NULL,
+                committed_at INTEGER
+            );
+            CREATE TABLE replay_store_lineage (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                schema_version INTEGER NOT NULL,
+                namespace_encoding_version INTEGER NOT NULL
+            );
+            INSERT INTO replay_store_lineage VALUES (1, 2, 1);
+            INSERT INTO nonces VALUES ('no-time', NULL, 999999, NULL);",
+        )
+        .unwrap();
+        drop(conn);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+        let error = store
+            .reconcile_recorded(&HashSet::new(), 1_500)
+            .unwrap_err();
+        println!("missing timestamp outcome: {error}");
+        assert!(error
+            .to_string()
+            .contains("hold no-time has no issued_at timestamp"));
+
+        let conn = Connection::open(&path).unwrap();
+        conn.execute("DELETE FROM nonces", []).unwrap();
+        conn.execute("DROP TABLE nonces", []).unwrap();
+        drop(conn);
+        let error = store
+            .reconcile_recorded(&HashSet::new(), 1_500)
+            .unwrap_err();
+        println!("unreadable hold table outcome: {error}");
+        assert!(error.to_string().contains("hold table unreadable"));
+
+        remove_sqlite_files(&path);
+        let path = temp_db_path("missing-receipt-hold");
+        initialize(&path);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+        let error = store
+            .reconcile_recorded(&HashSet::from(["missing".to_string()]), 1_500)
+            .unwrap_err();
+        println!("missing hold outcome: {error}");
+        assert!(error
+            .to_string()
+            .contains("RECORDED receipt names missing approval hold missing"));
         remove_sqlite_files(&path);
     }
 

@@ -10,8 +10,9 @@ G2 two-phase burn (ruled by Ben 2026-08-06) the production order is:
 (`rust/src/replay_store.rs`, WAL + `synchronous=FULL`) before the approval
 reaches Lean; the burn is durably COMMITTED (`A3Filter::commit_nonce`) only
 at RECORDED — after the authorization-decision receipt persists — and
-strictly before the child forward; startup recovery reclaims holds that
-never reached RECORDED. This module makes the durability argument itself
+strictly before the child forward; startup recovery commits a hold only when
+an exact matching RECORDED receipt nonce exists, reclaims holds with no such
+receipt, and refuses malformed or missing hold state. This module makes the durability argument itself
 formal: it models the ORDER of store-write, acknowledgement and process
 termination — not SQLite — states the property the claim needs, and proves
 exactly which hypotheses the storage layer must supply. In this model
