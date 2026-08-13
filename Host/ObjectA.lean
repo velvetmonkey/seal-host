@@ -20,8 +20,8 @@ before `Lean.Json.parse`. Object A additionally sends the exact judged request
 through the pinned kernel's `SealV2.Effect.deriveEffect`; it defines no
 competing request canonicaliser.
 
-The separate `Host.ThreeArtifactByteLock` module now supplies the
-three-artifact byte-lock. This module itself does not
+The `Host.ThreeArtifactByteLock` namespace supplies the three-artifact
+byte-lock. The Object A and Approval Statement gates themselves do not
 compare an approval's `requestStatementRef` with an Object A, nor either
 statement with Object B, and it does not prove deployment predicates faithful.
 

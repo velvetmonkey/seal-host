@@ -46,7 +46,9 @@ import Consensus.Checker
 import Calibration.CondHoeffding
 
 -- The three-artifact byte lock is imported by `Host`; keep its two public
--- byte-identity theorems visible to the maintained axiom census.
+-- byte-identity theorems visible to the maintained axiom census. Their proofs
+-- compile in the already-reached Host.ObjectB unit, avoiding a topology-only
+-- theorem-module count change while their namespace remains format-specific.
 #print axioms Host.ThreeArtifactByteLock.decode_encode_exact_content
 #print axioms Host.ThreeArtifactByteLock.one_logical_content_one_encoding
 

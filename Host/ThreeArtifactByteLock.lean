@@ -70,12 +70,6 @@ def decodeBlob : Bytes → Option (Bytes × Bytes)
       | [] => none
   | _ => none
 
-theorem decodeBlob_encodeBlob_append (bytes suffix : Bytes) :
-    decodeBlob (encodeBlob bytes ++ suffix) = some (bytes, suffix) := by
-  induction bytes with
-  | nil => simp [encodeBlob, decodeBlob]
-  | cons byte rest ih => simp [encodeBlob, decodeBlob, ih]
-
 def releaseTag : ReleaseStatus → UInt8
   | .pending => 4
   | .unknown => 5
@@ -89,10 +83,6 @@ def decodeRelease : Bytes → Option (ReleaseStatus × Bytes)
   | 7 :: rest => some (.notApplicable, rest)
   | _ => none
 
-theorem decodeRelease_releaseTag (status : ReleaseStatus) (suffix : Bytes) :
-    decodeRelease (releaseTag status :: suffix) = some (status, suffix) := by
-  cases status <;> rfl
-
 def durabilityTag : DurabilityClass → UInt8
   | .assertedLocalFsync => 8
   | .witnessedExternal => 9
@@ -103,12 +93,6 @@ def decodeDurability : Bytes → Option (DurabilityClass × Bytes)
   | 9 :: rest => some (.witnessedExternal, rest)
   | 10 :: rest => some (.unknown, rest)
   | _ => none
-
-theorem decodeDurability_durabilityTag
-    (durability : DurabilityClass) (suffix : Bytes) :
-    decodeDurability (durabilityTag durability :: suffix) =
-      some (durability, suffix) := by
-  cases durability <;> rfl
 
 def encodeApproval : Option Bytes → Bytes
   | none => [2]
@@ -121,24 +105,11 @@ def decodeApproval : Bytes → Option (Option Bytes × Bytes)
       pure (some bytes, suffix)
   | _ => none
 
-theorem decodeApproval_encodeApproval_append
-    (approval : Option Bytes) (suffix : Bytes) :
-    decodeApproval (encodeApproval approval ++ suffix) = some (approval, suffix) := by
-  cases approval with
-  | none => simp [encodeApproval, decodeApproval]
-  | some bytes => simp [encodeApproval, decodeApproval, decodeBlob_encodeBlob_append]
-
 def consumePrefix : Bytes → Bytes → Option Bytes
   | [], input => some input
   | expected :: expectedRest, actual :: actualRest =>
       if expected = actual then consumePrefix expectedRest actualRest else none
   | _ :: _, [] => none
-
-theorem consumePrefix_self_append (expectedPrefix suffix : Bytes) :
-    consumePrefix expectedPrefix (expectedPrefix ++ suffix) = some suffix := by
-  induction expectedPrefix with
-  | nil => rfl
-  | cons byte rest ih => simp [consumePrefix, ih]
 
 def encode (content : Content) : Bytes :=
   domainTag ++
@@ -166,19 +137,5 @@ def decode (input : Bytes) : Option Content := do
       durabilityClass
     }
   else none
-
-/-- Encoding followed by verification recovers exactly the logical content. -/
-theorem decode_encode_exact_content (content : Content) :
-    decode (encode content) = some content := by
-  cases content
-  simp [decode, encode, consumePrefix_self_append,
-    decodeBlob_encodeBlob_append, decodeApproval_encodeApproval_append,
-    decodeRelease_releaseTag, decodeDurability_durabilityTag]
-
-/-- A byte string emitted by this encoder cannot name two logical contents. -/
-theorem one_logical_content_one_encoding {left right : Content}
-    (sameBytes : encode left = encode right) : left = right := by
-  have decoded : decode (encode left) = decode (encode right) := congrArg decode sameBytes
-  simpa [decode_encode_exact_content] using decoded
 
 end Host.ThreeArtifactByteLock
