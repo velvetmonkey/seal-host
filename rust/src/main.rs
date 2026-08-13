@@ -1318,6 +1318,13 @@ fn run() -> i32 {
             return 4;
         }
     };
+    let recorded_approval_nonces = match authorization_decisions.recorded_approval_nonces() {
+        Ok(nonces) => nonces,
+        Err(error) => {
+            eprintln!("trusted config rejected: authorization recovery: {error}");
+            return 3;
+        }
+    };
     let mut a3 = if args.channel == "ed25519" {
         let Some(config) = replay_store_config else {
             eprintln!(
@@ -1333,6 +1340,11 @@ fn run() -> i32 {
                 return 3;
             }
         };
+        let mut store = store;
+        if let Err(error) = store.reconcile_recorded(&recorded_approval_nonces, now_ms()) {
+            eprintln!("trusted config rejected: authorization recovery: {error}");
+            return 3;
+        }
         match a3::A3Filter::with_store(ttl_ms, Box::new(store), now_ms()) {
             Ok(a3) => a3,
             Err(e) => {
