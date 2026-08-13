@@ -12,6 +12,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github/workflows"
 AGGREGATE_NAME = "Require every isolated CI step to pass"
+# GitHub runs both spellings. Discovering only *.yml lets a real workflow
+# sit outside this control by naming itself .yaml.
+WORKFLOW_SUFFIXES = (".yml", ".yaml")
 
 # This is deliberately a mapping over every workflow discovered on disk, not a
 # hand-picked set of the files that happened to need private access when this
@@ -63,7 +66,13 @@ WORKFLOW_CONTROL_MODES = {
 
 def workflow_paths(workflow_dir: Path = WORKFLOW_DIR) -> tuple[Path, ...]:
     """Discover the workflow population; additions require explicit review."""
-    return tuple(sorted(workflow_dir.glob("*.yml")))
+    return tuple(
+        sorted(
+            path
+            for suffix in WORKFLOW_SUFFIXES
+            for path in workflow_dir.glob(f"*{suffix}")
+        )
+    )
 
 
 def private_access_failures(workflows: tuple[Path, ...]) -> list[str]:
@@ -189,6 +198,28 @@ class CiControlReportingTests(unittest.TestCase):
             failures,
             ["workflow has no private-access classification: new-unclassified.yml"],
         )
+
+    def test_yaml_extension_is_discovered_and_fails_closed(self) -> None:
+        """GitHub accepts .yaml; that spelling must enter the population."""
+        with tempfile.TemporaryDirectory() as temporary:
+            workflow_dir = Path(temporary)
+            workflow = workflow_dir / "new-unclassified.yaml"
+            workflow.write_text(
+                "name: new control\non: workflow_dispatch\n", encoding="utf-8"
+            )
+            discovered = workflow_paths(workflow_dir)
+            self.assertEqual(
+                [path.name for path in discovered],
+                ["new-unclassified.yaml"],
+                "discovery must include GitHub's .yaml spelling",
+            )
+            self.assertEqual(
+                private_access_failures(discovered),
+                [
+                    "workflow has no private-access classification: "
+                    "new-unclassified.yaml"
+                ],
+            )
 
     def test_release_build_reports_after_fleet_failure_but_publish_stays_gated(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
