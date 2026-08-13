@@ -2013,6 +2013,10 @@ fn run() -> i32 {
                         continue;
                     }
                 };
+                // Residual G2 window: RECORDED receipt is durable, nonce burn
+                // has not happened yet. Recovery must finish the burn from the
+                // exact receipt nonce before allowing the approval again.
+                maybe_test_crash(test_crash_point.as_deref(), "g2-after-record");
                 if commit_consumed_approval_nonce(
                     &mut a3,
                     &pending_approvals,
@@ -2259,6 +2263,10 @@ fn run() -> i32 {
                                             continue;
                                         }
                                     };
+                                    maybe_test_crash(
+                                        test_crash_point.as_deref(),
+                                        "g2-after-record",
+                                    );
                                     if commit_consumed_approval_nonce(
                                         &mut a3,
                                         &pending_approvals,

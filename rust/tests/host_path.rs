@@ -2725,3 +2725,80 @@ fn g2_t3_crash_after_recorded_keeps_burn_and_receipt() {
         o.receipts().len()
     );
 }
+
+/// G2 residual — a real process crash after RECORDED and before nonce commit.
+#[test]
+fn g2_crash_after_recorded_before_commit_reconciles_burn() {
+    let mut o = Oracle::spawn_signed_with_env(
+        "g2-after-record",
+        &[("SEAL_TEST_CRASH_POINT", "g2-after-record")],
+    );
+    let call = guarded_call(241, "drop table g2_after_record");
+    o.send(&call);
+    let blocked = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(is_block(&blocked));
+    let target = block_target(&blocked).unwrap();
+    let framed = block_framed_subject(&blocked).unwrap();
+
+    let decisions_before = o.receipts().len();
+    o.approve_v2(&target, &framed, "n-g2-after-record");
+    o.send(&call);
+    let status = o.child.wait().unwrap();
+    println!("G2 after-record kill: host process exited {status:?} at crash point g2-after-record");
+    assert!(!status.success());
+
+    let rows = replay_rows(&o);
+    println!(
+        "G2 after-record state after crash: replay_rows={rows:?} decisions={}",
+        o.receipts().len()
+    );
+    assert_eq!(
+        rows,
+        vec![("n-g2-after-record".to_string(), None)],
+        "the receipt exists but the reserved hold must still be open"
+    );
+    assert_eq!(
+        o.receipts().len(),
+        decisions_before + 1,
+        "the RECORDED receipt survives the crash"
+    );
+
+    o.restart_with_env(&[]);
+    let recovered_line = o.expect_line();
+    let recovered_raw = o.expect_raw();
+    let raw_id = assert_forwarded_with_operation_id(&recovered_raw, &framed);
+    let line_id = assert_line_forwarded_with_operation_id(&recovered_line, &call);
+    assert_eq!(raw_id, line_id);
+    let rows = replay_rows(&o);
+    println!(
+        "G2 after-record state after restart: replay_rows={rows:?} decisions={}",
+        o.receipts().len()
+    );
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].1.is_some(),
+        "recovery must commit the receipt-backed hold"
+    );
+
+    o.send(&call);
+    let challenged = o.expect_line();
+    let _ = o.expect_raw();
+    assert!(is_block(&challenged));
+    o.approve_v2(&target, &framed, "n-g2-after-record");
+    o.send(&call);
+    assert!(
+        is_block(&o.expect_line()),
+        "the approval must remain burned after restart"
+    );
+    let stderr = o.drain_stderr(Duration::from_millis(300));
+    assert!(
+        stderr.iter().any(|l| l.contains("replayed_nonce")),
+        "the re-presented approval must be refused as a replay: {stderr:?}"
+    );
+    println!(
+        "G2 after-record state after replay attempt: replay_rows={:?} decisions={} stderr_has_replayed_nonce=true",
+        replay_rows(&o),
+        o.receipts().len()
+    );
+}
