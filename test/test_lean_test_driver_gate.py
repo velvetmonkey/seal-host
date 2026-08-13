@@ -160,8 +160,8 @@ class LeanTestDriverGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("exactly matches all 1 children derived", result.stdout)
 
-    def test_every_aggregate_lean_action_has_a_preceding_gate_call(self) -> None:
-        action_marker = "leanprover/lean-action"
+    def test_every_aggregate_lean_setup_has_a_preceding_gate_call(self) -> None:
+        setup_markers = ("leanprover/lean-action", "scripts/install_pinned_elan.py")
         gate_marker = "python3 scripts/lean_test_driver_gate.py"
         action_count = 0
         for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
@@ -175,7 +175,8 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 block = text[start:end]
                 if not re.search(r"(?m)lake test(?:\s|$)", block):
                     continue
-                action = block.find(action_marker)
+                setups = [block.find(marker) for marker in setup_markers]
+                action = next((position for position in setups if position != -1), -1)
                 gate = block.find(gate_marker)
                 test = block.find("lake test")
                 self.assertNotEqual(action, -1, workflow)
@@ -183,7 +184,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertLess(gate, action, workflow)
                 self.assertLess(action, test, workflow)
                 action_count += 1
-        self.assertEqual(action_count, 5, "review every aggregate Lean action")
+        self.assertEqual(action_count, 5, "review every aggregate Lean setup")
 
     def test_every_lean_action_defers_tests_and_disables_lint(self) -> None:
         action_marker = "leanprover/lean-action"
@@ -245,7 +246,9 @@ class LeanTestDriverGateTests(unittest.TestCase):
         #   8  release.yml:build:control_04
         #   9  security.yml:fuzz-hostile-ingress-lean:control_04
         #  10  security.yml:fuzz-hostile-ingress:control_04
-        self.assertEqual(action_count, 10, "review every lean-action call site")
+        # R27 replaced entries 4 and 5 with the repository-pinned installer;
+        # the remaining eight action sites retain these action-specific guards.
+        self.assertEqual(action_count, 8, "review every remaining lean-action call site")
 
     def test_every_aggregate_test_has_a_native_prerequisite(self) -> None:
         """Each lake test must follow a native build in the same job.

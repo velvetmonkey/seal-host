@@ -423,6 +423,7 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
         return 1
 
     failed: list[str] = []
+    unrunnable: dict[str, str] = {}
     skipped: list[str] = []
     malformed: list[str] = []
     passed: list[str] = []
@@ -431,7 +432,18 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
             malformed.append(name)
             continue
         outcome = result["outcome"]
-        if outcome == "failure":
+        outputs = result.get("outputs", {})
+        if (
+            outcome == "failure"
+            and isinstance(outputs, dict)
+            and outputs.get("unrunnable") == "true"
+            and isinstance(outputs.get("unrunnable-reason"), str)
+            and outputs["unrunnable-reason"].strip()
+            and "\n" not in outputs["unrunnable-reason"]
+            and "\r" not in outputs["unrunnable-reason"]
+        ):
+            unrunnable[name] = outputs["unrunnable-reason"]
+        elif outcome == "failure":
             failed.append(name)
         elif outcome == "skipped":
             skipped.append(name)
@@ -439,6 +451,48 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
             passed.append(name)
         else:
             malformed.append(f"{name} ({outcome})")
+
+    dependencies_raw = os.environ.get("SEAL_CONTROL_DEPENDENCIES", "{}")
+    try:
+        dependencies = json.loads(dependencies_raw)
+    except json.JSONDecodeError as error:
+        print(f"::error::SEAL_CONTROL_DEPENDENCIES is not valid JSON: {error}")
+        return 1
+    if not isinstance(dependencies, dict) or any(
+        not isinstance(prerequisite, str)
+        or not isinstance(dependents, list)
+        or any(not isinstance(dependent, str) for dependent in dependents)
+        for prerequisite, dependents in dependencies.items()
+    ):
+        print(
+            "::error::SEAL_CONTROL_DEPENDENCIES must map control ids to "
+            "arrays of control ids"
+        )
+        return 1
+    dependency_controls = {
+        name
+        for prerequisite, dependents in dependencies.items()
+        for name in [prerequisite, *dependents]
+    }
+    unknown_dependencies = sorted(dependency_controls - declared)
+    if unknown_dependencies:
+        print(
+            "::error::SEAL_CONTROL_DEPENDENCIES names undeclared controls: "
+            + ", ".join(unknown_dependencies)
+        )
+        return 1
+
+    for prerequisite, dependents in dependencies.items():
+        reason = unrunnable.get(prerequisite)
+        if reason is None:
+            continue
+        for dependent in dependents:
+            if dependent in failed:
+                failed.remove(dependent)
+                unrunnable[dependent] = f"blocked by {prerequisite}: {reason}"
+            elif dependent in skipped:
+                skipped.remove(dependent)
+                unrunnable[dependent] = f"blocked by {prerequisite}: {reason}"
 
     unallowed_skips: list[str] = []
     for name in skipped:
@@ -458,6 +512,8 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
 
     for name in failed:
         print(f"::error::isolated CI step failed: {name}")
+    for name, reason in unrunnable.items():
+        print(f"::error::isolated CI step UNRUNNABLE: {name} — {reason}")
     for name in malformed:
         print(f"::error::isolated CI step has no passing terminal outcome: {name}")
 
@@ -465,7 +521,13 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
     # payload (even when every skip is allowlisted) measures nothing and must
     # not pass. This is the same defect class as a missing control — green
     # that did not observe the system under test.
-    empty_success = not passed and not failed and not malformed and not unallowed_skips
+    empty_success = (
+        not passed
+        and not failed
+        and not unrunnable
+        and not malformed
+        and not unallowed_skips
+    )
     if empty_success and skipped:
         print(
             "::error::no successful control observations; every reported control "
@@ -473,12 +535,29 @@ def main(allowlist_path: Path = DEFAULT_ALLOWLIST) -> int:
             "successes is not a pass."
         )
 
-    if failed or malformed or unallowed_skips or empty_success:
+    if failed or unrunnable or malformed or unallowed_skips or empty_success:
+        if unrunnable and not failed and not malformed and not unallowed_skips:
+            result = "INFRASTRUCTURE"
+        elif unrunnable:
+            result = "FAIL+INFRASTRUCTURE"
+        else:
+            result = "FAIL"
+        root_causes = [
+            f"{name}: {reason}"
+            for name, reason in unrunnable.items()
+            if not reason.startswith("blocked by ")
+        ]
+        cause_summary = (
+            "; infrastructure cause: " + "; ".join(root_causes)
+            if root_causes
+            else ""
+        )
         print(
-            f"FAIL: {len(failed)} failed, {len(malformed)} invalid, "
+            f"{result}: {len(failed)} failed, {len(unrunnable)} unrunnable, "
+            f"{len(malformed)} invalid, "
             f"{len(unallowed_skips)} unallowed skips, {len(skipped)} skipped, "
             f"{len(passed)} passed, {len(controls)} reported, "
-            f"{len(declared)} declared"
+            f"{len(declared)} declared{cause_summary}"
         )
         return 1
 
