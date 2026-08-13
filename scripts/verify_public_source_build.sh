@@ -7,17 +7,44 @@ set -euo pipefail
 ARCHIVE=${1:?usage: verify_public_source_build.sh PUBLIC_SOURCE_TARBALL}
 ARCHIVE=$(realpath "$ARCHIVE")
 test -f "$ARCHIVE" || { echo "public source archive not found: $ARCHIVE" >&2; exit 1; }
+test -r "$ARCHIVE" || { echo "public source archive is unreadable: $ARCHIVE" >&2; exit 1; }
+test -s "$ARCHIVE" || { echo "public source archive is empty: $ARCHIVE" >&2; exit 1; }
 for command in git lake cargo python3 tar; do
   command -v "$command" >/dev/null || { echo "missing clean-build prerequisite: $command" >&2; exit 1; }
 done
+if ! gzip -t "$ARCHIVE" >/dev/null 2>&1; then
+  echo "public source archive is corrupt or truncated: $ARCHIVE" >&2
+  exit 1
+fi
+MEMBERS=$(mktemp)
+trap 'rm -f -- "$MEMBERS"' EXIT
+if ! tar -tzf "$ARCHIVE" >"$MEMBERS" 2>/dev/null; then
+  echo "public source archive member list is unreadable: $ARCHIVE" >&2
+  exit 1
+fi
+if [ "$(sort "$MEMBERS" | uniq -d | head -n 1)" ]; then
+  echo "public source archive member list is inconsistent: $ARCHIVE" >&2
+  exit 1
+fi
 
 WORK=$(mktemp -d)
-trap 'rm -rf -- "$WORK"' EXIT
+trap 'rm -f -- "$MEMBERS"; rm -rf -- "$WORK"' EXIT
 SOURCE="$WORK/source"
 EMPTY_HOME="$WORK/home"
 CARGO_HOME_CLEAN="$WORK/cargo-home"
 mkdir -p "$SOURCE" "$EMPTY_HOME" "$CARGO_HOME_CLEAN"
-tar -xzf "$ARCHIVE" -C "$SOURCE"
+if ! tar -xzf "$ARCHIVE" -C "$SOURCE" >/dev/null 2>&1; then
+  echo "public source archive contents are unreadable: $ARCHIVE" >&2
+  exit 1
+fi
+if ! find "$SOURCE" -type f -size +0c -print -quit | grep -q .; then
+  echo "public source archive contains no real data: $ARCHIVE" >&2
+  exit 1
+fi
+if [ "${SEAL_PUBLIC_SOURCE_PREFLIGHT_ONLY:-0}" = 1 ]; then
+  echo "PASS public source archive preflight"
+  exit 0
+fi
 test ! -e "$SOURCE/.git" || { echo "public source archive unexpectedly contains .git" >&2; exit 1; }
 test ! -e "$SOURCE/.lake" || { echo "public source archive unexpectedly contains .lake" >&2; exit 1; }
 
