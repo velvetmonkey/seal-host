@@ -11,6 +11,8 @@ on:
 jobs:
   lean-aggregate:
     runs-on: ubuntu-latest
+    # Recent successful maximum: 30m20s (run 31629655796); 45m leaves 14m40s headroom.
+    timeout-minutes: 45
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
@@ -68,7 +70,23 @@ jobs:
       - id: control_22
         continue-on-error: true
         name: Run aggregate Lean tests after native link dependency build with disk telemetry
-        run: python3 scripts/ci_disk_telemetry.py golden-lean-aggregate -- lake test
+        run: |
+          echo "::group::resources before aggregate Lean tests"
+          df -h / "$RUNNER_TEMP" || true
+          free -m || true
+          echo "::endgroup::"
+          set +e
+          timeout --signal=TERM --kill-after=30s 2100s python3 scripts/ci_disk_telemetry.py golden-lean-aggregate -- lake test
+          status=$?
+          set -e
+          echo "::group::resources after aggregate Lean tests"
+          df -h / "$RUNNER_TEMP" || true
+          free -m || true
+          echo "::endgroup::"
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "::error::aggregate Lean tests exceeded the 2100s in-shell timeout (exit $status)"
+          fi
+          exit "$status"
 
       - id: control_06
         continue-on-error: true
@@ -100,6 +118,8 @@ jobs:
   deterministic-shell:
     needs: lean-aggregate
     runs-on: ubuntu-latest
+    # Recent successful maximum: 43m12s (run 31659523979); 60m leaves 16m48s headroom.
+    timeout-minutes: 60
     env:
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
       SEAL_GOLDEN_PATH_IMAGE: node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4
@@ -199,7 +219,13 @@ jobs:
         continue-on-error: true
         name: Deterministic shell acceptance (no model, no operator auth)
         run: |
-          python3 scripts/ci_disk_telemetry.py golden-rust-acceptance -- \
+          echo "::group::resources before deterministic shell acceptance"
+          df -h / "$RUNNER_TEMP" || true
+          free -m || true
+          echo "::endgroup::"
+          set +e
+          timeout --signal=TERM --kill-after=30s 3000s \
+            python3 scripts/ci_disk_telemetry.py golden-rust-acceptance -- \
             bash -euo pipefail -c '
               C1_ARTIFACT="$RUNNER_TEMP/seal-doctrine-c1"
               ./demo/run c1 --output-dir "$C1_ARTIFACT" --color always | tee "$RUNNER_TEMP/golden-path-c1.txt"
@@ -211,6 +237,16 @@ jobs:
               grep -F "restore-byte-exact=true" "$RUNNER_TEMP/golden-path-c1.txt"
               grep -F "PASS doctrine trace" "$RUNNER_TEMP/golden-path-c1.txt"
             '
+          status=$?
+          set -e
+          echo "::group::resources after deterministic shell acceptance"
+          df -h / "$RUNNER_TEMP" || true
+          free -m || true
+          echo "::endgroup::"
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            echo "::error::deterministic shell acceptance exceeded the 3000s in-shell timeout (exit $status)"
+          fi
+          exit "$status"
 
       # Runs after C1 because golden_path.py's named-target build is what
       # produces rust/target/debug/seal-host-rs on the runner.
