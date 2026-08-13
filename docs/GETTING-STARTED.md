@@ -117,7 +117,7 @@ policy that guards destructive SQL:
 mkdir seal-quickstart && cd seal-quickstart
 umask 077
 python3 "$SEAL_REPO/scripts/generate_keys.py" --out-dir keys
-mkdir -m 700 store receipts
+mkdir -m 700 store
 : > approvals.ndjson
 
 cat > payload.json <<EOF
@@ -255,12 +255,12 @@ challenge died with the session.
 ## Recorded evidence: verify a receipt and see verification fail
 
 The two decisions from the live FIFO session emitted evidence in two forms:
-a JSON receipt per decision in `./receipts/`, because that host command passed
-`--receipt-dir receipts`, and an audit line carrying per-kernel certificates in
+a JSON receipt per decision in `./seal-receipts/`, the host default when
+`--receipt-dir` is omitted, and an audit line carrying per-kernel certificates in
 `audit.log`. Look at a receipt from the live session:
 
 ```sh
-python3 -m json.tool "$(ls receipts/receipt-* | tail -1)"
+python3 -m json.tool "$(ls seal-receipts/receipt-* | tail -1)"
 ```
 
 Fields worth reading on your first one: `verdict` (`ALLOW` here — the last
