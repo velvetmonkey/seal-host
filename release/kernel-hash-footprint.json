@@ -12,7 +12,7 @@
     {
       "name": "seal-assurance-kit",
       "url": "https://github.com/velvetmonkey/seal-assurance-kit.git",
-      "commit": "8946ec2a81e0e3e25b8920a9f7506ff4b37219f9",
+      "commit": "962823b22d179f3354f8b8cf1a7091029a23c715",
       "status": "scanned"
     },
     {
@@ -35,6 +35,272 @@
     }
   ],
   "occurrences": [
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 138,
+      "hash": "4d571d7ae03e9e7f82e8bd2ea17353ee494cc996d1a857e7393d3e6a0a3954fa",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 143,
+      "hash": "85d7bdc4f48aebef2ef5d2e5f75f7ec5b921c1a03f50e4ed786d775b18fff87c",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 144,
+      "hash": "34c49abdb74f5232f476b7f8a44c9afb56db404ca888911d90934158f356cb1c",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 24,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 25,
+      "hash": "5a671bb719c6463e03328ba2e7d9482c22584cf1a0982189cf401b161d4d2a15",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 26,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 33,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 34,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 35,
+      "hash": "012b51a20dbff499423b63e4f53d0552703679becabd5358f0f8b30556f5eb99",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 39,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 45,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 55,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 55,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 55,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 57,
+      "hash": "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 62,
+      "hash": "484deca58ae56e9ee9d52eaa5139479a56a256854d0c57ed6305e7e940eaddf1",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 63,
+      "hash": "02f072b3af602470973bbf6c195cddee371875607ecddab005765a0c665ec14f",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 79,
+      "hash": "bdf3db19a2007e5b6ab0d2a6578006d07ff8f7a35a7a8c0b3ed51de411d2e8ff",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v1-host.json",
+      "line": 8,
+      "hash": "2f3b94579f43fb59e8df8ecf8d8a231a288b641d262c4c425043c107e8e72b82",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 143,
+      "hash": "a41731592132962a7c6f5420e191cdc0a40492fb2b16fc8ff1757eea7f40b984",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 148,
+      "hash": "e74e48b61d5b203a3346b001af5a9aabe8890e75e3df2c932b5023dd5f6ec948",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 149,
+      "hash": "1bc1cec71521487d76845efd83c765340f4134e25b78d50a4df625b5cfbc655f",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 24,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 25,
+      "hash": "64641d3fea451b2ebf3fe0a170a013650327afe80eb440a46b92fcae160c204a",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 26,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 33,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 34,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 35,
+      "hash": "012b51a20dbff499423b63e4f53d0552703679becabd5358f0f8b30556f5eb99",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 39,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 45,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 55,
+      "hash": "9e76eb3c5825875d5c0acd9dda268a0a23038671403458e07a32c1e0b3cf4437",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 55,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 55,
+      "hash": "ed1ea2c2dd6bc7831fa4801024f264959cc39dcd00e4e3a530ab9b7837f9dbc2",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 57,
+      "hash": "28bb3ae71985357163e3b651791e2a70c462ea5d1313a59b4967d4c20ea77657",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 62,
+      "hash": "891d01c09c8d391d1cc8a686cd629617ab102e266bb5f8a31b12ce43b8b5d9e7",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 63,
+      "hash": "117a3d353851bb4bdd59eef6d6ab39dc03c04e7a610dda3417dd2b630beaecc9",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 79,
+      "hash": "88d2d0c0cbb47cfc637efda0d9dc2f4277dfc7d7e686049fae89ac2153b740c3",
+      "classification": "SIGNED"
+    },
+    {
+      "repo": "seal-assurance-kit",
+      "path": "fixtures/object-b-v2-host-04f7ba83.json",
+      "line": 8,
+      "hash": "2f3b94579f43fb59e8df8ecf8d8a231a288b641d262c4c425043c107e8e72b82",
+      "classification": "SIGNED"
+    },
     {
       "repo": "seal-assurance-kit",
       "path": "fixtures/receipt-allow.json",

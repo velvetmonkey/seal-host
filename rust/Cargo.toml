@@ -28,3 +28,7 @@ path = "src/main.rs"
 [[bin]]
 name = "seal-reachability-report"
 path = "src/bin/seal_reachability_report.rs"
+
+[[bin]]
+name = "seal-three-artifact-verify"
+path = "src/bin/seal_three_artifact_verify.rs"

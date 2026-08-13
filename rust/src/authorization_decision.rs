@@ -6,8 +6,11 @@
 //! config and approval records the host supplied to Lean, then persists the
 //! result before any ALLOW is forwarded.
 
-use crate::providers::ApprovalRecord;
-use crate::release::{RecoveryReport, ReleaseInput, ReleaseStatus, ReleaseStore, VerifiedRelease};
+use crate::providers::{canonical_approval_v2_payload, ApprovalRecord};
+use crate::release::{
+    attach_signed_artifacts, RecoveryReport, ReleaseInput, ReleaseStatus, ReleaseStore,
+    VerifiedRelease,
+};
 use crate::{envelope_v23::canonical_json, lean, secure_fs};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -499,7 +502,17 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
                 .collect(),
         ),
     );
-    Ok(Value::Object(receipt))
+    let approval_statement = consumed
+        .and_then(ApprovalRecord::v2)
+        .map(|record| canonical_approval_v2_payload(&record.payload()))
+        .transpose()?;
+    let mut receipt = Value::Object(receipt);
+    attach_signed_artifacts(
+        &mut receipt,
+        input.framed_subject,
+        approval_statement.as_deref(),
+    )?;
+    Ok(receipt)
 }
 
 impl AuthorizationDecisionWriter {

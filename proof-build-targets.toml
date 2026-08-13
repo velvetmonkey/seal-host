@@ -108,7 +108,22 @@ kind     = "build"
 target   = "SealV2.EffectEnvelope"
 guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
 push_main = true
-# ci.yml:345
+# ci.yml:348
+
+# The executable root Test.ThreeArtifactByteLock is not theorem-bearing, but
+# it imports theorem-bearing Host.ThreeArtifactByteLock (7 declarations).
+# This push-to-main invocation therefore honestly contributes that transitive
+# closure to REACHED; existing default/test roots already reach the same
+# module, so it adds a credited invocation without increasing REACHED modules.
+[[invocation]]
+workflow = "ci.yml"
+job      = "rust-conformance"
+step     = "control_27"
+kind     = "build"
+target   = "three_artifact_byte_lock"
+guard    = "step-if: ${{ env.SEAL_CI_READ_TOKEN != '' }}"
+push_main = true
+# ci.yml:348
 
 [[invocation]]
 workflow = "ci.yml"

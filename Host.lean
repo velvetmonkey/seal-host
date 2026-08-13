@@ -11,3 +11,4 @@ import Host.Provenance
 import Host.ReceiptIdentity
 import Host.Audit
 import Host.AdmissionBound
+import Host.ThreeArtifactByteLock

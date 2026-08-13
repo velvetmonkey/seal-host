@@ -304,8 +304,11 @@ class ProofReachRepoControls(unittest.TestCase):
         self.assertIn("ORPHANED=0", result.stdout)
         self.assertIn("UNCLASSIFIED=0", result.stdout)
         self.assertIn("EXCLUDED=2", result.stdout)
-        self.assertRegex(result.stdout, r"REACHED=51\b")
-        self.assertRegex(result.stdout, r"theorem-bearing=53\b")
+        # G2 three-artifact byte lock accounting (2026-08-13):
+        # Host.ThreeArtifactByteLock is one new theorem-bearing module. It is
+        # reached through axiom_check, host_unit_tests, and its byte witness.
+        self.assertRegex(result.stdout, r"REACHED=52\b")
+        self.assertRegex(result.stdout, r"theorem-bearing=54\b")
 
 
 if __name__ == "__main__":

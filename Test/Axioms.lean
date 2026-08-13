@@ -45,6 +45,11 @@ import Temporal.Monitor
 import Consensus.Checker
 import Calibration.CondHoeffding
 
+-- The three-artifact byte lock is imported by `Host`; keep its two public
+-- byte-identity theorems visible to the maintained axiom census.
+#print axioms Host.ThreeArtifactByteLock.decode_encode_exact_content
+#print axioms Host.ThreeArtifactByteLock.one_logical_content_one_encoding
+
 -- SealCore safety theorems (kernel S's math brick)
 
 /-- info: 'SealCore.default_deny_never_allowed' depends on axioms: [propext, Quot.sound] -/

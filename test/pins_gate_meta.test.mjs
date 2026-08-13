@@ -580,17 +580,17 @@ test("CI run-step floor fails below its pinned minimum", () => {
   );
 });
 
-test("the live Lean twin prerequisite precedes the generic Cargo suite", () => {
+test("the live Lean witness prerequisites precede the generic Cargo suite", () => {
   const steps = parseCiRunSteps();
   const prerequisite = steps.findIndex(
-    (step) => step.run === "lake build SealV2.EffectEnvelope",
+    (step) => step.run === "lake build SealV2.EffectEnvelope three_artifact_byte_lock",
   );
   const genericSuite = steps.findIndex(
     (step) =>
       step.run === "cargo test --no-fail-fast" &&
       step.workingDirectory === "rust",
   );
-  assert.notEqual(prerequisite, -1, "EffectEnvelope build prerequisite is missing");
+  assert.notEqual(prerequisite, -1, "Lean witness build prerequisites are missing");
   assert.notEqual(genericSuite, -1, "generic Cargo suite is missing");
   assert.ok(
     prerequisite < genericSuite,
