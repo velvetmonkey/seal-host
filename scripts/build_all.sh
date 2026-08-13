@@ -11,6 +11,10 @@
 # Result binary: rust/target/debug/seal-host-rs
 set -euo pipefail
 
+# Keep the one-shot release-shaped build on the same locale policy as the
+# individual release helpers it invokes.
+export LC_ALL=C
+
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
   SCRIPT_DIR=.

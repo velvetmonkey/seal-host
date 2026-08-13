@@ -9,6 +9,11 @@
 # libleanrt.a cannot enter a shared object).
 set -euo pipefail
 
+# Every filesystem-derived list below is sorted under this release policy.
+# Keep this explicit at the script boundary so callers cannot change archive
+# or linker input order with LANG/LC_* settings.
+export LC_ALL=C
+
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]]; then
   SCRIPT_DIR=.
@@ -30,6 +35,10 @@ if [ -z "${LEANBUILD:-}" ]; then
   fi
 fi
 LEAN_PREFIX="$(lean --print-prefix)"
+export SEAL_REPRO_ROOT="$ROOT"
+export SEAL_REPRO_LEAN_PREFIX="$LEAN_PREFIX"
+export LEAN_CC="$ROOT/scripts/reproducible_cc.sh"
+SYSTEM_CC="$ROOT/scripts/reproducible_system_cc.sh"
 MCP_TYPE="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .type' "$ROOT/lake-manifest.json")"
 if [ "$MCP_TYPE" = "path" ]; then
   MCP_DIR="$(jq -r '.packages[] | select(.name | contains("mcp-seal")) | .dir' "$ROOT/lake-manifest.json")"
@@ -151,14 +160,16 @@ ARCHIVES=()
 CLOSURE_EXEMPT=(Cli calibration-lean crdt-lean)
 
 archive_package_ir() {
-  local pkgdir="$1" force="${2:-0}"
+  local pkgdir="$1"
   pkg="$(basename "$pkgdir")"
   irdir="$pkgdir/.lake/build/ir"
-  objs=""
+  objs=()
   if [ -d "$irdir" ]; then
-    objs="$(find "$irdir" -name '*.c.o.export' | sort)"
+    mapfile -d '' -t objs < <(
+      find "$irdir" -name '*.c.o.export' -print0 | sort -z
+    )
   fi
-  if [ -z "$objs" ]; then
+  if [ "${#objs[@]}" -eq 0 ]; then
     for exempt in "${CLOSURE_EXEMPT[@]}"; do
       [ "$pkg" = "$exempt" ] && return 0
     done
@@ -171,39 +182,33 @@ archive_package_ir() {
     exit 1
   fi
   archive="$TMP/lib_${pkg}.a"
-  rebuild=0
-  if [ "$force" = "1" ] || [ ! -f "$archive" ]; then
-    rebuild=1
-  else
-    newer_object="$(find "$irdir" -name '*.c.o.export' -newer "$archive" -print -quit)"
-    if [ -n "$newer_object" ]; then
-      rebuild=1
-    fi
-  fi
-  if [ "$rebuild" = "1" ]; then
-    rm -f "$archive"
-    # Thin archive built by chunked quick-append (q), then indexed (s) once
-    # at the end — replace-mode chunking silently truncated earlier.
-    printf '%s\0' $objs | xargs -0 ar qT "$archive"
-    ar sT "$archive"
-  fi
+  # Always rebuild: an archive made by an older invocation can have a
+  # different member order (or stale members) while all of its inputs have
+  # older mtimes. Reusing it makes the final link depend on cache history.
+  rm -f "$archive"
+  # Thin archive built by chunked quick-append (q), then indexed (s) once
+  # at the end — replace-mode chunking silently truncated earlier.
+  printf '%s\0' "${objs[@]}" | xargs -0 ar qT "$archive"
+  ar sT "$archive"
   ARCHIVES+=("$archive")
 }
 
-for pkgdir in "$ROOT"/.lake/packages/*/; do
+PACKAGE_DIRS=("$ROOT"/.lake/packages/*/)
+mapfile -t PACKAGE_DIRS < <(printf '%s\n' "${PACKAGE_DIRS[@]}" | sort)
+for pkgdir in "${PACKAGE_DIRS[@]}"; do
   if [ "$MCP_TYPE" = "path" ] && [ "$(basename "$pkgdir")" = "mcp-seal" ]; then
     continue
   fi
   if [ "$(basename "$pkgdir")" = "mcp-seal" ]; then
     # Git preserves checkout mtimes poorly enough that a newly pinned commit
     # can look older than this thin archive. Never link a stale policy core.
-    archive_package_ir "$pkgdir" 1
+    archive_package_ir "$pkgdir"
   else
     archive_package_ir "$pkgdir"
   fi
 done
 if [ "$MCP_TYPE" = "path" ]; then
-  archive_package_ir "$CRYPTO_ROOT" 1
+  archive_package_ir "$CRYPTO_ROOT"
 fi
 
 # UnicodeBasic ships a HAND-WRITTEN C library (`libunicodeclib.a`), not Lean-IR
@@ -214,6 +219,33 @@ fi
 # Added 2026-07-25 alongside Host/UnicodeKeys in PROJECT_MODULES.
 UNICODE_CLIB="$ROOT/.lake/packages/UnicodeBasic/.lake/build/lib/libunicodeclib.a"
 if [ -f "$UNICODE_CLIB" ]; then
+  # UnicodeBasic's handwritten target obtains its C source list from
+  # IO.FS.readDir.  That is kernel directory order, not locale collation, so
+  # LC_ALL=C cannot make the archive reproducible.  Rebuild the archive from
+  # its extracted members in explicit byte order before the linker sees it.
+  # GNU sort in the C locale compares bytes; do not replace this with a shell
+  # glob or an unsorted read of the extraction directory.
+  UNICODE_CANONICAL="$TMP/unicodeclib-canonical"
+  rm -rf "$UNICODE_CANONICAL"
+  mkdir -p "$UNICODE_CANONICAL/members"
+  mapfile -t UNICODE_MEMBERS < <(ar t "$UNICODE_CLIB")
+  [ "${#UNICODE_MEMBERS[@]}" -gt 0 ] || {
+    echo "FATAL: UnicodeBasic native archive has no members: $UNICODE_CLIB" >&2
+    exit 1
+  }
+  mapfile -t UNICODE_SORTED_MEMBERS < <(
+    printf '%s\n' "${UNICODE_MEMBERS[@]}" | LC_ALL=C sort
+  )
+  [ "${#UNICODE_MEMBERS[@]}" -eq "${#UNICODE_SORTED_MEMBERS[@]}" ] || {
+    echo "FATAL: failed to byte-sort UnicodeBasic archive members" >&2
+    exit 1
+  }
+  (
+    cd "$UNICODE_CANONICAL/members"
+    ar x "$UNICODE_CLIB"
+    ar rcsD "$UNICODE_CANONICAL/libunicodeclib.a" "${UNICODE_SORTED_MEMBERS[@]}"
+  )
+  mv "$UNICODE_CANONICAL/libunicodeclib.a" "$UNICODE_CLIB"
   ARCHIVES+=("$UNICODE_CLIB")
 else
   echo "FATAL: UnicodeBasic native archive missing: $UNICODE_CLIB" >&2
@@ -221,10 +253,10 @@ else
   exit 1
 fi
 
-cc -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
+"$SYSTEM_CC" -O2 -fPIC -I "$LEAN_PREFIX/include" -c "$ROOT/scripts/ffi_shim.c" -o "$TMP/ffi_shim.o"
 CRYPTO_CFLAGS="-O2 -fPIC -fwrapv -fno-strict-aliasing"
-cc $CRYPTO_CFLAGS -c "$CRYPTO_ROOT/c/tweetnacl.c" -o "$CRYPTO_TWEET_PIC"
-cc $CRYPTO_CFLAGS -I "$LEAN_PREFIX/include" -I "$CRYPTO_ROOT/c" \
+"$SYSTEM_CC" $CRYPTO_CFLAGS -c "$CRYPTO_ROOT/c/tweetnacl.c" -o "$CRYPTO_TWEET_PIC"
+"$SYSTEM_CC" $CRYPTO_CFLAGS -I "$LEAN_PREFIX/include" -I "$CRYPTO_ROOT/c" \
   -c "$CRYPTO_ROOT/c/seal_ed25519.c" -o "$CRYPTO_ED25519_PIC"
 
 cc -shared -o "$OUT" \
@@ -246,7 +278,7 @@ nm -D "$OUT" | grep -E ' T seal_host_(init|step|classify)$' || {
 # false-fail correct artifacts the way a blanket "no undefined symbols"
 # nm check would. Anything still unresolved means a module object was
 # dropped from the link — refuse to call that "built".
-LDD_OUTPUT="$(ldd -r "$OUT" 2>&1)"
+LDD_OUTPUT="$(LD_LIBRARY_PATH="$LEAN_PREFIX/lib/lean${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd -r "$OUT" 2>&1)"
 UNRESOLVED=""
 while IFS= read -r line; do
   if [[ "$line" == *"undefined symbol"* ]]; then

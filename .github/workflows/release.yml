@@ -51,6 +51,7 @@ jobs:
     permissions:
       contents: read
     env:
+      LC_ALL: C
       SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
     steps:
       - id: control_01
@@ -112,8 +113,7 @@ jobs:
         run: scripts/build_ffi_so.sh
       - id: control_11
         continue-on-error: true
-        run: cargo build --locked --release --bins
-        working-directory: rust
+        run: scripts/build_rust_release.sh
       - id: control_12
         continue-on-error: true
         run: python3 scripts/release_policy_gate.py
@@ -198,6 +198,7 @@ jobs:
       contents: write
       id-token: write
     env:
+      LC_ALL: C
       COSIGN_SHA256_X86_64: c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74
       COSIGN_SHA256_AARCH64: bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8
     steps:

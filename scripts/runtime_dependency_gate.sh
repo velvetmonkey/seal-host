@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
+export LC_ALL=C
+
 STAGE=${1:?usage: runtime_dependency_gate.sh RELEASE_DIRECTORY}
 STAGE=$(realpath -e "$STAGE")
 BIN="$STAGE/bin/seal-host-rs"
 test -x "$BIN"
 
-READELF_OUTPUT="$(readelf -d "$BIN" "$STAGE"/lib/*.so)"
+LIBRARIES=("$STAGE"/lib/*.so)
+mapfile -t LIBRARIES < <(printf '%s\n' "${LIBRARIES[@]}" | sort)
+READELF_OUTPUT="$(readelf -d "$BIN" "${LIBRARIES[@]}")"
 while IFS= read -r line; do
   if [[ "$line" =~ (RPATH|RUNPATH) ]] &&
      [[ "$line" =~ /home/|\.lake|mcp-seal|github\.com ]]; then
