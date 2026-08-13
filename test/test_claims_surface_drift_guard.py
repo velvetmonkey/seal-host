@@ -18,6 +18,7 @@ INPUTS = (
     Path("docs/LIMITATIONS.md"),
     Path("docs/THREAT-MODEL.md"),
     Path("docs/TRUTH-BOX.md"),
+    Path("docs/SEAL-SYSTEM-TCB.md"),
 )
 
 
@@ -66,6 +67,33 @@ class ClaimsSurfaceDriftGuardTests(unittest.TestCase):
         )
         result = self.run_guard()
         self.assert_refused(result)
+        self.assertIn("CLAIMS DRIFT", result.stderr)
+
+    def test_manifest_entry_absent_fails_with_named_error(self) -> None:
+        (self.root / "docs/SEAL-SYSTEM-TCB.md").unlink()
+        result = self.run_guard()
+        self.assert_refused(result)
+        self.assertIn("ERROR  claim manifest entry docs/SEAL-SYSTEM-TCB.md", result.stderr)
+
+    def test_drift_and_unreadable_manifest_entry_are_both_reported(self) -> None:
+        readme = self.root / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        marker = "<!-- truthbox:end -->"
+        readme.write_text(
+            text.replace(marker, "tampered local claim\n" + marker, 1),
+            encoding="utf-8",
+        )
+        tcb = self.root / "docs/SEAL-SYSTEM-TCB.md"
+        backup = self.root / "docs/SEAL-SYSTEM-TCB.md.backup"
+        shutil.move(tcb, backup)
+        tcb.mkdir()
+        try:
+            result = self.run_guard()
+        finally:
+            tcb.rmdir()
+            shutil.move(backup, tcb)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("ERROR  claim manifest entry docs/SEAL-SYSTEM-TCB.md", result.stderr)
         self.assertIn("CLAIMS DRIFT", result.stderr)
 
     def test_absent_input_fails(self) -> None:
