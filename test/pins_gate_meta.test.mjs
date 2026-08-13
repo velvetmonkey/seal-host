@@ -61,6 +61,7 @@ const EXPECTED_CI_RUN_STEP_IDENTITIES = [
   "rust-conformance:control_13",
   "rust-conformance:control_27",
   "rust-conformance:control_14",
+  "rust-conformance:control_31",
   "rust-conformance:control_15",
   "rust-conformance:control_17",
   "rust-conformance:control_18",
@@ -472,6 +473,11 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // run steps invoking the pinned installer. Those are the only two new
   // ci.yml run-step identities; all other eight conversions are in other
   // workflows. The named inventory records both explicitly.
+  //
+  // Reviewed 2026-08-13 (guardwire): 69 -> 70. Exactly ONE run step is
+  // added to rust-conformance: control_31, the G2 crash-test fresh-artifact
+  // proof. Its continue-on-error result is measured by the existing
+  // aggregate; this inventory entry only accounts for the new step identity.
   assert.deepEqual(
     ciRunStepIdentities(normal),
     EXPECTED_CI_RUN_STEP_IDENTITIES,
@@ -518,7 +524,8 @@ test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   // (`build:control_17`, and `rust-conformance-lean`'s `control_02` and
   // `control_03`), and one arrives (`build:control_20`, now a literal block so
   // it can tee the axiom report the sorry-axiom grep reads).
-  assert.equal(literalRuns.length, 14);
+  // 14 -> 15: guardwire adds the literal control_31 crash-test block.
+  assert.equal(literalRuns.length, 15);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),
     "a literal run block collapsed to its YAML scalar header",
