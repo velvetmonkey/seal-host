@@ -51,11 +51,14 @@ def main() -> int:
     if filter_index < len(compile_args) and not compile_args[filter_index].startswith("-"):
         filter_arg = [compile_args.pop(filter_index)]
 
-    manifest = "rust/Cargo.toml"
+    repository_root = Path(__file__).resolve().parent.parent
+    manifest = str(repository_root / "rust/Cargo.toml")
     if "--manifest-path" in cargo_args:
         manifest_index = cargo_args.index("--manifest-path")
         if manifest_index + 1 < len(cargo_args):
-            manifest = cargo_args[manifest_index + 1]
+            manifest = str(Path(cargo_args[manifest_index + 1]).resolve())
+    else:
+        compile_args = ["--manifest-path", manifest, *compile_args]
 
     if force:
         cleaned = run(["cargo", "clean", "--manifest-path", manifest, "-p", "seal-host-rs"])
