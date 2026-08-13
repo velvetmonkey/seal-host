@@ -30,6 +30,10 @@ class ProofInventoryTests(unittest.TestCase):
         (root / "scripts").mkdir()
         (root / ".github/workflows").mkdir(parents=True)
         shutil.copyfile(ROOT / "scripts/lean_fetch_outcome.py", root / "scripts/lean_fetch_outcome.py")
+        shutil.copyfile(
+            ROOT / "scripts/release_performance_telemetry.py",
+            root / "scripts/release_performance_telemetry.py",
+        )
         (root / "lakefile.toml").write_text(
             'name = "fixture"\n'
             'testDriver = "lean_tests"\n'
@@ -321,6 +325,29 @@ class ProofInventoryTests(unittest.TestCase):
             self.plant_orphan(root)
             self.add_step(root, "control_probe", "python3 scripts/not_enrolled.py -- lake build Host.Planted")
             self.add_row(root, workflow="ci.yml", job="build", step="control_probe", kind="build", target="Host.Planted", guard="")
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("declared command is not in shell command position", result.stderr)
+
+    def test_telemetry_enrolment_does_not_admit_a_different_wrapper(self) -> None:
+        """Adding telemetry must remain an exact-path enrolment, not a family."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            self.plant_orphan(root)
+            self.add_step(
+                root,
+                "control_probe",
+                "python3 scripts/release_performance_telemetry_other.py -- lake build Host.Planted",
+            )
+            self.add_row(
+                root,
+                workflow="ci.yml",
+                job="build",
+                step="control_probe",
+                kind="build",
+                target="Host.Planted",
+                guard="",
+            )
             result = self.run_gate(root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("declared command is not in shell command position", result.stderr)
