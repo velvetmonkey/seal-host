@@ -15,6 +15,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts" / "lean_test_driver_gate.py"
+WORKFLOW_DIR = ROOT / ".github" / "workflows"
+
+
+def workflow_paths(workflow_dir: Path = WORKFLOW_DIR) -> tuple[Path, ...]:
+    """GitHub accepts both spellings; a .yaml workflow must enter every loop."""
+    # Same two globs as scripts/ci_control_aggregate.py,
+    # scripts/proof_inventory.py, scripts/workflow_pyyaml_gate.py, and
+    # scripts/check_proof_references.py. One vocabulary.
+    return tuple(sorted((*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml"))))
 
 
 class LeanTestDriverGateTests(unittest.TestCase):
@@ -164,7 +173,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
         setup_markers = ("leanprover/lean-action", "scripts/install_pinned_elan.py")
         gate_marker = "python3 scripts/lean_test_driver_gate.py"
         action_count = 0
-        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for workflow in workflow_paths():
             text = workflow.read_text(encoding="utf-8")
             job_starts = [
                 match.start()
@@ -190,7 +199,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
         action_marker = "leanprover/lean-action"
         action_count = 0
 
-        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for workflow in workflow_paths():
             text = workflow.read_text(encoding="utf-8")
             actions = [match.start() for match in re.finditer(action_marker, text)]
             if not actions:
@@ -263,7 +272,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
         )
         test_count = 0
 
-        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for workflow in workflow_paths():
             text = workflow.read_text(encoding="utf-8")
             # Split into job blocks: lines starting with exactly two spaces + name + colon
             job_starts = [
@@ -282,6 +291,94 @@ class LeanTestDriverGateTests(unittest.TestCase):
                     )
 
         self.assertEqual(test_count, 5, "review every aggregate lake test call site")
+
+    def _write_yaml_probe(self, name: str, body: str) -> Path:
+        path = WORKFLOW_DIR / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_yaml_lake_test_without_gate_is_refused(self) -> None:
+        """Loop 1: a .yaml lake-test job with no driver gate must be seen."""
+        path = self._write_yaml_probe(
+            "zz-leandriver-no-gate.yaml",
+            textwrap.dedent(
+                """\
+                name: zz leandriver no gate
+                on: workflow_dispatch
+                jobs:
+                  probe:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python3 scripts/install_pinned_elan.py
+                      - run: bash .lake/packages/mcp-seal/c/build.sh
+                      - run: lake test
+                """
+            ),
+        )
+        try:
+            with self.assertRaises(AssertionError) as ctx:
+                self.test_every_aggregate_lean_setup_has_a_preceding_gate_call()
+            self.assertIn("zz-leandriver-no-gate.yaml", str(ctx.exception))
+            # No lake-test count pin in this other loop; it must stay green.
+            self.test_no_workflow_installs_elan_through_lean_action()
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_yaml_lean_action_without_install_guard_is_refused(self) -> None:
+        """Loop 2: a .yaml lean-action that can install elan must be seen."""
+        path = self._write_yaml_probe(
+            "zz-leandriver-lean-action.yaml",
+            textwrap.dedent(
+                """\
+                name: zz leandriver lean action
+                on: workflow_dispatch
+                jobs:
+                  probe:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - uses: leanprover/lean-action@v1
+                """
+            ),
+        )
+        try:
+            with self.assertRaises(AssertionError) as ctx:
+                self.test_no_workflow_installs_elan_through_lean_action()
+            self.assertIn("zz-leandriver-lean-action.yaml", str(ctx.exception))
+            self.test_every_aggregate_lean_setup_has_a_preceding_gate_call()
+            self.test_every_aggregate_test_has_a_native_prerequisite()
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_yaml_lake_test_without_native_build_is_refused(self) -> None:
+        """Loop 3: a .yaml lake test with no native build must be seen."""
+        path = self._write_yaml_probe(
+            "zz-leandriver-no-native.yaml",
+            textwrap.dedent(
+                """\
+                name: zz leandriver no native
+                on: workflow_dispatch
+                jobs:
+                  probe:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python3 scripts/lean_test_driver_gate.py
+                      - run: python3 scripts/install_pinned_elan.py
+                      - run: lake test
+                """
+            ),
+        )
+        try:
+            with self.assertRaises(AssertionError) as ctx:
+                self.test_every_aggregate_test_has_a_native_prerequisite()
+            self.assertIn("zz-leandriver-no-native.yaml", str(ctx.exception))
+            self.assertIn(
+                "lake test without preceding native build in job",
+                str(ctx.exception),
+            )
+            # No lake-test count pin in this other loop; it must stay green.
+            self.test_no_workflow_installs_elan_through_lean_action()
+        finally:
+            path.unlink(missing_ok=True)
 
     def test_split_aggregate_jobs_are_required_predecessors(self) -> None:
         expected = (
