@@ -73,6 +73,7 @@ FD_REDIRECT = re.compile(r"\d+(?:>>|>&|<&|>|<)")
 # the parser to trust arbitrary arguments containing ``--``.
 APPROVED_WRAPPER_SCRIPTS = (
     "scripts/lean_fetch_outcome.py",
+    "scripts/release_performance_telemetry.py",
 )
 PIPEFAIL_SHELL = ("bash", "-o", "pipefail", "-c")
 

@@ -82,7 +82,13 @@ jobs:
       - id: control_04
         continue-on-error: true
         name: Install repository-pinned elan
-        run: python3 scripts/install_pinned_elan.py --mathlib-cache
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase pinned-elan-and-mathlib-cache --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          --cache-key lake-dependencies --cache-path .lake/packages \
+          --cache-key mathlib-olean --cache-path .lake/packages/mathlib/.lake/build \
+          --cache-mode restore -- python3 scripts/install_pinned_elan.py --mathlib-cache
       - id: control_05
         continue-on-error: true
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -93,23 +99,55 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y patchelf
       - id: control_07
         continue-on-error: true
-        run: test -d .lake/packages/mcp-seal || lake update
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase lake-dependency-update --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          --cache-key lake-dependencies --cache-path .lake/packages \
+          --cache-key mathlib-olean --cache-path .lake/packages/mathlib/.lake/build \
+          -- bash -o pipefail -c 'test -d .lake/packages/mcp-seal || lake update'
       - id: control_08
         continue-on-error: true
-        run: bash .lake/packages/mcp-seal/c/build.sh
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase native-link-build --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          --cache-key lake-dependencies --cache-path .lake/packages \
+          --cache-key mathlib-olean --cache-path .lake/packages/mathlib/.lake/build \
+          -- bash .lake/packages/mcp-seal/c/build.sh
       - id: control_19
         continue-on-error: true
         name: Run aggregate Lean tests after native link dependency build
-        run: lake test
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase aggregate-lean-tests --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          --cache-key lake-dependencies --cache-path .lake/packages \
+          --cache-key mathlib-olean --cache-path .lake/packages/mathlib/.lake/build \
+          -- lake test
       - id: control_09
         continue-on-error: true
-        run: lake build +Ffi:c.o.export
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase lean-ffi-export --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          --cache-key lake-dependencies --cache-path .lake/packages \
+          --cache-key mathlib-olean --cache-path .lake/packages/mathlib/.lake/build \
+          -- lake build +Ffi:c.o.export
       - id: control_10
         continue-on-error: true
-        run: scripts/build_ffi_so.sh
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase ffi-shared-object --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          -- bash scripts/build_ffi_so.sh
       - id: control_11
         continue-on-error: true
-        run: scripts/build_rust_release.sh
+        run: |
+          python3 scripts/release_performance_telemetry.py \
+          --phase rust-release-build --architecture ${{ matrix.arch }} \
+          --report "$RUNNER_TEMP/release-performance-${{ matrix.arch }}.jsonl" \
+          -- bash scripts/build_rust_release.sh
       - id: control_12
         continue-on-error: true
         run: python3 scripts/release_policy_gate.py
@@ -177,6 +215,15 @@ jobs:
           path: |
             ${{ runner.temp }}/release/*.tar.gz
             ${{ runner.temp }}/release/*.cdx.json
+
+      - id: control_20
+        continue-on-error: true
+        name: Upload architecture-comparable release performance telemetry
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-performance-${{ github.ref_name }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release-performance-${{ matrix.arch }}.jsonl
+          if-no-files-found: error
 
       - name: Require every isolated CI step to pass
         if: ${{ always() }}
