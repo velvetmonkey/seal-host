@@ -510,8 +510,9 @@ jobs:
         run: python3 test/test_ci_control_aggregate.py -v
       - id: control_10
         continue-on-error: true
-        name: Lean driver and CI reporting controls fail closed
+        name: Lean setup, driver, and CI reporting controls fail closed
         run: |
+          python3 test/test_install_pinned_elan.py -v
           python3 test/test_lean_test_driver_gate.py -v
           python3 test/test_ci_control_reporting.py -v
       # The population control for the defect that reddened this very job:

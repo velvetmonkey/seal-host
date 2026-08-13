@@ -50,12 +50,8 @@ jobs:
 
       - id: control_05
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py
 
       - id: control_21
         continue-on-error: true
@@ -95,6 +91,7 @@ jobs:
         if: ${{ always() }}
         env:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+          SEAL_CONTROL_DEPENDENCIES: '{"control_05":["control_06","control_21","control_22"]}'
         run: python3 scripts/ci_control_aggregate.py
 
   deterministic-shell:
@@ -160,12 +157,8 @@ jobs:
 
       - id: control_05
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py
 
       - id: control_07
         continue-on-error: true
@@ -472,4 +465,5 @@ jobs:
         if: ${{ always() }}
         env:
           SEAL_CONTROL_STEPS: ${{ toJSON(steps) }}
+          SEAL_CONTROL_DEPENDENCIES: '{"control_05":["control_11","control_12","control_13","control_14","control_15","control_16","control_17","control_18","control_19"]}'
         run: python3 scripts/ci_control_aggregate.py

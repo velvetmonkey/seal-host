@@ -56,6 +56,7 @@ class CiControlAggregateTests(unittest.TestCase):
         clear_identity: bool = False,
         workflow_ref: str | None = None,
         job_env: str | None = None,
+        dependencies: object | None = None,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         if clear_identity:
@@ -74,6 +75,10 @@ class CiControlAggregateTests(unittest.TestCase):
             env.pop("SEAL_CONTROL_STEPS", None)
         else:
             env["SEAL_CONTROL_STEPS"] = json.dumps(steps)
+        if dependencies is None:
+            env.pop("SEAL_CONTROL_DEPENDENCIES", None)
+        else:
+            env["SEAL_CONTROL_DEPENDENCIES"] = json.dumps(dependencies)
         command = ["python3", str(AGGREGATE)]
         if allowlist is not None:
             command.extend(["--allowlist", str(allowlist)])
@@ -352,6 +357,39 @@ class CiControlAggregateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("control_01", result.stdout)
         self.assertIn("1 failed", result.stdout)
+
+    def test_installer_failure_and_dependents_are_unrunnable(self) -> None:
+        steps = full_success_steps()
+        reason = "pinned elan v4.2.3 installer download failed: curl exit 22"
+        steps["control_05"] = {
+            "outcome": "failure",
+            "conclusion": "success",
+            "outputs": {"unrunnable": "true", "unrunnable-reason": reason},
+        }
+        steps["control_01"] = {"outcome": "failure", "conclusion": "success"}
+        result = self.run_aggregate(
+            steps, dependencies={"control_05": ["control_01"]}
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("INFRASTRUCTURE: 0 failed, 2 unrunnable", result.stdout)
+        self.assertIn(f"infrastructure cause: control_05: {reason}", result.stdout)
+        self.assertIn(f"UNRUNNABLE: control_05 — {reason}", result.stdout)
+        self.assertIn(
+            f"UNRUNNABLE: control_01 — blocked by control_05: {reason}",
+            result.stdout,
+        )
+        self.assertNotIn("isolated CI step failed", result.stdout)
+
+    def test_real_control_failure_is_not_unrunnable(self) -> None:
+        steps = full_success_steps()
+        steps["control_01"] = {"outcome": "failure", "conclusion": "success"}
+        result = self.run_aggregate(
+            steps, dependencies={"control_05": ["control_01"]}
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL: 1 failed, 0 unrunnable", result.stdout)
+        self.assertIn("isolated CI step failed: control_01", result.stdout)
+        self.assertNotIn("UNRUNNABLE", result.stdout)
 
     def test_semantic_attestation_id_is_aggregated(self) -> None:
         # attest is not declared on the build job; inject it as an extra
