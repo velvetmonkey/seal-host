@@ -35,6 +35,7 @@ const EXPECTED_CI_RUN_STEP_IDENTITIES = [
   "build:control_15",
   "build:control_02",
   "build:control_03",
+  "build:control_04",
   "build:control_05",
   "build:control_06",
   "build:control_07",
@@ -51,6 +52,7 @@ const EXPECTED_CI_RUN_STEP_IDENTITIES = [
   "rust-conformance:control_32",
   "rust-conformance:control_03",
   "rust-conformance:control_05",
+  "rust-conformance:control_06",
   "rust-conformance:control_08",
   "rust-conformance:control_09",
   "rust-conformance:control_10",
@@ -464,6 +466,12 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // above now names every job + step id (or the aggregate's unique name), so a
   // new, removed, renamed, reordered, or substituted run step needs an explicit
   // review of its identity rather than a count bump.
+  //
+  // Reviewed 2026-08-13: the elan second-door conversion changes
+  // build:control_04 and rust-conformance:control_06 from uses actions into
+  // run steps invoking the pinned installer. Those are the only two new
+  // ci.yml run-step identities; all other eight conversions are in other
+  // workflows. The named inventory records both explicitly.
   assert.deepEqual(
     ciRunStepIdentities(normal),
     EXPECTED_CI_RUN_STEP_IDENTITIES,

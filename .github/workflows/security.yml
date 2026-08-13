@@ -104,12 +104,8 @@ jobs:
             "https://github.com/velvetmonkey/"
       - id: control_04
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
       - id: control_05
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update
@@ -159,12 +155,8 @@ jobs:
             "https://github.com/velvetmonkey/"
       - id: control_04
         continue-on-error: true
-        uses: leanprover/lean-action@v1.5.0
-        with:
-          use-github-cache: false
-          build: false
-          test: false
-          lint: false
+        name: Install repository-pinned elan
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
       - id: control_05
         continue-on-error: true
         run: test -d .lake/packages/mcp-seal || lake update

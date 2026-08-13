@@ -186,7 +186,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 action_count += 1
         self.assertEqual(action_count, 5, "review every aggregate Lean setup")
 
-    def test_every_lean_action_defers_tests_and_disables_lint(self) -> None:
+    def test_no_workflow_installs_elan_through_lean_action(self) -> None:
         action_marker = "leanprover/lean-action"
         action_count = 0
 
@@ -203,10 +203,8 @@ class LeanTestDriverGateTests(unittest.TestCase):
                 self.assertIn("test: false", action_block, workflow)
                 self.assertIn("lint: false", action_block, workflow)
 
-        # This count is a tripwire, not a fact to be kept in sync: it goes red
-        # whenever a call site is added or removed, and the only way to clear
-        # it is to review every site and restate the roster below. Bumping the
-        # number without doing that review defeats the whole control.
+        # This is a zero-tolerance tripwire: every workflow must use the
+        # repository-pinned, hash-verified installer instead.
         #
         # Raised 9 -> 11 by the pyyamlpop lane, 2026-08-08, after reviewing all
         # eleven sites individually. Two were new since the roster was last
@@ -248,7 +246,7 @@ class LeanTestDriverGateTests(unittest.TestCase):
         #  10  security.yml:fuzz-hostile-ingress:control_04
         # R27 replaced entries 4 and 5 with the repository-pinned installer;
         # the remaining eight action sites retain these action-specific guards.
-        self.assertEqual(action_count, 8, "review every remaining lean-action call site")
+        self.assertEqual(action_count, 0, "no workflow may install elan through lean-action")
 
     def test_every_aggregate_test_has_a_native_prerequisite(self) -> None:
         """Each lake test must follow a native build in the same job.
