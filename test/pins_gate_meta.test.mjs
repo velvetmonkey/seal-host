@@ -26,6 +26,80 @@ import {
   stripSourceComments,
 } from "../scripts/pins_gate.mjs";
 
+const EXPECTED_CI_RUN_STEP_IDENTITIES = [
+  "export-surface:control_02",
+  "export-surface:control_03",
+  "export-surface:control_04",
+  "export-surface:control_05",
+  "export-surface:name:Require every isolated CI step to pass",
+  "build:control_15",
+  "build:control_02",
+  "build:control_03",
+  "build:control_05",
+  "build:control_06",
+  "build:control_07",
+  "build:control_20",
+  "build:control_08",
+  "build:control_10",
+  "build:control_18",
+  "build:control_33",
+  "build:control_19",
+  "build:control_16",
+  "build:control_34",
+  "build:name:Require every isolated CI step to pass",
+  "rust-conformance:control_02",
+  "rust-conformance:control_32",
+  "rust-conformance:control_03",
+  "rust-conformance:control_05",
+  "rust-conformance:control_08",
+  "rust-conformance:control_09",
+  "rust-conformance:control_10",
+  "rust-conformance:control_11",
+  "rust-conformance:control_12",
+  "rust-conformance:control_13",
+  "rust-conformance:control_27",
+  "rust-conformance:control_14",
+  "rust-conformance:control_15",
+  "rust-conformance:control_17",
+  "rust-conformance:control_18",
+  "rust-conformance:control_19",
+  "rust-conformance:control_20",
+  "rust-conformance:control_30",
+  "rust-conformance:control_21",
+  "rust-conformance:control_22",
+  "rust-conformance:control_23",
+  "rust-conformance:control_24",
+  "rust-conformance:control_25",
+  "rust-conformance:control_26",
+  "rust-conformance:control_28",
+  "rust-conformance:control_29",
+  "rust-conformance:name:Require every isolated CI step to pass",
+  "contract-freeze:control_03",
+  "contract-freeze:control_04",
+  "contract-freeze:control_05",
+  "contract-freeze:control_06",
+  "contract-freeze:control_07",
+  "contract-freeze:control_08",
+  "contract-freeze:control_09",
+  "contract-freeze:control_10",
+  "contract-freeze:control_11",
+  "contract-freeze:name:Require every isolated CI step to pass",
+  "cargo-audit:control_03",
+  "cargo-audit:control_04",
+  "cargo-audit:name:Require every isolated CI step to pass",
+  "rust-sbom:control_03",
+  "rust-sbom:control_04",
+  "rust-sbom:name:Require every isolated CI step to pass",
+  "release-evidence:control_02",
+  "release-evidence:control_03",
+  "release-evidence:control_04",
+  "release-evidence:name:Require every isolated CI step to pass",
+];
+
+const ciRunStepIdentities = (steps) => steps.map(
+  (step) => `${step.job}:${step.id ?? `name:${step.name}`}`,
+);
+
 test("build-gated guard counts accept numerals and common number words", () => {
   assert.deepEqual(parseBuildGatedGuardCount("9 build-gated guards"), {
     count: 9,
@@ -372,7 +446,8 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // parse. No pre-existing run step was removed or relocated. The run-step
   // FLOOR below is untouched.
   //
-  // Reviewed 2026-08-08 (this lane, rebased onto the pyyamlpop line): 79 -> 66.
+  // Reviewed 2026-08-08 (the consolidation lane, rebased onto the pyyamlpop
+  // line): 79 -> 66.
   // Roadmap 8y item 6 removes exactly thirteen duplicate CI run steps: six
   // aggregate-child reruns in `build`, all six run steps from the same-commit
   // `rust-conformance-lean` duplicate job, and the later default `lake build`
@@ -382,13 +457,47 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // are disjoint from the one step the pyyamlpop lane added -- that step is in
   // `contract-freeze`, which this change does not touch -- so the two reviews
   // compose as 78 + 1 - 13. The run-step floor below is unchanged.
-  assert.equal(normal.length, 66, "review the expected run-step inventory explicitly");
+  //
+  // Reviewed 2026-08-13: G2 item two adds `build:control_34`. The former guard
+  // asserted only the total 66; that named no control and could be satisfied by
+  // incrementing a number after an unrelated substitution. The live inventory
+  // above now names every job + step id (or the aggregate's unique name), so a
+  // new, removed, renamed, reordered, or substituted run step needs an explicit
+  // review of its identity rather than a count bump.
+  assert.deepEqual(
+    ciRunStepIdentities(normal),
+    EXPECTED_CI_RUN_STEP_IDENTITIES,
+    "CI run-step identities changed without an explicit inventory review",
+  );
   assert.equal(
     shifted.length,
     normal.length,
     "uniform reindent changed the parsed run-step inventory",
   );
   assert.deepEqual(shifted, normal, "uniform reindent changed parsed run-step semantics");
+});
+
+test("an undeclared run step fails even when its updated total is accepted", () => {
+  const ci = fs.readFileSync(
+    path.join(ROOT, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const marker = "      - name: Require every isolated CI step to pass\n";
+  const dummy =
+    "      - id: control_99\n" +
+    "        continue-on-error: true\n" +
+    "        name: Undeclared dummy control\n" +
+    "        run: echo dummy\n";
+  const mutated = ci.replace(marker, `${dummy}${marker}`);
+  assert.notEqual(mutated, ci, "dummy control insertion point disappeared");
+  const parsed = parseCiRunSteps(mutated);
+  const deliberatelyUpdatedTotal = EXPECTED_CI_RUN_STEP_IDENTITIES.length + 1;
+  assert.equal(parsed.length, deliberatelyUpdatedTotal, "count control did not model the old weakness");
+  assert.notDeepEqual(
+    ciRunStepIdentities(parsed),
+    EXPECTED_CI_RUN_STEP_IDENTITIES,
+    "undeclared dummy control escaped the named identity inventory",
+  );
 });
 
 test("CI literal run blocks are parsed as commands, not scalar headers", () => {

@@ -561,11 +561,25 @@ export function parseCiRunSteps(
     if (!stepsKey) continue;
 
     const stepsIndent = stepsKey[1].length;
+    let job = null;
+    for (let header = index - 1; header >= 0; header -= 1) {
+      const candidate = lines[header].match(/^(\s*)([a-z0-9-]+):\s*(?:#.*)?$/);
+      if (candidate && candidate[1].length === stepsIndent - 2) {
+        job = candidate[2];
+        break;
+      }
+    }
+    if (job === null) {
+      throw new Error(`ci.yml:${index + 1} steps block has no enclosing job identity`);
+    }
     let stepIndent = null;
     let current = null;
     const finishCurrent = () => {
       if (current && current.run !== null) {
         steps.push({
+          job,
+          id: current.id,
+          name: current.name,
           run: current.run,
           workingDirectory: current.workingDirectory,
         });
@@ -589,9 +603,15 @@ export function parseCiRunSteps(
         current = {
           indent: stepIndent,
           mappingIndent: null,
+          id: null,
+          name: null,
           run: null,
           workingDirectory: null,
         };
+        const inlineId = sequenceItem[2].match(/^id:\s*(\S+)\s*$/);
+        if (inlineId) current.id = inlineId[1];
+        const inlineName = sequenceItem[2].match(/^name:\s*(.+?)\s*$/);
+        if (inlineName) current.name = inlineName[1];
         const inlineRun = sequenceItem[2].match(/^run:\s*(.*)$/);
         if (inlineRun) {
           const parsed = parseCiRunValue(
@@ -610,6 +630,10 @@ export function parseCiRunSteps(
       if (indent !== current.mappingIndent) continue;
 
       const field = line.trim();
+      const id = field.match(/^id:\s*(\S+)\s*$/);
+      if (id) current.id = id[1];
+      const name = field.match(/^name:\s*(.+?)\s*$/);
+      if (name) current.name = name[1];
       const run = field.match(/^run:\s*(.*)$/);
       if (run) {
         const parsed = parseCiRunValue(lines, cursor, indent, run[1]);
