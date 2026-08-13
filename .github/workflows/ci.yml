@@ -339,9 +339,13 @@ jobs:
       #   error: object file '.../SealV2/EffectEnvelope.olean' ... does not exist
       # which reads like a byte divergence and is not one. Observed on main at
       # 23c3c03 (RUN twin-red-2026-07-26).
+      # The three-artifact Rust byte lock also executes the compiled Lean
+      # witness. It is a default target, but the default-target build happens
+      # after the Cargo suite in this job, so materialize it here as another
+      # explicit pre-Cargo prerequisite.
       - id: control_27
         continue-on-error: true
-        run: lake build SealV2.EffectEnvelope
+        run: lake build SealV2.EffectEnvelope three_artifact_byte_lock
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
       # --no-fail-fast: a test binary that dies on a signal instead of
       # reporting otherwise takes every binary queued behind it down with it,
