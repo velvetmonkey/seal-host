@@ -68,7 +68,12 @@ STEP_START = re.compile(r"^      -\s+(\S.*)$")
 STEP_KEY = re.compile(r"^        ([A-Za-z0-9_-]+):\s*(.*?)\s*$")
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=", re.S)
 FD_REDIRECT = re.compile(r"\d+(?:>>|>&|<&|>|<)")
-LEAN_FETCH_WRAPPER = ("python3", "scripts/lean_fetch_outcome.py", "--")
+# Closed, reviewable wrapper vocabulary.  Each entry is an exact repository
+# path, so enrolling another wrapper is a one-line diff rather than teaching
+# the parser to trust arbitrary arguments containing ``--``.
+APPROVED_WRAPPER_SCRIPTS = (
+    "scripts/lean_fetch_outcome.py",
+)
 PIPEFAIL_SHELL = ("bash", "-o", "pipefail", "-c")
 
 # RULED by Ben on 2026-08-01. This theorem-bearing module is deliberately not
@@ -1412,17 +1417,20 @@ def lake_invocations_in(command: ShellCommand, step: WorkflowStep, step_dead: bo
 
 
 def wrapped_lake_commands(command: ShellCommand) -> tuple[ShellCommand, ...]:
-    """Expose Lake commands behind the one approved fetch-outcome wrapper.
+    """Expose Lake commands behind an enrolled wrapper and literal separator.
 
-    The prefix is deliberately an exact tuple.  In particular, this does not
-    search arbitrary arguments for ``lake``: a command that does not use the
-    approved wrapper, or whose wrapped command is not Lake, stays invisible to
-    the refuting census and therefore cannot accidentally gain credit.
+    ``--`` is load-bearing: options belong before it and exactly one inner
+    command follows it.  We never search arbitrary arguments for ``lake``;
+    an unenrolled wrapper or malformed inner command stays invisible to the
+    refuting census and therefore cannot accidentally gain credit.
     """
     words = command.words
-    if words[: len(LEAN_FETCH_WRAPPER)] != LEAN_FETCH_WRAPPER:
+    if len(words) < 4 or words[0] != "python3" or words[1] not in APPROVED_WRAPPER_SCRIPTS:
         return ()
-    inner = words[len(LEAN_FETCH_WRAPPER) :]
+    separators = [index for index, word in enumerate(words[2:], start=2) if word == "--"]
+    if len(separators) != 1:
+        return ()
+    inner = words[separators[0] + 1 :]
     if inner and inner[0] == "lake":
         return (
             ShellCommand(tuple(inner), command.line, command.conditional, command.dead, command.dead_reason),
@@ -1435,6 +1443,32 @@ def wrapped_lake_commands(command: ShellCommand) -> tuple[ShellCommand, ...]:
             for item in nested
         )
     return ()
+
+
+def validate_wrapper_registry(root: Path) -> tuple[str, ...]:
+    """Reject unusable registry state before it can silently credit nothing."""
+    errors: list[str] = []
+    try:
+        Path(__file__).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        errors.append(f"cannot read proof_inventory.py: {error}")
+    if not APPROVED_WRAPPER_SCRIPTS:
+        errors.append("approved wrapper registry is empty")
+    repository = root.resolve()
+    for script in APPROVED_WRAPPER_SCRIPTS:
+        path = root / script
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            errors.append(f"approved wrapper registry entry does not name a file: {script}")
+            continue
+        if path.is_symlink():
+            errors.append(f"approved wrapper registry entry is a symlink, not a regular file: {script}")
+        elif not resolved.is_relative_to(repository):
+            errors.append(f"approved wrapper registry entry escapes repository root: {script}")
+        elif not path.is_file():
+            errors.append(f"approved wrapper registry entry does not name a regular file: {script}")
+    return tuple(errors)
 
 
 def discover_lake_commands(
@@ -1811,7 +1845,7 @@ def closure(root_module: str, graph: dict[str, set[str]]) -> set[str]:
 
 def evaluate(root: Path = ROOT, extra_upstream_roots: tuple[Path, ...] = ()) -> Inventory:
     sources, source_errors, unreadable = read_sources(root)
-    errors = list(source_errors)
+    errors = list(source_errors) + list(validate_wrapper_registry(root))
     try:
         steps = read_workflow_steps(root)
         declared = read_manifest(root)
