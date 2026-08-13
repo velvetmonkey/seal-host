@@ -20,3 +20,4 @@ pub mod release;
 pub mod replay_store;
 pub mod route;
 pub mod secure_fs;
+pub mod three_artifact_byte_lock;

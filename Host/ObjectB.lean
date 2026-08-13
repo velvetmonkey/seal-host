@@ -18,8 +18,9 @@ canonical-byte function. Request and approval references, the config digest,
 and decoding of the deployed host's raw route result are fixed functions below
 rather than caller-chosen fields. This module proves only that the deployment
 predicates accepted their payload arguments; it does not prove those external
-checks faithful, the Rust/Lean agreement witness, global sequence monotonicity,
-signatures, or a wire encoding.
+checks faithful, global sequence monotonicity, or signatures. The separate
+`Host.ThreeArtifactByteLock` module owns the wire encoding and its Rust/Lean
+agreement witness; this module does not duplicate either.
 
 The gate imposes no independent meaning or validity check on `schema`,
 `verificationProfile`, `recordedAt`, `sequenceNumber`, `postStateHash`,

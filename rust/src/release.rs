@@ -6,8 +6,11 @@
 //! operation burn only after verifying the receipt signature and its bound
 //! `post_state_hash`.
 
-use crate::{ed25519, secure_fs};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use crate::{ed25519, secure_fs, three_artifact_byte_lock as byte_lock};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,8 +20,6 @@ use std::path::{Path, PathBuf};
 
 const RECEIPT_KEY_FILE: &str = ".seal-receipt-ed25519.key";
 const OPERATION_STATE_FILE: &str = ".seal-operation-state.json";
-const SIGNATURE_DOMAIN: &[u8] = b"seal.object-b/v1\0";
-const SIGNATURE_DOMAIN_NAME: &str = "seal.object-b/v1";
 const OPERATION_ID_WIRE_FIELD: &str = "operation_id";
 
 /// Every value a verifier is allowed to read. This type deliberately has no
@@ -40,10 +41,16 @@ enum V1DurabilityClass {
     Unknown,
 }
 
-const V1_DURABILITY_VOCABULARY: [V1DurabilityClass; 2] = [
-    V1DurabilityClass::AssertedLocalFsync,
-    V1DurabilityClass::Unknown,
-];
+/// Convert a requested v1 emission value to its signed JSON spelling. The
+/// verifier's wider vocabulary is intentionally not accepted here.
+pub fn v1_durability_for_emission(value: &str) -> Result<Value, String> {
+    let value = match value {
+        "asserted_local_fsync" => V1DurabilityClass::AssertedLocalFsync,
+        "unknown" => V1DurabilityClass::Unknown,
+        _ => return Err(format!("refused v1 durability_class: {value}")),
+    };
+    serde_json::to_value(value).map_err(|error| format!("cannot encode durability_class: {error}"))
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -90,6 +97,14 @@ struct ReceiptSignature {
     value: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SignedArtifacts {
+    encoding: String,
+    object_a: String,
+    approval_statement: Option<String>,
+}
+
 #[derive(Debug)]
 struct ReceiptSigner {
     key: SigningKey,
@@ -116,13 +131,77 @@ fn random_32(label: &str) -> Result<[u8; 32], String> {
 }
 
 fn signature_preimage(record: &Value) -> Result<Vec<u8>, String> {
-    let bytes = serde_json::to_vec(record)
-        .map_err(|error| format!("cannot serialize receipt signature preimage: {error}"))?;
-    let mut preimage = Vec::with_capacity(SIGNATURE_DOMAIN.len() + 8 + bytes.len());
-    preimage.extend_from_slice(SIGNATURE_DOMAIN);
-    preimage.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-    preimage.extend_from_slice(&bytes);
-    Ok(preimage)
+    let artifacts: SignedArtifacts = serde_json::from_value(
+        record
+            .get("signed_artifacts")
+            .cloned()
+            .ok_or("signed receipt lacks signed_artifacts (Object A and Approval Statement)")?,
+    )
+    .map_err(|error| format!("bad signed_artifacts: {error}"))?;
+    if artifacts.encoding != "base64" {
+        return Err("unrecognised signed_artifacts encoding".into());
+    }
+    let object_a = STANDARD
+        .decode(artifacts.object_a)
+        .map_err(|_| "bad Object A base64")?;
+    let approval_statement = artifacts
+        .approval_statement
+        .map(|bytes| {
+            STANDARD
+                .decode(bytes)
+                .map_err(|_| "bad Approval Statement base64")
+        })
+        .transpose()?;
+    let object_b = serde_json::to_vec(record)
+        .map_err(|error| format!("cannot serialize Object B: {error}"))?;
+    let release_status: byte_lock::ReleaseStatus = serde_json::from_value(
+        record
+            .get("release_status")
+            .cloned()
+            .ok_or("signed receipt lacks release_status")?,
+    )
+    .map_err(|error| format!("bad release_status: {error}"))?;
+    let operation_id = record
+        .get("operation_id")
+        .and_then(Value::as_str)
+        .ok_or("signed receipt lacks operation_id")?
+        .as_bytes()
+        .to_vec();
+    let durability_class: byte_lock::DurabilityClass = serde_json::from_value(
+        record
+            .get("durability_class")
+            .cloned()
+            .ok_or("signed receipt lacks durability_class")?,
+    )
+    .map_err(|error| format!("bad durability_class: {error}"))?;
+    Ok(byte_lock::encode(&byte_lock::Content {
+        object_a,
+        approval_statement,
+        object_b,
+        release_status,
+        operation_id,
+        durability_class,
+    }))
+}
+
+pub fn attach_signed_artifacts(
+    record: &mut Value,
+    object_a: &[u8],
+    approval_statement: Option<&[u8]>,
+) -> Result<(), String> {
+    let object = record
+        .as_object_mut()
+        .ok_or("authorization decision must be an object")?;
+    object.insert(
+        "signed_artifacts".into(),
+        serde_json::to_value(SignedArtifacts {
+            encoding: "base64".into(),
+            object_a: STANDARD.encode(object_a),
+            approval_statement: approval_statement.map(|bytes| STANDARD.encode(bytes)),
+        })
+        .expect("SignedArtifacts is serializable"),
+    );
+    Ok(())
 }
 
 fn operation_state_value(operation_id: &str, frame_sha256: &str) -> Value {
@@ -193,17 +272,36 @@ impl ReleaseInput {
 }
 
 impl ReceiptSigner {
+    fn load_existing(dir: &Path) -> Result<Self, String> {
+        let path = dir.join(RECEIPT_KEY_FILE);
+        if !path.exists() {
+            return Err(format!("missing host receipt key {}", path.display()));
+        }
+        Self::load_key(&path)
+    }
+
+    fn load_key(path: &Path) -> Result<Self, String> {
+        secure_fs::validate_private_file(path, "host receipt key")?;
+        let key_bytes: [u8; 32] = std::fs::read(path)
+            .map_err(|error| format!("cannot read host receipt key {}: {error}", path.display()))?
+            .try_into()
+            .map_err(|_| "host receipt key must be exactly 32 bytes")?;
+        let key = SigningKey::from_bytes(&key_bytes);
+        let public_key_hex = hex::encode(key.verifying_key().to_bytes());
+        let key_id = sha256_hex(&key.verifying_key().to_bytes());
+        Ok(Self {
+            key,
+            public_key_hex,
+            key_id,
+        })
+    }
+
     fn load_or_create(dir: &Path) -> Result<Self, String> {
         let path = dir.join(RECEIPT_KEY_FILE);
-        let key_bytes: [u8; 32] = if path.exists() {
-            secure_fs::validate_private_file(&path, "host receipt key")?;
-            std::fs::read(&path)
-                .map_err(|error| {
-                    format!("cannot read host receipt key {}: {error}", path.display())
-                })?
-                .try_into()
-                .map_err(|_| "host receipt key must be exactly 32 bytes")?
-        } else {
+        if path.exists() {
+            return Self::load_key(&path);
+        }
+        {
             let bytes = random_32("host receipt key")?;
             let mut file = secure_fs::open_private_new(&path, "host receipt key")?;
             file.write_all(&bytes)
@@ -215,16 +313,8 @@ impl ReceiptSigner {
                     )
                 })?;
             secure_fs::sync_dir(dir, "authorization decision directory")?;
-            bytes
-        };
-        let key = SigningKey::from_bytes(&key_bytes);
-        let public_key_hex = hex::encode(key.verifying_key().to_bytes());
-        let key_id = sha256_hex(&key.verifying_key().to_bytes());
-        Ok(Self {
-            key,
-            public_key_hex,
-            key_id,
-        })
+        }
+        Self::load_key(&path)
     }
 
     fn sign(&self, record: &mut Value) -> Result<(), String> {
@@ -236,7 +326,7 @@ impl ReceiptSigner {
         record.as_object_mut().expect("checked object").insert(
             "signature".into(),
             serde_json::json!({
-                "domain": SIGNATURE_DOMAIN_NAME,
+                "domain": byte_lock::DOMAIN_NAME,
                 "algorithm": "Ed25519",
                 "public_key": self.public_key_hex,
                 "key_id": self.key_id,
@@ -256,10 +346,10 @@ impl ReceiptSigner {
             .ok_or("authorization decision lacks signature")?;
         let signature: ReceiptSignature = serde_json::from_value(signature_value)
             .map_err(|error| format!("bad receipt signature object: {error}"))?;
-        if signature.domain != SIGNATURE_DOMAIN_NAME
-            || signature.algorithm != "Ed25519"
-            || signature.encoding != "base64url-nopad"
-        {
+        if signature.domain != byte_lock::DOMAIN_NAME {
+            return Err("unrecognised receipt signature domain tag".into());
+        }
+        if signature.algorithm != "Ed25519" || signature.encoding != "base64url-nopad" {
             return Err("unsupported receipt signature parameters".into());
         }
         if signature.public_key != self.public_key_hex || signature.key_id != self.key_id {
@@ -293,6 +383,14 @@ impl ReleaseStore {
         Ok(Self { dir, signer })
     }
 
+    /// Open a verifier without creating a missing receipt key. Silence is a
+    /// refusal on this path: only the producing path may provision the key.
+    pub fn open_existing(dir: impl Into<PathBuf>) -> Result<Self, String> {
+        let dir = dir.into();
+        let signer = ReceiptSigner::load_existing(&dir)?;
+        Ok(Self { dir, signer })
+    }
+
     pub fn attach_and_sign(
         &self,
         record: &mut Value,
@@ -314,7 +412,7 @@ impl ReleaseStore {
             );
             object.insert(
                 "durability_class".into(),
-                serde_json::to_value(V1_DURABILITY_VOCABULARY[0]).unwrap(),
+                v1_durability_for_emission("asserted_local_fsync")?,
             );
             object.insert(
                 "release_valid_until".into(),
@@ -344,7 +442,7 @@ impl ReleaseStore {
             );
             object.insert(
                 "durability_class".into(),
-                serde_json::to_value(V1_DURABILITY_VOCABULARY[0]).unwrap(),
+                v1_durability_for_emission("asserted_local_fsync")?,
             );
         }
         self.signer.sign(record)
@@ -643,6 +741,7 @@ mod tests {
             "record_version": 3,
             "verdict": "ALLOW",
         });
+        attach_signed_artifacts(&mut record, b"test-object-a", None).unwrap();
         store.attach_and_sign(&mut record, Some(&release)).unwrap();
         let path = dir.join("receipt-00000000000000000000-test.json");
         let mut file = secure_fs::open_private_new(&path, "test authorization decision").unwrap();
@@ -669,9 +768,9 @@ mod tests {
                 }
             );
         }
-        let v1_emittable: Vec<_> = V1_DURABILITY_VOCABULARY
+        let v1_emittable: Vec<_> = ["asserted_local_fsync", "unknown"]
             .into_iter()
-            .map(|value| serde_json::to_value(value).unwrap())
+            .map(|value| v1_durability_for_emission(value).unwrap())
             .collect();
         assert_eq!(
             v1_emittable,
@@ -681,10 +780,52 @@ mod tests {
             ]
         );
         assert!(!v1_emittable.contains(&Value::String("witnessed_external".into())));
+        assert!(v1_durability_for_emission("witnessed_external").is_err());
         assert!(
             serde_json::from_value::<ReadableDurabilityClass>(Value::String("best_effort".into()))
                 .is_err()
         );
+
+        let dir = temp_dir("witnessed-readable");
+        let store = ReleaseStore::open(&dir).unwrap();
+        let mut externally_witnessed = serde_json::json!({
+            "verdict": "DENY",
+            "release_status": "NOT_APPLICABLE",
+            "operation_id": "external-witness-operation",
+            "durability_class": "witnessed_external"
+        });
+        attach_signed_artifacts(&mut externally_witnessed, b"object-a", None).unwrap();
+        store.signer.sign(&mut externally_witnessed).unwrap();
+        assert!(store
+            .verify_record(&externally_witnessed)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn asserted_prefix_and_install_key_description_reach_signed_bytes() {
+        let dir = temp_dir("signed-prefix");
+        let store = ReleaseStore::open(&dir).unwrap();
+        let mut record = serde_json::json!({"verdict": "DENY"});
+        attach_signed_artifacts(&mut record, b"object-a", Some(b"approval-statement")).unwrap();
+        store.attach_and_sign(&mut record, None).unwrap();
+
+        assert_eq!(record["durability_class"], "asserted_local_fsync");
+        let mut unsigned = record.clone();
+        unsigned.as_object_mut().unwrap().remove("signature");
+        let decoded = byte_lock::decode(&signature_preimage(&unsigned).unwrap()).unwrap();
+        assert_eq!(
+            decoded.durability_class,
+            byte_lock::DurabilityClass::AssertedLocalFsync
+        );
+        assert_eq!(record["signature"]["domain"], byte_lock::DOMAIN_NAME);
+        assert_eq!(record["signature"]["algorithm"], "Ed25519");
+        assert_eq!(record["signature"]["encoding"], "base64url-nopad");
+        assert_eq!(
+            record["signature"]["public_key"].as_str().unwrap().len(),
+            64
+        );
+        assert_eq!(record["signature"]["key_id"].as_str().unwrap().len(), 64);
     }
 
     #[test]

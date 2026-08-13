@@ -19,7 +19,10 @@
 //! The protocol is strictly lockstep (each input line produces exactly one
 //! output line), so a forwarded line can never be mistaken for a block.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::lean::LeanHost;
 use seal_host_rs::providers::{
@@ -1696,8 +1699,28 @@ fn mediation_obfuscation_and_one_shot_approval() {
     assert_eq!(allow["release_status"], "RELEASED");
     assert_eq!(allow["durability_class"], "asserted_local_fsync");
     assert_eq!(allow["operation_id"].as_str().unwrap().len(), 64);
-    assert_eq!(allow["signature"]["domain"], "seal.object-b/v1");
+    assert_eq!(allow["signature"]["domain"], "seal.object-b/v2");
     assert_eq!(allow["signature"]["algorithm"], "Ed25519");
+    assert_eq!(allow["signed_artifacts"]["encoding"], "base64");
+    assert_eq!(
+        STANDARD
+            .decode(allow["signed_artifacts"]["object_a"].as_str().unwrap())
+            .unwrap(),
+        approved_frame.as_bytes(),
+        "Object A seat must contain the exact framed request bytes judged by the host"
+    );
+    let approval_statement: serde_json::Value = serde_json::from_slice(
+        &STANDARD
+            .decode(
+                allow["signed_artifacts"]["approval_statement"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(approval_statement["approval_record_version"], 2);
+    assert_eq!(approval_statement["nonce"], "n-main-canonical");
     assert_ne!(
         allow["signature"]["public_key"], expected_pubkey,
         "per-install receipt signing key must remain role-split from config authority"
