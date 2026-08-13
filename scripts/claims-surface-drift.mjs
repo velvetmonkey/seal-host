@@ -12,7 +12,8 @@
 // deliberately OUTSIDE the markers, so only the profile/claim/non-claim lines
 // are guarded.
 //
-// Exit codes: 0 in sync · 1 drift (diff printed) · 2 markers missing/malformed.
+// Exit codes: 0 in sync · 1 drift (diff printed) · 2 fatal read/structure error.
+// A fatal error and drift together take the more severe code, 2.
 // Node only, no dependencies. Run: node scripts/claims-surface-drift.mjs
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -27,23 +28,33 @@ const BLOCKS = [
     canonical: "docs/TRUTH-BOX.md", mirrors: ["README.md"] },
 ];
 
+const CLAIM_MANIFEST = [
+  ["docs/SEAL-SYSTEM-TCB.md", "it explicitly allows are gated. A call the policy does not cover is out of scope, not \"safe\""],
+];
+
+let fatal = false;
+
+function fatalError(message) {
+  fatal = true;
+  console.error(message);
+}
 function extract(file, begin, end) {
   let text;
   try {
     text = readFileSync(resolve(ROOT, file), "utf8");
   } catch (e) {
-    console.error(`ERROR  ${file}: ${e.message}`);
-    process.exit(2);
+    fatalError(`ERROR  ${file}: ${e.message}`);
+    return null;
   }
   const i = text.indexOf(begin);
   const j = text.indexOf(end);
   if (i === -1 || j === -1 || j < i) {
-    console.error(`ERROR  ${file}: markers missing or malformed (need ${begin} ... ${end})`);
-    process.exit(2);
+    fatalError(`ERROR  ${file}: markers missing or malformed (need ${begin} ... ${end})`);
+    return null;
   }
   if (text.indexOf(begin, i + 1) !== -1 || text.indexOf(end, j + 1) !== -1) {
-    console.error(`ERROR  ${file}: multiple ${begin} pairs — exactly one region per file`);
-    process.exit(2);
+    fatalError(`ERROR  ${file}: multiple ${begin} pairs — exactly one region per file`);
+    return null;
   }
   return text.slice(i + begin.length, j);
 }
@@ -62,13 +73,19 @@ function normalise(block) {
 
 let drift = false;
 for (const blk of BLOCKS) {
-  const canonical = normalise(extract(blk.canonical, blk.begin, blk.end));
+  const canonicalBlock = extract(blk.canonical, blk.begin, blk.end);
+  const canonical = canonicalBlock === null ? null : normalise(canonicalBlock);
   if (!canonical) {
-    console.error(`ERROR  ${blk.canonical}: canonical block is empty`);
-    process.exit(2);
+    if (canonical !== null) {
+      fatalError(`ERROR  ${blk.canonical}: canonical block is empty`);
+    }
+    for (const file of blk.mirrors) extract(file, blk.begin, blk.end);
+    continue;
   }
   for (const file of blk.mirrors) {
-    const got = normalise(extract(file, blk.begin, blk.end));
+    const mirrorBlock = extract(file, blk.begin, blk.end);
+    if (mirrorBlock === null) continue;
+    const got = normalise(mirrorBlock);
     if (got === canonical) {
       console.log(`PASS  ${file} matches ${blk.canonical}`);
       continue;
@@ -87,8 +104,24 @@ for (const blk of BLOCKS) {
   }
 }
 
+for (const [file, claim] of CLAIM_MANIFEST) {
+  let text;
+  try { text = readFileSync(resolve(ROOT, file), "utf8"); }
+  catch (e) {
+    fatalError(`ERROR  claim manifest entry ${file}: ${e.message}`);
+    continue;
+  }
+  if (text.includes(claim)) console.log(`PASS  ${file} contains repaired claim`);
+  else { drift = true; console.error(`FAIL  ${file} missing repaired claim: ${claim}`); }
+}
+
 if (drift) {
   console.error("\nCLAIMS DRIFT — edit the canonical file first, then mirror verbatim.");
-  process.exit(1);
+  if (!fatal) process.exitCode = 1;
 }
-console.log("all claim blocks in sync across repository-local surfaces");
+if (fatal) {
+  process.exitCode = 2;
+}
+if (!drift && !fatal) {
+  console.log("all claim blocks in sync across repository-local surfaces");
+}
