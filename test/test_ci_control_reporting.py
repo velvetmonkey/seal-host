@@ -5,18 +5,84 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOWS = (
-    ROOT / ".github/workflows/ci.yml",
-    ROOT / ".github/workflows/security.yml",
-    ROOT / ".github/workflows/golden-path.yml",
-    ROOT / ".github/workflows/public-export.yml",
-    ROOT / ".github/workflows/release.yml",
-)
+WORKFLOW_DIR = ROOT / ".github/workflows"
 AGGREGATE_NAME = "Require every isolated CI step to pass"
+
+# This is deliberately a mapping over every workflow discovered on disk, not a
+# hand-picked set of the files that happened to need private access when this
+# test was first written.  An unknown workflow is a finding: someone must
+# decide whether it needs a fail-closed private-access route, rather than it
+# quietly sitting outside this control.
+PRIVATE_ACCESS_EXPECTATIONS = {
+    "acceptance.yml": (
+        'run: test -n "$SEAL_CI_READ_TOKEN"',
+        'name: Configure private fleet read access',
+    ),
+    "ci.yml": (
+        'run: test -n "$SEAL_CI_READ_TOKEN"',
+    ),
+    "g2-mutation-ablation.yml": (
+        "SEAL_CI_READ_TOKEN is not configured",
+        'name: Configure private dependency auth',
+    ),
+    "golden-path.yml": (
+        'test -n "$SEAL_CI_READ_TOKEN" || {',
+        "exit 1",
+    ),
+    "public-export.yml": (),
+    "release-docs.yml": (),
+    "release.yml": (
+        'test -n "$SEAL_CI_READ_TOKEN"',
+    ),
+    "security.yml": (
+        'run: test -n "$SEAL_CI_READ_TOKEN"',
+    ),
+}
+
+# Every discovered workflow is deliberately classified by the way a failed
+# step reaches a failed workflow.  The two fail-fast workflows do not use the
+# isolated-control aggregate: `acceptance.yml` is reusable, so GitHub reports
+# the caller's step identity there, and `release-docs.yml` has no tolerated
+# step failures to aggregate.  A new file has no mode until it is reviewed.
+WORKFLOW_CONTROL_MODES = {
+    "acceptance.yml": "fail-fast",
+    "ci.yml": "aggregate",
+    "g2-mutation-ablation.yml": "aggregate",
+    "golden-path.yml": "aggregate",
+    "public-export.yml": "aggregate",
+    "release-docs.yml": "fail-fast",
+    "release.yml": "aggregate",
+    "security.yml": "aggregate",
+}
+
+
+def workflow_paths(workflow_dir: Path = WORKFLOW_DIR) -> tuple[Path, ...]:
+    """Discover the workflow population; additions require explicit review."""
+    return tuple(sorted(workflow_dir.glob("*.yml")))
+
+
+def private_access_failures(workflows: tuple[Path, ...]) -> list[str]:
+    """Return every unclassified workflow or missing private-access fact."""
+    failures: list[str] = []
+    for workflow in workflows:
+        required = PRIVATE_ACCESS_EXPECTATIONS.get(workflow.name)
+        if required is None:
+            failures.append(
+                f"workflow has no private-access classification: {workflow.name}"
+            )
+            continue
+        text = workflow.read_text(encoding="utf-8")
+        for needle in required:
+            if needle not in text:
+                failures.append(
+                    f"{workflow.name} missing private-access requirement: {needle}"
+                )
+    return failures
 
 
 def job_step_blocks(path: Path) -> dict[str, list[list[str]]]:
@@ -55,12 +121,24 @@ def job_step_blocks(path: Path) -> dict[str, list[list[str]]]:
 
 class CiControlReportingTests(unittest.TestCase):
     def test_every_job_isolates_all_steps_then_aggregates(self) -> None:
-        for workflow in WORKFLOWS:
+        workflows = workflow_paths()
+        self.assertEqual(
+            {workflow.name for workflow in workflows},
+            set(WORKFLOW_CONTROL_MODES),
+            "control modes must name the discovered workflow population",
+        )
+        for workflow in workflows:
             with self.subTest(workflow=workflow.name):
                 jobs = job_step_blocks(workflow)
                 self.assertTrue(jobs, f"no jobs parsed from {workflow}")
+                mode = WORKFLOW_CONTROL_MODES[workflow.name]
                 for job, steps in jobs.items():
                     with self.subTest(workflow=workflow.name, job=job):
+                        if mode == "fail-fast":
+                            step_text = "\n".join("\n".join(step) for step in steps)
+                            self.assertNotIn("continue-on-error", step_text)
+                            continue
+
                         if workflow.name == "release.yml" and job == "ci-acceptance":
                             gate = "\n".join("\n".join(step) for step in steps)
                             self.assertIn("run: python3 scripts/tag_release_gate.py", gate)
@@ -93,32 +171,24 @@ class CiControlReportingTests(unittest.TestCase):
                         self.assertEqual(len(ids), len(set(ids)), ids)
 
     def test_private_access_gates_still_fail_closed(self) -> None:
-        expected = {
-            "ci.yml": (
-                'run: test -n "$SEAL_CI_READ_TOKEN"',
-            ),
-            "security.yml": (
-                'run: test -n "$SEAL_CI_READ_TOKEN"',
-            ),
-            "golden-path.yml": (
-                'test -n "$SEAL_CI_READ_TOKEN" || {',
-                "exit 1",
-            ),
-            "release.yml": (
-                'test -n "$SEAL_CI_READ_TOKEN"',
-            ),
-        }
-        for workflow in WORKFLOWS:
-            self.assertIn(
-                workflow.name,
-                {*expected, "public-export.yml"},
-                f"undeclared workflow in private access gate expectations: {workflow.name}",
-            )
-            if workflow.name in expected:
-                text = workflow.read_text(encoding="utf-8")
-                for required in expected[workflow.name]:
-                    with self.subTest(workflow=workflow.name, required=required):
-                        self.assertIn(required, text)
+        workflows = workflow_paths()
+        self.assertEqual(
+            {workflow.name for workflow in workflows},
+            set(PRIVATE_ACCESS_EXPECTATIONS),
+            "private-access classifications must name the discovered workflow population",
+        )
+        self.assertEqual(private_access_failures(workflows), [])
+
+    def test_unclassified_workflow_fails_closed(self) -> None:
+        """Negative control: a new workflow cannot evade private-access review."""
+        with tempfile.TemporaryDirectory() as temporary:
+            workflow = Path(temporary) / "new-unclassified.yml"
+            workflow.write_text("name: new control\non: workflow_dispatch\n", encoding="utf-8")
+            failures = private_access_failures((workflow,))
+        self.assertEqual(
+            failures,
+            ["workflow has no private-access classification: new-unclassified.yml"],
+        )
 
     def test_release_build_reports_after_fleet_failure_but_publish_stays_gated(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
