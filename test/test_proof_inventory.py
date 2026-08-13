@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -28,8 +29,7 @@ class ProofInventoryTests(unittest.TestCase):
         (root / "Test").mkdir()
         (root / "scripts").mkdir()
         (root / ".github/workflows").mkdir(parents=True)
-        (root / "scripts/lean_fetch_outcome.py").write_text("", encoding="utf-8")
-        (root / "scripts/release_performance_telemetry.py").write_text("", encoding="utf-8")
+        shutil.copyfile(ROOT / "scripts/lean_fetch_outcome.py", root / "scripts/lean_fetch_outcome.py")
         (root / "lakefile.toml").write_text(
             'name = "fixture"\n'
             'testDriver = "lean_tests"\n'
@@ -315,18 +315,6 @@ class ProofInventoryTests(unittest.TestCase):
                 {("build", "Host.Planted"), ("exe", "probe")},
             )
 
-    def test_enrolled_telemetry_wrapper_with_options_exposes_lake_command(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = self.make_root(directory)
-            self.add_step(
-                root,
-                "control_probe",
-                "python3 scripts/release_performance_telemetry.py --phase probe -- lake build Host.Planted",
-            )
-            found, errors = inventory.discover_lake_commands(inventory.read_workflow_steps(root))
-            self.assertEqual(errors, [])
-            self.assertIn(("build", "Host.Planted"), {(item.kind, item.target) for item in found})
-
     def test_unenrolled_wrapper_with_separator_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
@@ -336,6 +324,21 @@ class ProofInventoryTests(unittest.TestCase):
             result = self.run_gate(root)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("declared command is not in shell command position", result.stderr)
+
+    def test_enrolled_wrapper_requires_its_exact_path_spelling(self) -> None:
+        spellings = (
+            "./scripts/lean_fetch_outcome.py",
+            "scripts/../scripts/lean_fetch_outcome.py",
+            "/opt/seal-host/scripts/lean_fetch_outcome.py",
+        )
+        for spelling in spellings:
+            with self.subTest(spelling=spelling), tempfile.TemporaryDirectory() as directory:
+                root = self.make_root(directory)
+                self.add_step(root, "control_probe", f"python3 {spelling} -- lake build Host.Planted")
+                self.add_row(root, workflow="ci.yml", job="build", step="control_probe", kind="build", target="Host.Planted", guard="")
+                result = self.run_gate(root)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("declared command is not in shell command position", result.stderr)
 
     def test_wrapper_registry_fails_closed_on_empty_missing_and_unreadable_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -355,6 +358,31 @@ class ProofInventoryTests(unittest.TestCase):
                     any(error.startswith("cannot read proof_inventory.py:") for error in result.errors),
                     result.errors,
                 )
+
+    def test_absent_enrolled_wrapper_file_is_named_and_red(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            (root / "scripts/lean_fetch_outcome.py").unlink()
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(
+                "approved wrapper registry entry does not name a file: scripts/lean_fetch_outcome.py",
+                result.stderr,
+            )
+
+    def test_enrolled_wrapper_symlink_is_named_and_red(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            enrolled = root / "scripts/lean_fetch_outcome.py"
+            enrolled.unlink()
+            (root / "scripts/not_enrolled.py").write_text("# different file\n", encoding="utf-8")
+            enrolled.symlink_to("not_enrolled.py")
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(
+                "approved wrapper registry entry is a symlink, not a regular file: scripts/lean_fetch_outcome.py",
+                result.stderr,
+            )
 
     def test_broken_inner_command_behind_fetch_wrapper_is_not_credited(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

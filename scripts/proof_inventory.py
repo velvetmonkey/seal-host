@@ -73,7 +73,6 @@ FD_REDIRECT = re.compile(r"\d+(?:>>|>&|<&|>|<)")
 # the parser to trust arbitrary arguments containing ``--``.
 APPROVED_WRAPPER_SCRIPTS = (
     "scripts/lean_fetch_outcome.py",
-    "scripts/release_performance_telemetry.py",
 )
 PIPEFAIL_SHELL = ("bash", "-o", "pipefail", "-c")
 
@@ -1455,10 +1454,20 @@ def validate_wrapper_registry(root: Path) -> tuple[str, ...]:
         errors.append(f"cannot read proof_inventory.py: {error}")
     if not APPROVED_WRAPPER_SCRIPTS:
         errors.append("approved wrapper registry is empty")
+    repository = root.resolve()
     for script in APPROVED_WRAPPER_SCRIPTS:
         path = root / script
-        if not path.is_file():
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
             errors.append(f"approved wrapper registry entry does not name a file: {script}")
+            continue
+        if path.is_symlink():
+            errors.append(f"approved wrapper registry entry is a symlink, not a regular file: {script}")
+        elif not resolved.is_relative_to(repository):
+            errors.append(f"approved wrapper registry entry escapes repository root: {script}")
+        elif not path.is_file():
+            errors.append(f"approved wrapper registry entry does not name a regular file: {script}")
     return tuple(errors)
 
 
