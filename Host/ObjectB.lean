@@ -2,7 +2,6 @@
 
 import Host.Sha256
 import Host.JsonWire
-import Host.ThreeArtifactByteLock
 import SealV2.EffectEnvelope
 import Lean.Data.Json
 
@@ -17,11 +16,11 @@ durable recording. The signed-effect fields are bound directly to the pinned
 kernel's `SealV2.Effect.deriveEffect`; this module defines no competing
 canonical-byte function. Request and approval references, the config digest,
 and decoding of the deployed host's raw route result are fixed functions below
-rather than caller-chosen fields. The `Host.ThreeArtifactByteLock` namespace
-owns the wire encoding and its Rust/Lean agreement proof below. The Object B
-gate itself proves only that the deployment predicates accepted their payload
-arguments; it does not prove those external checks faithful, global sequence
-monotonicity, or signatures.
+rather than caller-chosen fields. This module proves only that the deployment
+predicates accepted their payload arguments; it does not prove those external
+checks faithful, global sequence monotonicity, or signatures. The separate
+`Host.ThreeArtifactByteLock` module owns the wire encoding and its Rust/Lean
+agreement witness; this module does not duplicate either.
 
 The gate imposes no independent meaning or validity check on `schema`,
 `verificationProfile`, `recordedAt`, `sequenceNumber`, `postStateHash`,
@@ -420,69 +419,3 @@ def forged : CorePayload :=
 end Witness
 
 end Host.ObjectB
-
-/-!
-The byte-lock proofs live in this already-reached kernel module so adding the
-wire definitions does not silently alter the repository's proof-module
-topology.  Their public names remain in `Host.ThreeArtifactByteLock` beside the
-encoder they prove.
--/
-
-namespace Host.ThreeArtifactByteLock
-
-theorem decodeBlob_encodeBlob_append (bytes suffix : Bytes) :
-    decodeBlob (encodeBlob bytes ++ suffix) = some (bytes, suffix) := by
-  induction bytes with
-  | nil => simp [encodeBlob, decodeBlob]
-  | cons byte rest ih => simp [encodeBlob, decodeBlob, ih]
-
-theorem decodeRelease_releaseTag (status : ReleaseStatus) (suffix : Bytes) :
-    decodeRelease (releaseTag status :: suffix) = some (status, suffix) := by
-  cases status <;> rfl
-
-theorem decodeDurability_durabilityTag
-    (durability : DurabilityClass) (suffix : Bytes) :
-    decodeDurability (durabilityTag durability :: suffix) =
-      some (durability, suffix) := by
-  cases durability <;> rfl
-
-theorem decodeApproval_encodeApproval_append
-    (approval : Option Bytes) (suffix : Bytes) :
-    decodeApproval (encodeApproval approval ++ suffix) = some (approval, suffix) := by
-  cases approval with
-  | none => simp [encodeApproval, decodeApproval]
-  | some bytes => simp [encodeApproval, decodeApproval, decodeBlob_encodeBlob_append]
-
-theorem consumePrefix_self_append (expectedPrefix suffix : Bytes) :
-    consumePrefix expectedPrefix (expectedPrefix ++ suffix) = some suffix := by
-  induction expectedPrefix with
-  | nil => rfl
-  | cons byte rest ih => simp [consumePrefix, ih]
-
-/--
-Plain words: encoding any logical three-artifact content and then decoding
-those bytes recovers exactly that content.
-
-This does not prove signature validity, JSON semantics, an fsync, or any
-deployment trust predicate; it proves only this byte representation.
--/
-theorem decode_encode_exact_content (content : Content) :
-    decode (encode content) = some content := by
-  cases content
-  simp [decode, encode, consumePrefix_self_append,
-    decodeBlob_encodeBlob_append, decodeApproval_encodeApproval_append,
-    decodeRelease_releaseTag, decodeDurability_durabilityTag]
-
-/--
-Plain words: a byte string emitted by this encoder cannot name two different
-logical contents.
-
-This is encoder injectivity, not a proof of signature validity, durability, or
-the meaning of any artifact's payload.
--/
-theorem one_logical_content_one_encoding {left right : Content}
-    (sameBytes : encode left = encode right) : left = right := by
-  have decoded : decode (encode left) = decode (encode right) := congrArg decode sameBytes
-  simpa [decode_encode_exact_content] using decoded
-
-end Host.ThreeArtifactByteLock
