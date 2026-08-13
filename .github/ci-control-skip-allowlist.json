@@ -33,6 +33,12 @@
     },
     {
       "workflow": "ci.yml",
+      "job": "rust-conformance",
+      "id": "control_31",
+      "reason": "The G2 crash tests require the private FFI dependency and therefore cannot run on the tokenless path; the isolated control is intentionally skipped with the rest of private conformance."
+    },
+    {
+      "workflow": "ci.yml",
       "job": "build",
       "id": "control_06",
       "reason": "The PINS gate reads the checked-out private mcp-seal source tree as part of its anti-drift checks."

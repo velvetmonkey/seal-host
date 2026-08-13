@@ -354,6 +354,26 @@ jobs:
         run: cargo test --no-fail-fast
         if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
         working-directory: rust
+      # G2 crash evidence is deliberately narrower than the generic suite:
+      # each named crash test gets a package-scoped clean and Cargo JSON fresh
+      # artifact proof before its exact test binary is executed. The existing
+      # control aggregate turns any refusal into a red job.
+      - id: control_31
+        continue-on-error: true
+        name: Run G2 crash tests with fresh artifact proof
+        if: ${{ env.SEAL_CI_READ_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          for test_name in \
+            g2_t1_crash_between_reserve_and_recorded_recovers_the_approval \
+            g2_t2_second_presentation_fails_while_reservation_open \
+            g2_t3_crash_after_recorded_keeps_burn_and_receipt
+          do
+            scripts/cargo-test-prove-build.sh \
+              --force \
+              --test host_path "$test_name" \
+              -- --exact --nocapture
+          done
       - id: control_15
         continue-on-error: true
         name: Build release bins with disk telemetry
