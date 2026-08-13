@@ -219,6 +219,33 @@ fi
 # Added 2026-07-25 alongside Host/UnicodeKeys in PROJECT_MODULES.
 UNICODE_CLIB="$ROOT/.lake/packages/UnicodeBasic/.lake/build/lib/libunicodeclib.a"
 if [ -f "$UNICODE_CLIB" ]; then
+  # UnicodeBasic's handwritten target obtains its C source list from
+  # IO.FS.readDir.  That is kernel directory order, not locale collation, so
+  # LC_ALL=C cannot make the archive reproducible.  Rebuild the archive from
+  # its extracted members in explicit byte order before the linker sees it.
+  # GNU sort in the C locale compares bytes; do not replace this with a shell
+  # glob or an unsorted read of the extraction directory.
+  UNICODE_CANONICAL="$TMP/unicodeclib-canonical"
+  rm -rf "$UNICODE_CANONICAL"
+  mkdir -p "$UNICODE_CANONICAL/members"
+  mapfile -t UNICODE_MEMBERS < <(ar t "$UNICODE_CLIB")
+  [ "${#UNICODE_MEMBERS[@]}" -gt 0 ] || {
+    echo "FATAL: UnicodeBasic native archive has no members: $UNICODE_CLIB" >&2
+    exit 1
+  }
+  mapfile -t UNICODE_SORTED_MEMBERS < <(
+    printf '%s\n' "${UNICODE_MEMBERS[@]}" | LC_ALL=C sort
+  )
+  [ "${#UNICODE_MEMBERS[@]}" -eq "${#UNICODE_SORTED_MEMBERS[@]}" ] || {
+    echo "FATAL: failed to byte-sort UnicodeBasic archive members" >&2
+    exit 1
+  }
+  (
+    cd "$UNICODE_CANONICAL/members"
+    ar x "$UNICODE_CLIB"
+    ar rcsD "$UNICODE_CANONICAL/libunicodeclib.a" "${UNICODE_SORTED_MEMBERS[@]}"
+  )
+  mv "$UNICODE_CANONICAL/libunicodeclib.a" "$UNICODE_CLIB"
   ARCHIVES+=("$UNICODE_CLIB")
 else
   echo "FATAL: UnicodeBasic native archive missing: $UNICODE_CLIB" >&2
