@@ -27,6 +27,10 @@ const BLOCKS = [
     canonical: "docs/TRUTH-BOX.md", mirrors: ["README.md"] },
 ];
 
+const CLAIM_MANIFEST = [
+  ["docs/SEAL-SYSTEM-TCB.md", "it explicitly allows are gated. A call the policy does not cover is out of scope, not \"safe\""],
+];
+
 function extract(file, begin, end) {
   let text;
   try {
@@ -85,6 +89,14 @@ for (const blk of BLOCKS) {
       }
     }
   }
+}
+
+for (const [file, claim] of CLAIM_MANIFEST) {
+  let text;
+  try { text = readFileSync(resolve(ROOT, file), "utf8"); }
+  catch (e) { console.error(`ERROR  ${file}: ${e.message}`); process.exit(2); }
+  if (text.includes(claim)) console.log(`PASS  ${file} contains repaired claim`);
+  else { drift = true; console.error(`FAIL  ${file} missing repaired claim: ${claim}`); }
 }
 
 if (drift) {
