@@ -381,6 +381,32 @@ class ProofInventoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("declared workflow/job/step does not exist", result.stderr)
 
+    def test_declared_lean_command_wrapped_by_another_command_fails_closed(self) -> None:
+        """A timing/helper wrapper must not launder a declared Lake command.
+
+        This is the negative control for the release and Golden Path wrapper
+        regressions: the declared command is present as an argument, but it is
+        not in shell command position and therefore cannot be credited.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "run: lake build",
+                    "run: python3 scripts/phase_telemetry.py -- lake build",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_gate(root)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(
+                "ci.yml:build:control_a (lake build): declared command is not in "
+                "shell command position at that step",
+                result.stderr,
+            )
+
     def test_manifest_must_explicitly_declare_push_main_scope(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
