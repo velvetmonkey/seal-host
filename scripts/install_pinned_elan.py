@@ -122,10 +122,16 @@ def main() -> int:
     parser.add_argument("--machine", choices=sorted(SUPPORTED_MACHINES))
     parser.add_argument("--resolve-only", action="store_true")
     parser.add_argument("--download-only", action="store_true")
+    parser.add_argument(
+        "--mathlib-cache",
+        action="store_true",
+        help="restore the Mathlib cache after installing the pinned toolchain",
+    )
     arguments = parser.parse_args()
 
     version = "unknown"
     url = "unresolved"
+    phase = "installer"
     try:
         version, url, checksum = resolved_installer(arguments.pin, arguments.release_root, arguments.machine)
         print(f"elan-version={version}")
@@ -139,6 +145,11 @@ def main() -> int:
             bin_directory = Path.home() / ".elan" / "bin"
             for program in ("elan", "lean", "lake"):
                 subprocess.run([str(bin_directory / program), "--version"], check=True)
+            if arguments.mathlib_cache:
+                phase = "Mathlib cache setup"
+                subprocess.run(
+                    [str(bin_directory / "lake"), "exe", "cache", "get"], check=True
+                )
             github_path = os.environ.get("GITHUB_PATH")
             if github_path is not None:
                 with Path(github_path).open("a", encoding="utf-8") as stream:
@@ -147,7 +158,7 @@ def main() -> int:
         print(f"Pinned elan {version} verified from {urlparse(url).netloc or 'local source'}")
         return 0
     except (InstallError, OSError, subprocess.CalledProcessError) as error:
-        reason = f"pinned elan {version} installer could not run from {url}: {error}"
+        reason = f"pinned elan {version} {phase} could not run from {url}: {error}"
         print(f"::error::{reason}")
         try:
             write_output("unrunnable", "true")

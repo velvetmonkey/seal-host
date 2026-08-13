@@ -57,7 +57,12 @@ class InstallPinnedElanTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "golden-path.yml").read_text(
             encoding="utf-8"
         )
-        self.assertEqual(workflow.count("run: python3 scripts/install_pinned_elan.py"), 2)
+        self.assertEqual(
+            workflow.count(
+                "run: python3 scripts/install_pinned_elan.py --mathlib-cache"
+            ),
+            2,
+        )
         self.assertNotIn("leanprover/lean-action", workflow)
         self.assertIn(
             'SEAL_CONTROL_DEPENDENCIES: \'{"control_05":["control_11",'

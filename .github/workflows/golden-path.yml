@@ -50,8 +50,8 @@ jobs:
 
       - id: control_05
         continue-on-error: true
-        name: Install repository-pinned elan
-        run: python3 scripts/install_pinned_elan.py
+        name: Install repository-pinned elan and restore Mathlib cache
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
 
       - id: control_21
         continue-on-error: true
@@ -157,8 +157,8 @@ jobs:
 
       - id: control_05
         continue-on-error: true
-        name: Install repository-pinned elan
-        run: python3 scripts/install_pinned_elan.py
+        name: Install repository-pinned elan and restore Mathlib cache
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
 
       - id: control_07
         continue-on-error: true
