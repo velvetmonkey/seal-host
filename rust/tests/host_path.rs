@@ -804,7 +804,12 @@ fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Ora
         after_kill = durable_cut_state(&oracle);
     }
     print_cut_state("T1 durable state after kill", &after_kill);
-    assert_eq!(after_kill, spec.expected_after_kill);
+    assert_eq!(
+        after_kill,
+        spec.expected_after_kill,
+        "crash recovery property for {}",
+        spec.crash_point
+    );
 
     oracle.restart();
     // Prove the replacement process completed boot and is mediating input;

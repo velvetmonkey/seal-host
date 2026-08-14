@@ -174,16 +174,19 @@ read -r -d '' MUTANT_2_PATCH <<'PATCH' || true
          replay_store.prune_expired(now_ms)?;
 PATCH
 
-# Mutant 6 — cut (c): committed operation state is reconciled before release.
+# Mutant 6 — cut (c): committed operation state is written before the crash.
 read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
---- a/rust/src/release.rs
-+++ b/rust/src/release.rs
-@@ -695,4 +695,2 @@
--            if self.commit_operation_state(&path)? {
--                report.redone_state_transitions += 1;
--            }
-+            // ABLATION: operation state is not reconciled.
-             self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
+--- a/rust/src/main.rs
++++ b/rust/src/main.rs
+@@ -505,7 +505,4 @@
+-    if let Err(error) = writer.commit_operation_state(&decision.path) {
+-        eprintln!(
+-            "{}",
+-            json!({"error": "operation state commit failure", "detail": error})
+-        );
+-        return Err(());
+-    }
++    // ABLATION: committed operation state is skipped before the C crash cut.
 PATCH
 
 # Mutant 7 — cut (d): an ambiguous partial child write is never retried.
