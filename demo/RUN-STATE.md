@@ -96,16 +96,18 @@ From source (`INFERRED` because the demos were prerequisite-blocked):
   gate compulsory after every C1-C7 run; a green demo process alone is not
   enough.
 - C1 (`golden_path.py`), C2 (`golden_path_postgres.py`), and C4
-  (`golden_path_token.py`) run plain `seal verify` on standalone receipts and
-  require corruption controls to fail.
+  (`golden_path_token.py`) run the product's bundled `seal verify` self-check
+  on standalone receipts and require corruption controls to fail; this is not
+  independent verification.
 - C3 (`golden_path_deploy.py`) and C7 (`golden_path_composition.py`) require
   trace replay for every receipt and require plain standalone verification to
   refuse.
 - C5 (`golden_path_convergence.py`) and C6 (`golden_path_temporal.py`) split
-  the story: the first receipt must pass plain `seal verify`; the later
+  the story: the first receipt must pass the product's bundled `seal verify`
+  self-check; the later
   stateful receipt must fail standalone verification and pass the ordered trace
   replay.
-- `golden_path_filesystem.py` independently verifies its fresh-state read,
+- `golden_path_filesystem.py` runs the product's bundled self-check on its fresh-state read,
   Safety block, bad-signature block, and first approved write, but explicitly
   does not call its stateful Budget denial independently verified.
 - `dogfood_cli.py`, `dogfood_failclosed.py`, `dogfood_telegram.py`,

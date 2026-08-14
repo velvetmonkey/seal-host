@@ -22,7 +22,7 @@ uncommitted. Only the headline executes downstream.
 
 All seven receipts are trace-scoped. The receipt schema does not carry the
 Consensus votes or Linear grant events required to reproduce this combined
-policy with plain `seal verify`; the later receipts also include the armed
+policy with the product's bundled `seal verify` self-check; the later receipts also include the armed
 Temporal trace and committed headline spend. No receipt is labelled
 independently verified.
 

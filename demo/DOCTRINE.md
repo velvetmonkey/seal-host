@@ -22,9 +22,10 @@ human-facing `DENY` while the trace retains the authorization-decision vocabular
 ## Two verification lanes
 
 Lane A — **authorization decisions (standalone)**: the frozen kernel maps
-`(signed config, fresh state, request)` to the recorded verdict. Plain
-`seal verify` independently replays every authorization decision assigned to this lane; any
-non-green authorization decision fails CI.
+`(signed config, fresh state, request)` to the recorded verdict. The product's
+`seal verify` command re-derives every authorization decision assigned to this
+lane as a self-check; that result is not an independent attestation. Any non-green
+authorization decision fails CI.
 
 Lane B — **trace transcripts (sequence)**: the frozen kernel is initialized
 once with the pinned signed config and vendored WASM, then fed exactly the
@@ -83,7 +84,8 @@ trigger-driven freeze. Its second recorded call has a separate live Safety
 approval but is denied by Temporal and never executes. The authorization decision attests
 only that this specific forbidden call was mediated to DENY under the armed
 policy; C6 makes no wall-clock claim and does not claim that no destructive
-action can ever occur. The trigger authorization decision is Lane A and independently verifies;
+action can ever occur. The trigger authorization decision is Lane A and passes the
+product's bundled self-check; that result is not independent verification;
 the frozen authorization decision is Lane B and requires the C6 transcript.
 
 C5 is the Convergence+Safety mesh sibling. It uses the shipped `mesh` recipe

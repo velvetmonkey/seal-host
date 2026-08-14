@@ -43,7 +43,7 @@ C4_TIER = {
     "tier": "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO",
     "evidence_scope": (
         "real nested usage.tokens costArg, over-cap Budget denial, exact in-budget retry, "
-        "one downstream execution, every receipt verified, anti-forge rejection, and scan passed"
+        "one downstream execution, every receipt self-check passed (not independent), anti-forge rejection, and scan passed"
     ),
     "proven": "Safety+Budget reference invariants are machine-checked; this integration is not universally proven",
     "ci_tested": False,
@@ -316,7 +316,7 @@ def verify_receipt(seal: Path, receipt: Path, verdict: str) -> dict:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
     if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
-        raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+        raise gp.DemoFailure(f"receipt self-check did not re-derive {verdict}: {receipt}")
     return record
 
 

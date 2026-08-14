@@ -721,10 +721,12 @@ def verify_receipt_and_scan(seal: Path, receipt: Path, manifest: Path, policy: P
 
 
 def boundary_card(config_pub: str, approval_pub: str, receipt_verified: bool) -> None:
-    receipt_claim = """The exact mediated request/config/verdict re-derived under the identified
-  WASM. This BLOCK receipt contains no approval witness.""" if receipt_verified else """NOT ESTABLISHED IN THIS RUN: the independent verifier rejected the stale
+    receipt_claim = """The exact mediated request/config/verdict was re-derived by the
+  bundled verifier self-check under the identified WASM. This BLOCK receipt
+  contains no approval witness and is not an independent attestation.""" if receipt_verified else """NOT ESTABLISHED IN THIS RUN: the bundled self-check rejected the stale
   verifier WASM before re-derivation. The BLOCK receipt exists and carries the
-  exact request/config, but it is not called verified."""
+  exact request/config, but it is only a bundled self-check, not an independent
+  attestation."""
     print(f"""
 ========================== SEAL BOUNDARY CARD ==========================
 PROVEN REFERENCE SEMANTICS

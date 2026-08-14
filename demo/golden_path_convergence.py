@@ -55,7 +55,7 @@ C5_TIER = {
     "evidence_scope": (
         "real Safety approvals on both calls, one proven-convergent store update executed exactly once, "
         "the specific non-convergent update denied by Convergence with no downstream execution, "
-        "standalone allow receipt verified, trace-scoped deny replayed byte-identically, "
+        "standalone allow receipt self-check passed (not independent), trace-scoped deny replayed byte-identically, "
         "receipt/transcript negative controls passed, and scan passed"
     ),
     "proven": (
@@ -343,7 +343,7 @@ def inspect_receipt(seal: Path, receipt: Path, verdict: str, *, standalone: bool
     if standalone:
         result = gp.run([str(seal), "verify", str(receipt)])
         if "PASS  VERIFIED" not in result.stdout:
-            raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+            raise gp.DemoFailure(f"receipt self-check did not re-derive {verdict}: {receipt}")
     return record
 
 
@@ -549,7 +549,7 @@ def standalone_trace_scope(seal: Path, receipt: Path) -> dict:
         raise gp.DemoFailure("C5 deny receipt did not exhibit its exact trace-indexed byte boundary")
     check(
         "trace-scoped receipt label",
-        "plain seal verify re-derives BLOCK but fails byte identity: fresh Temporal trace differs from live step 2",
+        "bundled seal verify self-check re-derives BLOCK but fails byte identity: fresh Temporal trace differs from live step 2; not independent",
     )
     return {
         "command": "seal verify",
@@ -633,7 +633,7 @@ def execute(artifact_dir: Path, color: str) -> int:
                 "harness": "demo/trace_replay.cjs",
                 "status": "PASS",
                 "lanes": {
-                    "standalone": "fresh first receipt; plain seal verify required",
+                    "standalone": "fresh first receipt; bundled self-check required (not independent)",
                     "trace": (
                         "second verdict re-derives BLOCK fresh, but the composite Temporal certificate "
                         "is trace-indexed; ordered raw outputs byte-compared"

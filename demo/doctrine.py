@@ -3,7 +3,9 @@
 """Reusable doctrine spine for Seal demos.
 
 Runtime receipts are copied byte-for-byte into a durable artifact directory
-and described by one NDJSON trace. Standalone receipts verify independently;
+and described by one NDJSON trace. Standalone receipts can be re-derived by the
+product's bundled verifier, but that is a self-check rather than independent
+verification;
 history-dependent receipts bind to a byte-replayed trace transcript. TTY and
 Markdown output are projections of that trace; neither is an independent demo
 script.
@@ -592,7 +594,7 @@ class DemoTrace:
                 raise DoctrineFailure("standalone receipt cannot carry trace-only verification metadata")
             verified = run([str(self.seal), "verify", str(dest)])
             if "PASS  VERIFIED" not in verified.stdout:
-                raise DoctrineFailure(f"seal verify did not report PASS VERIFIED: {dest}")
+                raise DoctrineFailure(f"product receipt self-check did not pass: {dest}")
             seal_verify = {"command": "seal verify", "status": "PASS", "exit_code": verified.returncode}
         elif verification_lane == "trace":
             if not isinstance(requires_trace, str) or not re.fullmatch(r"[0-9a-f]{64}", requires_trace):
@@ -1316,7 +1318,7 @@ def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifes
         raise DoctrineFailure("C5 must place the first receipt standalone and the trace-indexed deny on Lane B")
     expected_verify = {"command": "seal verify", "status": "PASS", "exit_code": 0}
     if allowed.get("seal_verify") != expected_verify:
-        raise DoctrineFailure("C5 convergent allow receipt must carry green standalone seal verify")
+        raise DoctrineFailure("C5 convergent allow receipt must pass the bundled self-check")
     denied_verify = denied.get("seal_verify", {})
     if (denied_verify.get("command") != "seal verify"
             or denied_verify.get("status") != "TRACE-SCOPED"
@@ -1414,7 +1416,7 @@ def _validate_c5(metadata: dict, steps: list[dict], records: list[dict], manifes
     if not isinstance(transcript_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha):
         raise DoctrineFailure("C5 trace transcript SHA-256 is malformed")
     expected_lanes = {
-        "standalone": "fresh first receipt; plain seal verify required",
+        "standalone": "fresh first receipt; bundled self-check required (not independent)",
         "trace": (
             "second verdict re-derives BLOCK fresh, but the composite Temporal certificate "
             "is trace-indexed; ordered raw outputs byte-compared"
@@ -1563,7 +1565,7 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
     if trigger.get("verification_lane") != "standalone" or denied.get("verification_lane") != "trace":
         raise DoctrineFailure("C6 must place only the trigger on the standalone lane and the frozen deny on the trace lane")
     if trigger.get("seal_verify") != {"command": "seal verify", "status": "PASS", "exit_code": 0}:
-        raise DoctrineFailure("C6 trigger receipt must independently verify")
+        raise DoctrineFailure("C6 trigger receipt must pass the bundled self-check; this is not independent")
     denied_verify = denied.get("seal_verify", {})
     if denied_verify.get("command") != "seal verify" or denied_verify.get("status") != "TRACE-SCOPED" or denied_verify.get("exit_code") == 0:
         raise DoctrineFailure("C6 frozen receipt must be honestly labelled trace-scoped")
@@ -1658,7 +1660,7 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
             or narrative_steps[1].get("requires_trace") is not None):
         raise DoctrineFailure("C6 receipt-to-trace dependency drift")
     expected_lanes = {
-        "standalone": "fresh-state receipt; plain seal verify required",
+        "standalone": "fresh-state receipt; bundled self-check required (not independent)",
         "trace": "one init plus exact ordered requests; raw outputs byte-compared",
     }
     if transcript_meta.get("path") != "trace-transcript.json" or transcript_meta.get("harness") != "demo/trace_replay.cjs":

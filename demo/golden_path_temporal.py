@@ -46,7 +46,7 @@ C6_TIER = {
     "evidence_scope": (
         "real Safety approvals on both calls, trigger execution exactly once, "
         "the specific forbidden call denied by Temporal with no downstream execution, "
-        "standalone trigger receipt verified, trace-scoped deny fully replayed byte-identically, "
+        "standalone trigger receipt self-check passed (not independent), trace-scoped deny fully replayed byte-identically, "
         "receipt/transcript negative controls passed, and scan passed"
     ),
     "proven": (
@@ -347,7 +347,7 @@ def inspect_receipt(seal: Path, receipt: Path, verdict: str, *, standalone: bool
     if standalone:
         result = gp.run([str(seal), "verify", str(receipt)])
         if "PASS  VERIFIED" not in result.stdout:
-            raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+            raise gp.DemoFailure(f"receipt self-check did not re-derive {verdict}: {receipt}")
     return record
 
 
@@ -540,7 +540,7 @@ def standalone_trace_scope(seal: Path, receipt: Path) -> dict:
         raise gp.DemoFailure("post-trigger receipt did not exhibit the expected fresh-state standalone boundary")
     check(
         "trace-scoped receipt label",
-        "plain seal verify fails honestly: fresh-state ALLOW differs from live-session BLOCK",
+        "bundled seal verify self-check fails honestly: fresh-state ALLOW differs from live-session BLOCK; not independent",
     )
     return {
         "command": "seal verify", "status": "TRACE-SCOPED", "exit_code": result.returncode,
@@ -626,7 +626,7 @@ def execute(artifact_dir: Path, color: str) -> int:
                 "harness": "demo/trace_replay.cjs",
                 "status": "PASS",
                 "lanes": {
-                    "standalone": "fresh-state receipt; plain seal verify required",
+                    "standalone": "fresh-state receipt; bundled self-check required (not independent)",
                     "trace": "one init plus exact ordered requests; raw outputs byte-compared",
                 },
             },

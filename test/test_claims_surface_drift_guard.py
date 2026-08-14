@@ -19,6 +19,18 @@ INPUTS = (
     Path("docs/THREAT-MODEL.md"),
     Path("docs/TRUTH-BOX.md"),
     Path("docs/SEAL-SYSTEM-TCB.md"),
+    Path("demo/DOCTRINE.md"),
+    Path("demo/C5-README.md"),
+    Path("demo/C6-README.md"),
+    Path("demo/C7-README.md"),
+    Path("demo/RUN-STATE.md"),
+    Path("demo/doctrine.py"),
+    Path("demo/golden_path.py"),
+    Path("demo/golden_path_convergence.py"),
+    Path("demo/golden_path_filesystem.py"),
+    Path("demo/golden_path_postgres.py"),
+    Path("demo/golden_path_temporal.py"),
+    Path("demo/golden_path_token.py"),
 )
 
 
@@ -27,6 +39,7 @@ class ClaimsSurfaceDriftGuardTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="claims-surface-drift-guard-")
         self.root = Path(self.temporary.name)
         (self.root / "scripts").mkdir()
+        (self.root / "demo").mkdir()
         (self.root / "docs").mkdir()
         shutil.copy2(SCRIPT, self.root / "scripts" / SCRIPT.name)
         for relative in INPUTS:
@@ -74,6 +87,17 @@ class ClaimsSurfaceDriftGuardTests(unittest.TestCase):
         result = self.run_guard()
         self.assert_refused(result)
         self.assertIn("ERROR  claim manifest entry docs/SEAL-SYSTEM-TCB.md", result.stderr)
+
+    def test_product_independent_receipt_claim_is_refused(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\nThe product independently verifies receipts.\n",
+            encoding="utf-8",
+        )
+        result = self.run_guard()
+        self.assert_refused(result)
+        self.assertIn("forbidden product-independent receipt claim", result.stderr)
 
     def test_drift_and_unreadable_manifest_entry_are_both_reported(self) -> None:
         readme = self.root / "README.md"

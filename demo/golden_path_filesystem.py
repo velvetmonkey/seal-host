@@ -695,7 +695,7 @@ def read_leg(name: str,seal: Path,trusted: Path,config_pub: str,approval_pub: st
         else:
             check("2025 receipt era boundary","PASS","legacy request and receipt carry no 2026 _meta")
         evidence=(
-            "read_text_file forwarded; exact tmpfs content observed; fresh-state ALLOW receipt VERIFIED"
+            "read_text_file forwarded; exact tmpfs content observed; fresh-state ALLOW receipt self-check passed (not independent)"
             if verified
             else "read_text_file forwarded; exact tmpfs content observed; modern receipt inspected; pinned 2025 verifier rejection matched"
         )
@@ -723,7 +723,7 @@ def approval_tamper(name: str,seal: Path,trusted: Path,config_pub: str,key: Path
         second,record=session.call("write_file",args); block(second); session.wait_stderr("bad_signature")
         if file_exists(name,path) or session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=0: raise gp.DemoFailure("tampered approval wrote file")
         verified=verify_receipt(seal,record,"BLOCK",era)
-        suffix="fresh-state BLOCK receipt VERIFIED" if verified else "modern BLOCK receipt inspected; pinned 2025 verifier rejection matched"
+        suffix="fresh-state BLOCK receipt self-check passed (not independent)" if verified else "modern BLOCK receipt inspected; pinned 2025 verifier rejection matched"
         check("approval tamper fail-closed","PASS",f"bad_signature; no downstream write; file absent; {suffix}")
     finally: session.close()
 
@@ -761,7 +761,7 @@ def one_shot(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approv
         if session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("replay reached filesystem")
         check("approved one-shot real write","PASS","BLOCK→signed ALLOW→file observed; v2 context-mismatch replay BLOCK; one downstream write")
         receipt_evidence=(
-            "initial write BLOCK + first approved write ALLOW independently re-derived"
+            "initial write BLOCK + first approved write ALLOW re-derived by bundled self-check (not independent)"
             if block_verified and allow_verified
             else "modern BLOCK + ALLOW receipt projections inspected; pinned 2025 verifier rejections matched"
         )
@@ -817,12 +817,12 @@ def boundary_card(
 )->None:
     receipt_claim=(
         """Fresh-state read ALLOW, Safety BLOCK, bad-signature BLOCK, and first approved
-  write ALLOW independently re-derived."""
+  write ALLOW re-derived by the bundled self-check; not independently verified."""
         if era is mcp_eras.McpEra.MCP_2025
         else """Modern receipts expose exact request _meta at the top level and in
   effect_view.effect._meta. The pinned 2025 verifier rejects their modern
   canonical request at its known no-repin boundary; they are not labelled
-  independently re-derived in this lane."""
+  re-derived by the bundled self-check in this lane; not independently verified."""
     )
     print(f"""
 ===================== FILESYSTEM SEAL BOUNDARY CARD =====================

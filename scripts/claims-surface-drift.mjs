@@ -32,6 +32,30 @@ const CLAIM_MANIFEST = [
   ["docs/SEAL-SYSTEM-TCB.md", "it explicitly allows are gated. A call the policy does not cover is out of scope, not \"safe\""],
 ];
 
+// Product-side receipt checks are self-checks.  Keep this guard narrow enough
+// to allow the honest negative labels and the separately published verifier
+// surfaces, while refusing the materially false product-independent claim.
+const RECEIPT_CLAIM_FILES = [
+  "README.md",
+  "demo/DOCTRINE.md",
+  "demo/C5-README.md",
+  "demo/C6-README.md",
+  "demo/C7-README.md",
+  "demo/RUN-STATE.md",
+  "demo/doctrine.py",
+  "demo/golden_path.py",
+  "demo/golden_path_convergence.py",
+  "demo/golden_path_filesystem.py",
+  "demo/golden_path_postgres.py",
+  "demo/golden_path_temporal.py",
+  "demo/golden_path_token.py",
+];
+const FORBIDDEN_RECEIPT_CLAIMS = [
+  /product(?:'s)?[^\n]{0,120}independently\s+(?:verif(?:y|ies|ied)|re-deriv(?:e|es|ed))/i,
+  /seal verify[^\n]{0,80}independently\s+(?:verif(?:y|ies|ied)|re-deriv(?:e|es|ed))/i,
+  /receipt[^\n]{0,80}verify independently/i,
+];
+
 let fatal = false;
 
 function fatalError(message) {
@@ -113,6 +137,19 @@ for (const [file, claim] of CLAIM_MANIFEST) {
   }
   if (text.includes(claim)) console.log(`PASS  ${file} contains repaired claim`);
   else { drift = true; console.error(`FAIL  ${file} missing repaired claim: ${claim}`); }
+}
+
+for (const file of RECEIPT_CLAIM_FILES) {
+  let text;
+  try { text = readFileSync(resolve(ROOT, file), "utf8"); }
+  catch (e) { fatalError(`ERROR  receipt claim entry ${file}: ${e.message}`); continue; }
+  for (const pattern of FORBIDDEN_RECEIPT_CLAIMS) {
+    const match = text.match(pattern);
+    if (match) {
+      drift = true;
+      console.error(`FAIL  ${file} contains forbidden product-independent receipt claim: ${match[0]}`);
+    }
+  }
 }
 
 if (drift) {

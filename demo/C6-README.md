@@ -14,11 +14,12 @@ The ordered runtime story is narrow:
 ## Honest verification labels
 
 The pre-trigger `session.revoke` receipt is standalone: it is a fresh-state
-decision and must pass plain `seal verify`.
+decision and must pass the product's bundled `seal verify` self-check; that
+result is not independent verification.
 
 The post-trigger `audit.destroy` receipt is trace-scoped. Its unmodified receipt
 schema is not extended; `requires_trace: <trace-transcript sha256>` lives only
-in `events.ndjson`. Plain `seal verify` intentionally initializes a fresh
+in `events.ndjson`. The product's bundled `seal verify` self-check intentionally initializes a fresh
 kernel, where no trigger has executed, so it re-derives ALLOW and rejects the
 live-session BLOCK. That failure is the positive history-dependence exhibit,
 not a defect and never an independently-verified label.

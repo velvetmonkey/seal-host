@@ -13,14 +13,15 @@ The ordered runtime story is narrow:
 
 ## Honest verification labels
 
-The first `orset.add` receipt is standalone and must pass plain `seal verify`.
+The first `orset.add` receipt is standalone and must pass the product's bundled
+`seal verify` self-check; that result is not independent verification.
 
 The second receipt is trace-scoped for a narrower reason than C6. Convergence
 is stateless (`State = Unit`), and fresh replay still re-derives BLOCK from
 `assign`. But Temporal is always registered even with no configured policies,
 and its certificate includes the executed-trace count. Fresh replay emits a
 step-1 Temporal certificate while the live call emitted step 2, so exact
-decision bytes differ and plain `seal verify` correctly reports NOT VERIFIED.
+decision bytes differ and the bundled self-check correctly reports NOT VERIFIED.
 The trace label records fresh BLOCK versus live BLOCK; it does not pretend the
 Convergence decision itself is history-dependent.
 

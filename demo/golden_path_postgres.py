@@ -50,7 +50,7 @@ C2_THEOREMS = [
 
 POSTGRES_TIER = {
     "tier": "dev-box deterministic-tested (local run); CI configured but not run; operator-verified: NO",
-    "evidence_scope": "local containment, real costed approved DROP, both tamper legs, fresh over-cap Budget denial, invalid costArg fail-closed controls, every emitted receipt verified, and scan passed",
+    "evidence_scope": "local containment, real costed approved DROP, both tamper legs, fresh over-cap Budget denial, invalid costArg fail-closed controls, every emitted receipt passed the bundled self-check (not independent), and scan passed",
     "proven": "S+B+T reference invariants are machine-checked; this integration is not universally proven",
     "ci_tested": False,
     "ci_status": "configured; pending Phase B assurance-kit and seal-host pushes plus first green workflow",
@@ -451,7 +451,7 @@ def verify_receipt(seal: Path, receipt: Path, verdict: str) -> None:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
     if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
-        raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+        raise gp.DemoFailure(f"receipt self-check did not re-derive {verdict}: {receipt}")
 
 
 def policy_tamper(name: str, trusted: Path, config_pub: str, approval_pub: str,
@@ -510,7 +510,7 @@ def approval_tamper(name: str, seal: Path, trusted: Path, config_pub: str,
                 budget={"name":"destructive-sql-units", "cost_arg":"cost_units", "cap":10,
                         "remaining_before":10, "remaining_after":10},
             )
-        check("approval tamper fail-closed", "PASS", "bad_signature; no SQL; table remains; fresh-state BLOCK receipt VERIFIED")
+        check("approval tamper fail-closed", "PASS", "bad_signature; no SQL; table remains; fresh-state BLOCK receipt self-check passed (not independent)")
     finally:
         session.close()
 
@@ -547,7 +547,7 @@ def doctrine_path(name: str, seal: Path, trusted: Path, config_pub: str,
                         "remaining_before":10, "remaining_after":8},
             )
         check("approved costed real DROP", "PASS", "Safety DENY→signed ALLOW→table absent; cost_units=2; one downstream execution")
-        check("fresh receipt verification", "PASS", "Safety BLOCK + composed S+B+T ALLOW independently re-derived")
+        check("fresh receipt verification", "PASS", "Safety BLOCK + composed S+B+T ALLOW re-derived by bundled self-check (not independent)")
     finally:
         session.close()
 
@@ -641,7 +641,7 @@ PROVEN REFERENCE ENFORCEMENT
   Safety approval binding/one-shot; composed_budget_cap; composed_temporal_safety.
   Budget/Temporal enforcement is machine-checked by composed_budget_cap and
   composed_temporal_safety. This doctrine path stays in fresh state so every
-  emitted receipt is independently re-derivable; it makes no receipt claim
+  emitted receipt is re-derivable by the bundled self-check; it makes no receipt claim
   about prior counter/trace state that the frozen verifier does not carry.
 
 SIGNED / VERIFIED KEYS
@@ -649,8 +649,8 @@ SIGNED / VERIFIED KEYS
   Approval: exact {{target,issuedAt,nonce}} bytes, Ed25519 key {approval_pub}
 
 RECEIPTS / EVIDENCE
-  Every receipt emitted by this doctrine path is independently re-derived by
-  seal verify. The Budget denial uses a fresh session and cost_units=11 at
+  Every receipt emitted by this doctrine path passes the bundled seal verify
+  self-check; this is not an independent attestation. The Budget denial uses a fresh session and cost_units=11 at
   cap=10; the composed ALLOW carries Safety, Budget, and Temporal certificates.
   Accumulated-counter and post-freeze receipts are deliberately not emitted:
   the frozen verifier is fresh-state only; their stateful behavior remains in

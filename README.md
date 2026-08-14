@@ -20,7 +20,7 @@ deployed decisions against pinned kernel bytes.
 ## Your first gate
 
 ```text
-blocked → approved once → executed → independently verified → tamper rejected
+blocked → approved once → executed → separately checked → tamper rejected
 ```
 
 **Published onboarding:** `seal-host` v0.1.6 exists with signed provenance,
