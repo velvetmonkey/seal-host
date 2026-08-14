@@ -535,6 +535,7 @@ jobs:
           python3 test/test_install_pinned_elan.py -v
           python3 test/test_lean_test_driver_gate.py -v
           python3 test/test_ci_control_reporting.py -v
+          node --test test/test_mcp_seal_pin_drift.mjs
       # The population control for the defect that reddened this very job:
       # ci_control_aggregate.py and proof_inventory.py refuse to run without
       # PyYAML, twenty jobs invoke one of them, and until 2026-08-08 exactly
