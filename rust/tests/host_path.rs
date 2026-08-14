@@ -805,8 +805,7 @@ fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Ora
     }
     print_cut_state("T1 durable state after kill", &after_kill);
     assert_eq!(
-        after_kill,
-        spec.expected_after_kill,
+        after_kill, spec.expected_after_kill,
         "crash recovery property for {}",
         spec.crash_point
     );
@@ -830,8 +829,7 @@ fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Ora
     }
     print_cut_state("T1 durable state after recovery", &after_recovery);
     assert_eq!(
-        after_recovery,
-        spec.expected_after_recovery,
+        after_recovery, spec.expected_after_recovery,
         "crash recovery property for {}",
         spec.crash_point
     );
@@ -2650,10 +2648,7 @@ fn assert_reconcile_commits_receipt_backed_hold(o: &Oracle) {
         .unwrap());
     assert_eq!(
         store
-            .reconcile_recorded(
-                &HashSet::from(["reconcile-commit-probe".to_string()]),
-                2,
-            )
+            .reconcile_recorded(&HashSet::from(["reconcile-commit-probe".to_string()]), 2,)
             .unwrap(),
         0,
         "reconcile_recorded does not reclaim a receipt-backed hold"
