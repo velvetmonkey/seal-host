@@ -183,7 +183,7 @@ read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
 -                report.redone_state_transitions += 1;
 -            }
 +            // ABLATION: operation state is not reconciled.
-+            self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
++             self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
 PATCH
 
 # Mutant 7 — cut (d): an ambiguous partial child write is never retried.
@@ -194,8 +194,8 @@ read -r -d '' MUTANT_7_PATCH <<'PATCH' || true
              let (_, release) = self.read_verified(&path)?;
              let Some(release) = release else { continue };
 +            if release.status == ReleaseStatus::Unknown {
-+                // ABLATION: ambiguous release is retried without receiver dedupe.
-+                forward(&release.frame)?;
++                // ABLATION: ambiguous release is incorrectly finalized.
++                self.transition(&path, ReleaseStatus::Unknown, ReleaseStatus::Released)?;
 +            }
              if release.status != ReleaseStatus::Pending {
                  continue;
