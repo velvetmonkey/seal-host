@@ -168,6 +168,26 @@ function checkoutRevision() {
   }
 }
 
+export function comparePinValues({ expected, lakefile, manifest, checkout }) {
+  const values = [
+    ["expected pin", expected],
+    [lakefile.chosenConfig, lakefile.revision],
+    ["lake-manifest.json", manifest],
+    [".lake/packages/mcp-seal HEAD", checkout],
+  ];
+  const mismatches = [];
+  for (let left = 0; left < values.length; left += 1) {
+    for (let right = left + 1; right < values.length; right += 1) {
+      if (values[left][1] !== values[right][1]) {
+        mismatches.push(
+          `mcp-seal pin drift: ${values[left][0]}="${values[left][1]}" disagrees with ${values[right][0]}="${values[right][1]}"`,
+        );
+      }
+    }
+  }
+  return { ok: mismatches.length === 0, mismatches };
+}
+
 export function checkMcpSealPin() {
   let expected;
   let lakefile;
@@ -190,24 +210,14 @@ export function checkMcpSealPin() {
     return 1;
   }
 
-  const values = [
-    ["expected pin", expected],
-    [lakefile.chosenConfig, lakefile.revision],
-    ["lake-manifest.json", manifest],
-    [".lake/packages/mcp-seal HEAD", checkout],
-  ];
-  const mismatches = [];
-  for (let left = 0; left < values.length; left += 1) {
-    for (let right = left + 1; right < values.length; right += 1) {
-      if (values[left][1] !== values[right][1]) {
-        mismatches.push(
-          `mcp-seal pin drift: ${values[left][0]}="${values[left][1]}" disagrees with ${values[right][0]}="${values[right][1]}"`,
-        );
-      }
-    }
-  }
-  if (mismatches.length > 0) {
-    for (const mismatch of mismatches) console.error(mismatch);
+  const comparison = comparePinValues({
+    expected,
+    lakefile,
+    manifest,
+    checkout,
+  });
+  if (!comparison.ok) {
+    for (const mismatch of comparison.mismatches) console.error(mismatch);
     console.error(`mcp-seal pin values: ${lakefile.chosenConfig}="${lakefile.revision}" lake-manifest.json="${manifest}" checkout="${checkout}"`);
     return 1;
   }
