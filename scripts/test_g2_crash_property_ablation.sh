@@ -127,7 +127,7 @@ read -r -d '' MUTANT_3_PATCH <<'PATCH' || true
 read -r -d '' MUTANT_4_PATCH <<'PATCH' || true
 --- a/rust/src/replay_store.rs
 +++ b/rust/src/replay_store.rs
-@@ -317,9 +317,5 @@
+@@ -317,8 +317,4 @@
              }
              if recorded_nonces.contains(&nonce) {
 -                tx.execute(
@@ -178,7 +178,7 @@ PATCH
 read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
 --- a/rust/src/release.rs
 +++ b/rust/src/release.rs
-@@ -695,9 +695,6 @@
+@@ -695,4 +695,2 @@
             // ABLATION: operation state is not reconciled.
             self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
 PATCH
@@ -187,7 +187,7 @@ PATCH
 read -r -d '' MUTANT_7_PATCH <<'PATCH' || true
 --- a/rust/src/release.rs
 +++ b/rust/src/release.rs
-@@ -685,6 +685,9 @@
+@@ -685,5 +685,8 @@
              let (_, release) = self.read_verified(&path)?;
              let Some(release) = release else { continue };
 +            if release.status == ReleaseStatus::Unknown {
@@ -203,7 +203,7 @@ PATCH
 read -r -d '' MUTANT_8_PATCH <<'PATCH' || true
 --- a/rust/src/release.rs
 +++ b/rust/src/release.rs
-@@ -685,6 +685,9 @@
+@@ -685,5 +685,8 @@
              let (_, release) = self.read_verified(&path)?;
              let Some(release) = release else { continue };
 +            if release.status == ReleaseStatus::Released {
