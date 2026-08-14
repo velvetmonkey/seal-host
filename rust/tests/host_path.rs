@@ -824,7 +824,12 @@ fn drive_crash_cut(spec: CrashCutSpec, trigger: impl FnOnce(&mut Oracle)) -> Ora
         after_recovery = durable_cut_state(&oracle);
     }
     print_cut_state("T1 durable state after recovery", &after_recovery);
-    assert_eq!(after_recovery, spec.expected_after_recovery);
+    assert_eq!(
+        after_recovery,
+        spec.expected_after_recovery,
+        "crash recovery property for {}",
+        spec.crash_point
+    );
     // ...then hold and re-assert, so a forbidden late write (an unsafe replay
     // landing after a transient match) still turns the cut red instead of
     // slipping in behind a single early sample.
@@ -2631,6 +2636,39 @@ fn assert_reconcile_reclaims_unmatched_hold(o: &Oracle) {
     std::fs::remove_file(path).unwrap();
 }
 
+fn assert_reconcile_commits_receipt_backed_hold(o: &Oracle) {
+    let path = o.dir.join("reconcile-commit-probe.sqlite");
+    SqliteReplayStore::initialize(&path, ReplayStoreLineage::CURRENT).unwrap();
+    let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+    assert!(store
+        .reserve_returning_is_new("reconcile-commit-probe", 1, 120_001)
+        .unwrap());
+    assert_eq!(
+        store
+            .reconcile_recorded(
+                &HashSet::from(["reconcile-commit-probe".to_string()]),
+                2,
+            )
+            .unwrap(),
+        0,
+        "reconcile_recorded does not reclaim a receipt-backed hold"
+    );
+    drop(store);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let committed: bool = conn
+        .query_row(
+            "SELECT committed_at IS NOT NULL FROM nonces WHERE nonce = 'reconcile-commit-probe'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        committed,
+        "reconcile_recorded committed the receipt-backed hold"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
 /// G2 T1 — crash between reserve and RECORDED. The host dies (SIGABRT) after
 /// the kernel ALLOW but before the authorization decision persists. The
 /// crashed window must leave NO receipt and a reclaimable hold; after a clean
@@ -2840,6 +2878,7 @@ fn g2_crash_after_recorded_before_commit_reconciles_burn() {
         "g2-after-record",
         &[("SEAL_TEST_CRASH_POINT", "g2-after-record")],
     );
+    assert_reconcile_commits_receipt_backed_hold(&o);
     let call = guarded_call(241, "drop table g2_after_record");
     o.send(&call);
     let blocked = o.expect_line();

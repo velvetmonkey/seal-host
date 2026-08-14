@@ -122,6 +122,36 @@ read -r -d '' MUTANT_3_PATCH <<'PATCH' || true
              }
          }
          for nonce in recorded_nonces {
+# Mutant 4 — residual G2 property: receipt-backed holds are committed during
+# startup reconciliation after a crash at g2-after-record.
+read -r -d '' MUTANT_4_PATCH <<'PATCH' || true
+--- a/rust/src/replay_store.rs
++++ b/rust/src/replay_store.rs
+@@ -317,9 +317,5 @@
+             }
+             if recorded_nonces.contains(&nonce) {
+-                tx.execute(
+-                    "UPDATE nonces SET committed_at = ?2
+-                     WHERE nonce = ?1 AND committed_at IS NULL",
+-                    params![nonce, committed_at_ms],
+-                )?;
++                // ABLATION: receipt-backed hold is not committed.
+             } else {
+PATCH
+
+# Mutant 5 — cut (b): pending durable releases resume exactly once.
+read -r -d '' MUTANT_5_PATCH <<'PATCH' || true
+--- a/rust/src/release.rs
++++ b/rust/src/release.rs
+@@ -695,7 +695,7 @@
+             if self.commit_operation_state(&path)? {
+                 report.redone_state_transitions += 1;
+             }
+             self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
+-            forward(&release.frame)?;
++            // ABLATION: pending release is not forwarded after restart.
+             self.transition(&path, ReleaseStatus::Unknown, ReleaseStatus::Released)?;
+             report.released += 1;
 PATCH
 
 # Mutant 2 — T1 property: startup recovery reclaims an unrecorded hold.
@@ -142,6 +172,47 @@ read -r -d '' MUTANT_2_PATCH <<'PATCH' || true
 -        replay_store.reclaim_uncommitted()?;
 +        // ABLATION: startup reclaim of never-RECORDED holds is skipped.
          replay_store.prune_expired(now_ms)?;
+PATCH
+
+# Mutant 6 — cut (c): committed operation state is reconciled before release.
+read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
+--- a/rust/src/release.rs
++++ b/rust/src/release.rs
+@@ -695,9 +695,6 @@
+            // ABLATION: operation state is not reconciled.
+            self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
+PATCH
+
+# Mutant 7 — cut (d): an ambiguous partial child write is never retried.
+read -r -d '' MUTANT_7_PATCH <<'PATCH' || true
+--- a/rust/src/release.rs
++++ b/rust/src/release.rs
+@@ -685,6 +685,9 @@
+             let (_, release) = self.read_verified(&path)?;
+             let Some(release) = release else { continue };
++            if release.status == ReleaseStatus::Unknown {
++                // ABLATION: ambiguous release is retried without receiver dedupe.
++                forward(&release.frame)?;
++            }
+             if release.status != ReleaseStatus::Pending {
+                 continue;
+             }
+PATCH
+
+# Mutant 8 — cut (e): a Released operation is not emitted again before ack.
+read -r -d '' MUTANT_8_PATCH <<'PATCH' || true
+--- a/rust/src/release.rs
++++ b/rust/src/release.rs
+@@ -685,6 +685,9 @@
+             let (_, release) = self.read_verified(&path)?;
+             let Some(release) = release else { continue };
++            if release.status == ReleaseStatus::Released {
++                // ABLATION: already Released operation is emitted again.
++                forward(&release.frame)?;
++            }
+             if release.status != ReleaseStatus::Pending {
+                 continue;
+             }
 PATCH
 
 failed=0
@@ -178,7 +249,12 @@ fi
 
 for control_test in \
     g2_t1_crash_between_reserve_and_recorded_recovers_the_approval \
-    g2_t3_crash_after_recorded_keeps_burn_and_receipt
+    g2_t3_crash_after_recorded_keeps_burn_and_receipt \
+    g2_crash_after_recorded_before_commit_reconciles_burn \
+    g2_cut_b_recorded_receipt_redoes_state_and_releases_on_restart \
+    g2_cut_c_committed_state_resumes_release_once_on_restart \
+    g2_cut_d_partial_child_write_is_ambiguous_and_not_retried_on_restart \
+    g2_cut_e_released_operation_is_not_released_again_before_ack
 do
     if ! run_g2_test "$CONTROL_TREE" "$control_test" "$LOG_DIR/control-$control_test.log"; then
         echo "ABLATION ERROR: $control_test FAILED in the UNMUTATED scratch tree." >&2
@@ -275,10 +351,40 @@ expect_mutant_kills_test \
     g2_t1_crash_between_reserve_and_recorded_recovers_the_approval \
     "reconcile_recorded reclaimed the unmatched hold"
 
+expect_mutant_kills_test \
+    after-record-reconcile-not-committed \
+    "$MUTANT_4_PATCH" \
+    g2_crash_after_recorded_before_commit_reconciles_burn \
+    "reconcile_recorded committed the receipt-backed hold"
+
+expect_mutant_kills_test \
+    pending-release-not-forwarded \
+    "$MUTANT_5_PATCH" \
+    g2_cut_b_recorded_receipt_redoes_state_and_releases_on_restart \
+    "crash recovery property for g2-b-after-recorded"
+
+expect_mutant_kills_test \
+    operation-state-not-reconciled \
+    "$MUTANT_6_PATCH" \
+    g2_cut_c_committed_state_resumes_release_once_on_restart \
+    "crash recovery property for g2-c-after-state-commit"
+
+expect_mutant_kills_test \
+    ambiguous-release-retried \
+    "$MUTANT_7_PATCH" \
+    g2_cut_d_partial_child_write_is_ambiguous_and_not_retried_on_restart \
+    "crash recovery property for g2-d-during-child-write"
+
+expect_mutant_kills_test \
+    released-operation-retried \
+    "$MUTANT_8_PATCH" \
+    g2_cut_e_released_operation_is_not_released_again_before_ack \
+    "crash recovery property for g2-e-after-released"
+
 if [[ "$failed" -ne 0 ]]; then
     echo "G2 crash-property ablation did not kill every mutated property" >&2
     exit 1
 fi
 
-echo "G2 crash-property ablation killed all three mutated properties"
+echo "G2 crash-property ablation killed all eight mutated properties"
 echo "ABLATION RESTORED: disposable mutant trees removed on exit"
