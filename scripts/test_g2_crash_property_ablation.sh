@@ -178,7 +178,7 @@ PATCH
 read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
 --- a/rust/src/main.rs
 +++ b/rust/src/main.rs
-@@ -505,7 +505,4 @@
+@@ -505,7 +505,1 @@
 -    if let Err(error) = writer.commit_operation_state(&decision.path) {
 -        eprintln!(
 -            "{}",
