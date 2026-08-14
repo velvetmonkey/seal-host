@@ -35,14 +35,14 @@ use seal_host_rs::replay_store::{
 };
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::cell::RefCell;
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
@@ -2600,12 +2600,8 @@ fn assert_startup_reclaims_unrecorded_hold() {
     let store = ReclaimProbeStore {
         state: Rc::clone(&state),
     };
-    let _filter = seal_host_rs::a3::A3Filter::with_store(
-        120_000,
-        Box::new(store),
-        wall_now_ms(),
-    )
-    .expect("startup recovery accepts the replay store");
+    let _filter = seal_host_rs::a3::A3Filter::with_store(120_000, Box::new(store), wall_now_ms())
+        .expect("startup recovery accepts the replay store");
     assert_eq!(
         state.borrow().reclaim_calls,
         1,
@@ -2624,8 +2620,7 @@ fn assert_reconcile_reclaims_unmatched_hold(o: &Oracle) {
         .reconcile_recorded(&HashSet::new(), wall_now_ms())
         .unwrap();
     assert_eq!(
-        reclaimed,
-        1,
+        reclaimed, 1,
         "reconcile_recorded reclaimed the unmatched hold"
     );
     assert!(
