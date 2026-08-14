@@ -179,7 +179,10 @@ read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
 --- a/rust/src/release.rs
 +++ b/rust/src/release.rs
 @@ -695,4 +695,2 @@
-            // ABLATION: operation state is not reconciled.
+-            if self.commit_operation_state(&path)? {
+-                report.redone_state_transitions += 1;
+-            }
++            // ABLATION: operation state is not reconciled.
             self.transition(&path, ReleaseStatus::Pending, ReleaseStatus::Unknown)?;
 PATCH
 
@@ -187,7 +190,7 @@ PATCH
 read -r -d '' MUTANT_7_PATCH <<'PATCH' || true
 --- a/rust/src/release.rs
 +++ b/rust/src/release.rs
-@@ -685,5 +685,8 @@
+@@ -685,4 +685,8 @@
              let (_, release) = self.read_verified(&path)?;
              let Some(release) = release else { continue };
 +            if release.status == ReleaseStatus::Unknown {
@@ -203,7 +206,7 @@ PATCH
 read -r -d '' MUTANT_8_PATCH <<'PATCH' || true
 --- a/rust/src/release.rs
 +++ b/rust/src/release.rs
-@@ -685,5 +685,8 @@
+@@ -685,4 +685,8 @@
              let (_, release) = self.read_verified(&path)?;
              let Some(release) = release else { continue };
 +            if release.status == ReleaseStatus::Released {
