@@ -178,7 +178,8 @@ PATCH
 read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
 --- a/rust/src/main.rs
 +++ b/rust/src/main.rs
-@@ -505,7 +505,1 @@
+@@ -504,9 +504,3 @@
+     crash_injection::abort_if_armed("g2-b-after-recorded");
 -    if let Err(error) = writer.commit_operation_state(&decision.path) {
 -        eprintln!(
 -            "{}",
@@ -187,6 +188,7 @@ read -r -d '' MUTANT_6_PATCH <<'PATCH' || true
 -        return Err(());
 -    }
 +    // ABLATION: committed operation state is skipped before the C crash cut.
+     crash_injection::abort_if_armed("g2-c-after-state-commit");
 PATCH
 
 # Mutant 7 — cut (d): an ambiguous partial child write is never retried.
