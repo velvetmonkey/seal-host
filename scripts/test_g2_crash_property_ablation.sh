@@ -103,6 +103,27 @@ read -r -d '' MUTANT_1_PATCH <<'PATCH' || true
  }
 PATCH
 
+# Mutant 3 — T1 recovery property: receipt reconciliation deletes unmatched
+# open holds. This is the production mechanism that currently covers the
+# older A3Filter::with_store reclaim path.
+read -r -d '' MUTANT_3_PATCH <<'PATCH' || true
+--- a/rust/src/replay_store.rs
++++ b/rust/src/replay_store.rs
+@@ -321,9 +321,5 @@
+                     params![nonce, committed_at_ms],
+                 )?;
+             } else {
+-                tx.execute(
+-                    "DELETE FROM nonces WHERE nonce = ?1 AND committed_at IS NULL",
+-                    params![nonce],
+-                )?;
+-                reclaimed += 1;
++                // ABLATION: unmatched RECORDED holds are not reclaimed.
+             }
+         }
+         for nonce in recorded_nonces {
+PATCH
+
 # Mutant 2 — T1 property: startup recovery reclaims an unrecorded hold.
 #
 # `A3Filter::with_store` reclaims, before any state is read, every hold that
@@ -248,10 +269,16 @@ expect_mutant_kills_test \
     g2_t1_crash_between_reserve_and_recorded_recovers_the_approval \
     "recovery reclaimed the unrecorded hold: state as if never presented"
 
+expect_mutant_kills_test \
+    t1-reconcile-hold-not-deleted \
+    "$MUTANT_3_PATCH" \
+    g2_t1_crash_between_reserve_and_recorded_recovers_the_approval \
+    "reconcile_recorded reclaimed the unmatched hold"
+
 if [[ "$failed" -ne 0 ]]; then
     echo "G2 crash-property ablation did not kill every mutated property" >&2
     exit 1
 fi
 
-echo "G2 crash-property ablation killed both mutated properties"
+echo "G2 crash-property ablation killed all three mutated properties"
 echo "ABLATION RESTORED: disposable mutant trees removed on exit"

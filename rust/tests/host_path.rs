@@ -30,7 +30,9 @@ use seal_host_rs::providers::{
     ApprovalRenderer,
 };
 use seal_host_rs::release::{ReadableDurabilityClass, ReleaseStatus, ReleaseStore};
-use seal_host_rs::replay_store::{ReplayStoreLineage, SqliteReplayStore};
+use seal_host_rs::replay_store::{
+    ReplayStore, ReplayStoreError, ReplayStoreLineage, SqliteReplayStore, StoredNonce,
+};
 use seal_host_rs::route::SEAM_ERROR_RESPONSE;
 use sha2::Digest;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -39,6 +41,9 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
@@ -2549,6 +2554,88 @@ fn replay_rows(o: &Oracle) -> Vec<(String, Option<i64>)> {
     rows
 }
 
+#[derive(Default)]
+struct ReclaimProbeState {
+    reclaim_calls: usize,
+}
+
+struct ReclaimProbeStore {
+    state: Rc<RefCell<ReclaimProbeState>>,
+}
+
+impl ReplayStore for ReclaimProbeStore {
+    fn reserve_returning_is_new(
+        &mut self,
+        _nonce: &str,
+        _issued_at: u64,
+        _expiry_at: u64,
+    ) -> Result<bool, ReplayStoreError> {
+        Ok(true)
+    }
+
+    fn commit_reservation(
+        &mut self,
+        _nonce: &str,
+        _committed_at_ms: u64,
+    ) -> Result<bool, ReplayStoreError> {
+        Ok(true)
+    }
+
+    fn reclaim_uncommitted(&mut self) -> Result<usize, ReplayStoreError> {
+        self.state.borrow_mut().reclaim_calls += 1;
+        Ok(1)
+    }
+
+    fn load_unexpired(&mut self, _now_ms: u64) -> Result<Vec<StoredNonce>, ReplayStoreError> {
+        Ok(Vec::new())
+    }
+
+    fn prune_expired(&mut self, _now_ms: u64) -> Result<(), ReplayStoreError> {
+        Ok(())
+    }
+}
+
+fn assert_startup_reclaims_unrecorded_hold() {
+    let state = Rc::new(RefCell::new(ReclaimProbeState::default()));
+    let store = ReclaimProbeStore {
+        state: Rc::clone(&state),
+    };
+    let _filter = seal_host_rs::a3::A3Filter::with_store(
+        120_000,
+        Box::new(store),
+        wall_now_ms(),
+    )
+    .expect("startup recovery accepts the replay store");
+    assert_eq!(
+        state.borrow().reclaim_calls,
+        1,
+        "recovery reclaimed the unrecorded hold: state as if never presented"
+    );
+}
+
+fn assert_reconcile_reclaims_unmatched_hold(o: &Oracle) {
+    let path = o.dir.join("reconcile-probe.sqlite");
+    SqliteReplayStore::initialize(&path, ReplayStoreLineage::CURRENT).unwrap();
+    let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+    assert!(store
+        .reserve_returning_is_new("reconcile-probe", wall_now_ms(), wall_now_ms() + 120_000)
+        .unwrap());
+    let reclaimed = store
+        .reconcile_recorded(&HashSet::new(), wall_now_ms())
+        .unwrap();
+    assert_eq!(
+        reclaimed,
+        1,
+        "reconcile_recorded reclaimed the unmatched hold"
+    );
+    assert!(
+        store.load_unexpired(wall_now_ms()).unwrap().is_empty(),
+        "reconcile_recorded removed the unmatched hold"
+    );
+    drop(store);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// G2 T1 — crash between reserve and RECORDED. The host dies (SIGABRT) after
 /// the kernel ALLOW but before the authorization decision persists. The
 /// crashed window must leave NO receipt and a reclaimable hold; after a clean
@@ -2557,6 +2644,8 @@ fn replay_rows(o: &Oracle) -> Vec<(String, Option<i64>)> {
 fn g2_t1_crash_between_reserve_and_recorded_recovers_the_approval() {
     let mut o =
         Oracle::spawn_signed_with_env("g2-t1", &[("SEAL_TEST_CRASH_POINT", "g2-before-record")]);
+    assert_startup_reclaims_unrecorded_hold();
+    assert_reconcile_reclaims_unmatched_hold(&o);
     let call = guarded_call(211, "drop table g2_t1");
     o.send(&call);
     let blocked = o.expect_line();
