@@ -122,6 +122,8 @@ read -r -d '' MUTANT_3_PATCH <<'PATCH' || true
              }
          }
          for nonce in recorded_nonces {
+PATCH
+
 # Mutant 4 — residual G2 property: receipt-backed holds are committed during
 # startup reconciliation after a crash at g2-after-record.
 read -r -d '' MUTANT_4_PATCH <<'PATCH' || true
