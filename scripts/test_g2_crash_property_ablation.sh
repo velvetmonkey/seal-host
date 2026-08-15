@@ -227,17 +227,35 @@ PATCH
 
 failed=0
 
-# run_g2_test <tree> <test_name> <log>
+# Deleting the behavior under test can leave a product binding unused even
+# though that binding is required by the unmutated product. Keep those
+# mutation-induced lint deltas explicit and per-mutant. These flags are only
+# appended to Cargo commands for the named disposable mutant; the unmutated
+# control and normal product builds never receive them, and `-D warnings`
+# remains in force for every other lint.
+T1_RECONCILE_HOLD_NOT_DELETED_LINT_EXEMPTIONS="-A unused-mut"
+AFTER_RECORD_RECONCILE_NOT_COMMITTED_LINT_EXEMPTIONS="-A unused-variables"
+PENDING_RELEASE_NOT_FORWARDED_LINT_EXEMPTIONS="-A unused-mut -A unused-variables"
+
+# run_g2_test <tree> <test_name> <log> [mutant_lint_exemptions]
 # Runs exactly one G2 test in one scratch tree. Returns the cargo exit status.
 run_g2_test() {
     local tree="$1"
     local test_name="$2"
     local log="$3"
+    local mutant_lint_exemptions="${4:-}"
     local status=0
 
     (
         cd "$tree/rust"
-        cargo test --test host_path "$test_name" -- --exact --nocapture >"$log" 2>&1
+        if [[ -n "$mutant_lint_exemptions" ]]; then
+            RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$mutant_lint_exemptions" \
+                cargo test --test host_path "$test_name" -- --exact --nocapture \
+                >"$log" 2>&1
+        else
+            cargo test --test host_path "$test_name" -- --exact --nocapture \
+                >"$log" 2>&1
+        fi
     ) || status=$?
     return "$status"
 }
@@ -277,6 +295,7 @@ done
 rm -rf -- "$CONTROL_TREE"
 
 # expect_mutant_kills_test <label> <patch> <test_name> <assertion_message>
+#                          [mutant_lint_exemptions]
 #
 # Applies one product mutant to a fresh scratch tree and requires the named G2
 # test to fail there, citing the assertion that pins the mutated property.
@@ -285,6 +304,7 @@ expect_mutant_kills_test() {
     local patch="$2"
     local test_name="$3"
     local assertion="$4"
+    local mutant_lint_exemptions="${5:-}"
     local tree="$SCRATCH/mutant-$label"
     local build_log="$LOG_DIR/$label-build.log"
     local test_log="$LOG_DIR/$label-test.log"
@@ -302,7 +322,12 @@ expect_mutant_kills_test() {
     # mutant that does not compile proves nothing about the assertions.
     if ! (
         cd "$tree/rust"
-        cargo test --test host_path --no-run >"$build_log" 2>&1
+        if [[ -n "$mutant_lint_exemptions" ]]; then
+            RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$mutant_lint_exemptions" \
+                cargo test --test host_path --no-run >"$build_log" 2>&1
+        else
+            cargo test --test host_path --no-run >"$build_log" 2>&1
+        fi
     ); then
         echo "ABLATION ERROR: mutant $label failed to build; no artifact was run" >&2
         sed -n '1,240p' "$build_log" >&2
@@ -312,7 +337,8 @@ expect_mutant_kills_test() {
     fi
     echo "ABLATION BUILD: mutant $label compiles"
 
-    run_g2_test "$tree" "$test_name" "$test_log" || status=$?
+    run_g2_test "$tree" "$test_name" "$test_log" \
+        "$mutant_lint_exemptions" || status=$?
 
     if [[ "$status" -eq 0 ]]; then
         echo "ABLATION FAILURE: $test_name PASSED against mutant $label" >&2
@@ -359,19 +385,22 @@ expect_mutant_kills_test \
     t1-reconcile-hold-not-deleted \
     "$MUTANT_3_PATCH" \
     g2_t1_crash_between_reserve_and_recorded_recovers_the_approval \
-    "reconcile_recorded reclaimed the unmatched hold"
+    "reconcile_recorded reclaimed the unmatched hold" \
+    "$T1_RECONCILE_HOLD_NOT_DELETED_LINT_EXEMPTIONS"
 
 expect_mutant_kills_test \
     after-record-reconcile-not-committed \
     "$MUTANT_4_PATCH" \
     g2_crash_after_recorded_before_commit_reconciles_burn \
-    "reconcile_recorded committed the receipt-backed hold"
+    "reconcile_recorded committed the receipt-backed hold" \
+    "$AFTER_RECORD_RECONCILE_NOT_COMMITTED_LINT_EXEMPTIONS"
 
 expect_mutant_kills_test \
     pending-release-not-forwarded \
     "$MUTANT_5_PATCH" \
     g2_cut_b_recorded_receipt_redoes_state_and_releases_on_restart \
-    "crash recovery property for g2-b-after-recorded"
+    "crash recovery property for g2-b-after-recorded" \
+    "$PENDING_RELEASE_NOT_FORWARDED_LINT_EXEMPTIONS"
 
 expect_mutant_kills_test \
     operation-state-not-reconciled \
