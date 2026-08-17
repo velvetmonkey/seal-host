@@ -8,10 +8,9 @@
 //! compared field, and watch the known divergences reappear when that gate is
 //! deliberately bypassed.
 
-use seal_host_rs::adapter_revision::McpAdapterRevision;
 use seal_host_rs::envelope_v23::{
     canonical_effect_agreement, canonical_json, derive_mcp_effect, effect_message_for_signing,
-    CanonicalAgreementError, EnvelopeV23, PrincipalClaim,
+    AdapterClaim, CanonicalAgreementError, EnvelopeV23, PrincipalClaim,
 };
 use seal_host_rs::lean::LeanHost;
 use serde_json::Value;
@@ -115,7 +114,7 @@ fn tab_backspace_and_formfeed_in_meta_are_typed_rejections() {
             nonce: "00".repeat(32),
             issued_at: 1,
             expires_at: 2,
-            adapter: McpAdapterRevision::Legacy2025_06_18.adapter_claim(),
+            adapter: AdapterClaim::deployed_mcp(),
             principal: PrincipalClaim {
                 session: "seal-session-v1:containment-test".into(),
             },

@@ -8,7 +8,6 @@
 //! or reverting the domain-tag bump makes them fail.
 
 use ed25519_dalek::{Signer, SigningKey};
-use seal_host_rs::adapter_revision::McpAdapterRevision;
 use seal_host_rs::envelope_v23::{
     canonical_effect_agreement, effect_message, effect_message_for_signing, verify,
     verify_kernel_principal, wire_view, AdapterClaim, CanonicalAgreement, EffectClaim, EnvelopeV23,
@@ -89,7 +88,7 @@ fn fixture() -> (EnvelopeV23, String, String, serde_json::Value) {
         nonce: "11".repeat(32),
         issued_at: 1234,
         expires_at: 4_102_444_800_000,
-        adapter: McpAdapterRevision::Legacy2025_06_18.adapter_claim(),
+        adapter: AdapterClaim::deployed_mcp(),
         principal: PrincipalClaim {
             session: "seal-session-v1:test".into(),
         },
@@ -162,7 +161,7 @@ fn verify_fixture(
     authority_hex: &str,
     kernel_config: &serde_json::Value,
 ) -> Result<VerifiedEnvelope, String> {
-    let adapter = McpAdapterRevision::Legacy2025_06_18.adapter_claim();
+    let adapter = AdapterClaim::deployed_mcp();
     let agreement = agreement(line);
     verify(
         envelope,
@@ -593,7 +592,7 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
         nonce: "22".repeat(32),
         issued_at: now_ms,
         expires_at: now_ms + 600_000,
-        adapter: McpAdapterRevision::Legacy2025_06_18.adapter_claim(),
+        adapter: AdapterClaim::deployed_mcp(),
         principal: PrincipalClaim {
             session: session.into(),
         },
@@ -629,7 +628,7 @@ fn runtime_issues_session_first_and_has_no_pre_repin_forward_path() {
         &HostContext {
             authority_hex: &hex::encode(authority),
             session,
-            adapter: &McpAdapterRevision::Legacy2025_06_18.adapter_claim(),
+            adapter: &AdapterClaim::deployed_mcp(),
             kernel_config: &kernel_config,
         },
         Some(&canonical_agreement),
