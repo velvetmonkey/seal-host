@@ -3,7 +3,7 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use seal_host_rs::adapter_revision::{
-    McpAdapterRevision, McpMixedVersionPolicy, McpRevisionSession,
+    McpAdapterRevision, McpMixedVersionPolicy, McpRevisionSession, MCP_CURRENT_ADAPTER_REVISION,
     MCP_DISCOVERY_SUPPORTED_REVISIONS, MCP_MIXED_VERSION_POLICY,
 };
 use seal_host_rs::envelope_v23::{
@@ -149,6 +149,34 @@ fn different_received_eras_sign_different_scalar_claims_and_commitments() {
     assert_ne!(
         legacy.1, current.1,
         "M2 RED: different received MCP entry eras collapsed to the same signed commitment"
+    );
+}
+
+#[test]
+fn current_selected_era_refuses_a_legacy_signed_envelope() {
+    let (_, _, _, legacy_envelope) = signed(selected(INITIALIZE));
+    let current_adapter = selected(DISCOVER).adapter_claim();
+    assert_eq!(
+        current_adapter.version, MCP_CURRENT_ADAPTER_REVISION,
+        "MCP revision control is invalid: server/discover did not select the current adapter revision"
+    );
+    let observation = host().canonical_effect(CALL).unwrap();
+    let agreement = canonical_effect_agreement(CALL, &observation).unwrap();
+    let error = verify(
+        &legacy_envelope,
+        CALL,
+        &HostContext {
+            authority_hex: &hex::encode(AUTHORITY),
+            session: "seal-session-v1:m2-control",
+            adapter: &current_adapter,
+            kernel_config: &json!({}),
+        },
+        Some(&agreement),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error, "V2.3 adapter claim does not match the deployed mediator",
+        "M2 RED: a current session accepted a legacy signed adapter revision"
     );
 }
 

@@ -31,7 +31,6 @@ use std::io::Read;
 /// `effect_cross_version_v1_separated`).
 pub const DOMAIN_TAG: &[u8] = b"seal.effect/v2\0";
 pub const MCP_ADAPTER_TYPE: &str = "mcp";
-pub const MCP_ADAPTER_VERSION: &str = "2025-06-18";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -39,15 +38,6 @@ pub struct AdapterClaim {
     #[serde(rename = "type")]
     pub kind: String,
     pub version: String,
-}
-
-impl AdapterClaim {
-    pub fn deployed_mcp() -> Self {
-        Self {
-            kind: MCP_ADAPTER_TYPE.into(),
-            version: MCP_ADAPTER_VERSION.into(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
