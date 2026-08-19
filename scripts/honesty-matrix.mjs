@@ -25,7 +25,7 @@
 // artefact are assertion dates and evidence-record dates.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -371,10 +371,14 @@ if (check) {
     console.error(
       "honesty-matrix: DRIFT — docs/HONESTY-MATRIX.md does not match what the sources derive.",
     );
-    const tmp = join(mkdtempSync(join(tmpdir(), "honesty-")), "HONESTY-MATRIX.md");
+    const tmpDir = mkdtempSync(join(tmpdir(), "honesty-"));
+    const tmp = join(tmpDir, "HONESTY-MATRIX.md");
     writeFileSync(tmp, rendered);
     const d = spawnSync("diff", ["-u", TARGET, tmp], { encoding: "utf8" });
     if (d.stdout) console.error(d.stdout);
+    if (process.env.KEEP_TMP !== "1" && process.env.KEEP_TMP !== "true") {
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
     process.exit(1);
   }
   console.log("honesty-matrix: check OK — artefact matches its sources");
