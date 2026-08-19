@@ -21,6 +21,9 @@ ARCHIVE="$SCRATCH/source.tar"
 LOG_DIR="$SCRATCH/logs"
 
 cleanup() {
+    if [[ "${KEEP_TMP:-}" == "1" || "${KEEP_TMP:-}" == "true" ]]; then
+        return
+    fi
     rm -rf -- "$SCRATCH"
 }
 trap cleanup EXIT

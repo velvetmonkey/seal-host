@@ -10,7 +10,7 @@ readonly FIXTURES=link-set-audit-fixtures
 readonly AUDIT=link_set_audit.py
 readonly TOOLROOT="$PWD/emsdk/upstream/bin"
 scratch=$(mktemp -d)
-trap 'rm -rf -- "$scratch"' EXIT
+trap 'if [[ "${KEEP_TMP:-}" == "1" || "${KEEP_TMP:-}" == "true" ]]; then :; else rm -rf -- "$scratch"; fi' EXIT
 cases_run=0
 
 # build_case NAME TARGET INIT PROVIDER...   (INIT may be "-" for none)

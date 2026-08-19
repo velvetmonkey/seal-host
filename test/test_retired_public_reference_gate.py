@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests for the retired public-reference gate."""
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -17,7 +18,11 @@ RETIRED = "can" + "ary"
 class RetiredPublicReferenceGateTests(unittest.TestCase):
     def make_repo(self, files: dict[str, str]) -> Path:
         temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
+        def _cleanup() -> None:
+            if os.environ.get("KEEP_TMP") in ("1", "true"):
+                return
+            temporary.cleanup()
+        self.addCleanup(_cleanup)
         root = Path(temporary.name)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         for relative, text in files.items():

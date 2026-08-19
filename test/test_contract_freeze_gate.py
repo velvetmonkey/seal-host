@@ -34,7 +34,11 @@ FROZEN_FILES = (
 class ContractFreezeGateTests(unittest.TestCase):
     def make_repo_copy(self) -> Path:
         root = Path(tempfile.mkdtemp(prefix="freeze-gate-test-"))
-        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        def _cleanup() -> None:
+            if os.environ.get("KEEP_TMP") in ("1", "true"):
+                return
+            shutil.rmtree(root, ignore_errors=True)
+        self.addCleanup(_cleanup)
         for relative in FROZEN_FILES + (MANIFEST, "scripts/contract_freeze_gate.py"):
             source = ROOT / relative
             target = root / relative

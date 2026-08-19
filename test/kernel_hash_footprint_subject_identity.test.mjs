@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { scanFleet } from "../scripts/kernel_hash_footprint.mjs";
+import { tmpdir } from "./tmpdir.mjs";
 
 function git(root, ...args) {
   const result = spawnSync("git", args, {
@@ -20,9 +21,7 @@ function git(root, ...args) {
 }
 
 function makeRepository() {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "kernel-footprint-subject-"),
-  );
+  const root = tmpdir("kernel-footprint-subject-");
   git(root, "init", "--quiet");
   fs.writeFileSync(path.join(root, ".gitignore"), "ignored.txt\n");
   fs.writeFileSync(path.join(root, "kernel.wasm"), "audited kernel\n");
