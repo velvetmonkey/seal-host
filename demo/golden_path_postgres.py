@@ -36,7 +36,7 @@ HOST = gp.HOST
 # either, because both name the staleness as a COMMIT sha.
 # a5f9a91 carries the pinned 28bb3ae7 kernel and the current 7-kernel policy
 # bundle used by the doctrine-clean S+B+T recipe.
-PHASE_B_KIT_REV = "962823b22d179f3354f8b8cf1a7091029a23c715"
+PHASE_B_KIT_REV = "4a34ddcf3bd571a7e7a234fe2961deb14719b346"
 PINNED_POSTGRES_IMAGE = "postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb"
 POSTGRES_IMAGE = os.environ.get("SEAL_POSTGRES_IMAGE", PINNED_POSTGRES_IMAGE)
 C2_THEOREMS = [
