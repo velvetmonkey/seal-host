@@ -23,16 +23,17 @@ VERIFY_BLOCK = re.compile(
 
 
 def run_checker(root: Path) -> subprocess.CompletedProcess[str]:
+    return run_checker_with_tags(root, ("v0.1.5", "v0.1.6"))
+
+
+def run_checker_with_tags(root: Path, tags: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
             str(CHECKER),
             "--root",
             str(root),
-            "--published-tag",
-            "v0.1.5",
-            "--published-tag",
-            "v0.1.6",
+            *[argument for tag in tags for argument in ("--published-tag", tag)],
         ],
         text=True,
         capture_output=True,
@@ -41,6 +42,14 @@ def run_checker(root: Path) -> subprocess.CompletedProcess[str]:
 
 
 class ReaderReleasePathTests(unittest.TestCase):
+    def run_fixture(self, commands: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory(prefix="reader-release-identity-") as temp_dir:
+            root = Path(temp_dir)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "FIXTURE.md").write_text(commands, encoding="utf-8")
+            return run_checker_with_tags(root, ("v0.1.0", "v0.2.0"))
+
     def test_current_reader_paths_pass(self) -> None:
         result = run_checker(ROOT)
         self.assertEqual(0, result.returncode, result.stderr)
@@ -140,6 +149,63 @@ install -m 0755 seal-host-v0.1.5-linux-x86_64/bin/seal-host-rs /usr/local/bin/se
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("documented asset is absent from v0.1.6", result.stderr)
+
+    def test_tag_mismatch_is_refused(self) -> None:
+        result = self.run_fixture(
+            """```sh
+python3 release_provenance.py verify X/seal-host-v0.1.0-linux-x86_64.tar.gz
+.seal/release/seal-host-v0.2.0-linux-x86_64/seal-host-rs --version
+```
+"""
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("release artifact identity does not match verified release", result.stderr)
+
+    def test_directory_mismatch_is_refused(self) -> None:
+        result = self.run_fixture(
+            """```sh
+gh release download v0.1.0 --repo velvetmonkey/seal-host --dir X --pattern seal-host-v0.1.0-linux-x86_64.tar.gz
+python3 release_provenance.py verify X/seal-host-v0.1.0-linux-x86_64.tar.gz
+Y/seal-host-v0.1.0-linux-x86_64/seal-host-rs --version
+```
+"""
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("release artifact identity does not match verified release", result.stderr)
+
+    def test_artifact_mismatch_is_refused(self) -> None:
+        result = self.run_fixture(
+            """```sh
+gh release download v0.1.0 --repo velvetmonkey/seal-host --dir X --pattern 'seal-host-v0.1.0-linux-*'
+python3 release_provenance.py verify X/seal-host-v0.1.0-linux-aarch64.tar.gz
+X/seal-host-v0.1.0-linux-x86_64/seal-host-rs --version
+```
+"""
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("release artifact identity does not match verified release", result.stderr)
+
+    def test_matching_release_identity_passes(self) -> None:
+        result = self.run_fixture(
+            """```sh
+gh release download v0.1.0 --repo velvetmonkey/seal-host --dir X --pattern seal-host-v0.1.0-linux-x86_64.tar.gz
+python3 release_provenance.py verify X/seal-host-v0.1.0-linux-x86_64.tar.gz
+X/seal-host-v0.1.0-linux-x86_64/seal-host-rs --version
+```
+"""
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_unparseable_release_identity_is_refused(self) -> None:
+        result = self.run_fixture(
+            """```sh
+python3 release_provenance.py verify X/seal-host-v0.1.0-linux-x86_64.tar.gz
+.seal/release/seal-host-${tag}/seal-host-rs --version
+```
+"""
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("release artifact identity is unknown", result.stderr)
 
 
 if __name__ == "__main__":

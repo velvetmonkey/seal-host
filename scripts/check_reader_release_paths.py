@@ -9,6 +9,7 @@ import fnmatch
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -79,6 +80,21 @@ class ReleaseCatalog:
     tags: frozenset[str]
     latest_tag: str
     assets: dict[str, frozenset[str]]
+
+
+@dataclass(frozen=True)
+class ReleaseIdentity:
+    tag: str | None
+    directory: Path | None
+    artifact: str | None
+
+    @property
+    def known(self) -> bool:
+        return self.tag is not None and self.directory is not None and self.artifact is not None
+
+
+ALL_VERIFIED_ARTIFACTS = "<all artifacts in verified release directory>"
+UNKNOWN_IDENTITY = ReleaseIdentity(None, None, None)
 
 
 def standard_assets(tag: str) -> frozenset[str]:
@@ -185,23 +201,171 @@ def logical_lines(path: Path) -> list[tuple[int, str]]:
     return result
 
 
+def _shell_words(line: str) -> list[str]:
+    try:
+        return shlex.split(line, posix=True)
+    except ValueError:
+        return []
+
+
+def _expand(value: str, variables: dict[str, str]) -> str:
+    value = value.strip("'\"")
+    for name, replacement in variables.items():
+        value = value.replace(f"${{{name}}}", replacement).replace(f"${name}", replacement)
+    return value
+
+
+def _tag_from(value: str, variables: dict[str, str]) -> str | None:
+    expanded = _expand(value, variables)
+    match = re.search(r"\bv[0-9]+\.[0-9]+\.[0-9]+\b", expanded)
+    return match.group(0) if match else None
+
+
+def _option(words: list[str], name: str) -> str | None:
+    for index, word in enumerate(words[:-1]):
+        if word == name:
+            return words[index + 1]
+    return None
+
+
+def _canonical_path(value: str, current_directory: Path, variables: dict[str, str]) -> Path | None:
+    expanded = _expand(value, variables)
+    if not expanded or "<" in expanded or "*" in expanded:
+        return None
+    candidate = Path(expanded)
+    if not candidate.is_absolute():
+        candidate = current_directory / candidate
+    return candidate.resolve()
+
+
+def _archive_identity(path: str, current_directory: Path, variables: dict[str, str]) -> ReleaseIdentity:
+    expanded = _expand(path, variables)
+    match = re.search(
+        r"(seal-host-(v[0-9]+\.[0-9]+\.[0-9]+-linux-"
+        r"(?:[A-Za-z0-9_]+|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)\.tar\.gz))",
+        expanded,
+    )
+    if not match:
+        return UNKNOWN_IDENTITY
+    artifact = match.group(1)
+    tag = _tag_from(artifact, variables)
+    full_path = _canonical_path(expanded, current_directory, variables)
+    if tag is None or full_path is None:
+        return UNKNOWN_IDENTITY
+    if "$" in artifact:
+        artifact = ALL_VERIFIED_ARTIFACTS
+    return ReleaseIdentity(tag, full_path.parent.resolve(), artifact)
+
+
+def _binary_identity(line: str, current_directory: Path, variables: dict[str, str]) -> ReleaseIdentity:
+    expanded = _expand(line, variables)
+    match = re.search(
+        r"(seal-host-(v[0-9]+\.[0-9]+\.[0-9]+-linux-"
+        r"(?:[A-Za-z0-9_]+|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)))"
+        r"(?:/bin)?/seal-host-rs\b",
+        expanded,
+    )
+    if not match:
+        return UNKNOWN_IDENTITY
+    package = match.group(1)
+    tag = _tag_from(package, variables)
+    package_start = expanded.rfind(package, 0, match.end())
+    package_path = _canonical_path(expanded[:package_start] + package, current_directory, variables)
+    if package_path is None:
+        return UNKNOWN_IDENTITY
+    artifact = ALL_VERIFIED_ARTIFACTS if "$" in package else f"{package}.tar.gz"
+    return ReleaseIdentity(tag, package_path.parent.resolve(), artifact)
+
+
+def _verifier_identity(line: str, current_directory: Path, variables: dict[str, str]) -> ReleaseIdentity:
+    words = _shell_words(line)
+    try:
+        verify_index = next(
+            index for index, word in enumerate(words)
+            if word == "verify" and index > 0 and words[index - 1].endswith("release_provenance.py")
+        )
+    except StopIteration:
+        return UNKNOWN_IDENTITY
+    tail = words[verify_index + 1 :]
+    release_dir = _option(tail, "--release-dir")
+    release_version = _option(tail, "--release-version")
+    positional = next((word for word in tail if not word.startswith("--") and word not in {release_dir, release_version}), None)
+    if positional is not None:
+        identity = _archive_identity(positional, current_directory, variables)
+        if identity.known:
+            return identity
+    if release_dir is None or release_version is None:
+        return UNKNOWN_IDENTITY
+    directory = _canonical_path(release_dir, current_directory, variables)
+    tag = _tag_from(release_version, variables)
+    if directory is None or tag is None:
+        return UNKNOWN_IDENTITY
+    # This form verifies the complete release directory, so every exact
+    # artifact in that directory is established; it is not a wildcard claim.
+    return ReleaseIdentity(tag, directory, ALL_VERIFIED_ARTIFACTS)
+
+
+def _identities_match(verified: ReleaseIdentity, used: ReleaseIdentity) -> bool:
+    if not verified.known or not used.known:
+        return False
+    return (
+        verified.tag == used.tag
+        and verified.directory == used.directory
+        and (verified.artifact == used.artifact or verified.artifact == ALL_VERIFIED_ARTIFACTS)
+    )
+
+
 def release_use_failures(path: Path, root: Path) -> list[str]:
     failures: list[str] = []
+    current_directory = root.resolve()
+    variables: dict[str, str] = {"PWD": str(current_directory)}
     release_downloaded = False
-    provenance_verified = False
+    verified_identity = UNKNOWN_IDENTITY
+    bin_identity = UNKNOWN_IDENTITY
     for line_number, line in logical_lines(path):
+        words = _shell_words(line)
+        assignment = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(\S+)", line)
+        if assignment and assignment.group(1) != "SEAL_BIN" and "$(" not in assignment.group(2):
+            variables[assignment.group(1)] = _expand(assignment.group(2), variables)
+        if len(words) >= 2 and words[0] == "cd":
+            next_directory = _canonical_path(words[1], current_directory, variables)
+            if next_directory is not None:
+                current_directory = next_directory
+                variables["PWD"] = str(current_directory)
+                release_downloaded = False
         if RELEASE_DOWNLOAD.search(line):
             release_downloaded = True
-            provenance_verified = False
+            verified_identity = UNKNOWN_IDENTITY
         if PROVENANCE_VERIFY.search(line):
-            provenance_verified = True
+            verified_identity = _verifier_identity(line, current_directory, variables)
+        if re.match(r"^\s*(?:export\s+)?SEAL_BIN\s*=", line):
+            assigned = line.split("=", 1)[1].strip()
+            bin_identity = _binary_identity(assigned, current_directory, variables)
+            if bin_identity == UNKNOWN_IDENTITY:
+                release_downloaded = False
         release_specific_use = RELEASE_SPECIFIC.search(line) and RELEASE_USE.search(line)
-        downloaded_release_use = release_downloaded and RELEASE_USE.search(line)
-        if (release_specific_use or downloaded_release_use) and not provenance_verified:
-            failures.append(
-                f"{path.relative_to(root)}:{line_number}: release artifact use occurs before "
-                f"release_provenance.py verify: {line.strip()}"
-            )
+        downloaded_release_use = (
+            release_downloaded
+            and RELEASE_USE.search(line)
+            and not line.lstrip().startswith("Install ")
+        )
+        if release_specific_use or downloaded_release_use:
+            assignment_is_bin = re.match(r"^\s*(?:export\s+)?SEAL_BIN\s*=", line)
+            used_identity = bin_identity if assignment_is_bin else _binary_identity(line, current_directory, variables)
+            if used_identity == UNKNOWN_IDENTITY and "$SEAL_BIN" in line:
+                used_identity = bin_identity
+            if used_identity == UNKNOWN_IDENTITY:
+                used_identity = _archive_identity(line, current_directory, variables)
+            if not _identities_match(verified_identity, used_identity):
+                if not verified_identity.known:
+                    reason = "release artifact use occurs before release_provenance.py verify"
+                elif not used_identity.known:
+                    reason = "release artifact identity is unknown"
+                else:
+                    reason = "release artifact identity does not match verified release"
+                failures.append(
+                    f"{path.relative_to(root)}:{line_number}: {reason}: {line.strip()}"
+                )
     return failures
 
 
