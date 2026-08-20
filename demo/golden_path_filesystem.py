@@ -654,7 +654,7 @@ def verify_receipt(
     if record.get("verdict")!=verdict: raise gp.DemoFailure(f"receipt verdict mismatch: {path}")
     if era is mcp_eras.McpEra.MCP_2025:
         result=gp.run([str(seal),"verify",str(path)])
-        if "PASS  VERIFIED" not in result.stdout: raise gp.DemoFailure(f"receipt verification failed: {path}")
+        if "PASS  VERIFIED (bundled self-check; not independent verification)" not in result.stdout: raise gp.DemoFailure(f"receipt verification failed: {path}")
         return True
 
     # M.6 is deliberately no-repin. The pinned 2025 verifier reconstructs a

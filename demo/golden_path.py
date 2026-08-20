@@ -706,7 +706,7 @@ def verify_receipt_and_scan(seal: Path, receipt: Path, manifest: Path, policy: P
     print("$ " + " ".join(verify_command), flush=True)
     verified = subprocess.run(verify_command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     verify_error = None
-    if verified.returncode == 0 and "PASS  VERIFIED" in verified.stdout:
+    if verified.returncode == 0 and "PASS  VERIFIED (bundled self-check; not independent verification)" in verified.stdout:
         check("receipt verify + tier", "PASS", "BLOCK receipt re-derived; local deterministic-tested, ci_tested=false, operator_verified=false")
     else:
         output = ((verified.stdout or "") + (verified.stderr or "")).strip().splitlines()

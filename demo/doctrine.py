@@ -591,7 +591,7 @@ class DemoTrace:
             if requires_trace is not None or standalone_failure is not None:
                 raise DoctrineFailure("standalone receipt cannot carry trace-only verification metadata")
             verified = run([str(self.seal), "verify", str(dest)])
-            if "PASS  VERIFIED" not in verified.stdout:
+            if "PASS  VERIFIED (bundled self-check; not independent verification)" not in verified.stdout:
                 raise DoctrineFailure(f"seal verify did not report PASS VERIFIED: {dest}")
             seal_verify = {"command": "seal verify", "status": "PASS", "exit_code": verified.returncode}
         elif verification_lane == "trace":
@@ -694,7 +694,7 @@ class DemoTrace:
     def _verify_all(self) -> None:
         for receipt in self.standalone_receipts:
             result = run([str(self.seal), "verify", str(receipt)])
-            if "PASS  VERIFIED" not in result.stdout:
+            if "PASS  VERIFIED (bundled self-check; not independent verification)" not in result.stdout:
                 raise DoctrineFailure(f"final seal verify did not report PASS: {receipt}")
 
     def _anti_forge(self) -> None:
@@ -729,7 +729,7 @@ class DemoTrace:
         if restored_hash != original_hash or receipt.read_bytes() != original:
             raise DoctrineFailure("anti-forge negative control did not restore the receipt byte-exact")
         rerun = run([str(self.seal), "verify", str(receipt)])
-        if "PASS  VERIFIED" not in rerun.stdout:
+        if "PASS  VERIFIED (bundled self-check; not independent verification)" not in rerun.stdout:
             raise DoctrineFailure("restored receipt did not verify")
         self.emit({
             "schema": SCHEMA,

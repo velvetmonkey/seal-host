@@ -450,7 +450,7 @@ def verify_receipt(seal: Path, receipt: Path, verdict: str) -> None:
     if not tier_rules or tier_rules[0].get("_seal_demo_tier") != POSTGRES_TIER:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
-    if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
+    if "PASS  VERIFIED (bundled self-check; not independent verification)" not in result.stdout or record.get("verdict") != verdict:
         raise gp.DemoFailure(f"receipt decision was not reproduced as {verdict}: {receipt}")
 
 
