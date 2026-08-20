@@ -23,6 +23,9 @@ BUILD_LOG="$SCRATCH/build.log"
 TEST_LOG="$SCRATCH/test.log"
 
 cleanup() {
+    if [[ "${KEEP_TMP:-}" == "1" || "${KEEP_TMP:-}" == "true" ]]; then
+        return
+    fi
     rm -rf -- "$SCRATCH"
 }
 trap cleanup EXIT

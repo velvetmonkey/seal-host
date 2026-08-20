@@ -19,7 +19,10 @@ const VERIFY = `${ROOT}/receipt-verifier/verify.mjs`;
 const WASM_JS = `${ROOT}/wasm-spike/verified/seal.js`;
 const WASM_PATH = `${ROOT}/receipt-verifier/wasm/seal.wasm`;
 const WORK = mkdtempSync(join(tmpdir(), "seal-six-lines-"));
-test.after(() => rmSync(WORK, { recursive: true, force: true }));
+test.after(() => {
+  if (process.env.KEEP_TMP === "1" || process.env.KEEP_TMP === "true") return;
+  rmSync(WORK, { recursive: true, force: true });
+});
 
 const key = () => {
   const pair = generateKeyPairSync("ed25519");
