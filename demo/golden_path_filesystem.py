@@ -761,7 +761,7 @@ def one_shot(name: str,seal: Path,trusted: Path,config_pub: str,key: Path,approv
         if session.marker_count("SEAL_FILESYSTEM_WRITE_FILE_RECEIVED")!=1: raise gp.DemoFailure("replay reached filesystem")
         check("approved one-shot real write","PASS","BLOCK→signed ALLOW→file observed; v2 context-mismatch replay BLOCK; one downstream write")
         receipt_evidence=(
-            "initial write BLOCK + first approved write ALLOW independently re-derived"
+            "initial write BLOCK + first approved write ALLOW decisions reproduced"
             if block_verified and allow_verified
             else "modern BLOCK + ALLOW receipt projections inspected; pinned 2025 verifier rejections matched"
         )
@@ -817,12 +817,12 @@ def boundary_card(
 )->None:
     receipt_claim=(
         """Fresh-state read ALLOW, Safety BLOCK, bad-signature BLOCK, and first approved
-  write ALLOW independently re-derived."""
+  write ALLOW decisions reproduced."""
         if era is mcp_eras.McpEra.MCP_2025
         else """Modern receipts expose exact request _meta at the top level and in
   effect_view.effect._meta. The pinned 2025 verifier rejects their modern
   canonical request at its known no-repin boundary; they are not labelled
-  independently re-derived in this lane."""
+  presented as reproduced in this lane."""
     )
     print(f"""
 ===================== FILESYSTEM SEAL BOUNDARY CARD =====================

@@ -451,7 +451,7 @@ def verify_receipt(seal: Path, receipt: Path, verdict: str) -> None:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
     if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
-        raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+        raise gp.DemoFailure(f"receipt decision was not reproduced as {verdict}: {receipt}")
 
 
 def policy_tamper(name: str, trusted: Path, config_pub: str, approval_pub: str,
@@ -547,7 +547,7 @@ def doctrine_path(name: str, seal: Path, trusted: Path, config_pub: str,
                         "remaining_before":10, "remaining_after":8},
             )
         check("approved costed real DROP", "PASS", "Safety DENY→signed ALLOW→table absent; cost_units=2; one downstream execution")
-        check("fresh receipt verification", "PASS", "Safety BLOCK + composed S+B+T ALLOW independently re-derived")
+        check("fresh receipt verification", "PASS", "Safety BLOCK + composed S+B+T ALLOW decisions reproduced")
     finally:
         session.close()
 
@@ -641,7 +641,7 @@ PROVEN REFERENCE ENFORCEMENT
   Safety approval binding/one-shot; composed_budget_cap; composed_temporal_safety.
   Budget/Temporal enforcement is machine-checked by composed_budget_cap and
   composed_temporal_safety. This doctrine path stays in fresh state so every
-  emitted receipt is independently re-derivable; it makes no receipt claim
+  emitted receipt is re-derivable; it makes no receipt claim
   about prior counter/trace state that the frozen verifier does not carry.
 
 SIGNED / VERIFIED KEYS
@@ -649,7 +649,7 @@ SIGNED / VERIFIED KEYS
   Approval: exact {{target,issuedAt,nonce}} bytes, Ed25519 key {approval_pub}
 
 RECEIPTS / EVIDENCE
-  Every receipt emitted by this doctrine path is independently re-derived by
+  Every receipt emitted by this doctrine path has its decision reproduced by
   seal verify. The Budget denial uses a fresh session and cost_units=11 at
   cap=10; the composed ALLOW carries Safety, Budget, and Temporal certificates.
   Accumulated-counter and post-freeze receipts are deliberately not emitted:

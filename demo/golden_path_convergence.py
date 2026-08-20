@@ -343,7 +343,7 @@ def inspect_receipt(seal: Path, receipt: Path, verdict: str, *, standalone: bool
     if standalone:
         result = gp.run([str(seal), "verify", str(receipt)])
         if "PASS  VERIFIED" not in result.stdout:
-            raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+            raise gp.DemoFailure(f"receipt decision was not reproduced as {verdict}: {receipt}")
     return record
 
 

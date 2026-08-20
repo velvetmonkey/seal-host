@@ -14,13 +14,13 @@ can flow once. Every decision leaves replayable evidence.
 
 Seal enforces authorization at the effect boundary; it does not claim to read
 agent intent. The family decision rule is machine-checked, effect-commitment
-sufficiency is tested, and sibling verifier surfaces independently re-derive
-deployed decisions against pinned kernel bytes.
+sufficiency is tested, and sibling verifier surfaces reproduce deployed
+decisions against pinned kernel bytes.
 
 ## Your first gate
 
 ```text
-blocked → approved once → executed → independently verified → tamper rejected
+blocked → approved once → executed → decision reproduced → tamper rejected
 ```
 
 **Published onboarding:** `seal-host` v0.1.6 exists with signed provenance,

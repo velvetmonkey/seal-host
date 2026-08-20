@@ -316,7 +316,7 @@ def verify_receipt(seal: Path, receipt: Path, verdict: str) -> dict:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
     if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
-        raise gp.DemoFailure(f"receipt did not independently verify as {verdict}: {receipt}")
+        raise gp.DemoFailure(f"receipt decision was not reproduced as {verdict}: {receipt}")
     return record
 
 

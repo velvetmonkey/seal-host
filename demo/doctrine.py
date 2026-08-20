@@ -3,7 +3,7 @@
 """Reusable doctrine spine for Seal demos.
 
 Runtime receipts are copied byte-for-byte into a durable artifact directory
-and described by one NDJSON trace. Standalone receipts verify independently;
+and described by one NDJSON trace. Standalone receipt decisions are reproduced;
 history-dependent receipts bind to a byte-replayed trace transcript. TTY and
 Markdown output are projections of that trace; neither is an independent demo
 script.
@@ -1563,7 +1563,7 @@ def _validate_c6(metadata: dict, steps: list[dict], records: list[dict], manifes
     if trigger.get("verification_lane") != "standalone" or denied.get("verification_lane") != "trace":
         raise DoctrineFailure("C6 must place only the trigger on the standalone lane and the frozen deny on the trace lane")
     if trigger.get("seal_verify") != {"command": "seal verify", "status": "PASS", "exit_code": 0}:
-        raise DoctrineFailure("C6 trigger receipt must independently verify")
+        raise DoctrineFailure("C6 trigger decision must be reproduced")
     denied_verify = denied.get("seal_verify", {})
     if denied_verify.get("command") != "seal verify" or denied_verify.get("status") != "TRACE-SCOPED" or denied_verify.get("exit_code") == 0:
         raise DoctrineFailure("C6 frozen receipt must be honestly labelled trace-scoped")
