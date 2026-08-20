@@ -156,7 +156,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: velvetmonkey/seal-assurance-kit
-          ref: 962823b22d179f3354f8b8cf1a7091029a23c715
+          ref: 4a34ddcf3bd571a7e7a234fe2961deb14719b346
           token: ${{ secrets.SEAL_CI_READ_TOKEN }}
           path: seal-assurance-kit
 
