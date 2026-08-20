@@ -20,7 +20,7 @@ SOURCE_KIT_REV = json.loads(
     (ROOT / "scripts" / "mcp_seal_pin_baseline.json").read_text(encoding="utf-8")
 )["mcpSealRevision"]
 FLEET_ASSURANCE_KIT_REV = "962823b22d179f3354f8b8cf1a7091029a23c715"
-GOLDEN_PATH_KIT_REV = "962823b22d179f3354f8b8cf1a7091029a23c715"
+GOLDEN_PATH_KIT_REV = "4a34ddcf3bd571a7e7a234fe2961deb14719b346"
 
 GOLDEN_PATH_DEMOS = (
     "golden_path_composition.py",

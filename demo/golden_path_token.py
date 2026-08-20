@@ -26,7 +26,7 @@ MCP_ERAS = mcp_eras.declared_eras(__file__)
 ROOT = gp.ROOT
 KIT = gp.KIT
 HOST = gp.HOST
-PHASE_B_KIT_REV = "962823b22d179f3354f8b8cf1a7091029a23c715"
+PHASE_B_KIT_REV = "4a34ddcf3bd571a7e7a234fe2961deb14719b346"
 SERVER_IDENTITY = "seal-token-governor-demo@1.0.0"
 TOOL = "llm_call"
 CAP = 10
@@ -315,7 +315,7 @@ def verify_receipt(seal: Path, receipt: Path, verdict: str) -> dict:
     if not rules or rules[0].get("_seal_demo_tier") != C4_TIER:
         raise gp.DemoFailure(f"receipt tier mismatch: {receipt}")
     result = gp.run([str(seal), "verify", str(receipt)])
-    if "PASS  VERIFIED" not in result.stdout or record.get("verdict") != verdict:
+    if "PASS  VERIFIED (bundled self-check; not independent verification)" not in result.stdout or record.get("verdict") != verdict:
         raise gp.DemoFailure(f"receipt decision was not reproduced as {verdict}: {receipt}")
     return record
 

@@ -45,7 +45,7 @@ HOST = ROOT / "rust" / "target" / "release" / "seal-host-rs"
 # 0aeb35a60adfa4c50b6bfcf761967b1c6280fde7 -> ff1bfd68d7be51b6a395f94dfc46b2fb27ed11dc5833af6a84675f42f9730546
 # 6d0d6eb1512983ed9a1d09146476f806dd89d828 -> d3067bc07e74977dedf6bb96d79a710c4b61143f6e8db151655bc88ece8b9d66
 # 0db03efd27fc3775988d5e4bd527d8e6206b6c47 -> df42cbada2297741bfeab99f222b96ac02e43a4ce8695b24922b425b8d66b1e8
-PHASE_B_KIT_REV = "962823b22d179f3354f8b8cf1a7091029a23c715"
+PHASE_B_KIT_REV = "4a34ddcf3bd571a7e7a234fe2961deb14719b346"
 PINNED_FILESYSTEM_IMAGE = "node@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4"
 FILESYSTEM_IMAGE = os.environ.get("SEAL_FILESYSTEM_IMAGE", PINNED_FILESYSTEM_IMAGE)
 
@@ -654,7 +654,7 @@ def verify_receipt(
     if record.get("verdict")!=verdict: raise gp.DemoFailure(f"receipt verdict mismatch: {path}")
     if era is mcp_eras.McpEra.MCP_2025:
         result=gp.run([str(seal),"verify",str(path)])
-        if "PASS  VERIFIED" not in result.stdout: raise gp.DemoFailure(f"receipt verification failed: {path}")
+        if "PASS  VERIFIED (bundled self-check; not independent verification)" not in result.stdout: raise gp.DemoFailure(f"receipt verification failed: {path}")
         return True
 
     # M.6 is deliberately no-repin. The pinned 2025 verifier reconstructs a
