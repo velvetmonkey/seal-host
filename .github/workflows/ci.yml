@@ -551,7 +551,6 @@ jobs:
           python3 test/test_golden_path_timeouts.py -v
           node scripts/claims-surface-drift.mjs
           python3 test/test_claims_surface_drift_guard.py -v
-          node scripts/claims-drift.mjs
       - id: control_12
         continue-on-error: true
         name: Public fleet prose must not retain private-era access claims
