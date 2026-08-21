@@ -480,10 +480,10 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // proof. Its continue-on-error result is measured by the existing
   // aggregate; this inventory entry only accounts for the new step identity.
   //
-  // Reviewed 2026-08-21 (public-fleet claim gate): 70 -> 71. Exactly ONE
-  // run step is added to contract-freeze: control_12, which runs the
-  // public-fleet claim gate and its fail-closed tests. Its outcome is
-  // measured by that job's existing aggregate.
+  // Reviewed 2026-08-21 (public-fleet claim pin gate): 70 -> 71. Exactly ONE
+  // run step is added to contract-freeze: control_12, which checks approved
+  // fleet-claim blocks against reviewed pins and runs its fail-closed tests.
+  // Its outcome is measured by that job's existing aggregate.
   assert.deepEqual(
     ciRunStepIdentities(normal),
     EXPECTED_CI_RUN_STEP_IDENTITIES,
@@ -531,7 +531,7 @@ test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   // `control_03`), and one arrives (`build:control_20`, now a literal block so
   // it can tee the axiom report the sorry-axiom grep reads).
   // 14 -> 15: guardwire adds the literal control_31 crash-test block.
-  // 15 -> 16: public-fleet claim gate adds contract-freeze control_12.
+  // 15 -> 16: public-fleet claim pin gate adds contract-freeze control_12.
   assert.equal(literalRuns.length, 16);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),

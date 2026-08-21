@@ -112,10 +112,12 @@ and pinned by `Test/Axioms.lean`, not the repository as a whole.
 - [Family claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md)
   and [what Seal is not](https://github.com/velvetmonkey/seal-assurance-kit/blob/main/docs/WHAT-SEAL-IS-NOT.md).
 
+<!-- FLEET-CLAIM:BEGIN -->
 The public family consists of the `seal` umbrella, `mcp-seal-dev` rulebook,
 this deployed host, `seal-check`, `seal-live-demo`, `seal-assurance-kit`, and
 `seal-verify-action`. `witness-check`, the sufficiency analyzer, is the named
 private/proprietary exception.
+<!-- FLEET-CLAIM:END -->
 
 The before-and-after claim and caveat inventory is the
 [README content map](README-CONTENT-MAP.md).
