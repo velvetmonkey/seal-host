@@ -21,15 +21,12 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const FAMILY_REPOS = [
-  "seal",
-  "seal-host",
-  "seal-check",
-  "seal-live-demo",
-  "seal-verify-action",
-  "seal-assurance-kit",
-  "mcp-seal-dev",
-];
+const FAMILY_REPOS = JSON.parse(
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "family-repos.json"),
+    "utf8",
+  ),
+);
 
 function parseArgs(argv) {
   if (argv.length === 0) return { familyRoot: null };

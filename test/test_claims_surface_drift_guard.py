@@ -13,6 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "claims-surface-drift.mjs"
+FAMILY_REPOS = ROOT / "scripts" / "family-repos.json"
 INPUTS = (
     Path("README.md"),
     Path("docs/LIMITATIONS.md"),
@@ -29,6 +30,7 @@ class ClaimsSurfaceDriftGuardTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "docs").mkdir()
         shutil.copy2(SCRIPT, self.root / "scripts" / SCRIPT.name)
+        shutil.copy2(FAMILY_REPOS, self.root / "scripts" / FAMILY_REPOS.name)
         for relative in INPUTS:
             shutil.copy2(ROOT / relative, self.root / relative)
 

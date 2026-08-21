@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 import sys
@@ -18,7 +19,32 @@ REQUIRED_READER_FILES = (
     Path("SECURITY.md"),
     Path("docs/FRONT-PAGE-REFERENCE.md"),
 )
-STALE_PATTERNS = (
+FAMILY_REPOS = tuple(json.loads((ROOT / "scripts/family-repos.json").read_text(encoding="utf-8")))
+FAMILY_PHRASES = (
+    r"seal(?:[- ]family)? repositor(?:y|ies)",
+    r"seal(?:[- ]family)? repos?",
+    r"`seal`",
+    r"\bseal (?=(?:is|remains|stays|has|was|will)\b)",
+)
+RESTRICTION_VOCABULARY = (
+    r"private",
+    r"not (?:public|publicly available)",
+    r"restricted",
+    r"authori[sz]ed (?:evaluators|reviewers)",
+    r"request access",
+    r"not yet (?:been )?open sourced",
+    r"pre-award",
+    r"closed[ -]source",
+    r"invite[ -]only",
+    r"internal[ -]only",
+    r"(?:unavailable|not available) to the public",
+    r"access(?: is| remains| stays)? (?:controlled|gated)",
+)
+
+# These exact historical claims remain as regression signatures. The semantic
+# detector below is what catches new wording; this list preserves all thirteen
+# already-proved failures, including fragments that do not name their subject.
+LEGACY_STALE_PATTERNS = (
     re.compile(r"\bAll Seal-family repositories are currently private\b", re.IGNORECASE),
     re.compile(r"\blinks resolve only for authori[sz]ed evaluators\b", re.IGNORECASE),
     re.compile(r"\bboth in private repos\b", re.IGNORECASE),
@@ -33,6 +59,66 @@ STALE_PATTERNS = (
     re.compile(r"\bprivate umbrella story\b", re.IGNORECASE),
     re.compile(r"\bprivate kit repo\b", re.IGNORECASE),
 )
+
+
+def _name_pattern(name: str) -> str:
+    """Match a repository name without treating it as part of a longer slug."""
+    return rf"(?<![\w-]){re.escape(name)}(?![\w-])"
+
+
+FAMILY_REPO_PATTERNS = tuple(
+    _name_pattern(name)
+    for name in sorted(
+        (repo for repo in FAMILY_REPOS if repo != "seal"),
+        key=len,
+        reverse=True,
+    )
+)
+FAMILY_SUBJECT = re.compile(
+    "(?:" + "|".join((*FAMILY_REPO_PATTERNS, *FAMILY_PHRASES)) + ")",
+    re.IGNORECASE,
+)
+RESTRICTION = re.compile(
+    "(?:" + "|".join(RESTRICTION_VOCABULARY) + ")",
+    re.IGNORECASE,
+)
+
+
+def stale_claim(line: str) -> bool:
+    """Return true when a line makes a private-era claim about the public family."""
+    if any(pattern.search(line) for pattern in LEGACY_STALE_PATTERNS):
+        return True
+    subject = FAMILY_SUBJECT.search(line)
+    if subject is None:
+        return False
+
+    # The normal assertion shape names the repository/family first and then
+    # predicates restricted availability of it. Limit the span so an unrelated
+    # restriction later on a long line is not joined to the name.
+    if RESTRICTION.search(line, subject.end(), min(len(line), subject.end() + 160)):
+        return True
+
+    # Imperative/access wording naturally puts the restriction first. Require
+    # an access/view/use connector, or an explicit repository noun, so phrases
+    # such as "private kernel (`mcp-seal-dev`)" do not become availability claims.
+    prefix = line[max(0, subject.start() - 160):subject.start()]
+    restriction = RESTRICTION.search(prefix)
+    if restriction is None:
+        return False
+    between = prefix[restriction.end():]
+    return bool(
+        re.search(
+            r"\b(?:access|accessing|view|viewing|use|using|clone|cloning)\b",
+            between,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"^\s+(?:repositor(?:y|ies)|repos?)\b",
+            line[subject.end():],
+            re.IGNORECASE,
+        )
+        or re.search(r"seal(?:[- ]family)? repos", subject.group(0), re.IGNORECASE)
+    )
 
 
 def reader_files(root: Path) -> list[Path]:
@@ -89,11 +175,10 @@ def failures(root: Path) -> list[str]:
             continue
         relative = path.relative_to(root)
         for line_number, line in enumerate(text.splitlines(), 1):
-            for pattern in STALE_PATTERNS:
-                if pattern.search(line):
-                    problems.append(
-                        f"{relative}:{line_number}: stale private-era fleet claim: {line.strip()}"
-                    )
+            if stale_claim(line):
+                problems.append(
+                    f"{relative}:{line_number}: stale private-era fleet claim: {line.strip()}"
+                )
     return problems
 
 
