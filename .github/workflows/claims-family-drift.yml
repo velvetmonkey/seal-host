@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Claims family drift
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  claims-family-drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out seal
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: velvetmonkey/seal
+          path: family/seal
+      - name: Check out seal-host
+        uses: actions/checkout@v7.0.1
+        with:
+          path: family/seal-host
+      - name: Check out seal-check
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: velvetmonkey/seal-check
+          path: family/seal-check
+      - name: Check out seal-live-demo
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: velvetmonkey/seal-live-demo
+          path: family/seal-live-demo
+      - name: Check out seal-verify-action
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: velvetmonkey/seal-verify-action
+          path: family/seal-verify-action
+      - name: Check out seal-assurance-kit
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: velvetmonkey/seal-assurance-kit
+          path: family/seal-assurance-kit
+      - name: Check out mcp-seal-dev
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: velvetmonkey/mcp-seal-dev
+          path: family/mcp-seal-dev
+      - name: Require all seven family truth boxes to match
+        working-directory: family/seal-host
+        run: node scripts/claims-surface-drift.mjs --family-root "$GITHUB_WORKSPACE/family"

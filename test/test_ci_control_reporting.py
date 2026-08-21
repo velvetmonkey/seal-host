@@ -45,6 +45,7 @@ PRIVATE_ACCESS_EXPECTATIONS = {
     "security.yml": (
         'run: test -n "$SEAL_CI_READ_TOKEN"',
     ),
+    "claims-family-drift.yml": (),
 }
 
 # Every discovered workflow is deliberately classified by the way a failed
@@ -54,6 +55,7 @@ PRIVATE_ACCESS_EXPECTATIONS = {
 # step failures to aggregate.  A new file has no mode until it is reviewed.
 WORKFLOW_CONTROL_MODES = {
     "acceptance.yml": "fail-fast",
+    "claims-family-drift.yml": "fail-fast",
     "ci.yml": "aggregate",
     "g2-mutation-ablation.yml": "aggregate",
     "golden-path.yml": "aggregate",
