@@ -68,11 +68,13 @@ byte-exact conformance tests. Seal verifies configured authorization evidence;
 whether its key holder is the intended person or service is a custody
 assumption.
 
+<!-- FLEET-CLAIM:BEGIN -->
 Start with the family [claims matrix](https://github.com/velvetmonkey/seal/blob/main/docs/CLAIMS-MATRIX.md)
 for proven/tested/assumed/not-claimed status, then read
 [Limitations](docs/LIMITATIONS.md). Effect-commitment sufficiency is **tested,
 not proven**; the private/proprietary `witness-check` analyzer is not part of
 this repository.
+<!-- FLEET-CLAIM:END -->
 
 <!-- truthbox:begin -->
 > **Runtime profile: `compatible`.** Strict `canonical-l0` is proved and modelled, not the deployed route yet.

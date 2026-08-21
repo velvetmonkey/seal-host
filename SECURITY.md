@@ -66,10 +66,12 @@ an area we already document as trusted or out of scope.
 
 ## Scope
 
+<!-- FLEET-CLAIM:BEGIN -->
 **In scope:** the Lean kernel and its proofs; the Rust host and FFI boundary; the verifier
 and assurance kit; receipt and envelope formats; key handling and the signed configuration
 path; the release and build pipeline; and any case where a **published claim in `CLAIMS.md`
 is false**, which we treat as a security issue in its own right.
+<!-- FLEET-CLAIM:END -->
 
 **The false-claim rule controls.** A defect in a named TCB component remains **in scope** if
 it falsifies a published claim under that claim's stated preconditions. A named unmediated

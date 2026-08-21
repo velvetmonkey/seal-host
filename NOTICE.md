@@ -2,6 +2,7 @@
 
 Licence: **Apache-2.0** (see `LICENSE`), matching the public `mcp-seal` repository.
 
+<!-- FLEET-CLAIM:BEGIN -->
 This repository is **PUBLIC**. The licence is permissive; the moat is
 maintained by controlling *what is published, and when*, not by licence
 restriction. The source is public; release timing still governs which layers are published.
@@ -16,6 +17,7 @@ Release schedule (ARIA Safeguarded AI Track 1 bid commitment):
 
 The public demonstration shows the gate *behaviour*; released artifacts and
 public source remain separate publication surfaces.
+<!-- FLEET-CLAIM:END -->
 
 ## ARIA IP terms (verified 2026-06-13)
 

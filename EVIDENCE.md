@@ -13,8 +13,10 @@ The script runs the Lean builds and axiom gates, Rust host tests, the native +
 wasm conformance bridge, and the JavaScript checker/assurance suites. It fails
 on the first error and prints a PASS/FAIL summary naming the failed step.
 
+<!-- FLEET-CLAIM:BEGIN -->
 What this proves: the checked public repos, at their local commits, still pass
 the proof gates and the finite integration/conformance evidence chain.
+<!-- FLEET-CLAIM:END -->
 
 What this does not prove: universal compiler correctness, exhaustive equivalence
 for all inputs, or that a downstream deployment is wired through Seal. The

@@ -1,0 +1,20 @@
+{
+  "normalization": "For each FLEET-CLAIM block, hash the inner UTF-8 bytes after normalizing CRLF and CR to LF, then stripping exactly one trailing LF if present. Leading indentation, interior blank lines, and all other bytes count.",
+  "surfaces": {
+    "EVIDENCE.md": [
+      "e328a1f8b1b453d617dc986db0761bcd5a3a5c10730fe14129df21e43d0b0281"
+    ],
+    "NOTICE.md": [
+      "b17257f9fbd37b28b17ce028daae786d069f3b3e3c785291d5202db7849406c3"
+    ],
+    "README.md": [
+      "e5996ea7f3b630edbec4c6b3bfccb04447d63e11dbae6e9a8f6dc439e2b1df25"
+    ],
+    "SECURITY.md": [
+      "70e6fdafc3fc834f02bc302f6f1d9d129129af36c23b34dbfe4b8cc1b3b52072"
+    ],
+    "docs/FRONT-PAGE-REFERENCE.md": [
+      "80d79fb443c1666b4d92abc50803df9435c6ecf72e5758111afbcb4fc2fac7b6"
+    ]
+  }
+}
