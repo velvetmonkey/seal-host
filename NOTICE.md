@@ -14,8 +14,8 @@ Release schedule (ARIA Safeguarded AI Track 1 bid commitment):
 | **Proofs** | Full Lean proof *sources* | **At grant kickoff** — held back from the public demo |
 | **Implementation** | Host, registry, harness, Rust FFI, tooling | Public source; release artifacts still follow the release gate |
 
-The public demo (`mcp-seal` × `canary`) shows the gate *behaviour*; released
-artifacts and public source remain separate publication surfaces.
+The public demonstration shows the gate *behaviour*; released artifacts and
+public source remain separate publication surfaces.
 
 ## ARIA IP terms (verified 2026-06-13)
 

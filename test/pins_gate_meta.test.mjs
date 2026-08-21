@@ -86,6 +86,7 @@ const EXPECTED_CI_RUN_STEP_IDENTITIES = [
   "contract-freeze:control_09",
   "contract-freeze:control_10",
   "contract-freeze:control_11",
+  "contract-freeze:control_12",
   "contract-freeze:name:Require every isolated CI step to pass",
   "cargo-audit:control_03",
   "cargo-audit:control_04",
@@ -478,6 +479,11 @@ test("CI run-step parsing is invariant under uniform workflow reindent", () => {
   // added to rust-conformance: control_31, the G2 crash-test fresh-artifact
   // proof. Its continue-on-error result is measured by the existing
   // aggregate; this inventory entry only accounts for the new step identity.
+  //
+  // Reviewed 2026-08-21 (public-fleet claim gate): 70 -> 71. Exactly ONE
+  // run step is added to contract-freeze: control_12, which runs the
+  // public-fleet claim gate and its fail-closed tests. Its outcome is
+  // measured by that job's existing aggregate.
   assert.deepEqual(
     ciRunStepIdentities(normal),
     EXPECTED_CI_RUN_STEP_IDENTITIES,
@@ -525,7 +531,8 @@ test("CI literal run blocks are parsed as commands, not scalar headers", () => {
   // `control_03`), and one arrives (`build:control_20`, now a literal block so
   // it can tee the axiom report the sorry-axiom grep reads).
   // 14 -> 15: guardwire adds the literal control_31 crash-test block.
-  assert.equal(literalRuns.length, 15);
+  // 15 -> 16: public-fleet claim gate adds contract-freeze control_12.
+  assert.equal(literalRuns.length, 16);
   assert.ok(
     literalRuns.every((step) => step.run !== "|"),
     "a literal run block collapsed to its YAML scalar header",
