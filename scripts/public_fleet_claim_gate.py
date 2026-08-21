@@ -82,43 +82,75 @@ RESTRICTION = re.compile(
     "(?:" + "|".join(RESTRICTION_VOCABULARY) + ")",
     re.IGNORECASE,
 )
+CLAUSE_BOUNDARY = re.compile(
+    r"(?:[.!?;:]|,\s+(?=(?:and|but|or|yet|while)\b))\s*",
+    re.IGNORECASE,
+)
+HISTORY_MARKER = re.compile(
+    r"\b(?:was|were|used to be|previously|formerly)\b"
+    r"|\b(?:until|before)\s+(?:(?:the\s+)?(?:"
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+    r")\s+)?(?:\d{1,2},?\s+)?\d{4}\b",
+    re.IGNORECASE,
+)
+
+
+def clauses(line: str) -> tuple[str, ...]:
+    """Split a reader line into assertion-sized sentence and clause units."""
+    return tuple(clause for clause in CLAUSE_BOUNDARY.split(line) if clause.strip())
+
+
+def is_historical(clause: str) -> bool:
+    """Return whether a clause scopes its claim to a completed time period."""
+    return HISTORY_MARKER.search(clause) is not None
 
 
 def stale_claim(line: str) -> bool:
     """Return true when a line makes a private-era claim about the public family."""
     if any(pattern.search(line) for pattern in LEGACY_STALE_PATTERNS):
         return True
-    subject = FAMILY_SUBJECT.search(line)
-    if subject is None:
-        return False
+    for clause in clauses(line):
+        subject = FAMILY_SUBJECT.search(clause)
+        if subject is None or is_historical(clause):
+            continue
 
-    # The normal assertion shape names the repository/family first and then
-    # predicates restricted availability of it. Limit the span so an unrelated
-    # restriction later on a long line is not joined to the name.
-    if RESTRICTION.search(line, subject.end(), min(len(line), subject.end() + 160)):
-        return True
+        # Bind a restriction only to a family subject in this same clause.
+        # This deliberately does not use a proximity window: a restriction in
+        # another clause describes that clause's subject, not this repository.
+        if RESTRICTION.search(clause, subject.end()):
+            return True
 
-    # Imperative/access wording naturally puts the restriction first. Require
-    # an access/view/use connector, or an explicit repository noun, so phrases
-    # such as "private kernel (`mcp-seal-dev`)" do not become availability claims.
-    prefix = line[max(0, subject.start() - 160):subject.start()]
-    restriction = RESTRICTION.search(prefix)
-    if restriction is None:
-        return False
-    between = prefix[restriction.end():]
-    return bool(
-        re.search(
-            r"\b(?:access|accessing|view|viewing|use|using|clone|cloning)\b",
-            between,
-            re.IGNORECASE,
-        )
-        or re.search(
-            r"^\s+(?:repositor(?:y|ies)|repos?)\b",
-            line[subject.end():],
-            re.IGNORECASE,
-        )
-        or re.search(r"seal(?:[- ]family)? repos", subject.group(0), re.IGNORECASE)
-    )
+        # Imperative/access wording naturally puts the restriction first.
+        # Require an access/view/use connector, an explicit repository noun,
+        # or a Seal-family repository phrase to distinguish an unrelated
+        # private implementation from a restriction on this repository.
+        restriction = RESTRICTION.search(clause, 0, subject.start())
+        if restriction is None:
+            continue
+        between = clause[restriction.end():subject.start()]
+        restriction_binds_subject = re.fullmatch(
+            r"\s+(?:(?:a|an|the|this|that)\s+)?", between, re.IGNORECASE
+        ) is not None
+        if (
+            re.search(
+                r"\b(?:access|accessing|view|viewing|use|using|clone|cloning)\b",
+                between,
+                re.IGNORECASE,
+            )
+            or re.search(
+                r"^\s+(?:repositor(?:y|ies)|repos?)\b",
+                clause[subject.end():],
+                re.IGNORECASE,
+            )
+            and restriction_binds_subject
+            or (
+                restriction_binds_subject
+                and re.search(r"seal(?:[- ]family)? repos", subject.group(0), re.IGNORECASE)
+            )
+        ):
+            return True
+    return False
 
 
 def reader_files(root: Path) -> list[Path]:

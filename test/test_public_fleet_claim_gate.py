@@ -56,6 +56,29 @@ LEGACY_SENTENCES = (
     "private kit repo",
 )
 
+FRISK_SENTENCES = (
+    ("The seal-host repository is private until the award is complete.", True),
+    ("Only authorized reviewers may view the mcp-seal-dev repository.", True),
+    ("The seal-live-demo repo is unavailable to the public during evaluation.", True),
+    ("Request access before cloning seal-verify-action.", True),
+    ("The seal-assurance-kit repository is closed source.", True),
+    ("witness-check is private and is never published.", False),
+    ("The seal-check page is served publicly; the witness-check repository is not.", False),
+    ("Before August 2026 the Seal repositories were private.", False),
+    ("seal-host is public, and its deployment may protect a private service.", False),
+    ("A private operator can run mcp-seal-dev against the public Seal repositories.", False),
+)
+
+HISTORICAL_SENTENCES = (
+    "The seal-host repository was private.",
+    "The Seal repositories were private.",
+    "seal-check used to be private.",
+    "seal-live-demo was previously private.",
+    "mcp-seal-dev was formerly private.",
+    "Until March 2026, the seal-verify-action repository is private.",
+    "Before August 2026 the seal-assurance-kit repository is private.",
+)
+
 
 def run_gate(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -120,6 +143,51 @@ class PublicFleetClaimGateTests(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("PASS public fleet claim gate", result.stdout)
+
+    def test_all_ten_cold_frisk_sentences_have_expected_verdicts(self) -> None:
+        for sentence, refused in FRISK_SENTENCES:
+            with self.subTest(sentence=sentence, expected="REFUSED" if refused else "ALLOWED"):
+                with tempfile.TemporaryDirectory(prefix="public-fleet-frisk-") as temporary:
+                    root = Path(temporary)
+                    write_reader_tree(root, sentence)
+                    result = run_gate(root)
+                if refused:
+                    self.assertNotEqual(result.returncode, 0, sentence)
+                    self.assertIn("stale private-era fleet claim", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("PASS public fleet claim gate", result.stdout)
+
+    def test_private_witness_check_exception_in_another_clause_is_allowed(self) -> None:
+        sentence = (
+            "The Seal-family repositories are public and resolve for everyone. "
+            "`witness-check` is the one intentional private, proprietary exception."
+        )
+        with tempfile.TemporaryDirectory(prefix="public-fleet-witness-exception-") as temporary:
+            root = Path(temporary)
+            write_reader_tree(root, sentence)
+            result = run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PASS public fleet claim gate", result.stdout)
+
+    def test_private_witness_check_is_allowed_in_the_same_clause_as_a_public_repo(self) -> None:
+        sentence = "witness-check is private and the seal-host repository is public."
+        with tempfile.TemporaryDirectory(prefix="public-fleet-witness-same-clause-") as temporary:
+            root = Path(temporary)
+            write_reader_tree(root, sentence)
+            result = run_gate(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PASS public fleet claim gate", result.stdout)
+
+    def test_historical_tense_and_date_markers_are_allowed(self) -> None:
+        for sentence in HISTORICAL_SENTENCES:
+            with self.subTest(sentence=sentence):
+                with tempfile.TemporaryDirectory(prefix="public-fleet-history-") as temporary:
+                    root = Path(temporary)
+                    write_reader_tree(root, sentence)
+                    result = run_gate(root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("PASS public fleet claim gate", result.stdout)
 
     def test_all_thirteen_historical_patterns_remain_refused(self) -> None:
         for sentence in LEGACY_SENTENCES:
