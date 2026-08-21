@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
+
+import yaml
 
 from test_ci_control_reporting import job_step_blocks
 
@@ -180,7 +185,8 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
         self.assertNotRegex(rust, r"(?m)^\s*run: lake build\s*$")
 
     def test_release_build_buys_headroom_for_the_whole_stack(self) -> None:
-        jobs = job_step_blocks(ROOT / ".github" / "workflows" / "release.yml")
+        release_path = ROOT / ".github" / "workflows" / "release.yml"
+        jobs = job_step_blocks(release_path)
         build = "\n".join("\n".join(step) for step in jobs["build"])
         # The unsplittable job must free ballast BEFORE the stack it carries,
         # and the Lean aggregate must be measured so a future exhaustion
@@ -190,11 +196,77 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
         self.assertIn("/usr/local/lib/android", build)
         self.assertIn("/opt/hostedtoolcache/Ruby", build)
         self.assertIn(
-            "python3 scripts/ci_disk_telemetry.py release-lean-aggregate "
-            "-- lake test",
+            "--phase aggregate-lean-tests --architecture ${{ matrix.arch }}",
             build,
         )
         self.assertNotRegex(build, r"(?m)^\s*run: lake test\s*$")
+
+        workflow = yaml.safe_load(release_path.read_text(encoding="utf-8"))
+        cleanup = next(
+            step
+            for step in workflow["jobs"]["build"]["steps"]
+            if step.get("id") == "control_32"
+        )
+        cleanup_run = cleanup.get("run", "")
+        self.assertEqual(
+            cleanup.get("name"),
+            "Free unused runner SDKs before the full release stack (disk headroom)",
+            "disk-headroom cleanup step is missing or renamed",
+        )
+        self.assertIn(
+            "python3 scripts/ci_disk_telemetry.py release-free-ballast --",
+            cleanup_run,
+            "disk-headroom cleanup is disabled: telemetry command is absent",
+        )
+        self.assertRegex(
+            cleanup_run,
+            r"(?m)^\s*sudo rm -rf \\\s*$",
+            "disk-headroom cleanup is disabled: ballast removal is absent",
+        )
+        self.assertNotIn("# TAMPER", cleanup_run)
+        condition = str(cleanup.get("if", "")).strip().lower()
+        self.assertNotIn(
+            condition,
+            {"false", "${{ false }}", "${{ 0 }}", "0"},
+            "disk-headroom cleanup is disabled: step condition is never true",
+        )
+
+        with tempfile.TemporaryDirectory(prefix="diskheadroom-", dir=ROOT.parent) as fixture:
+            fixture_path = Path(fixture)
+            command = [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('created').write_text('ballast')",
+            ]
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "ci_disk_telemetry.py"),
+                    "--path",
+                    str(fixture_path),
+                    "--interval-seconds",
+                    "0.01",
+                    "release-free-ballast-fixture",
+                    "--",
+                    *command,
+                ],
+                cwd=fixture_path,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        records = [
+            line
+            for line in completed.stdout.splitlines()
+            if line.startswith("DISK_TELEMETRY ")
+        ]
+        self.assertEqual(
+            [line.split("event=", 1)[1].split()[0] for line in records],
+            ["initial", "peak", "final"],
+            "disk-headroom telemetry did not produce the expected record",
+        )
+        self.assertIn("command_rc=0", records[-1])
 
     def test_release_container_build_keeps_reap_protection(self) -> None:
         jobs = job_step_blocks(ROOT / ".github" / "workflows" / "release.yml")
@@ -265,7 +337,7 @@ class RunnerCapacityTopologyTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("release-free-ballast", release)
-        self.assertIn("release-lean-aggregate", release)
+        self.assertIn("aggregate-lean-tests", release)
         self.assertIn("security-lean-aggregate", security)
         self.assertIn("security-fuzz", security)
         self.assertIn("golden-lean-aggregate", golden)
