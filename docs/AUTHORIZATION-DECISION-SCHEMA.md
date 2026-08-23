@@ -275,9 +275,11 @@ One module implements §2, §3 and §5 for every JS producer/verifier:
 
 * **Canonical source:** `seal-check/receipt-format.js` (pure ES module,
   browser + Node, zero dependencies).
-* **Vendored byte-identical copy:** `seal-assurance-kit/kernel/receipt-format.js`
-  — same discipline as the kit's existing vendored `kernel.js` /
-  `seal-config.js`. Any change lands in seal-check first, then is re-copied.
+* **Derived compatibility implementation:** `seal-assurance-kit/kernel/receipt-format.js`
+  follows the same receipt-format rule independently, with documented kit-only
+  omissions such as `signed_config`; it is not a byte copy. From sibling
+  checkouts, `git diff --no-index ../seal-check/receipt-format.js ../seal-assurance-kit/kernel/receipt-format.js >/dev/null; test $? -eq 1`
+  confirms that deliberate divergence.
 
 Frozen exports (signatures are the Day-1 contract):
 
@@ -300,9 +302,11 @@ validateReceipt(obj)                    // -> { ok, version, errors }
 ```
 
 Both repos ship a vector test (`V1/V2/V2b/V3/V4` above) that fails if the
-module and this spec ever disagree. The kit's vendored `kernel.js` is also a
-byte-identical copy of seal-check's (pre-existing discipline, re-vendored
-with each producer change).
+module and this spec ever disagree. The kit's `kernel.js` is a separate host
+integration of the shared kernel contract, not a byte copy of seal-check's.
+From sibling checkouts,
+`git diff --no-index ../seal-check/kernel.js ../seal-assurance-kit/kernel/kernel.js >/dev/null; test $? -eq 1`
+shows the integration-specific branches.
 
 ## 10. Day-2 convergence — LANDED (2026-07-04)
 
@@ -323,9 +327,12 @@ with each producer change).
 4. **DONE** cross-tool test: `seal-check/test/fixtures/cross-receipt.json`
    (produced by the shipped seal-check producer, byte-pinned) passes BOTH
    `seal-check/receipt.js` (`test/cross-receipt.test.cjs`) and
-   `seal-assurance-kit`'s `seal verify`
-   (`fixtures/receipt-crosstool.json`, byte-identical copy, wired into
-   `npm test`).
+   `seal-assurance-kit`'s `seal verify`. The kit fixture
+   (`fixtures/receipt-crosstool.json`) independently represents the compatible
+   receipt while omitting kit-unsupported `signed_config`; it is wired into
+   `npm test`, not copied byte for byte. From sibling checkouts,
+   `git diff --no-index ../seal-check/test/fixtures/cross-receipt.json ../seal-assurance-kit/fixtures/receipt-crosstool.json >/dev/null; test $? -eq 1`
+   displays that deliberate difference.
 5. seal-live-demo stays as-is (`v0-live` accepted); its own bump to
    `record_type: "seal.authorization-decision", record_version: 1` is a
    separate, later step. **Superseded by §11:** the
