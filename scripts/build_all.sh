@@ -3,7 +3,7 @@
 # One-shot build for seal-host: Lean core + FFI shared object + Rust host.
 # Runs the four steps from DEPLOY.md §1 in order, from the repo root.
 #
-#   lake build             -> Lean core + FFI
+#   lake build             -> Lean core + FFI + compiled byte-lock witness
 #   lake exe axiom_check   -> confirm the axiom footprint (optional but cheap)
 #   scripts/build_ffi_so.sh-> the FFI shared object the Rust host loads
 #   cargo build            -> the Rust host binary
@@ -48,8 +48,8 @@ if [ ! -f "$MCP_SEAL_ROOT/c/build/libsealcrypto.o" ]; then
   bash "$MCP_SEAL_ROOT/c/build.sh"
 fi
 
-echo "==> lake build +Ffi (runtime import closure)"
-"$LEANBUILD" build +Ffi
+echo "==> lake build +Ffi three_artifact_byte_lock (runtime import closure + byte-lock witness)"
+"$LEANBUILD" build +Ffi three_artifact_byte_lock
 
 echo "==> lake exe axiom_check"
 "$LEANBUILD" exe axiom_check
