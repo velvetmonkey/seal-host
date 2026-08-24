@@ -1346,3 +1346,15 @@ info: 'Ffi.bundle_disabled_principals_not_registered' depends on axioms: [propex
  Classical.choice,
  Quot.sound] -/
 #guard_msgs in #print axioms Host.ApprovalStatement.check_refuses_statement_field_mismatch
+
+-- Protection state machine model: atomicity of the guarded set
+-- (Host/Protection.lean; models seal spine/protection.cjs).
+
+/-- info: 'Host.Protection.guarded_atomic' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Protection.guarded_atomic
+
+/-- info: 'Host.Protection.never_partial' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Protection.never_partial
+
+/-- info: 'Host.Protection.inv_reachable' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Host.Protection.inv_reachable

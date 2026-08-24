@@ -1,0 +1,116 @@
+{
+  "schema": "seal-host.protection-transition-table/v1",
+  "subject": "seal spine/protection.cjs",
+  "subjectCommit": "8b4d3bea0847841e12e1844d585b28623d4a34ac",
+  "leanModule": "Host.Protection",
+  "leanStepRelation": "Host.Protection.Step",
+  "theorem": "Host.Protection.guarded_atomic",
+  "stateClasses": ["UNPROTECTED", "PENDING RESTART", "ACTIVE", "STALE", "DRIFTED", "BROKEN"],
+  "storedPhases": ["UNPROTECTED", "PENDING RESTART", "ACTIVE", "DRIFTED", "BROKEN"],
+  "staleRule": "STALE is never stored: it is the status view of a stored ACTIVE record whose lease is dead (spine/protection.cjs:629-640). view = ACTIVE if phase=ACTIVE and leaseLive, STALE if phase=ACTIVE and not leaseLive, else the stored phase.",
+  "stateFields": {
+    "phase": "state.state as stored in state.json; one of storedPhases",
+    "declared": "state.guardTools as a set (deduplicated at spine/protection.cjs:651 and on read at :300)",
+    "guarded": "the set of tools a live proxy actually intercepts; in this table always the token 'declared' or 'empty'",
+    "leaseLive": "lockOwnerIsLive(state.lease) (spine/protection.cjs:558-568); boolean",
+    "installed": "state.localOverride.installed (spine/protection.cjs:335-349, :722-726); boolean"
+  },
+  "initial": {
+    "phase": "UNPROTECTED",
+    "declared": "empty",
+    "guarded": "empty",
+    "leaseLive": false,
+    "installed": false,
+    "note": "no state file; readState returns null (spine/protection.cjs:275-281) and every view is UNPROTECTED (:630)"
+  },
+  "transitions": [
+    {
+      "event": "protectWrite",
+      "leanCtor": "Host.Protection.Step.protectWrite",
+      "input": "seal protect SERVER TOOL [TOOL...] with a nonempty request, reaching the first state write; the tool-discovery preflight (:666-681) has passed",
+      "pre": { "phase": "UNPROTECTED" },
+      "post": { "phase": "PENDING RESTART", "declared": "the deduplicated request set", "guarded": "empty", "leaseLive": false, "installed": false },
+      "cite": "spine/protection.cjs:651-712"
+    },
+    {
+      "event": "installOk",
+      "leanCtor": "Host.Protection.Step.installOk",
+      "input": "claude mcp add --scope local succeeds inside the same protect call",
+      "pre": { "phase": "PENDING RESTART", "installed": false },
+      "post": { "phase": "PENDING RESTART", "declared": "unchanged", "guarded": "empty", "leaseLive": false, "installed": true },
+      "cite": "spine/protection.cjs:714-717,722-726"
+    },
+    {
+      "event": "installFail",
+      "leanCtor": "Host.Protection.Step.installFail",
+      "input": "claude mcp add --scope local fails inside the same protect call",
+      "pre": { "phase": "PENDING RESTART", "installed": false },
+      "post": { "phase": "BROKEN", "declared": "unchanged", "guarded": "empty", "leaseLive": false, "installed": false },
+      "cite": "spine/protection.cjs:718-721"
+    },
+    {
+      "event": "activateOk",
+      "leanCtor": "Host.Protection.Step.activateOk",
+      "input": "seal __proxy --protect-state PATH activation where tools/list returns a set containing every declared tool",
+      "pre": { "leaseLive": false, "declared": "nonempty", "observed": "superset of declared", "phaseNote": "NO stored-phase precondition: activationLease never inspects state.state (disagreement D1)" },
+      "post": { "phase": "ACTIVE", "declared": "unchanged", "guarded": "declared", "leaseLive": true, "installed": "unchanged" },
+      "cite": "spine/protection.cjs:772-841 (lease refusal :779-784, vanished check :807-819, ACTIVE write :820-836)"
+    },
+    {
+      "event": "activateVanished",
+      "leanCtor": "Host.Protection.Step.activateVanished",
+      "input": "seal __proxy activation where tools/list is missing at least one declared tool",
+      "pre": { "leaseLive": false, "declared": "nonempty", "observed": "not a superset of declared" },
+      "post": { "phase": "BROKEN", "declared": "unchanged", "guarded": "empty", "leaseLive": false, "installed": "unchanged" },
+      "cite": "spine/protection.cjs:808-819 with markBroken :766-770"
+    },
+    {
+      "event": "activateDrift",
+      "leanCtor": "Host.Protection.Step.activateDrift",
+      "input": "seal __proxy activation where the project server digest no longer matches state.projectServerDigest",
+      "pre": { "leaseLive": false },
+      "post": { "phase": "DRIFTED", "declared": "unchanged", "guarded": "empty", "leaseLive": false, "installed": "unchanged", "note": "markDrifted keeps the stored (dead) lease (:753)" },
+      "cite": "spine/protection.cjs:789-792 with markDrifted :752-756"
+    },
+    {
+      "event": "activateListFail",
+      "leanCtor": "Host.Protection.Step.activateListFail",
+      "input": "seal __proxy activation where the configured server fails to start, initialize, or answer tools/list",
+      "pre": { "leaseLive": false },
+      "post": { "phase": "BROKEN", "declared": "unchanged", "guarded": "empty", "leaseLive": false, "installed": "unchanged" },
+      "cite": "spine/protection.cjs:794-805 with markBroken :766-770"
+    },
+    {
+      "event": "forwardDrift",
+      "leanCtor": "Host.Protection.Step.forwardDrift",
+      "input": "any forward through the live proxy after the project server digest changed",
+      "pre": { "phase": "ACTIVE", "leaseLive": true },
+      "post": { "phase": "DRIFTED", "declared": "unchanged", "guarded": "empty", "leaseLive": true, "installed": "unchanged", "note": "the proxy stays alive, holds the lease (:753), and refuses every forward (:850-855)" },
+      "cite": "spine/protection.cjs:843-857 with markDrifted :752-756"
+    },
+    {
+      "event": "leaseDies",
+      "leanCtor": "Host.Protection.Step.leaseDies",
+      "input": "environment: the lease-holding proxy process exits; no code writes state",
+      "pre": { "leaseLive": true },
+      "post": { "phase": "unchanged", "declared": "unchanged", "guarded": "empty", "leaseLive": false, "installed": "unchanged", "note": "a stored ACTIVE record now displays STALE (:632-639); a proxy with a mismatched lease generation refuses every forward (:847-849)" },
+      "cite": "spine/protection.cjs:558-568,629-640,847-849"
+    },
+    {
+      "event": "unprotect",
+      "leanCtor": "Host.Protection.Step.unprotect",
+      "input": "seal unprotect SERVER",
+      "pre": { "phase": "not UNPROTECTED", "leaseLive": false, "installed": true },
+      "post": { "phase": "UNPROTECTED", "declared": "unchanged (kept as history; doc answer 4)", "guarded": "empty", "leaseLive": false, "installed": "unchanged" },
+      "cite": "spine/protection.cjs:730-750 (ownership gate :735/:351-369, live-lease refusal :739-741, write :748)"
+    }
+  ],
+  "nonTransitions": [
+    { "refusal": "already_protected", "cite": "spine/protection.cjs:658-663", "note": "protect over any non-UNPROTECTED phase writes nothing" },
+    { "refusal": "proxy_lease_active", "cite": "spine/protection.cjs:779-784", "note": "activation against a live lease writes nothing" },
+    { "refusal": "active_claude_session", "cite": "spine/protection.cjs:739-741", "note": "unprotect against a live lease writes nothing" },
+    { "refusal": "protected_server_missing", "cite": "spine/protection.cjs:785-788", "note": "activation with a missing server command throws before any write" },
+    { "refusal": "state_broken (empty guardTools)", "cite": "spine/protection.cjs:295-301 at :807", "note": "activation of a record with no valid guardTools throws before any write" },
+    { "refusal": "no_seal_owned_override / local_override_drifted", "cite": "spine/protection.cjs:351-369", "note": "ownership refusals write nothing" }
+  ]
+}
