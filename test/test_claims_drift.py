@@ -73,6 +73,7 @@ class ClaimsDriftTests(unittest.TestCase):
         (family / "seal-check" / "docs" / "TRUTH-BOX.md").unlink()
         result = self.run_family(family)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("seal-check has no truth box; searched docs/TRUTH-BOX.md, docs/**/TRUTH-BOX.md", result.stderr)
 
     def test_empty_input_fails(self) -> None:
         family = self.family_root()
@@ -89,6 +90,28 @@ class ClaimsDriftTests(unittest.TestCase):
         finally:
             target.chmod(0o644)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("seal-check truth box unreadable", result.stderr)
+
+    def test_moved_input_is_discovered_with_its_location(self) -> None:
+        family = self.family_root()
+        source = family / "seal" / "docs" / "TRUTH-BOX.md"
+        target = family / "seal" / "docs" / "relocated" / "TRUTH-BOX.md"
+        target.parent.mkdir()
+        source.replace(target)
+        result = self.run_family(family)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS  family seal truth-box found at docs/relocated/TRUTH-BOX.md", result.stdout)
+
+    def test_missing_repository_and_mismatch_are_reported_together(self) -> None:
+        family = self.family_root()
+        shutil.rmtree(family / "seal-check")
+        target = family / "seal-live-demo" / "docs" / "TRUTH-BOX.md"
+        target.write_text(BLOCK.replace("family check must agree", "different family claim"), encoding="utf-8")
+        result = self.run_family(family)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("FAMILY MISSING repositories: seal-check", result.stdout)
+        self.assertIn("FAMILY CLAIMS DRIFT", result.stderr)
+        self.assertIn("seal-live-demo", result.stderr)
 
 
 if __name__ == "__main__":
