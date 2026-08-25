@@ -64,8 +64,18 @@ const FAMILY_TRUTHBOX_SEARCH = {
   maxNestedDirectories: 4,
 };
 
+// This existing opening sentinel is the canonical truth-box identity. A
+// filename is only a discovery convention; a regular candidate is canonical
+// only if it carries this marker. The later extraction still validates the
+// matching closing sentinel before hashing its contents.
+const FAMILY_TRUTHBOX_MARKER = "<!-- truthbox:begin -->";
+
 function familySearchDescription() {
-  return `docs/TRUTH-BOX.md, docs/**/TRUTH-BOX.md (exact filename; max ${FAMILY_TRUTHBOX_SEARCH.maxNestedDirectories} nested directories; no symlinks)`;
+  return `docs/TRUTH-BOX.md, docs/**/TRUTH-BOX.md (exact filename; marker ${FAMILY_TRUTHBOX_MARKER}; max ${FAMILY_TRUTHBOX_SEARCH.maxNestedDirectories} nested directories; no symlinks)`;
+}
+
+function countLabel(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 function fatalError(message) {
@@ -123,8 +133,11 @@ function extractFromRoot(root, file, begin, end) {
 
 function familyFile(root, repo) {
   const docs = resolve(root, repo, FAMILY_TRUTHBOX_SEARCH.docsRoot);
-  const readable = [];
+  const candidates = [];
+  const marked = [];
   const unreadable = [];
+  const skippedSymlinks = [];
+  const skippedByDepth = [];
 
   function visit(directory, relativeDirectory, depth) {
     let entries;
@@ -136,27 +149,53 @@ function familyFile(root, repo) {
     for (const entry of entries) {
       const relative = `${relativeDirectory}/${entry.name}`;
       const path = resolve(directory, entry.name);
-      if (entry.isFile() && entry.name === FAMILY_TRUTHBOX_SEARCH.filename) {
+      if (entry.name === FAMILY_TRUTHBOX_SEARCH.filename && entry.isSymbolicLink()) {
+        skippedSymlinks.push(relative);
+      } else if (entry.isFile() && entry.name === FAMILY_TRUTHBOX_SEARCH.filename) {
+        candidates.push(relative);
         try {
           const stat = statSync(path);
           if ((stat.mode & 0o444) === 0) unreadable.push(relative);
-          else readable.push({ path, relative });
+          else if (readFileSync(path, "utf8").includes(FAMILY_TRUTHBOX_MARKER)) marked.push({ path, relative });
         } catch (e) {
           unreadable.push(`${relative} (${e.message})`);
         }
-      } else if (entry.isDirectory() && depth < FAMILY_TRUTHBOX_SEARCH.maxNestedDirectories) {
-        const result = visit(path, relative, depth + 1);
-        if (result?.error) return result;
+      } else if (entry.isDirectory()) {
+        if (depth < FAMILY_TRUTHBOX_SEARCH.maxNestedDirectories) {
+          const result = visit(path, relative, depth + 1);
+          if (result?.error) return result;
+        } else {
+          skippedByDepth.push(relative);
+        }
       }
     }
     return null;
   }
   const result = visit(docs, FAMILY_TRUTHBOX_SEARCH.docsRoot, 0);
-  if (result?.error) return { kind: "absent", detail: result.error };
-  if (readable.length === 1) return { kind: "found", ...readable[0] };
-  if (readable.length > 1) return { kind: "ambiguous", paths: readable.map((file) => file.relative) };
-  if (unreadable.length > 0) return { kind: "unreadable", paths: unreadable };
-  return { kind: "absent" };
+  const detail = { candidates, marked, unreadable, skippedSymlinks, skippedByDepth };
+  if (result?.error) return { kind: "absent", ...detail, error: result.error };
+  if (unreadable.length > 0) return { kind: "unreadable", ...detail };
+  if (marked.length === 1) return { kind: "found", ...detail, ...marked[0] };
+  if (marked.length > 1) return { kind: "ambiguous", ...detail, paths: marked.map((file) => file.relative) };
+  return { kind: "absent", ...detail };
+}
+
+function familyFindingContext(file) {
+  const context = [
+    `found ${countLabel(file.candidates.length, "candidate")}, ${file.marked.length} marked`,
+    `searched ${familySearchDescription()}`,
+    `absence is bounded: only candidates at at most ${FAMILY_TRUTHBOX_SEARCH.maxNestedDirectories} nested directories are eligible, so deeper candidates are not considered`,
+  ];
+  if (file.skippedByDepth.length > 0) {
+    context.push(`search stopped at that depth bound before ${file.skippedByDepth.join(", ")}`);
+  }
+  if (file.skippedSymlinks.length > 0) {
+    const label = file.skippedSymlinks.length === 1
+      ? "skipped symlink candidate"
+      : `skipped symlink candidates (${file.skippedSymlinks.length})`;
+    context.push(`${label}: ${file.skippedSymlinks.join(", ")}`);
+  }
+  return context.join("; ");
 }
 
 // Per-line trim + drop blanks; strip any HTML <pre> wrapper. The claim text
@@ -192,11 +231,11 @@ if (familyRoot) {
       familyFiles.set(repo, file);
       console.log(`PASS  family ${repo} truth-box found at ${file.relative}`);
     } else if (file.kind === "absent") {
-      truthboxProblems.push(`${repo} has no truth box; searched ${familySearchDescription()}`);
+      truthboxProblems.push(`${repo} has no marked truth box; ${familyFindingContext(file)}`);
     } else if (file.kind === "unreadable") {
-      truthboxProblems.push(`${repo} truth box unreadable at ${file.paths.join(", ")}; searched ${familySearchDescription()}`);
+      truthboxProblems.push(`${repo} truth-box candidate unreadable at ${file.unreadable.join(", ")}; ${familyFindingContext(file)}`);
     } else {
-      truthboxProblems.push(`${repo} has ambiguous truth boxes at ${file.paths.join(", ")}; searched ${familySearchDescription()}`);
+      truthboxProblems.push(`${repo} has ambiguous marked truth boxes at ${file.paths.join(", ")}; ${familyFindingContext(file)}`);
     }
   }
   if (truthboxProblems.length > 0) {
