@@ -51,6 +51,7 @@ const CLAIM_MANIFEST = [
 ];
 
 let fatal = false;
+let familyFatal = false;
 
 function fatalError(message) {
   fatal = true;
@@ -108,6 +109,19 @@ function extractFromRoot(root, file, begin, end) {
   return text.slice(i + begin.length, j);
 }
 
+function familyFile(root, repo, relativePaths) {
+  for (const relative of relativePaths) {
+    const path = resolve(root, repo, relative);
+    try {
+      const stat = statSync(path);
+      if (stat.isFile() && (stat.mode & 0o444) !== 0) return { path, relative };
+    } catch {
+      // The inventory below reports the absence together, before any reads.
+    }
+  }
+  return null;
+}
+
 // Per-line trim + drop blanks; strip any HTML <pre> wrapper. The claim text
 // itself contains no HTML entities or tags, so tag-stripping is safe.
 function normalise(block) {
@@ -121,6 +135,36 @@ function normalise(block) {
 }
 
 let drift = false;
+
+let familyFiles = new Map();
+if (familyRoot) {
+  const expectedCount = FAMILY_REPOS.length;
+  const foundRepos = FAMILY_REPOS.filter((repo) => {
+    try { return statSync(resolve(familyRoot, repo)).isDirectory(); }
+    catch { return false; }
+  });
+  const missingRepos = FAMILY_REPOS.filter((repo) => !foundRepos.includes(repo));
+  console.log(`FAMILY EXPECTED repositories: ${expectedCount}`);
+  console.log(`FAMILY FOUND repositories: ${foundRepos.length}`);
+  console.log(`FAMILY MISSING repositories: ${missingRepos.length > 0 ? missingRepos.join(", ") : "none"}`);
+
+  const missingFiles = [];
+  for (const repo of foundRepos) {
+    const file = familyFile(familyRoot, repo, repo === "seal"
+      ? ["docs/TRUTH-BOX.md", "docs/archive/TRUTH-BOX.md"]
+      : ["docs/TRUTH-BOX.md"]);
+    if (file) familyFiles.set(repo, file);
+    else missingFiles.push(repo);
+  }
+  if (missingFiles.length > 0) {
+    const tried = missingFiles.map((repo) =>
+      `${repo}/docs/TRUTH-BOX.md${repo === "seal" ? " (or docs/archive/TRUTH-BOX.md)" : ""}`,
+    );
+    console.error(`FAMILY MISSING truth-box inputs: ${tried.join(", ")}`);
+  }
+  familyFatal = missingRepos.length > 0 || missingFiles.length > 0;
+}
+
 for (const blk of BLOCKS) {
   const canonicalBlock = extract(blk.canonical, blk.begin, blk.end);
   const canonical = canonicalBlock === null ? null : normalise(canonicalBlock);
@@ -175,34 +219,38 @@ if (!drift && !fatal) {
   console.log("all claim blocks in sync across repository-local surfaces");
 }
 if (familyRoot) {
-  const truthbox = BLOCKS[1];
-  const hashes = new Map();
-  for (const repo of FAMILY_REPOS) {
-    const canonical = normalise(extractFromRoot(
-      familyRoot,
-      `${repo}/docs/TRUTH-BOX.md`,
-      truthbox.begin,
-      truthbox.end,
-    ));
-    if (!canonical) {
-      console.error(`ERROR  ${repo}/docs/TRUTH-BOX.md: canonical block is empty`);
-      process.exit(2);
+  if (familyFatal) {
+    process.exitCode = 2;
+  } else {
+    const truthbox = BLOCKS[1];
+    const hashes = new Map();
+    for (const repo of FAMILY_REPOS) {
+      const canonical = normalise(extractFromRoot(
+        familyRoot,
+        `${repo}/${familyFiles.get(repo).relative}`,
+        truthbox.begin,
+        truthbox.end,
+      ));
+      if (!canonical) {
+        console.error(`ERROR  ${repo}/docs/TRUTH-BOX.md: canonical block is empty`);
+        process.exit(2);
+      }
+      const hash = createHash("sha256").update(canonical, "utf8").digest("hex");
+      hashes.set(repo, hash);
+      console.log(`PASS  family ${repo} truth-box sha256=${hash}`);
     }
-    const hash = createHash("sha256").update(canonical, "utf8").digest("hex");
-    hashes.set(repo, hash);
-    console.log(`PASS  family ${repo} truth-box sha256=${hash}`);
-  }
-  const expected = hashes.get(FAMILY_REPOS[0]);
-  const mismatches = FAMILY_REPOS.filter((repo) => hashes.get(repo) !== expected);
-  if (mismatches.length > 0) {
-    console.error("\nFAMILY CLAIMS DRIFT — canonical truth-box hashes diverge:");
-    for (const repo of mismatches) {
-      console.error(`  ${repo}: ${hashes.get(repo)}`);
+    const expected = hashes.get(FAMILY_REPOS[0]);
+    const mismatches = FAMILY_REPOS.filter((repo) => hashes.get(repo) !== expected);
+    if (mismatches.length > 0) {
+      console.error("\nFAMILY CLAIMS DRIFT — canonical truth-box hashes diverge:");
+      for (const repo of mismatches) {
+        console.error(`  ${repo}: ${hashes.get(repo)}`);
+      }
+      console.error(`  expected (${FAMILY_REPOS[0]}): ${expected}`);
+      process.exit(1);
     }
-    console.error(`  expected (${FAMILY_REPOS[0]}): ${expected}`);
-    process.exit(1);
+    console.log("family truth-box hashes match across all seven repos");
   }
-  console.log("family truth-box hashes match across all seven repos");
 }
 
 console.log("all claim blocks in sync across all surfaces");
