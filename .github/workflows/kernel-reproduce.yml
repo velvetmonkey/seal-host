@@ -1,0 +1,72 @@
+name: Kernel reproduce
+
+# This is a reproducibility instrument, not a proof claim. Retire it when the
+# kernel no longer ships as a prebuilt artifact, or when its build is part of
+# the ordinary release pipeline.
+on:
+  schedule:
+    # Weekly, off the hour to avoid the GitHub-wide cron stampede.
+    - cron: "43 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: kernel-reproduce
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  kernel-reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SEAL_CI_READ_TOKEN: ${{ secrets.SEAL_CI_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Require private dependency source access
+        run: test -n "$SEAL_CI_READ_TOKEN"
+
+      # The provisioner verifies both restored trees, including their commits,
+      # archives, patch state, and tool versions, before it permits a build.
+      - name: Restore pinned wasm toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            wasm-spike/emsdk
+            wasm-spike/lean4-src
+          key: ${{ runner.os }}-kernel-toolchains-${{ hashFiles('wasm-spike/provision_toolchain.sh', 'wasm-spike/lean4-v4.28.0-interrupt.patch') }}
+
+      - name: Provision and verify pinned wasm toolchains
+        run: bash wasm-spike/provision_toolchain.sh
+
+      # Match the existing CI Lean setup and do exactly one Lean build, whose
+      # generated C is the input consumed by the published wasm scripts below.
+      - name: Install repository-pinned elan and restore Mathlib cache
+        run: python3 scripts/install_pinned_elan.py --mathlib-cache
+
+      - name: Configure and materialize manifest-pinned dependencies
+        run: |
+          git config --global \
+            url."https://x-access-token:${SEAL_CI_READ_TOKEN}@github.com/velvetmonkey/".insteadOf \
+            "https://github.com/velvetmonkey/"
+          test -d .lake/packages/mcp-seal || lake update
+          bash .lake/packages/mcp-seal/c/build.sh
+
+      - name: Build Lean sources once for wasm C inputs
+        run: lake build
+
+      - name: Rebuild the published wasm artifact
+        run: |
+          cd wasm-spike
+          ./build_runtime_wasm.sh
+          ./build_base.sh
+          ./build_core.sh
+          ./build_closure.sh
+          ./build_wasm.sh strict
+
+      - name: Require rebuilt seal.wasm to match the tracked pin
+        run: |
+          expected=$(sha256sum wasm-spike/verified/seal.wasm | awk '{print $1}')
+          printf '%s  %s\n' "$expected" wasm-spike/build-core/seal.wasm | sha256sum -c -
