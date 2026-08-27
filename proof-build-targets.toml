@@ -260,3 +260,17 @@ target   = "+Ffi:c.o.export"
 guard    = ""
 push_main = true
 # security.yml:176
+
+# ------------------------------------------------------------- kernel-reproduce.yml
+# This scheduled/manual artifact-reproducibility build has no push-to-main
+# trigger. It is declared so the inventory can refute its workflow coordinate,
+# but it confers no proof-inventory reachability or proof claim.
+[[invocation]]
+workflow = "kernel-reproduce.yml"
+job      = "kernel-reproduce"
+step     = "line57"
+kind     = "build"
+target   = ""
+guard    = ""
+push_main = false
+# kernel-reproduce.yml:58
