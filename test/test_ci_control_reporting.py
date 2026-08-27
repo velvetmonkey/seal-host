@@ -33,6 +33,9 @@ PRIVATE_ACCESS_EXPECTATIONS = {
         "SEAL_CI_READ_TOKEN is not configured",
         'name: Configure private dependency auth',
     ),
+    "kernel-reproduce.yml": (
+        'run: test -n "$SEAL_CI_READ_TOKEN"',
+    ),
     "golden-path.yml": (
         'test -n "$SEAL_CI_READ_TOKEN" || {',
         "exit 1",
@@ -59,6 +62,7 @@ WORKFLOW_CONTROL_MODES = {
     "ci.yml": "aggregate",
     "g2-mutation-ablation.yml": "aggregate",
     "golden-path.yml": "aggregate",
+    "kernel-reproduce.yml": "fail-fast",
     "public-export.yml": "aggregate",
     "release-docs.yml": "fail-fast",
     "release.yml": "aggregate",
