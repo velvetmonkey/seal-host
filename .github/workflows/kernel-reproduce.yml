@@ -31,7 +31,7 @@ jobs:
       # The provisioner verifies both restored trees, including their commits,
       # archives, patch state, and tool versions, before it permits a build.
       - name: Restore pinned wasm toolchains
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             wasm-spike/emsdk
