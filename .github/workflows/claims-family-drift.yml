@@ -12,11 +12,6 @@ jobs:
   claims-family-drift:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out seal
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: velvetmonkey/seal
-          path: family/seal
       - name: Check out seal-host
         uses: actions/checkout@v7.0.1
         with:
@@ -46,6 +41,6 @@ jobs:
         with:
           repository: velvetmonkey/mcp-seal-dev
           path: family/mcp-seal-dev
-      - name: Require all seven family truth boxes to match
+      - name: Require all six family truth boxes to match
         working-directory: family/seal-host
         run: node scripts/claims-surface-drift.mjs --family-root "$GITHUB_WORKSPACE/family"

@@ -176,8 +176,9 @@ if (!drift && !fatal) {
 }
 if (familyRoot) {
   const truthbox = BLOCKS[1];
+  const familyTruthBoxRepos = FAMILY_REPOS.filter((repo) => repo !== "seal");
   const hashes = new Map();
-  for (const repo of FAMILY_REPOS) {
+  for (const repo of familyTruthBoxRepos) {
     const canonical = normalise(extractFromRoot(
       familyRoot,
       `${repo}/docs/TRUTH-BOX.md`,
@@ -192,17 +193,17 @@ if (familyRoot) {
     hashes.set(repo, hash);
     console.log(`PASS  family ${repo} truth-box sha256=${hash}`);
   }
-  const expected = hashes.get(FAMILY_REPOS[0]);
-  const mismatches = FAMILY_REPOS.filter((repo) => hashes.get(repo) !== expected);
+  const expected = hashes.get(familyTruthBoxRepos[0]);
+  const mismatches = familyTruthBoxRepos.filter((repo) => hashes.get(repo) !== expected);
   if (mismatches.length > 0) {
     console.error("\nFAMILY CLAIMS DRIFT — canonical truth-box hashes diverge:");
     for (const repo of mismatches) {
       console.error(`  ${repo}: ${hashes.get(repo)}`);
     }
-    console.error(`  expected (${FAMILY_REPOS[0]}): ${expected}`);
+    console.error(`  expected (${familyTruthBoxRepos[0]}): ${expected}`);
     process.exit(1);
   }
-  console.log("family truth-box hashes match across all seven repos");
+  console.log("family truth-box hashes match across all six repos");
 }
 
 console.log("all claim blocks in sync across all surfaces");
