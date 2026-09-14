@@ -7,7 +7,8 @@
 //!   record reaches Lean (a hold blocks any second presentation exactly as a
 //!   burn would); the host durably COMMITS the burn via `commit_nonce` only
 //!   at RECORDED, once the authorization-decision receipt exists. Startup
-//!   (`with_store`) reclaims holds that never reached RECORDED, so a crash
+//!   (`with_store`) reclaims holds that never reached RECORDED when the
+//!   receipt inventory is complete, so a crash
 //!   between reserve and RECORDED leaves the approval usable again;
 //! * TTL freshness: a record older than the approval TTL is dead on arrival;
 //! * clock skew: a record from the future (beyond a small skew) is rejected.
@@ -18,7 +19,7 @@
 //! (the provider enforces it).
 
 use crate::providers::{record_redaction_material, ApprovalDropWarning, ApprovalRecord};
-use crate::replay_store::{InMemoryReplayStore, ReplayStore, ReplayStoreError};
+use crate::replay_store::{InMemoryReplayStore, ReceiptInventory, ReplayStore, ReplayStoreError};
 use std::collections::HashMap;
 
 const MAX_FUTURE_SKEW_MS: u64 = 5_000;
@@ -47,12 +48,17 @@ impl A3Filter {
         ttl_ms: u64,
         mut replay_store: Box<dyn ReplayStore>,
         now_ms: u64,
+        inventory: ReceiptInventory,
     ) -> Result<Self, ReplayStoreError> {
         // Startup recovery, before any state is read: a hold that never
         // reached RECORDED belongs to a dead process. Reclaiming it makes
         // the crash indistinguishable from the approval never having been
         // presented. Committed burns are untouched (T3 direction).
-        replay_store.reclaim_uncommitted()?;
+        // Corrupt receipts make absence of RECORDED evidence inconclusive.
+        // Keep those holds in both the store and the loaded replay view.
+        if inventory == ReceiptInventory::Complete {
+            replay_store.reclaim_uncommitted()?;
+        }
         replay_store.prune_expired(now_ms)?;
         let seen_nonces = replay_store
             .load_unexpired(now_ms)?
@@ -258,6 +264,26 @@ mod tests {
     }
 
     #[test]
+    fn quarantine_keeps_uncertain_nonce_unusable() {
+        let mut store = InMemoryReplayStore::default();
+        assert!(store
+            .reserve_returning_is_new("uncertain", 1_000, 11_000)
+            .unwrap());
+        let mut filter = A3Filter::with_store(
+            10_000,
+            Box::new(store),
+            2_000,
+            ReceiptInventory::Quarantined,
+        )
+        .unwrap();
+        let (accepted, dropped) =
+            filter.filter(vec![rec("target", Some(1_000), Some("uncertain"))], 2_000);
+        assert!(accepted.is_empty());
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].reason, "replayed_nonce");
+    }
+
+    #[test]
     fn replayed_nonce_rejected() {
         let mut a3 = A3Filter::new(120_000);
         let (ok, dropped) = a3.filter(
@@ -350,7 +376,13 @@ mod tests {
         {
             let store =
                 Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-            let mut a3 = A3Filter::with_store(10_000, store, 1_000).unwrap();
+            let mut a3 = A3Filter::with_store(
+                10_000,
+                store,
+                1_000,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
+            .unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(1_000), Some("nonce-1"))], 1_000);
             assert_eq!(ok.len(), 1);
             assert!(dropped.is_empty());
@@ -359,7 +391,13 @@ mod tests {
         {
             let store =
                 Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-            let mut a3 = A3Filter::with_store(10_000, store, 2_000).unwrap();
+            let mut a3 = A3Filter::with_store(
+                10_000,
+                store,
+                2_000,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
+            .unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(2_000), Some("nonce-1"))], 2_000);
             assert!(ok.is_empty());
             assert_eq!(dropped.len(), 1);
@@ -378,7 +416,13 @@ mod tests {
         {
             let store =
                 Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-            let mut a3 = A3Filter::with_store(10_000, store, 1_000).unwrap();
+            let mut a3 = A3Filter::with_store(
+                10_000,
+                store,
+                1_000,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
+            .unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(1_000), Some("nonce-1"))], 1_000);
             assert_eq!(ok.len(), 1);
             assert!(dropped.is_empty());
@@ -387,7 +431,13 @@ mod tests {
         {
             let store =
                 Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-            let mut a3 = A3Filter::with_store(10_000, store, 2_000).unwrap();
+            let mut a3 = A3Filter::with_store(
+                10_000,
+                store,
+                2_000,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
+            .unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(2_000), Some("nonce-1"))], 2_000);
             assert_eq!(
                 ok.len(),
@@ -408,7 +458,13 @@ mod tests {
         let target = "0000000000000000000000000000000000000000000000000000000000000001";
         initialize_store(&path);
         let store = Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-        let mut a3 = A3Filter::with_store(10_000, store, 1_000).unwrap();
+        let mut a3 = A3Filter::with_store(
+            10_000,
+            store,
+            1_000,
+            crate::replay_store::ReceiptInventory::Complete,
+        )
+        .unwrap();
         let (ok, dropped) = a3.filter(vec![rec(target, Some(1_000), Some("nonce-1"))], 1_000);
         assert_eq!(ok.len(), 1);
         assert!(dropped.is_empty());
@@ -424,7 +480,13 @@ mod tests {
         let path = temp_db_path("no-hold");
         initialize_store(&path);
         let store = Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-        let mut a3 = A3Filter::with_store(10_000, store, 1_000).unwrap();
+        let mut a3 = A3Filter::with_store(
+            10_000,
+            store,
+            1_000,
+            crate::replay_store::ReceiptInventory::Complete,
+        )
+        .unwrap();
         let error = a3.commit_nonce("never-reserved", 1_000).unwrap_err();
         assert!(error.to_string().contains("no open reservation"));
         remove_sqlite_files(&path);
@@ -447,7 +509,13 @@ mod tests {
         {
             let store =
                 Box::new(SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap());
-            let mut a3 = A3Filter::with_store(1_000, store, 3_000).unwrap();
+            let mut a3 = A3Filter::with_store(
+                1_000,
+                store,
+                3_000,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
+            .unwrap();
             let (ok, dropped) = a3.filter(vec![rec(target, Some(3_000), Some("nonce-1"))], 3_000);
             assert_eq!(ok.len(), 1);
             assert!(dropped.is_empty());
@@ -492,7 +560,13 @@ mod tests {
     #[test]
     fn store_write_failure_drops_fail_closed() {
         let target = "0000000000000000000000000000000000000000000000000000000000000001";
-        let mut a3 = A3Filter::with_store(10_000, Box::new(FailingStore), 1_000).unwrap();
+        let mut a3 = A3Filter::with_store(
+            10_000,
+            Box::new(FailingStore),
+            1_000,
+            crate::replay_store::ReceiptInventory::Complete,
+        )
+        .unwrap();
         let (ok, dropped) = a3.filter(vec![rec(target, Some(1_000), Some("nonce-1"))], 1_000);
         assert!(ok.is_empty());
         assert_eq!(dropped.len(), 1);
@@ -580,7 +654,13 @@ mod tests {
         let store = SharedStore {
             inner: shared.clone(),
         };
-        let mut a3 = A3Filter::with_store(10_000, Box::new(store), 1_000).unwrap();
+        let mut a3 = A3Filter::with_store(
+            10_000,
+            Box::new(store),
+            1_000,
+            crate::replay_store::ReceiptInventory::Complete,
+        )
+        .unwrap();
         shared
             .borrow_mut()
             .entries

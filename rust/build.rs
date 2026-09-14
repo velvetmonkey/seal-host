@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// Links the Lean verified core (libFfi.so, built by `lake build Ffi:shared`)
+// Links the Lean verified core (libsealffi.so, built by `bash scripts/build_ffi_so.sh`)
 // and the Lean runtime (libleanshared.so from the active toolchain).
 //
 // Override with env vars:
-//   SEAL_FFI_LIB_DIR   — directory containing libFfi.so
+//   SEAL_FFI_LIB_DIR   — directory containing libsealffi.so
 //   LEAN_LIB_DIR       — toolchain lib/lean directory
 
 use std::path::PathBuf;

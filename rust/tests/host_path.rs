@@ -2608,8 +2608,13 @@ fn assert_startup_reclaims_unrecorded_hold() {
     let store = ReclaimProbeStore {
         state: Rc::clone(&state),
     };
-    let _filter = seal_host_rs::a3::A3Filter::with_store(120_000, Box::new(store), wall_now_ms())
-        .expect("startup recovery accepts the replay store");
+    let _filter = seal_host_rs::a3::A3Filter::with_store(
+        120_000,
+        Box::new(store),
+        wall_now_ms(),
+        seal_host_rs::replay_store::ReceiptInventory::Complete,
+    )
+    .expect("startup recovery accepts the replay store");
     assert_eq!(
         state.borrow().reclaim_calls,
         1,
@@ -2625,7 +2630,11 @@ fn assert_reconcile_reclaims_unmatched_hold(o: &Oracle) {
         .reserve_returning_is_new("reconcile-probe", wall_now_ms(), wall_now_ms() + 120_000)
         .unwrap());
     let reclaimed = store
-        .reconcile_recorded(&HashSet::new(), wall_now_ms())
+        .reconcile_recorded(
+            &HashSet::new(),
+            wall_now_ms(),
+            seal_host_rs::replay_store::ReceiptInventory::Complete,
+        )
         .unwrap();
     assert_eq!(
         reclaimed, 1,
@@ -2648,7 +2657,11 @@ fn assert_reconcile_commits_receipt_backed_hold(o: &Oracle) {
         .unwrap());
     assert_eq!(
         store
-            .reconcile_recorded(&HashSet::from(["reconcile-commit-probe".to_string()]), 2,)
+            .reconcile_recorded(
+                &HashSet::from(["reconcile-commit-probe".to_string()]),
+                2,
+                seal_host_rs::replay_store::ReceiptInventory::Complete
+            )
             .unwrap(),
         0,
         "reconcile_recorded does not reclaim a receipt-backed hold"
@@ -2947,4 +2960,251 @@ fn g2_crash_after_recorded_before_commit_reconciles_burn() {
         replay_rows(&o),
         o.receipts().len()
     );
+}
+
+/// Exercise the deployed main loop and relay, including a normal mediated
+/// ALLOW. A successful child exit cannot mask broken downstream framing.
+#[test]
+fn transport_failure_exit_and_clean_mediation_control() {
+    let mut oracle = Oracle::spawn_channel("transport-exit-control", false, false);
+    oracle.child.kill().unwrap();
+    oracle.child.wait().unwrap();
+    let mut args = oracle.args.clone();
+    assert_eq!(args.pop().as_deref(), Some("/bin/cat"));
+    let frame = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"m7.echo\",\"arguments\":{}}}\n";
+    for (tag, script, success) in [
+        ("clean", "cat", true),
+        ("unterminated-output", "printf broken", false),
+        ("signal-death", "kill -KILL $$", false),
+        ("child-error", "exit 7", false),
+        ("client-output", "cat", false),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+            .args(&args)
+            .args(["/bin/sh", "-c", script])
+            .stdin(Stdio::piped())
+            .stdout(if tag == "client-output" {
+                Stdio::from(
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open("/dev/full")
+                        .unwrap(),
+                )
+            } else {
+                Stdio::piped()
+            })
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        if success || tag == "client-output" {
+            input.write_all(frame).unwrap();
+        }
+        drop(input);
+        let output = child.wait_with_output().unwrap();
+        println!(
+            "#72 {tag}: exit={:?} stdout={:?} stderr={}",
+            output.status.code(),
+            output.stdout,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.success(), success, "{tag}");
+        if success {
+            assert_forwarded_with_operation_id(&output.stdout, frame);
+        }
+    }
+}
+
+#[test]
+fn configured_auxiliary_failures_stop_mediation_and_readable_file_still_allows() {
+    let mut oracle = Oracle::spawn_channel("auxiliary-read-control", false, false);
+    oracle.child.kill().unwrap();
+    oracle.child.wait().unwrap();
+    let config = oracle.dir.join("trusted.json");
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    let original_payload: serde_json::Value =
+        serde_json::from_str(envelope["payload"].as_str().unwrap()).unwrap();
+    let frame = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"m7.echo\",\"arguments\":{}}}\n";
+    for case in [
+        "missing",
+        "unreadable",
+        "oversize",
+        "invalid-utf8",
+        "readable",
+        "not-configured",
+    ] {
+        let path = oracle.dir.join(case);
+        match case {
+            "unreadable" => {
+                std::fs::write(&path, b"[]").unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            }
+            "oversize" => std::fs::write(
+                &path,
+                vec![b'x'; seal_host_rs::limits::MAX_AUXILIARY_FILE_BYTES + 1],
+            )
+            .unwrap(),
+            "invalid-utf8" => std::fs::write(&path, [255]).unwrap(),
+            "readable" => std::fs::write(&path, b"[]").unwrap(),
+            _ => {}
+        }
+        let mut payload = original_payload.clone();
+        if case != "not-configured" {
+            payload["consensus"] = serde_json::json!({
+                "roster": [1], "votes_file": path, "high_stakes": []
+            });
+        }
+        let payload = payload.to_string();
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let envelope = serde_json::json!({
+            "signature": hex::encode(key.sign(payload.as_bytes()).to_bytes()), "payload": payload
+        });
+        std::fs::write(&config, envelope.to_string()).unwrap();
+        let (mut child, mut input, _lines, raw, _stderr) = Oracle::spawn_process(&oracle.args, &[]);
+        input.write_all(frame).unwrap();
+        let response = raw
+            .recv_timeout(Duration::from_secs(10))
+            .expect("auxiliary response");
+        drop(input);
+        let status = child.wait().unwrap();
+        let success = matches!(case, "readable" | "not-configured");
+        println!(
+            "#76 {case}: exit={:?} response={}",
+            status.code(),
+            String::from_utf8_lossy(&response)
+        );
+        assert_eq!(status.success(), success, "{case}");
+        if success {
+            assert_forwarded_with_operation_id(&response, frame);
+        } else {
+            assert_eq!(response, SEAM_ERROR_RESPONSE.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn stdin_transport_read_failure_never_reports_success() {
+    let mut oracle = Oracle::spawn_channel("stdin-read-failure", false, false);
+    oracle.child.kill().unwrap();
+    oracle.child.wait().unwrap();
+    // A directory is a valid fd to inherit, but read(2) returns EISDIR.
+    // The host must retain that failure when it kills and reaps its child.
+    let output = Command::new(env!("CARGO_BIN_EXE_seal-host-rs"))
+        .args(&oracle.args)
+        .stdin(Stdio::from(std::fs::File::open(&oracle.dir).unwrap()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!(
+        "#72 stdin read failure: exit={:?} stderr={stderr}",
+        output.status.code()
+    );
+    assert!(stderr.contains("stdin read error"));
+    assert!(!output.status.success());
+}
+
+#[test]
+fn startup_recovery_reports_quarantine_and_forwards_valid_receipts() {
+    use seal_host_rs::release::{attach_signed_artifacts, ReleaseInput};
+    let mut oracle = Oracle::spawn_channel("recovery-quarantine", true, false);
+    oracle.child.kill().unwrap();
+    oracle.child.wait().unwrap();
+    for malformed in [true, false] {
+        let dir = oracle.dir.join(format!("recovery-{malformed}"));
+        let store = ReleaseStore::open(&dir).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let replay_path = oracle.dir.join("replay.sqlite");
+        let uncertain_nonce = format!("uncertain-{malformed}");
+        let mut replay =
+            SqliteReplayStore::open(&replay_path, ReplayStoreLineage::CURRENT).unwrap();
+        assert!(replay
+            .reserve_returning_is_new(&uncertain_nonce, now, now + 60_000)
+            .unwrap());
+        drop(replay);
+        let mut expected = Vec::new();
+        for id in 1..=2 {
+            let frame = format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"tools/list\"}}\n")
+                .into_bytes();
+            let release = ReleaseInput::prepare(&frame, now, 60_000).unwrap();
+            let mut record = serde_json::json!({
+                "record_type": "seal.authorization-decision", "record_version": 3, "verdict": "ALLOW"
+            });
+            attach_signed_artifacts(&mut record, &frame, None).unwrap();
+            store.attach_and_sign(&mut record, Some(&release)).unwrap();
+            let path = dir.join(format!("receipt-{id}.json"));
+            let mut file =
+                seal_host_rs::secure_fs::open_private_new(&path, "recovery probe").unwrap();
+            file.write_all(&serde_json::to_vec(&record).unwrap())
+                .unwrap();
+            file.sync_all().unwrap();
+            expected.push(release.frame);
+        }
+        let bad = dir.join("receipt-z.json");
+        if malformed {
+            let mut file =
+                seal_host_rs::secure_fs::open_private_new(&bad, "malformed recovery probe")
+                    .unwrap();
+            file.write_all(b"{broken").unwrap();
+            file.sync_all().unwrap();
+        }
+        let mut args = oracle.args.clone();
+        let receipt_arg = args.iter().position(|arg| arg == "--receipt-dir").unwrap();
+        args[receipt_arg + 1] = dir.to_str().unwrap().to_owned();
+        let (mut child, input, _lines, raw, stderr) = Oracle::spawn_process(&args, &[]);
+        for frame in &expected {
+            assert_eq!(
+                raw.recv_timeout(Duration::from_secs(10))
+                    .unwrap_or_else(|error| panic!(
+                        "recovered frame: {error}; status={:?}; stderr={:?}",
+                        child.try_wait(),
+                        stderr.try_iter().collect::<Vec<_>>()
+                    )),
+                *frame
+            );
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let report = loop {
+            let line = stderr
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("recovery report");
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                if value.get("startup_release_recovery").is_some() {
+                    break value["startup_release_recovery"].clone();
+                }
+            }
+        };
+        drop(input);
+        let status = child.wait().unwrap();
+        println!(
+            "#93 startup malformed={malformed} exit={:?} report={report}",
+            status.code()
+        );
+        assert!(status.success());
+        let mut replay =
+            SqliteReplayStore::open(&replay_path, ReplayStoreLineage::CURRENT).unwrap();
+        let held = replay
+            .load_unexpired(now)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.nonce == uncertain_nonce);
+        assert_eq!(
+            held, malformed,
+            "quarantine must retain uncertain approval holds; complete recovery must reclaim them"
+        );
+        println!("#93 uncertain approval hold retained={held}");
+        assert_eq!(report["released"], 2);
+        assert_eq!(report["released_paths"].as_array().unwrap().len(), 2);
+        let quarantine = report["quarantined"].as_array().unwrap();
+        assert_eq!(quarantine.len(), usize::from(malformed));
+        if malformed {
+            assert_eq!(quarantine[0]["path"], bad.to_str().unwrap());
+            assert_eq!(std::fs::read(bad).unwrap(), b"{broken");
+        }
+    }
 }

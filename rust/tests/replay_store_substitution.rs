@@ -73,7 +73,13 @@ fn substitute(from: &Path, to: &Path) {
 /// reclaimed by startup recovery, which is not what this test probes.
 fn consume(path: &Path, nonce: &str, now_ms: u64) {
     let store = Box::new(SqliteReplayStore::open(path, ReplayStoreLineage::CURRENT).unwrap());
-    let mut a3 = A3Filter::with_store(TTL_MS, store, now_ms).unwrap();
+    let mut a3 = A3Filter::with_store(
+        TTL_MS,
+        store,
+        now_ms,
+        seal_host_rs::replay_store::ReceiptInventory::Complete,
+    )
+    .unwrap();
     let (ok, dropped) = a3.filter(vec![record(nonce, now_ms)], now_ms);
     assert_eq!(ok.len(), 1, "first use of {nonce} must be accepted");
     assert!(dropped.is_empty());
@@ -168,7 +174,13 @@ fn store_substitution_is_not_detected() {
     consume(&live, "nonce-1", 1_000);
     {
         let store = Box::new(SqliteReplayStore::open(&live, ReplayStoreLineage::CURRENT).unwrap());
-        let mut a3 = A3Filter::with_store(TTL_MS, store, 2_000).unwrap();
+        let mut a3 = A3Filter::with_store(
+            TTL_MS,
+            store,
+            2_000,
+            seal_host_rs::replay_store::ReceiptInventory::Complete,
+        )
+        .unwrap();
         let (ok, dropped) = a3.filter(vec![record("nonce-1", 2_000)], 2_000);
         assert!(ok.is_empty(), "replay must be blocked before substitution");
         assert_eq!(dropped.len(), 1);
@@ -185,7 +197,13 @@ fn store_substitution_is_not_detected() {
     );
 
     // And the consumed nonce comes back.
-    let mut a3 = A3Filter::with_store(TTL_MS, store, 3_000).unwrap();
+    let mut a3 = A3Filter::with_store(
+        TTL_MS,
+        store,
+        3_000,
+        seal_host_rs::replay_store::ReceiptInventory::Complete,
+    )
+    .unwrap();
     let (ok, dropped) = a3.filter(vec![record("nonce-1", 3_000)], 3_000);
     assert_eq!(
         ok.len(),
