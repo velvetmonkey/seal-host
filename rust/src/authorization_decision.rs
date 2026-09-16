@@ -8,8 +8,8 @@
 
 use crate::providers::{canonical_approval_v2_payload, ApprovalRecord};
 use crate::release::{
-    attach_signed_artifacts, RecoveryReport, ReleaseInput, ReleaseStatus, ReleaseStore,
-    VerifiedRelease,
+    attach_signed_artifacts, QuarantinedReceipt, RecoveryReport, ReleaseInput, ReleaseStatus,
+    ReleaseStore, VerifiedRelease,
 };
 use crate::{envelope_v23::canonical_json, lean, secure_fs};
 use serde_json::{Map, Value};
@@ -515,6 +515,12 @@ fn authorization_decision_from_step(input: &DecisionInput<'_>) -> Result<Value, 
     Ok(receipt)
 }
 
+#[derive(Debug, Default)]
+pub struct RecordedApprovalNonces {
+    pub nonces: HashSet<String>,
+    pub quarantined: Vec<QuarantinedReceipt>,
+}
+
 impl AuthorizationDecisionWriter {
     pub fn new(dir: impl Into<PathBuf>) -> Result<Self, String> {
         let dir = dir.into();
@@ -667,9 +673,10 @@ impl AuthorizationDecisionWriter {
 
     /// Read the durable RECORDED receipt index used to finish a two-phase
     /// approval burn during startup recovery. A match is exact equality of
-    /// `approval.nonce`; malformed receipt state refuses recovery.
-    pub fn recorded_approval_nonces(&self) -> Result<HashSet<String>, String> {
-        let mut nonces = HashSet::new();
+    /// `approval.nonce`. Unverifiable receipts are quarantined in place; callers
+    /// must preserve unmatched approval holds when this inventory is incomplete.
+    pub fn recorded_approval_nonces(&self) -> Result<RecordedApprovalNonces, String> {
+        let mut report = RecordedApprovalNonces::default();
         let entries = std::fs::read_dir(&self.dir)
             .map_err(|e| format!("cannot read authorization decision directory: {e}"))?;
         for entry in entries {
@@ -681,18 +688,13 @@ impl AuthorizationDecisionWriter {
             if !name.starts_with("receipt-") || !name.ends_with(".json") {
                 continue;
             }
-            let bytes = std::fs::read(&path).map_err(|e| {
-                format!(
-                    "authorization decision receipt unreadable at {}: {e}",
-                    path.display()
-                )
-            })?;
-            let value: Value = serde_json::from_slice(&bytes).map_err(|e| {
-                format!(
-                    "authorization decision receipt unreadable at {}: {e}",
-                    path.display()
-                )
-            })?;
+            let (value, _) = match self.release_store.read_verified(&path) {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    report.quarantined.push(QuarantinedReceipt { path, error });
+                    continue;
+                }
+            };
             let Some(approval) = value.get("approval") else {
                 continue;
             };
@@ -711,9 +713,10 @@ impl AuthorizationDecisionWriter {
                     path.display()
                 ));
             }
-            nonces.insert(nonce.to_owned());
+            report.nonces.insert(nonce.to_owned());
         }
-        Ok(nonces)
+        report.quarantined.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(report)
     }
 }
 

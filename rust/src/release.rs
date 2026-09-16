@@ -79,11 +79,21 @@ pub struct VerifiedRelease {
     pub post_state_hash: String,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QuarantinedReceipt {
+    pub path: PathBuf,
+    pub error: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RecoveryReport {
     pub redone_state_transitions: usize,
     pub released: usize,
     pub stale: usize,
+    pub released_paths: Vec<PathBuf>,
+    /// Quarantined in place: never forwarded or mutated during this pass.
+    /// Keep the original bytes for diagnosis and re-verify on the next pass.
+    pub quarantined: Vec<QuarantinedReceipt>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -683,7 +693,13 @@ impl ReleaseStore {
     ) -> Result<RecoveryReport, String> {
         let mut report = RecoveryReport::default();
         for path in self.receipt_paths()? {
-            let (_, release) = self.read_verified(&path)?;
+            let (_, release) = match self.read_verified(&path) {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    report.quarantined.push(QuarantinedReceipt { path, error });
+                    continue;
+                }
+            };
             let Some(release) = release else { continue };
             if release.status != ReleaseStatus::Pending {
                 continue;
@@ -699,6 +715,7 @@ impl ReleaseStore {
             forward(&release.frame)?;
             self.transition(&path, ReleaseStatus::Unknown, ReleaseStatus::Released)?;
             report.released += 1;
+            report.released_paths.push(path);
         }
         Ok(report)
     }
@@ -751,6 +768,66 @@ mod tests {
             .unwrap();
         secure_fs::sync_dir(dir, "test receipt directory").unwrap();
         path
+    }
+
+    #[test]
+    fn recovery_quarantines_malformed_receipts_without_losing_valid_releases() {
+        for bad_name in [
+            Some("receipt-0.json"),
+            Some("receipt-2.json"),
+            Some("receipt-4.json"),
+            None,
+        ] {
+            let dir = temp_dir("quarantine");
+            let store = ReleaseStore::open(&dir).unwrap();
+            let mut valid_paths = Vec::new();
+            for name in ["receipt-1.json", "receipt-3.json"] {
+                let path = signed_pending_receipt(&store, &dir, 10, 20);
+                let destination = dir.join(name);
+                std::fs::rename(path, &destination).unwrap();
+                valid_paths.push(destination);
+            }
+            if let Some(name) = bad_name {
+                let mut file =
+                    secure_fs::open_private_new(&dir.join(name), "malformed probe").unwrap();
+                file.write_all(b"{broken").unwrap();
+            }
+            let mut forwarded = Vec::new();
+            let report = store
+                .recover_pending(20, |frame| {
+                    forwarded.push(frame.to_vec());
+                    Ok(())
+                })
+                .unwrap();
+            println!(
+                "#93 bad={bad_name:?} forwarded={} report={report:?}",
+                forwarded.len()
+            );
+            assert_eq!(forwarded.len(), 2);
+            assert_eq!(report.released, 2);
+            assert_eq!(report.released_paths, valid_paths);
+            assert_eq!(report.redone_state_transitions, 2);
+            assert_eq!(report.quarantined.len(), usize::from(bad_name.is_some()));
+            if let Some(name) = bad_name {
+                assert_eq!(report.quarantined[0].path, dir.join(name));
+                assert!(report.quarantined[0]
+                    .error
+                    .contains("bad authorization decision"));
+                assert_eq!(std::fs::read(dir.join(name)).unwrap(), b"{broken");
+            }
+            for path in &valid_paths {
+                assert_eq!(
+                    store.read_verified(path).unwrap().1.unwrap().status,
+                    ReleaseStatus::Released
+                );
+            }
+            let repeat = store
+                .recover_pending(20, |_| panic!("released receipt replayed"))
+                .unwrap();
+            assert_eq!(repeat.released, 0);
+            assert_eq!(repeat.quarantined.len(), report.quarantined.len());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]
@@ -913,6 +990,8 @@ mod tests {
                 redone_state_transitions: 1,
                 released: 1,
                 stale: 0,
+                released_paths: vec![fresh_path.clone()],
+                quarantined: vec![],
             }
         );
         assert_eq!(forwarded.len(), 1);

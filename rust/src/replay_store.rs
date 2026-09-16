@@ -48,6 +48,14 @@ impl From<rusqlite::Error> for ReplayStoreError {
     }
 }
 
+/// Whether receipt recovery can prove that an unmatched hold was never recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptInventory {
+    Complete,
+    /// Invalid receipts are retained, so an unmatched hold may belong to one.
+    Quarantined,
+}
+
 pub trait ReplayStore {
     /// Phase 1: durably hold the nonce. Returns `false` when any hold or
     /// committed burn for this nonce already exists.
@@ -274,11 +282,14 @@ impl SqliteReplayStore {
     /// Reconcile the durable receipt side of the two-phase burn before A3
     /// rebuilds its in-memory replay view. A receipt names a hold by exact
     /// nonce equality. Receipt-backed open holds are committed; every other
-    /// open hold is reclaimed. Missing or malformed hold state refuses startup.
+    /// open hold is reclaimed only with a complete receipt inventory. With
+    /// quarantined receipts, unmatched holds remain reserved until expiry.
+    /// Missing or malformed hold state still refuses startup.
     pub fn reconcile_recorded(
         &mut self,
         recorded_nonces: &HashSet<String>,
         committed_at_ms: u64,
+        inventory: ReceiptInventory,
     ) -> Result<usize, ReplayStoreError> {
         let committed_at_ms = to_i64("committed_at", committed_at_ms)?;
         let tx = self.conn.transaction()?;
@@ -320,7 +331,7 @@ impl SqliteReplayStore {
                      WHERE nonce = ?1 AND committed_at IS NULL",
                     params![nonce, committed_at_ms],
                 )?;
-            } else {
+            } else if inventory == ReceiptInventory::Complete {
                 tx.execute(
                     "DELETE FROM nonces WHERE nonce = ?1 AND committed_at IS NULL",
                     params![nonce],
@@ -651,9 +662,46 @@ mod tests {
             .reserve_returning_is_new("crashed", 1_000, 10_000)
             .unwrap());
         let recorded = HashSet::from(["receipt-backed".to_string()]);
-        assert_eq!(store.reconcile_recorded(&recorded, 1_500).unwrap(), 1);
+        assert_eq!(
+            store
+                .reconcile_recorded(
+                    &recorded,
+                    1_500,
+                    crate::replay_store::ReceiptInventory::Complete
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(store.nonce_state("receipt-backed"), Some(true));
         assert_eq!(store.nonce_state("crashed"), None);
+        remove_sqlite_files(&path);
+    }
+
+    #[test]
+    fn quarantine_preserves_uncertain_holds_while_committing_verified_matches() {
+        let path = temp_db_path("quarantined-receipts");
+        initialize(&path);
+        let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
+        for nonce in ["verified", "uncertain"] {
+            assert!(store
+                .reserve_returning_is_new(nonce, 1_000, 10_000)
+                .unwrap());
+        }
+        assert_eq!(
+            store
+                .reconcile_recorded(
+                    &HashSet::from(["verified".to_string()]),
+                    1_500,
+                    ReceiptInventory::Quarantined
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(store.nonce_state("verified"), Some(true));
+        assert_eq!(store.nonce_state("uncertain"), Some(false));
+        assert!(!store
+            .reserve_returning_is_new("uncertain", 1_500, 10_500)
+            .unwrap());
         remove_sqlite_files(&path);
     }
 
@@ -681,7 +729,11 @@ mod tests {
         drop(conn);
         let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
         let error = store
-            .reconcile_recorded(&HashSet::new(), 1_500)
+            .reconcile_recorded(
+                &HashSet::new(),
+                1_500,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
             .unwrap_err();
         println!("missing timestamp outcome: {error}");
         assert!(error
@@ -693,7 +745,11 @@ mod tests {
         conn.execute("DROP TABLE nonces", []).unwrap();
         drop(conn);
         let error = store
-            .reconcile_recorded(&HashSet::new(), 1_500)
+            .reconcile_recorded(
+                &HashSet::new(),
+                1_500,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
             .unwrap_err();
         println!("unreadable hold table outcome: {error}");
         assert!(error.to_string().contains("hold table unreadable"));
@@ -703,7 +759,11 @@ mod tests {
         initialize(&path);
         let mut store = SqliteReplayStore::open(&path, ReplayStoreLineage::CURRENT).unwrap();
         let error = store
-            .reconcile_recorded(&HashSet::from(["missing".to_string()]), 1_500)
+            .reconcile_recorded(
+                &HashSet::from(["missing".to_string()]),
+                1_500,
+                crate::replay_store::ReceiptInventory::Complete,
+            )
             .unwrap_err();
         println!("missing hold outcome: {error}");
         assert!(error

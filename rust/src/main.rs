@@ -329,15 +329,69 @@ fn refusal_with_framed_subject(
         .map_err(|error| format!("cannot serialize framed-subject refusal: {error}"))
 }
 
-fn read_or_empty(path: &str) -> String {
-    if path.is_empty() {
-        String::new()
-    } else {
-        read_file_bounded(std::path::Path::new(path), MAX_AUXILIARY_FILE_BYTES)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .unwrap_or_default()
+#[derive(Debug)]
+enum AuxiliaryReadError {
+    ReadFailed(std::io::Error),
+    Oversize,
+    InvalidUtf8(std::string::FromUtf8Error),
+}
+
+impl std::fmt::Display for AuxiliaryReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReadFailed(error) => write!(f, "read failed: {error}"),
+            Self::Oversize => write!(f, "file exceeds {MAX_AUXILIARY_FILE_BYTES} bytes"),
+            Self::InvalidUtf8(error) => write!(f, "invalid UTF-8: {error}"),
+        }
     }
+}
+
+fn read_auxiliary_file(path: &str) -> Result<Option<String>, AuxiliaryReadError> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let bytes = read_file_bounded(std::path::Path::new(path), MAX_AUXILIARY_FILE_BYTES).map_err(
+        |error| {
+            if error.kind() == std::io::ErrorKind::FileTooLarge {
+                AuxiliaryReadError::Oversize
+            } else {
+                AuxiliaryReadError::ReadFailed(error)
+            }
+        },
+    )?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(AuxiliaryReadError::InvalidUtf8)
+}
+
+fn auxiliary_inputs(votes: &str, forecasts: &str) -> Result<(String, String), String> {
+    let read = |path: &str| {
+        read_auxiliary_file(path)
+            .map(|contents| contents.unwrap_or_default())
+            .map_err(|error| format!("configured auxiliary file {path:?}: {error}"))
+    };
+    Ok((read(votes)?, read(forecasts)?))
+}
+
+/// Close stdin before calling this. Give a clean child a bounded opportunity
+/// to finish; transport failure requires immediate termination. Signal death,
+/// wait failure and a child that never finishes must never become success.
+fn finish_child(child: &mut std::process::Child, transport_failed: bool) -> i32 {
+    if !transport_failed {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return status.code().unwrap_or(1),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => break,
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    1
 }
 
 fn same_ed25519_key_hex(left: &str, right: &str) -> bool {
@@ -1325,6 +1379,18 @@ fn run() -> i32 {
             return 3;
         }
     };
+    let receipt_inventory = if recorded_approval_nonces.quarantined.is_empty() {
+        seal_host_rs::replay_store::ReceiptInventory::Complete
+    } else {
+        eprintln!(
+            "{}",
+            json!({"startup_approval_recovery": {
+                "quarantined": recorded_approval_nonces.quarantined,
+                "unmatched_holds": "preserved_until_expiry",
+            }})
+        );
+        seal_host_rs::replay_store::ReceiptInventory::Quarantined
+    };
     let mut a3 = if args.channel == "ed25519" {
         let Some(config) = replay_store_config else {
             eprintln!(
@@ -1341,11 +1407,15 @@ fn run() -> i32 {
             }
         };
         let mut store = store;
-        if let Err(error) = store.reconcile_recorded(&recorded_approval_nonces, now_ms()) {
+        if let Err(error) = store.reconcile_recorded(
+            &recorded_approval_nonces.nonces,
+            now_ms(),
+            receipt_inventory,
+        ) {
             eprintln!("trusted config rejected: authorization recovery: {error}");
             return 3;
         }
-        match a3::A3Filter::with_store(ttl_ms, Box::new(store), now_ms()) {
+        match a3::A3Filter::with_store(ttl_ms, Box::new(store), now_ms(), receipt_inventory) {
             Ok(a3) => a3,
             Err(e) => {
                 eprintln!("trusted config rejected: cannot load replay store: {e}");
@@ -1472,13 +1542,13 @@ fn run() -> i32 {
                         eprintln!("{}", json!({"error": error}));
                         relay_dead.store(true, Ordering::Release);
                         relay_ready.store(false, Ordering::Release);
-                        break;
+                        return true;
                     }
                 }
                 Ok(FrameStatus::Eof) => {
                     relay_dead.store(true, Ordering::Release);
                     relay_ready.store(false, Ordering::Release);
-                    break;
+                    return false;
                 }
                 Ok(FrameStatus::Unterminated) => {
                     eprintln!(
@@ -1487,13 +1557,13 @@ fn run() -> i32 {
                     );
                     relay_dead.store(true, Ordering::Release);
                     relay_ready.store(false, Ordering::Release);
-                    break;
+                    return true;
                 }
                 Ok(FrameStatus::Oversized) => {
                     emit_resource_limit("downstream_wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
                     relay_dead.store(true, Ordering::Release);
                     relay_ready.store(false, Ordering::Release);
-                    break;
+                    return true;
                 }
                 Err(error) => {
                     eprintln!(
@@ -1502,7 +1572,7 @@ fn run() -> i32 {
                     );
                     relay_dead.store(true, Ordering::Release);
                     relay_ready.store(false, Ordering::Release);
-                    break;
+                    return true;
                 }
             }
         }
@@ -1521,6 +1591,8 @@ fn run() -> i32 {
                         "redone_state_transitions": report.redone_state_transitions,
                         "released": report.released,
                         "stale": report.stale,
+                        "released_paths": report.released_paths,
+                        "quarantined": report.quarantined,
                     }
                 })
             );
@@ -1547,32 +1619,33 @@ fn run() -> i32 {
     // legitimate unparseable call. Passive — never gates the forward.
     let mut reduced_scope_forward_attempts: u64 = 0;
     readiness.store(true, Ordering::Release);
-    loop {
+    let mut mediation_failed = false;
+    let transport_failed = loop {
         wire.clear();
         match read_bounded_frame(&mut reader, &mut wire, MAX_WIRE_MESSAGE_BYTES) {
-            Ok(FrameStatus::Eof) => break,
+            Ok(FrameStatus::Eof) => break false,
             Ok(FrameStatus::Complete | FrameStatus::Unterminated) => {}
             Ok(FrameStatus::Oversized) => {
                 emit_resource_limit("wire_message_bytes", MAX_WIRE_MESSAGE_BYTES);
                 if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
             Err(e) => {
                 eprintln!("{}", json!({"error": format!("stdin read error: {e}")}));
-                break; // transport dead: stop mediating, kill child
+                break true; // transport dead: stop mediating, kill child
             }
         }
 
         if output.has_failed() {
             readiness.store(false, Ordering::Release);
-            break;
+            break true;
         }
         if downstream_dead.load(Ordering::Acquire) {
             let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
             readiness.store(false, Ordering::Release);
-            break;
+            break true;
         }
 
         // The Lean view must be valid UTF-8 (Lean strings are UTF-8). A
@@ -1581,14 +1654,14 @@ fn run() -> i32 {
         let Ok(line) = std::str::from_utf8(lean_view(&wire)) else {
             eprintln!("{}", json!({"error": "non-utf8 line refused"}));
             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                break;
+                break true;
             }
             continue;
         };
         if let Err(limit) = check_json_limits(line.as_bytes()) {
             emit_resource_limit(limit.name(), limit.maximum());
             if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
-                break;
+                break true;
             }
             continue;
         }
@@ -1625,7 +1698,7 @@ fn run() -> i32 {
                     json!({"error": format!("malformed principal envelope refused: {reason}")})
                 );
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
@@ -1635,7 +1708,7 @@ fn run() -> i32 {
             if let Err(limit) = check_json_limits(line.as_bytes()) {
                 emit_resource_limit(limit.name(), limit.maximum());
                 if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
@@ -1657,12 +1730,13 @@ fn run() -> i32 {
                 );
                 let response = numeric_agreement_refusal_response(&literal);
                 if write_frame(&output, &response).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
             Ok(None) => {}
             Err(error) => {
+                mediation_failed = true;
                 eprintln!(
                     "{}",
                     json!({
@@ -1672,7 +1746,7 @@ fn run() -> i32 {
                     })
                 );
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
@@ -1689,14 +1763,15 @@ fn run() -> i32 {
                     json!({"seal_host_event": "mcp_version_gate_rejected"})
                 );
                 if write_frame(&output, &response).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
             VersionGateRoute::SeamFailure { reason } => {
+                mediation_failed = true;
                 eprintln!("{}", json!({"error": reason}));
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
@@ -1706,6 +1781,7 @@ fn run() -> i32 {
         // failure refuses the line and leaves the selection unchanged, like
         // every other seam error on this path.
         if let Err(error) = mcp_revision_session.observe_received_call(&host, line) {
+            mediation_failed = true;
             eprintln!(
                 "{}",
                 json!({
@@ -1713,7 +1789,7 @@ fn run() -> i32 {
                 })
             );
             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                break;
+                break true;
             }
             continue;
         }
@@ -1748,18 +1824,19 @@ fn run() -> i32 {
                 // flow to the child.
                 if write_child(&mut child_in, &forward, &readiness).is_err() {
                     let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
-                    break;
+                    break true;
                 }
                 continue;
             }
             ClassifyRoute::Mediate => {}
             ClassifyRoute::Refuse => {
+                mediation_failed = true;
                 eprintln!(
                     "{}",
                     json!({"error": "classify seam failure; line refused"})
                 );
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
@@ -1775,7 +1852,7 @@ fn run() -> i32 {
                 let Some(session) = v23_session.as_deref() else {
                     eprintln!("{}", json!({"error": "V2.3 session was not issued"}));
                     if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                        break;
+                        break true;
                     }
                     continue;
                 };
@@ -1787,7 +1864,7 @@ fn run() -> i32 {
                             json!({"error": format!("V2.3 envelope refused: {reason}")})
                         );
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -1803,6 +1880,7 @@ fn run() -> i32 {
                     let lean_observation = match host.canonical_effect(line) {
                         Ok(observation) => observation,
                         Err(error) => {
+                            mediation_failed = true;
                             let typed =
                                 envelope_v23::CanonicalAgreementError::LeanSeam(error.to_string());
                             eprintln!(
@@ -1810,7 +1888,7 @@ fn run() -> i32 {
                                 json!({"error": "canonical agreement refusal", "detail": typed.to_string()})
                             );
                             if write_frame(&output, CANONICAL_AGREEMENT_REFUSAL_RESPONSE).is_err() {
-                                break;
+                                break true;
                             }
                             continue;
                         }
@@ -1823,7 +1901,7 @@ fn run() -> i32 {
                                 json!({"error": "canonical agreement refusal", "detail": error.to_string()})
                             );
                             if write_frame(&output, CANONICAL_AGREEMENT_REFUSAL_RESPONSE).is_err() {
-                                break;
+                                break true;
                             }
                             continue;
                         }
@@ -1849,7 +1927,7 @@ fn run() -> i32 {
                             json!({"error": format!("V2.3 envelope refused: {error}")})
                         );
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -1883,7 +1961,7 @@ fn run() -> i32 {
             warnings.extend(a3_warnings);
             emit_approval_drop_warnings(&warnings);
             if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
-                break;
+                break true;
             }
             continue;
         }
@@ -1928,13 +2006,21 @@ fn run() -> i32 {
             None => None,
         };
 
+        let (votes, forecasts) = match auxiliary_inputs(&votes_file, &forecasts_file) {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                eprintln!("{}", json!({"error": error}));
+                let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                break true;
+            }
+        };
         let mut input = json!({
             "line": line,
             "now": now,
             "approvals": approvals,
-            "votes": read_or_empty(&votes_file),
+            "votes": votes,
             "grants": grants.fresh(),
-            "forecasts": read_or_empty(&forecasts_file),
+            "forecasts": forecasts,
         });
         if let Some(env) = &envelope {
             // RAW fields only — Rust never passes a principal string; the
@@ -1944,21 +2030,23 @@ fn run() -> i32 {
         let step_output = match host.step(&input.to_string()) {
             Ok(output) => output,
             Err(error) => {
+                mediation_failed = true;
                 eprintln!("{}", json!({"error": format!("seam error: {error}")}));
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
         };
         if let Some(verified) = &verified_v23 {
             if let Err(error) = envelope_v23::verify_kernel_principal(&step_output, verified) {
+                mediation_failed = true;
                 eprintln!(
                     "{}",
                     json!({"error": format!("V2.3 kernel cross-check refused: {error}")})
                 );
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
                 continue;
             }
@@ -1968,8 +2056,9 @@ fn run() -> i32 {
                 pending_approval_challenge = None;
                 if let Some(a) = audit {
                     if emit_audit(&mut receipts, &a).is_err() {
+                        mediation_failed = true;
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -1977,12 +2066,13 @@ fn run() -> i32 {
                 let release = match ReleaseInput::prepare(&forward, now, ttl_ms) {
                     Ok(release) => release,
                     Err(error) => {
+                        mediation_failed = true;
                         eprintln!(
                             "{}",
                             json!({"error": "release authority construction failure", "detail": error})
                         );
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -2007,8 +2097,9 @@ fn run() -> i32 {
                 ) {
                     Ok(decision) => decision,
                     Err(()) => {
+                        mediation_failed = true;
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -2025,8 +2116,9 @@ fn run() -> i32 {
                 )
                 .is_err()
                 {
+                    mediation_failed = true;
                     if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                        break;
+                        break true;
                     }
                     continue;
                 }
@@ -2056,7 +2148,7 @@ fn run() -> i32 {
                 .is_err()
                 {
                     let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
-                    break;
+                    break true;
                 }
             }
             Route::Block {
@@ -2065,8 +2157,9 @@ fn run() -> i32 {
             } => {
                 if let Some(a) = audit {
                     if emit_audit(&mut receipts, &a).is_err() {
+                        mediation_failed = true;
                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -2089,8 +2182,9 @@ fn run() -> i32 {
                 )
                 .is_err()
                 {
+                    mediation_failed = true;
                     if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                        break;
+                        break true;
                     }
                     continue;
                 }
@@ -2116,8 +2210,9 @@ fn run() -> i32 {
                         let refused_audit =
                             format!("approval refused: {} (explicit signed decline)", target);
                         if emit_audit(&mut receipts, &refused_audit).is_err() {
+                            mediation_failed = true;
                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                break;
+                                break true;
                             }
                             continue;
                         }
@@ -2126,7 +2221,7 @@ fn run() -> i32 {
                             target
                         );
                         if write_frame(&output, &refused).is_err() {
-                            break;
+                            break true;
                         }
                         continue;
                     }
@@ -2160,7 +2255,7 @@ fn run() -> i32 {
                             warnings.extend(a3_warnings);
                             emit_approval_drop_warnings(&warnings);
                             if write_frame(&output, RESOURCE_LIMIT_RESPONSE).is_err() {
-                                break;
+                                break true;
                             }
                             continue;
                         }
@@ -2171,11 +2266,20 @@ fn run() -> i32 {
                                 .iter()
                                 .map(|r| json!({"target": r.target, "issuedAt": r.issued_at}))
                                 .collect();
+                            let (votes, forecasts) =
+                                match auxiliary_inputs(&votes_file, &forecasts_file) {
+                                    Ok(inputs) => inputs,
+                                    Err(error) => {
+                                        eprintln!("{}", json!({"error": error}));
+                                        let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
+                                        break true;
+                                    }
+                                };
                             let mut retry = json!({
                                 "line": line, "now": now_ms(), "approvals": approvals,
-                                "votes": read_or_empty(&votes_file),
+                                "votes": votes,
                                 "grants": grants.fresh(),
-                                "forecasts": read_or_empty(&forecasts_file),
+                                "forecasts": forecasts,
                             });
                             // Same wire arrival, same envelope: the nonce was
                             // consumed once above and is NOT re-filtered —
@@ -2187,12 +2291,13 @@ fn run() -> i32 {
                             let retry_output = match host.step(&retry.to_string()) {
                                 Ok(output) => output,
                                 Err(error) => {
+                                    mediation_failed = true;
                                     eprintln!(
                                         "{}",
                                         json!({"error": format!("seam error: {error}")})
                                     );
                                     if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                        break;
+                                        break true;
                                     }
                                     continue;
                                 }
@@ -2201,6 +2306,7 @@ fn run() -> i32 {
                                 if let Err(error) =
                                     envelope_v23::verify_kernel_principal(&retry_output, verified)
                                 {
+                                    mediation_failed = true;
                                     eprintln!(
                                         "{}",
                                         json!({"error": format!(
@@ -2208,7 +2314,7 @@ fn run() -> i32 {
                                         )})
                                     );
                                     if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                        break;
+                                        break true;
                                     }
                                     continue;
                                 }
@@ -2218,8 +2324,9 @@ fn run() -> i32 {
                                     pending_approval_challenge = None;
                                     if let Some(a) = audit {
                                         if emit_audit(&mut receipts, &a).is_err() {
+                                            mediation_failed = true;
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                                break;
+                                                break true;
                                             }
                                             continue;
                                         }
@@ -2229,12 +2336,13 @@ fn run() -> i32 {
                                     ) {
                                         Ok(release) => release,
                                         Err(error) => {
+                                            mediation_failed = true;
                                             eprintln!(
                                                 "{}",
                                                 json!({"error": "release authority construction failure", "detail": error})
                                             );
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                                break;
+                                                break true;
                                             }
                                             continue;
                                         }
@@ -2257,8 +2365,9 @@ fn run() -> i32 {
                                     ) {
                                         Ok(decision) => decision,
                                         Err(()) => {
+                                            mediation_failed = true;
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                                break;
+                                                break true;
                                             }
                                             continue;
                                         }
@@ -2275,8 +2384,9 @@ fn run() -> i32 {
                                     )
                                     .is_err()
                                     {
+                                        mediation_failed = true;
                                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                            break;
+                                            break true;
                                         }
                                         continue;
                                     }
@@ -2295,7 +2405,7 @@ fn run() -> i32 {
                                     .is_err()
                                     {
                                         let _ = write_frame(&output, SEAM_ERROR_RESPONSE);
-                                        break;
+                                        break true;
                                     }
                                     continue;
                                 }
@@ -2305,8 +2415,9 @@ fn run() -> i32 {
                                 } => {
                                     if let Some(a) = audit {
                                         if emit_audit(&mut receipts, &a).is_err() {
+                                            mediation_failed = true;
                                             if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                                break;
+                                                break true;
                                             }
                                             continue;
                                         }
@@ -2329,8 +2440,9 @@ fn run() -> i32 {
                                     )
                                     .is_err()
                                     {
+                                        mediation_failed = true;
                                         if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                                            break;
+                                            break true;
                                         }
                                         continue;
                                     }
@@ -2342,6 +2454,7 @@ fn run() -> i32 {
                                     response = r2;
                                 }
                                 Route::SeamFailure { reason } => {
+                                    mediation_failed = true;
                                     eprintln!("{}", json!({"error": reason}));
                                     response = SEAM_ERROR_RESPONSE.to_string();
                                 }
@@ -2357,30 +2470,102 @@ fn run() -> i32 {
                     }
                 };
                 if write_frame(&output, &response).is_err() {
-                    break;
+                    break true;
                 }
             }
             Route::SeamFailure { reason } => {
+                mediation_failed = true;
                 eprintln!("{}", json!({"error": reason}));
                 if write_frame(&output, SEAM_ERROR_RESPONSE).is_err() {
-                    break;
+                    break true;
                 }
             }
         }
-    }
+    };
 
     readiness.store(false, Ordering::Release);
-    let _ = child.kill();
-    let code = child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(0);
-    let _ = relay.join();
+    drop(child_in);
+    let code = finish_child(&mut child, transport_failed || output.has_failed());
+    let relay_failed = relay.join().unwrap_or(true);
     output_queue.shutdown();
-    code
+    if mediation_failed || transport_failed || relay_failed || output.has_failed() {
+        1
+    } else {
+        code
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn auxiliary_files_distinguish_absent_broken_and_readable() {
+        let dir = std::env::temp_dir().join(format!("seal-auxiliary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("missing");
+        let unreadable = dir.join("unreadable");
+        let oversize = dir.join("oversize");
+        let invalid = dir.join("invalid");
+        let valid = dir.join("valid");
+        std::fs::write(&unreadable, b"secret").unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::write(&oversize, vec![b'x'; MAX_AUXILIARY_FILE_BYTES + 1]).unwrap();
+        std::fs::write(&invalid, [255]).unwrap();
+        std::fs::write(&valid, b"{\"votes\":[]}\n").unwrap();
+        assert!(matches!(read_auxiliary_file(""), Ok(None)));
+        for path in [&missing, &unreadable] {
+            let result = read_auxiliary_file(path.to_str().unwrap());
+            println!("#76 {}: {result:?}", path.display());
+            assert!(matches!(result, Err(AuxiliaryReadError::ReadFailed(_))));
+        }
+        let result = read_auxiliary_file(oversize.to_str().unwrap());
+        println!("#76 oversize: {result:?}");
+        assert!(matches!(result, Err(AuxiliaryReadError::Oversize)));
+        let result = read_auxiliary_file(invalid.to_str().unwrap());
+        println!("#76 invalid UTF-8: {result:?}");
+        assert!(matches!(result, Err(AuxiliaryReadError::InvalidUtf8(_))));
+        let result = read_auxiliary_file(valid.to_str().unwrap()).unwrap();
+        println!("#76 readable control: {result:?}");
+        assert_eq!(result.as_deref(), Some("{\"votes\":[]}\n"));
+        assert!(auxiliary_inputs(missing.to_str().unwrap(), "").is_err());
+        assert!(auxiliary_inputs("", invalid.to_str().unwrap()).is_err());
+        assert_eq!(
+            auxiliary_inputs("", "").unwrap(),
+            (String::new(), String::new())
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn child_cleanup_preserves_failure_and_clean_exit() {
+        let mut killed = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        killed.kill().unwrap();
+        let code = finish_child(&mut killed, false);
+        println!("#72 signaled child exit={code}");
+        assert_ne!(code, 0);
+        let mut clean = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let code = finish_child(&mut clean, false);
+        println!("#72 clean child exit={code}");
+        assert_eq!(code, 0);
+        let mut failed = Command::new("/bin/sh")
+            .args(["-c", "exit 7"])
+            .spawn()
+            .unwrap();
+        assert_eq!(finish_child(&mut failed, false), 7);
+        let mut transport = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        transport.wait().unwrap();
+        let code = finish_child(&mut transport, true);
+        println!("#72 transport failure with child exit 0: host exit={code}");
+        assert_ne!(code, 0);
+    }
 
     #[test]
     fn approval_refusal_emits_exact_framed_subject_with_explicit_identity() {
