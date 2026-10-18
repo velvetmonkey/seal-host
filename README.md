@@ -1,3 +1,5 @@
+> **ARCHIVED, not maintained.** See [seal](https://github.com/velvetmonkey/seal) for the maintained product.
+
 # seal-host
 
 <!-- current-release: v0.1.6 -->
