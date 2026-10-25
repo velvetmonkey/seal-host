@@ -7,7 +7,7 @@
 
 **Put one gate between an agent and the effect it wants to cause.**
 
-`seal-host` is Seal's deployed effect-boundary adapter for MCP `tools/call`.
+`seal-host` was Seal's effect-boundary adapter for MCP `tools/call`. It is archived: it is not deployed and not maintained.
 A guarded request without a matching live approval is stopped before the real
 MCP server receives it. Approve that exact request once and the identical call
 can flow once. Every decision leaves replayable evidence.
